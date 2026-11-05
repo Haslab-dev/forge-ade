@@ -870,8 +870,9 @@ export const FileTree: React.FC = () => {
             </button>
           </div>
 
-          {/* Root Workspace Row with Action Icons */}
-          <div className="px-2 py-1.5 flex items-center justify-between text-xs font-bold uppercase text-foreground dark:text-[#e5e7eb] hover:bg-surface-hover dark:hover:bg-surface-hover cursor-pointer group transition-colors">
+          {/* Root Workspace Row with Action Icons (only shown when a workspace folder is open or files exist) */}
+          {(activeWorkspacePath || files.length > 0) && (
+          <div className="px-2 py-1.5 flex items-center justify-between text-xs font-bold uppercase text-foreground hover:bg-surface-hover cursor-pointer group transition-colors">
             <div onClick={() => toggleFolder('root')} className="flex items-center gap-1.5 min-w-0 flex-1">
               {expandedFolders['root'] ? (
                 <ChevronDown className="w-3.5 h-3.5 text-foreground-subtle shrink-0" />
@@ -907,7 +908,7 @@ export const FileTree: React.FC = () => {
                       e.stopPropagation();
                       void openTerminalTab(undefined, activeWorkspacePath);
                     }}
-                    className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
+                    className="p-0.5 hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
                     title="Open Remote Terminal in Root"
                   >
                     <Terminal className="w-3.5 h-3.5" />
@@ -918,7 +919,7 @@ export const FileTree: React.FC = () => {
                       e.stopPropagation();
                       openRemoteUploader(activeWorkspacePath);
                     }}
-                    className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
+                    className="p-0.5 hover:bg-surface-hover rounded text-primary hover:text-primary-hover"
                     title="Upload to Remote Server"
                   >
                     <Upload className="w-3.5 h-3.5" />
@@ -932,7 +933,7 @@ export const FileTree: React.FC = () => {
                   setIsCreatingFile(true);
                   setCreateParentPath(activeWorkspacePath);
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
+                className="p-0.5 hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="New File"
               >
                 <FilePlus className="w-3.5 h-3.5" />
@@ -944,7 +945,7 @@ export const FileTree: React.FC = () => {
                   setIsCreatingFolder(true);
                   setCreateParentPath(activeWorkspacePath);
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
+                className="p-0.5 hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="New Folder"
               >
                 <FolderPlus className="w-3.5 h-3.5" />
@@ -955,7 +956,7 @@ export const FileTree: React.FC = () => {
                   e.stopPropagation();
                   revalidateFileMutations();
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
+                className="p-0.5 hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="Refresh Explorer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -966,13 +967,14 @@ export const FileTree: React.FC = () => {
                   e.stopPropagation();
                   collapseAllFolders();
                 }}
-                className="p-0.5 hover:bg-surface-hover dark:hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
+                className="p-0.5 hover:bg-surface-hover rounded text-foreground-subtle hover:text-foreground" 
                 title="Collapse Folders in Explorer"
               >
                 <Minimize2 className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
+          )}
 
           {/* Inline File / Folder Creation input */}
           {(isCreatingFile || isCreatingFolder) && (
@@ -1054,7 +1056,7 @@ export const FileTree: React.FC = () => {
               {files.length === 0 ? (
                 <div className="p-4 space-y-3 text-center select-none">
                   <div className="py-2">
-                    <p className="text-xs font-semibold text-foreground">No Folder Opened</p>
+                    <p className="text-ui-sm font-semibold text-foreground">No Folder Opened</p>
                     <p className="text-ui-xs text-foreground-subtle mt-0.5">
                       Standalone Code Editor Mode
                     </p>
@@ -1064,7 +1066,7 @@ export const FileTree: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => openFolder()}
-                      className="w-full py-1.5 px-3 rounded-lg bg-primary text-white text-xs font-medium hover:bg-accent-hover transition-colors cursor-pointer shadow-xs"
+                      className="w-full py-1.5 px-3 rounded-lg bg-foreground text-background text-ui-xs font-medium hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
                     >
                       Open Folder
                     </button>
@@ -1072,7 +1074,7 @@ export const FileTree: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setIsSSHModalOpen(true)}
-                      className="w-full py-1.5 px-3 rounded-lg border border-border hover:bg-surface-hover dark:hover:bg-card text-foreground text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                      className="w-full py-1.5 px-3 rounded-lg border border-border bg-card hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <Server className="w-3.5 h-3.5 text-primary" />
                       Connect via SSH Remote
@@ -1091,7 +1093,7 @@ export const FileTree: React.FC = () => {
                           content: '// Standalone Scratchpad\n// Edit freely without active project\n'
                         });
                       }}
-                      className="w-full py-1.5 px-3 rounded-lg bg-surface-hover dark:bg-surface-hover text-foreground-subtle hover:bg-surface-hover dark:hover:bg-[#303034] text-xs font-medium transition-colors cursor-pointer"
+                      className="w-full py-1.5 px-3 rounded-lg border border-border/60 bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground text-ui-xs font-medium transition-colors cursor-pointer"
                     >
                       New Scratch File
                     </button>

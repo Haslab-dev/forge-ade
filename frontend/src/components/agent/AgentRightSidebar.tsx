@@ -253,6 +253,7 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     currentModel,
     providers,
     rightPaneWidth,
+    setIsRightActionDrawerOpen,
     subagents,
     sendSubagentMessage
   } = useWorkspace();
@@ -1035,7 +1036,7 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
 
   return (
     <aside
-      style={{ width: `${rightPaneWidth}px` }}
+      style={{ width: `${rightPaneWidth}px`, maxWidth: '34vw' }}
       className="h-full min-w-0 shrink-0 border-l border-border bg-background flex flex-col select-none text-xs text-foreground overflow-hidden transition-colors"
     >
       
@@ -1128,28 +1129,15 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
                   )}
                   <span className="truncate">{t.title}</span>
                 </button>
-                {/* Close button: surface icon swaps to X on tab hover */}
+                {/* Close button */}
                 <button
                   type="button"
                   aria-label={`Close ${t.title}`}
                   title="Close tab"
                   onClick={() => void closePaneTab(t.id)}
-                  className="group/close relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm hover:bg-muted"
+                  className="group/close relative flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-foreground-subtlest opacity-60 hover:bg-muted hover:text-foreground group-hover/panetab:opacity-100"
                 >
-                  <span className="relative flex size-3 items-center justify-center group-hover/panetab:hidden">
-                    {t.kind === 'terminal' ? (
-                      <SquareTerminal className="size-3 shrink-0" />
-                    ) : t.kind === 'browser' ? (
-                      <Globe className="size-3 shrink-0" />
-                    ) : t.kind === 'diffs' ? (
-                      <FileDiffIcon className="size-3 shrink-0" />
-                    ) : t.kind === 'file' ? (
-                      <span className="shrink-0">{getFileIcon(t.title || t.path || '', 'size-3')}</span>
-                    ) : (
-                      <MessageSquare className="size-3 shrink-0" />
-                    )}
-                  </span>
-                  <X className="hidden size-3 group-hover/panetab:block" />
+                  <X className="size-3" />
                 </button>
               </div>
             );
@@ -1292,6 +1280,15 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
               </>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setIsRightActionDrawerOpen(false)}
+            aria-label="Close side pane"
+            title="Close side pane (⌘⇧J)"
+            className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-foreground cursor-pointer"
+          >
+            <X className="size-3.5" />
+          </button>
         </div>
       </div>
 

@@ -8,7 +8,11 @@ import {
   MessageSquareOff,
   GitBranch,
   Loader2,
-  Trash2
+  Trash2,
+  Compass,
+  Bug,
+  TestTube2,
+  GitPullRequest
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
@@ -306,6 +310,46 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
               headerNode={landingTray}
               showContextStrip={false}
             />
+          </div>
+
+          {/* Quick-Start Prompt Suggestions */}
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            {[
+              {
+                icon: Compass,
+                label: 'Explore architecture',
+                prompt: 'Summarize the architecture of this repository, key packages, and entry points.'
+              },
+              {
+                icon: Bug,
+                label: 'Find & fix a bug',
+                prompt: 'Help me diagnose and fix an issue in the codebase: '
+              },
+              {
+                icon: TestTube2,
+                label: 'Run & improve tests',
+                prompt: 'Run the test suite, identify any failing or missing unit tests, and propose improvements.'
+              },
+              {
+                icon: GitPullRequest,
+                label: 'Review working tree',
+                prompt: 'Review uncommitted git changes in this workspace for bugs, edge cases, and style.'
+              }
+            ].map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  window.dispatchEvent(
+                    new CustomEvent('forge:composer-insert', { detail: item.prompt })
+                  );
+                }}
+                className="group inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-surface/60 px-3 py-1.5 text-ui-xs font-medium text-foreground-subtle transition-all hover:border-border hover:bg-surface-hover hover:text-foreground cursor-pointer"
+              >
+                <item.icon className="size-3.5 text-muted-foreground transition-colors group-hover:text-primary" />
+                <span>{item.label}</span>
+              </button>
+            ))}
           </div>
 
         </div>

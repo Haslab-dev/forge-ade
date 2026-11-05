@@ -165,12 +165,12 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
           <span className="truncate">
             Modified {changes.length} {changes.length === 1 ? 'file' : 'files'} in this turn
           </span>
-          <div className="flex items-center gap-1 font-mono text-[11px] tabular-nums shrink-0 ml-1">
+          <div className="flex items-center gap-1 font-mono text-2xs tabular-nums shrink-0 ml-1">
             {totalAdditions > 0 && (
-              <span className="text-emerald-500 font-semibold">+{totalAdditions}</span>
+              <span className="text-diff-addition-foreground font-semibold">+{totalAdditions}</span>
             )}
             {totalDeletions > 0 && (
-              <span className="text-destructive font-semibold">-{totalDeletions}</span>
+              <span className="text-diff-deletion-foreground font-semibold">-{totalDeletions}</span>
             )}
           </div>
         </button>
@@ -182,9 +182,9 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
               disabled={isReverting || reverted}
               onClick={handleRevertTurn}
               className={cn(
-                "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer",
+                "flex items-center gap-1 px-2 py-0.5 rounded text-2xs transition-colors cursor-pointer",
                 reverted
-                  ? "text-emerald-500 bg-emerald-500/10 cursor-default"
+                  ? "text-success bg-success/10 cursor-default"
                   : "text-foreground-subtle hover:text-destructive hover:bg-destructive/10"
               )}
               title={reverted ? "Turn reverted" : "Revert all file modifications in this turn"}
@@ -246,12 +246,12 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
               </button>
 
               <div className="flex items-center gap-2 shrink-0">
-                <span className="font-mono text-[11px] tabular-nums">
+                <span className="font-mono text-2xs tabular-nums">
                   {item.additions > 0 && (
-                    <span className="text-emerald-500">+{item.additions} </span>
+                    <span className="text-diff-addition-foreground">+{item.additions} </span>
                   )}
                   {item.deletions > 0 && (
-                    <span className="text-destructive">-{item.deletions}</span>
+                    <span className="text-diff-deletion-foreground">-{item.deletions}</span>
                   )}
                 </span>
                 {onOpenFile && (

@@ -735,8 +735,8 @@ function getInitialAgents(): ACPAgent[] {
             command: def ? def.command : a.command,
             args: def ? def.args : a.args,
             type: def ? def.type : a.type,
-            model: (a.model || '').includes('myairouter_cloud') ? (def ? def.model : cleanSupported[0] || a.model) : (a.model || (def ? def.model : '')),
-            supportedModels: cleanSupported.length > 0 ? cleanSupported : (def ? def.supportedModels : []),
+            model: a.type === 'internal' ? '' : ((a.model || '').includes('myairouter_cloud') ? (def ? def.model : cleanSupported[0] || a.model) : (a.model || (def ? def.model : ''))),
+            supportedModels: a.type === 'internal' ? [] : (cleanSupported.length > 0 ? cleanSupported : (def ? def.supportedModels : [])),
             supportedEfforts: def ? def.supportedEfforts : (a.supportedEfforts || undefined),
             defaultEffort: def ? def.defaultEffort : a.defaultEffort
           };
@@ -798,6 +798,13 @@ function getInitialArchivedSessionIds(): Set<string> {
   }
 }
 
+let cachedContextSession: AgentSession | undefined = undefined;
+let cachedContextModel = '';
+let cachedContextUsageVal: ContextUsageInfo | null = null;
+let cachedSubagentIds: string[] | undefined = undefined;
+let cachedSubagentMap: Record<string, AgentSession> | undefined = undefined;
+let cachedSubagentsVal: AgentSession[] = [];
+
 function computeDerived(state: {
   mode: WorkspaceMode;
   agentWorkspacePath: string;
@@ -827,12 +834,27 @@ function computeDerived(state: {
     ? candidate!
     : (enabledAgents.find(a => a.type === 'internal') || enabledAgents[0] || state.agents[0]);
 
-  const contextUsage = calculateContextUsage(activeSession, state.currentModel);
+  if (
+    !cachedContextUsageVal ||
+    cachedContextSession !== activeSession ||
+    cachedContextModel !== state.currentModel
+  ) {
+    cachedContextSession = activeSession;
+    cachedContextModel = state.currentModel;
+    cachedContextUsageVal = calculateContextUsage(activeSession, state.currentModel);
+  }
+  const contextUsage = cachedContextUsageVal;
+
   const isLeftSidebarOpen = state.mode === 'editor' ? state.editorLeftSidebarOpen : state.agentLeftSidebarOpen;
   const canGoBack = state.nav.index > 0;
   const canGoForward = state.nav.index >= 0 && state.nav.index < state.nav.stack.length - 1;
-  const subagentIds = activeSession?.subagentIds || [];
-  const subagents = subagentIds.map(id => state.subagentSessions[id]).filter(Boolean) as AgentSession[];
+  const subagentIds = activeSession?.subagentIds;
+  if (cachedSubagentIds !== subagentIds || cachedSubagentMap !== state.subagentSessions) {
+    cachedSubagentIds = subagentIds;
+    cachedSubagentMap = state.subagentSessions;
+    cachedSubagentsVal = (subagentIds || []).map(id => state.subagentSessions[id]).filter(Boolean) as AgentSession[];
+  }
+  const subagents = cachedSubagentsVal;
 
   return {
     activeWorkspacePath,
@@ -846,6 +868,15 @@ function computeDerived(state: {
   };
 }
 
+function hasStateDiff(state: Record<string, any>, next: Record<string, any>): boolean {
+  for (const key of Object.keys(next)) {
+    if (!Object.is(state[key], next[key])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ── Full Zustand Store Definition ────────────────────────────────────────────
 export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
   // Helper to update store while keeping derived properties strictly synchronized
@@ -856,10 +887,11 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       const partial = typeof updater === 'function' ? updater(state) : updater;
       const combined = { ...state, ...partial };
       const derived = computeDerived(combined);
-      return {
+      const next = {
         ...partial,
         ...derived
       };
+      return hasStateDiff(state as any, next) ? next : state;
     });
   };
 
@@ -1130,14 +1162,17 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
 
       const oldPath = get().activeWorkspacePath;
       if (oldPath && (surface === 'editor' || get().mode === 'editor')) {
+        const activeId = get().activeTabId;
         workspaceStateCache.set(oldPath, {
-          openTabs: [...get().openTabs],
-          activeTabId: get().activeTabId,
-          selectedFile: get().selectedFile,
-          diffs: [...get().diffs],
+          openTabs: get().openTabs.map(t =>
+            t.type === 'code' && !t.isModified && t.id !== activeId ? { ...t, content: '' } : t
+          ),
+          activeTabId: activeId,
+          selectedFile: get().selectedFile ? { ...get().selectedFile!, content: undefined } : null,
+          diffs: get().diffs.slice(0, 20),
           activeDiff: get().activeDiff
         });
-        if (workspaceStateCache.size > 8) {
+        if (workspaceStateCache.size > 3) {
           const oldest = workspaceStateCache.keys().next().value;
           if (oldest !== undefined && oldest !== newPath) {
             workspaceStateCache.delete(oldest);
@@ -1354,13 +1389,14 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     },
 
     openFileInEditor: async (filePath, line, column, opts) => {
-      if (get().mode === 'agent') {
+      if (get().mode === 'agent' && !opts?.silent) {
         await get().openSideFile(filePath, line);
         return;
       }
 
+      const existingOpenTab = get().openTabs.find(t => t.filePath === filePath && t.type === 'code');
       const file = findFileInTree(get().files, filePath);
-      let content = file?.content || '';
+      let content = existingOpenTab?.content || file?.content || '';
       const fileName = filePath.split('/').pop() || filePath;
 
       if (isBinaryFile(filePath)) {
@@ -1396,14 +1432,15 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         }
       }
 
-      const fileItem: FileItem = file || {
-        id: `file-${Date.now()}`,
-        name: fileName,
-        path: filePath,
-        type: 'file',
-        content,
-        isModified: false
-      };
+      const fileItem: FileItem = file
+        ? { ...file, content: undefined }
+        : {
+            id: `file-${Date.now()}`,
+            name: fileName,
+            path: filePath,
+            type: 'file',
+            isModified: false
+          };
 
       const newTab: EditorTab = {
         id: `tab-${fileItem.id}`,
@@ -1419,7 +1456,15 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       updateStore(prev => {
         const existing = prev.openTabs.find(t => t.filePath === filePath && t.type === 'code');
         const updatedTabs = existing
-          ? (line !== undefined ? prev.openTabs.map(t => (t.id === existing.id ? { ...t, line, column } : t)) : prev.openTabs)
+          ? prev.openTabs.map(t =>
+              t.id === existing.id
+                ? {
+                    ...t,
+                    content: t.content || content,
+                    ...(line !== undefined ? { line, column } : {})
+                  }
+                : t
+            )
           : [...prev.openTabs, newTab];
         return {
           selectedFile: fileItem,
@@ -2947,10 +2992,11 @@ useWorkspace.setState = (updater: any, replace?: any) => {
   origSetState((state) => {
     const partial = typeof updater === 'function' ? updater(state) : updater;
     const combined = { ...state, ...partial };
-    return {
+    const next = {
       ...partial,
       ...computeDerived(combined)
     };
+    return !replace && !hasStateDiff(state as any, next) ? state : next;
   }, replace);
 };
 

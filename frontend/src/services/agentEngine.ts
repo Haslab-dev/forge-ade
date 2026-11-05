@@ -644,12 +644,10 @@ export class AgentEngine {
       // 6. Handle Internal Agent Execution with Full Multi-Turn Tool Calling (Pi Agent Core)
       if (agent.type === 'internal' || agent.id === 'agent-internal') {
         if (enabledProviders.length === 0) {
-          const msg = `⚠️ **No LLM Provider Configured**\n\n` +
-            `To enable reasoning with **ForgeADE Internal**, please go to **Settings > Providers & API Keys** and add your LLM provider:\n` +
-            `• **Local Ollama**: Base URL \`http://localhost:11434\`\n` +
-            `• **OpenAI / OpenRouter / Compatible**: Base URL & API Key\n` +
-            `• **Google Gemini**: API Key\n` +
-            `• **Anthropic Claude**: API Key`;
+          const msg = `⚠️ **No Custom LLM Provider Configured**\n\n` +
+            `To enable reasoning with **ForgeADE Internal**, please go to **Settings → Providers & Models** and add a custom provider:\n` +
+            `• **OpenAI Compatible**: Base URL (\`/v1\`) & API Key\n` +
+            `• **Anthropic Compatible**: Base URL (\`/v1\`) & API Key`;
           callbacks.onFinish(msg);
           return;
         }
@@ -992,11 +990,22 @@ CRITICAL RULES:
           }
         }
       }
-    } else if (targetProvider.id === 'anthropic' || targetProvider.baseUrl?.includes('anthropic.com')) {
+    } else if (
+      targetProvider.protocol === 'anthropic' ||
+      targetProvider.id === 'anthropic' ||
+      targetProvider.id?.startsWith('anthropic-') ||
+      targetProvider.baseUrl?.includes('anthropic')
+    ) {
       if (!targetProvider.apiKey) {
         throw new Error('Anthropic API Key is missing. Please set it in Settings > Providers & Models.');
       }
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const cleanBase = (targetProvider.baseUrl || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
+      const messagesEndpoint = cleanBase.endsWith('/messages')
+        ? cleanBase
+        : cleanBase.endsWith('/v1')
+          ? `${cleanBase}/messages`
+          : `${cleanBase}/v1/messages`;
+      const res = await fetch(messagesEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

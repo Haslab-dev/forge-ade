@@ -88,8 +88,8 @@ export function SettingsRow({
         className={cn(
           'grid items-center gap-4',
           controlLayout === 'wide'
-            ? 'grid-cols-1 sm:grid-cols-[minmax(0,1fr)_280px]'
-            : 'grid-cols-[minmax(0,1fr)_192px]'
+            ? 'grid-cols-1 sm:grid-cols-[minmax(0,1fr)_260px]'
+            : 'grid-cols-[minmax(0,1fr)_auto]'
         )}
       >
         <div className="min-w-0">
@@ -200,20 +200,20 @@ export function SectionTitle({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-3">
-        <h2 className="text-[32px] font-semibold leading-tight tracking-tight text-foreground">{title}</h2>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2.5">
+        <h2 className="text-ui-2xl font-semibold leading-tight tracking-tight text-foreground">{title}</h2>
         {badge ? <BetaBadge label={badge} /> : null}
         {children}
       </div>
-      {subtitle ? <p className="text-ui-base text-foreground-subtle">{subtitle}</p> : null}
+      {subtitle ? <p className="text-ui-sm text-foreground-subtle">{subtitle}</p> : null}
     </div>
   );
 }
 
 export function BetaBadge({ label }: { label: string }) {
   return (
-    <span className="inline-flex h-6 items-center rounded-full border border-sky-500 px-2 text-ui-xs font-semibold text-sky-500">
+    <span className="inline-flex h-5 items-center rounded-full border border-primary/35 bg-primary/10 px-2 text-2xs font-semibold text-primary">
       {label}
     </span>
   );

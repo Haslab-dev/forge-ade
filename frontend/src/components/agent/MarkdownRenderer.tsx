@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Check, FileCode, Image as ImageIcon } from 'lucide-react';
+import { Copy, Check, FileCode, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { parseFilePath } from '../../lib/utils';
 import { openInBrowser, isLocalhostUrl } from '../../lib/browser';
@@ -352,8 +352,24 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
         continue;
       }
 
-      // 6. Italic: *text* or _text_
-      const italicMatch = current.match(/^(\*|_)(.*?)\1/);
+      // 5.5 Environment variable / constant identifiers with underscores (e.g. OPENAI_API_KEY)
+      // Render as subtle inline code and prevent intraword _italic_ mangling.
+      const envVarMatch = current.match(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+/);
+      if (envVarMatch) {
+        parts.push(
+          <code
+            key={key++}
+            className="rounded-md bg-surface px-1 py-0.5 font-mono text-[0.9em] text-foreground break-all [overflow-wrap:anywhere]"
+          >
+            {envVarMatch[0]}
+          </code>
+        );
+        current = current.slice(envVarMatch[0].length);
+        continue;
+      }
+
+      // 6. Italic: *text* or _text_ (avoid matching intraword underscores like foo_bar_baz)
+      const italicMatch = current.match(/^(\*|_)(?!\s)(.+?)(?<!\s)\1(?![A-Za-z0-9_])/);
       if (italicMatch) {
         parts.push(
           <em key={key++} className="italic text-foreground break-words [overflow-wrap:anywhere]">
@@ -365,7 +381,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
       }
 
       // 7. Regular characters: find the next delimiter
-      const nextSpecial = current.search(/[`*_\[!~]|file:\/\/|(?:\/(?:Users|home|data|tmp|var|opt|private|usr|etc|[a-zA-Z0-9_.-]+)\/|~\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/))?[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java|vue|svelte)/);
+      const nextSpecial = current.search(/[`*\[!~]|(?<![A-Za-z0-9])_|_[A-Z0-9]+_[A-Z0-9]+|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+|file:\/\/|(?:\/(?:Users|home|data|tmp|var|opt|private|usr|etc|[a-zA-Z0-9_.-]+)\/|~\/|(?:\.\/|\.\.\/|[a-zA-Z0-9_.-]+\/))?[a-zA-Z0-9_./-]+\.(?:ts|tsx|js|jsx|json|go|py|rs|css|scss|html|md|toml|yaml|yml|sh|c|h|cpp|hpp|sql|txt|zon|zig|swift|kt|java|vue|svelte)/);
       if (nextSpecial === -1) {
         parts.push(current);
         break;
@@ -526,6 +542,21 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({ content, classN
         );
       } else if (line.trim() === '') {
         nodes.push(<div key={`empty-${i}`} className="h-2" />);
+      } else if (/^(?:⚠️|❌|\u26a0\ufe0f?|\u274c)?\s*\*\*Error\*\*:\s*/i.test(line.trim())) {
+        const errorBody = line.trim().replace(/^(?:⚠️|❌|\u26a0\ufe0f?|\u274c)?\s*\*\*Error\*\*:\s*/i, '');
+        nodes.push(
+          <div
+            key={`err-${i}`}
+            role="alert"
+            className="my-1.5 flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-error-surface px-3.5 py-2.5 text-ui-sm text-foreground"
+          >
+            <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1 break-words leading-relaxed [overflow-wrap:anywhere]">
+              <span className="font-semibold text-destructive">Error: </span>
+              {renderInline(errorBody)}
+            </div>
+          </div>
+        );
       } else {
         nodes.push(
           <p key={`p-${i}`} className={`max-w-full min-w-0 break-words [overflow-wrap:anywhere] ${muted ? 'text-ui-xs leading-relaxed text-foreground-subtle' : 'text-ui-sm leading-relaxed text-foreground'}`}>

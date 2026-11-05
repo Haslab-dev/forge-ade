@@ -87,36 +87,44 @@ func (e *Engine) InvalidateAll() {
 	e.statusMu.Unlock()
 }
 
+var (
+	enrichedPathOnce sync.Once
+	cachedPath       string
+)
+
 // EnrichedPath returns a PATH string that includes common installation directories
 // (Homebrew, Linuxbrew, Cargo, Go, Bun, ~/.local/bin, Nix, etc.) so that desktop apps
 // launched without an inherited terminal shell environment can reliably execute git,
 // gh, glab, and other CLI tools.
 func EnrichedPath() string {
-	home, _ := os.UserHomeDir()
-	extra := []string{
-		"/opt/homebrew/bin",
-		"/opt/homebrew/sbin",
-		"/usr/local/bin",
-		"/usr/local/sbin",
-		"/home/linuxbrew/.linuxbrew/bin",
-		filepath.Join(home, ".local", "bin"),
-		filepath.Join(home, "go", "bin"),
-		filepath.Join(home, ".cargo", "bin"),
-		filepath.Join(home, ".bun", "bin"),
-		filepath.Join(home, ".nix-profile", "bin"),
-		"/run/current-system/sw/bin",
-		"/usr/bin",
-		"/bin",
-		"/usr/sbin",
-		"/sbin",
-	}
-	currentPath := os.Getenv("PATH")
-	for _, p := range extra {
-		if p != "" && !strings.Contains(currentPath, p) {
-			currentPath = p + string(os.PathListSeparator) + currentPath
+	enrichedPathOnce.Do(func() {
+		home, _ := os.UserHomeDir()
+		extra := []string{
+			"/opt/homebrew/bin",
+			"/opt/homebrew/sbin",
+			"/usr/local/bin",
+			"/usr/local/sbin",
+			"/home/linuxbrew/.linuxbrew/bin",
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, "go", "bin"),
+			filepath.Join(home, ".cargo", "bin"),
+			filepath.Join(home, ".bun", "bin"),
+			filepath.Join(home, ".nix-profile", "bin"),
+			"/run/current-system/sw/bin",
+			"/usr/bin",
+			"/bin",
+			"/usr/sbin",
+			"/sbin",
 		}
-	}
-	return currentPath
+		currentPath := os.Getenv("PATH")
+		for _, p := range extra {
+			if p != "" && !strings.Contains(currentPath, p) {
+				currentPath = p + string(os.PathListSeparator) + currentPath
+			}
+		}
+		cachedPath = currentPath
+	})
+	return cachedPath
 }
 
 // gitCmd constructs an exec.Cmd configured for non-interactive git execution.
@@ -191,7 +199,7 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	scanner := bufio.NewScanner(bytes.NewReader(outBytes))
 	var commits []CommitNode
 
-	pushedSet, stashSet := commitStatusSets(ctx, repoPath)
+	pushedSet, stashSet := commitStatusSets(ctx, repoPath, offset+limit+250)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -263,11 +271,14 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 
 // commitStatusSets builds sets of commit hashes that are pushed (reachable from
 // any remote-tracking branch) or the current stash tip.
-func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[string]bool) {
-	pushed = map[string]bool{}
+func commitStatusSets(ctx context.Context, repoPath string, maxCommits int) (pushed, stash map[string]bool) {
+	if maxCommits <= 0 {
+		maxCommits = 300
+	}
+	pushed = make(map[string]bool, maxCommits)
 	stash = map[string]bool{}
 
-	// Remote-tracking refs (refs/remotes/*) → pushed commits.
+	// Remote-tracking refs (refs/remotes/*) → pushed commits (bounded to page window).
 	refCmd := gitCmd(ctx, repoPath, "for-each-ref", "--format=%(refname)", "refs/remotes/")
 	out, err := refCmd.Output()
 	if err == nil {
@@ -278,7 +289,7 @@ func commitStatusSets(ctx context.Context, repoPath string) (pushed, stash map[s
 			}
 		}
 		if len(refs) > 0 {
-			args := append([]string{"rev-list"}, refs...)
+			args := append([]string{"rev-list", fmt.Sprintf("--max-count=%d", maxCommits)}, refs...)
 			revCmd := gitCmd(ctx, repoPath, args...)
 			out, err := revCmd.Output()
 			if err == nil {

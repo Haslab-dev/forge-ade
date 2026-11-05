@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strings"
 
@@ -163,15 +164,17 @@ func main() {
 		},
 	})
 
-	wailsApp.Menu.Set(application.DefaultApplicationMenu())
+	if runtime.GOOS == "darwin" {
+		wailsApp.Menu.Set(application.DefaultApplicationMenu())
+	}
 
 	mainWindow := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:                      "ForgeADE",
 		URL:                        "/",
 		Width:                      1280,
 		Height:                     800,
-		MinWidth:                   800,
-		MinHeight:                  600,
+		MinWidth:                   640,
+		MinHeight:                  480,
 		BackgroundType:             application.BackgroundTypeSolid,
 		EnableFileDrop:             true,
 		DevToolsEnabled:            true,

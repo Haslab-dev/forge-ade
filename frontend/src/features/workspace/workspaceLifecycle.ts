@@ -49,17 +49,15 @@ function readPersistedSession(wsPath: string): PersistedEditorSession | null {
  * It connects to Zustand stores directly without React Context.
  */
 export function useWorkspaceLifecycle() {
-  const mode = useWorkspace(s => s.mode);
   const theme = useWorkspace(s => s.theme);
   const themePalette = useWorkspace(s => s.themePalette);
   const activeWorkspacePath = useWorkspace(s => s.activeWorkspacePath);
-  const activeSession = useWorkspace(s => s.activeSession);
-  const activeSessionId = useWorkspace(s => s.activeSessionId);
+  const activeGoSessionId = useWorkspace(s => s.activeSession?.goSessionId);
   const agentExecutionMode = useWorkspace(s => s.agentExecutionMode);
-  const openTabs = useWorkspace(s => s.openTabs);
   const activeTabId = useWorkspace(s => s.activeTabId);
-  const sessions = useWorkspace(s => s.sessions);
-  const automations = useWorkspace(s => s.automations);
+  const openTabsMetaKey = useWorkspace(s =>
+    s.openTabs.map(t => `${t.id}:${t.filePath}:${t.line}:${t.column}:${t.isPinned}:${t.isReadOnly}`).join('|')
+  );
 
   // 1. Initial terminal session boot
   const bootModeAppliedRef = useRef(false);
@@ -122,7 +120,6 @@ export function useWorkspaceLifecycle() {
   }, [theme, themePalette]);
 
   // 6. Go agent session auto-approve sync with permission mode
-  const activeGoSessionId = activeSession?.goSessionId;
   useEffect(() => {
     if (!activeGoSessionId) return;
     SetAgentAutoApprove(activeGoSessionId, agentExecutionMode === 'bypass').catch(() => {});
@@ -170,11 +167,13 @@ export function useWorkspaceLifecycle() {
 
   // 9. File activations on activeTabId
   useEffect(() => {
-    const tab = openTabs.find(t => t.id === activeTabId);
+    if (!activeTabId) return;
+    const store = useWorkspace.getState();
+    const tab = store.openTabs.find(t => t.id === activeTabId);
     if (tab && tab.type === 'code' && tab.filePath) {
-      useWorkspace.getState().recordRecentFile?.(tab.filePath);
+      store.recordRecentFile?.(tab.filePath);
     }
-  }, [activeTabId, openTabs]);
+  }, [activeTabId]);
 
   // 10. External fs:changed watcher & ssh:disconnected
   useEffect(() => {
@@ -312,7 +311,6 @@ export function useWorkspaceLifecycle() {
 
   // 12. Debounced persist of active workspace code tabs
   const persistSessionTimerRef = useRef<number | null>(null);
-  const openTabsMetaKey = openTabs.map(t => `${t.id}:${t.filePath}:${t.line}:${t.column}:${t.isPinned}:${t.isReadOnly}`).join('|');
   useEffect(() => {
     const path = activeWorkspacePath;
     if (!path) return;

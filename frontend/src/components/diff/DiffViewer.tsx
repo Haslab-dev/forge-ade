@@ -492,9 +492,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
   return (
     <div className="w-full h-full min-h-0 flex flex-col bg-background border border-border rounded-[12px] overflow-hidden shadow-xs font-sans">
       {/* Header */}
-      <div className="px-4 py-2.5 bg-surface border-b border-border flex items-center justify-between flex-wrap gap-2 text-xs select-none">
-        <div className="flex items-center gap-2">
-          <GitCompare className="w-4 h-4 text-success" />
+      <div className="px-3.5 py-2 bg-surface border-b border-border flex items-center justify-between flex-wrap gap-2 text-ui-xs select-none">
+        <div className="flex items-center gap-2 min-w-0">
+          <GitCompare className="size-3.5 text-foreground-subtle shrink-0" />
           <span
             role={diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 ? 'button' : undefined}
             tabIndex={diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 ? 0 : undefined}
@@ -512,66 +512,66 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
                 void openFileInEditor(diff.filePath);
               }
             }}
-            className={`font-bold text-foreground font-mono ${
+            className={`font-semibold text-foreground font-mono truncate ${
               diff.filePath && diff.filePath !== 'Working Tree Changes' && fileSections.length === 1 ? 'hover:underline cursor-pointer' : ''
             }`}
           >
             {diff.fileName || diff.filePath}
           </span>
           {fileSections.length > 1 && (
-            <span className="px-2 py-0.5 rounded-full text-ui-xs font-semibold bg-primary/10 text-primary dark:bg-card text-link">
-              {fileSections.length} files changed
+            <span className="px-2 py-0.5 rounded-full text-2xs font-medium bg-surface-hover text-foreground-subtle border border-border/60 shrink-0">
+              {fileSections.length} files
             </span>
           )}
-          <span className="flex items-center gap-1 font-mono text-ui-xs">
-            <span className="text-success font-semibold">+{displayAdditions}</span>
-            <span className="text-destructive font-semibold">-{displayDeletions}</span>
+          <span className="flex items-center gap-1 font-mono text-2xs tabular-nums shrink-0">
+            <span className="text-diff-addition-foreground font-medium">+{displayAdditions}</span>
+            <span className="text-diff-deletion-foreground font-medium">-{displayDeletions}</span>
           </span>
-          <span className={`px-2 py-0.5 rounded-full text-ui-xs font-semibold font-mono ${
-            diff.status === 'accepted' 
-              ? 'bg-success/10 text-success dark:bg-success/10 dark:text-success' 
+          <span className={`px-1.5 py-0.5 rounded-md text-2xs font-medium border shrink-0 ${
+            diff.status === 'accepted'
+              ? 'bg-success/10 text-success border-success/25'
               : diff.status === 'rejected'
-              ? 'bg-destructive/10 text-destructive dark:bg-destructive/10 dark:text-destructive'
+              ? 'bg-destructive/10 text-destructive border-destructive/25'
               : isGitReview
-              ? 'bg-surface-hover text-foreground-subtle dark:bg-surface-hover dark:text-foreground-subtle'
-              : 'bg-warning/10 text-warning dark:bg-warning/10 dark:text-warning'
+              ? 'bg-surface-hover text-foreground-subtle border-border/60'
+              : 'bg-warning/10 text-warning border-warning/25'
           }`}>
-            {isGitReview ? 'GIT REVIEW' : diff.status.toUpperCase()}
+            {isGitReview ? 'Git Review' : diff.status.charAt(0).toUpperCase() + diff.status.slice(1)}
           </span>
         </div>
 
         {/* View Controls & Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {/* Collapse/Expand All Button */}
           {fileSections.length > 0 && (
             <button
               type="button"
               onClick={handleToggleAll}
-              className="px-2.5 py-1 rounded-[6px] bg-surface-hover hover:bg-surface-hover dark:hover:bg-selected text-foreground border border-border transition-colors cursor-pointer flex items-center gap-1.5 text-ui-xs font-medium shadow-2xs"
+              className="px-2 py-1 rounded-md hover:bg-surface-hover text-foreground-subtle hover:text-foreground border border-transparent hover:border-border/60 transition-colors cursor-pointer flex items-center gap-1 text-ui-xs"
               title={areAnyCollapsed ? 'Expand all diffs' : 'Collapse all diffs'}
             >
               {areAnyCollapsed ? (
                 <>
-                  <ChevronsDownUp className="w-3.5 h-3.5" />
-                  <span>Expand all diffs</span>
+                  <ChevronsDownUp className="size-3.5" />
+                  <span>Expand all</span>
                 </>
               ) : (
                 <>
-                  <ChevronsUpDown className="w-3.5 h-3.5" />
-                  <span>Collapse all diffs</span>
+                  <ChevronsUpDown className="size-3.5" />
+                  <span>Collapse all</span>
                 </>
               )}
             </button>
           )}
 
           {/* Split / Unified Toggle (split is useless at pane width) */}
-          {!isInline && (<div className="bg-border p-0.5 rounded-[7px] flex items-center text-ui-xs">
+          {!isInline && (<div className="bg-surface-hover p-0.5 rounded-md border border-border/60 flex items-center text-ui-xs">
             <button
               type="button"
               onClick={() => setViewMode('split')}
               aria-pressed={viewMode === 'split'}
-              className={`px-2.5 py-1 rounded-[5px] transition-colors cursor-pointer ${
-                viewMode === 'split' ? 'bg-card text-foreground font-semibold shadow-2xs' : 'text-foreground-subtle'
+              className={`px-2 py-0.5 rounded-sm transition-colors cursor-pointer ${
+                viewMode === 'split' ? 'bg-card text-foreground font-medium shadow-2xs' : 'text-foreground-subtle hover:text-foreground'
               }`}
             >
               Split
@@ -580,8 +580,8 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               type="button"
               onClick={() => setViewMode('unified')}
               aria-pressed={viewMode === 'unified'}
-              className={`px-2.5 py-1 rounded-[5px] transition-colors cursor-pointer ${
-                viewMode === 'unified' ? 'bg-card text-foreground font-semibold shadow-2xs' : 'text-foreground-subtle'
+              className={`px-2 py-0.5 rounded-sm transition-colors cursor-pointer ${
+                viewMode === 'unified' ? 'bg-card text-foreground font-medium shadow-2xs' : 'text-foreground-subtle hover:text-foreground'
               }`}
             >
               Unified
@@ -592,21 +592,20 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
           <button
             type="button"
             onClick={handleCopy}
-            className="p-1.5 rounded-[6px] hover:bg-border text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+            className="p-1.5 rounded-md hover:bg-surface-hover text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
             title="Copy diff text"
           >
-            {copied ? <CheckCheck className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <CheckCheck className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
           </button>
-
 
           {!isGitReview && (
             <button
               type="button"
               onClick={handleAskRefine}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-primary/10 hover:bg-primary/10 text-primary dark:bg-card dark:hover:bg-[#28394F] text-link font-semibold text-xs transition-colors cursor-pointer"
-              title="Ask Forge-ADE to adjust this diff"
+              className="flex items-center gap-1 px-2 py-1 rounded-md border border-border/70 bg-card hover:bg-surface-hover text-foreground text-ui-xs font-medium transition-colors cursor-pointer"
+              title="Ask ForgeADE to adjust this diff"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <Sparkles className="size-3 text-primary" />
               <span>Refine</span>
             </button>
           )}
@@ -616,20 +615,20 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
               <button
                 type="button"
                 onClick={handleReject}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-[7px] bg-destructive/10 hover:bg-[#FECACA] text-destructive dark:bg-destructive/10 dark:hover:bg-[#5C0D0D] dark:text-destructive font-semibold text-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-destructive hover:bg-destructive/10 font-medium text-ui-xs transition-colors cursor-pointer"
                 title="Reject changes"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="size-3.5" />
                 <span>Reject</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleAccept}
-                className="flex items-center gap-1 px-3 py-1 rounded-[7px] bg-success hover:bg-success text-white font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-foreground hover:opacity-90 text-background font-medium text-ui-xs transition-opacity shadow-2xs cursor-pointer"
                 title="Accept and write to workspace"
               >
-                <Check className="w-3.5 h-3.5" />
+                <Check className="size-3.5" />
                 <span>Accept</span>
               </button>
             </>
@@ -639,9 +638,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
             <button
               type="button"
               onClick={onClose}
-              className="p-1 hover:bg-border rounded-[6px] text-foreground-subtle cursor-pointer"
+              className="p-1 hover:bg-surface-hover rounded-md text-foreground-subtle hover:text-foreground cursor-pointer"
             >
-              <X className="w-4 h-4" />
+              <X className="size-3.5" />
             </button>
           )}
         </div>

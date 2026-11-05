@@ -3,14 +3,11 @@ import { createPortal } from 'react-dom';
 import {
   Search,
   Check,
-  Brain,
   Plus,
   X,
-  History,
-  Workflow,
-  Sparkles,
   RefreshCw,
-  Cpu
+  Settings2,
+  KeyRound
 } from 'lucide-react';
 import { useWorkspace } from '../../stores/workspaceStore';
 import { useProviderStore } from '../../stores/providerStore';
@@ -55,18 +52,34 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     setCurrentModel,
     providers,
     agents,
-    activeAgent,
     activeAgentId,
     setActiveAgentId,
     reasoningLevel,
     setReasoningLevel,
-    activeSession,
-    acpEnabled
+    acpEnabled,
+    checkAgentsAvailability,
+    openSettingsTab,
+    setMode,
+    setSettingsActiveSection
   } = useWorkspace();
 
   const localServices = useProviderStore(s => s.localServices);
   const isScanningLocal = useProviderStore(s => s.isScanningLocal);
   const discoverLocalProviders = useProviderStore(s => s.discoverLocalProviders);
+  const [isScanningAgents, setIsScanningAgents] = useState(false);
+
+  const handleScanAll = async () => {
+    setIsScanningAgents(true);
+    try {
+      await Promise.all([
+        checkAgentsAvailability ? checkAgentsAvailability() : Promise.resolve(),
+        discoverLocalProviders()
+      ]);
+      showToast('Scanned installed ACP agents & local LLMs', 'info');
+    } finally {
+      setIsScanningAgents(false);
+    }
+  };
 
   const localOnlineCount = useMemo(() => {
     return (localServices || []).filter(s => s.running).length;
@@ -74,15 +87,18 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
 
   const [search, setSearch] = useState('');
   const [selectedHarnessId, setSelectedHarnessId] = useState<string>('');
+  const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>('all');
+  const [highlightedIdx, setHighlightedIdx] = useState<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const [coords, setCoords] = useState<{ top?: number; bottom?: number; left: number; width: number }>({
+  const [coords, setCoords] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({
     left: 20,
-    width: 520
+    width: 540,
+    maxHeight: 420
   });
 
-  // Calculate anchored popover coordinates
+  // Calculate anchored popover coordinates with dynamic viewport-safe maxHeight
   useLayoutEffect(() => {
     if (!isOpen) return;
     if (anchorRef?.current) {
@@ -90,37 +106,41 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
       const composerSurface = anchorRef.current.closest('.chat-composer-surface') || anchorRef.current.closest('[data-file-drop-target="true"]');
       const composerRect = composerSurface?.getBoundingClientRect();
 
-      const maxAvailableWidth = composerRect ? Math.max(300, composerRect.width) : (window.innerWidth - 24);
-      const width = Math.min(520, window.innerWidth - 24, maxAvailableWidth);
+      const maxAvailableWidth = composerRect ? Math.max(320, composerRect.width) : (window.innerWidth - 24);
+      const width = Math.min(540, window.innerWidth - 24, maxAvailableWidth);
 
       const minLeft = composerRect ? Math.max(12, composerRect.left) : 12;
       const maxRight = composerRect ? Math.min(window.innerWidth - 12, composerRect.right) : (window.innerWidth - 12);
       const idealLeft = Math.max(minLeft, Math.min(rect.left, maxRight - width));
       const left = Math.max(12, Math.min(idealLeft, window.innerWidth - width - 12));
       const gap = 8;
-      const height = 440;
+      const idealHeight = 420;
 
-      const roomAbove = rect.top;
-      if (roomAbove >= height + gap || roomAbove > window.innerHeight - rect.bottom) {
+      const roomAbove = rect.top - 12;
+      const roomBelow = window.innerHeight - rect.bottom - 12;
+      if (roomAbove >= idealHeight || roomAbove >= roomBelow) {
         setCoords({
           bottom: window.innerHeight - rect.top + gap,
           left,
-          width
+          width,
+          maxHeight: Math.min(idealHeight, Math.max(240, roomAbove - gap))
         });
       } else {
         setCoords({
           top: rect.bottom + gap,
           left,
-          width
+          width,
+          maxHeight: Math.min(idealHeight, Math.max(240, roomBelow - gap))
         });
       }
     } else {
-      // Fallback: center in viewport
-      const width = Math.min(520, window.innerWidth - 24);
+      const width = Math.min(540, window.innerWidth - 24);
+      const maxHeight = Math.min(420, Math.max(240, window.innerHeight - 40));
       setCoords({
-        top: Math.max(20, (window.innerHeight - 440) / 2),
+        top: Math.max(20, (window.innerHeight - maxHeight) / 2),
         left: Math.max(12, (window.innerWidth - width) / 2),
-        width
+        width,
+        maxHeight
       });
     }
   }, [isOpen, anchorRef]);
@@ -141,7 +161,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     const internalModels: ModelMeta[] = [];
     (providers || []).forEach(p => {
       if (!p.enabled) return;
-      const models = (p.selectedModels && p.selectedModels.length > 0 ? p.selectedModels : p.models) || [];
+      const models = (Array.isArray(p.selectedModels) ? p.selectedModels : p.models) || [];
       models.forEach(m => {
         internalModels.push(parseModelMetadata(m, p.name, 'agent-internal'));
       });
@@ -157,11 +177,12 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
       models: internalModels
     });
 
-    // 2. ACP External Agents (only included if ACP is enabled and agent is enabled)
+    // 2. ACP External Agents (only included if ACP is enabled, agent is enabled, AND agent is available/installed)
     if (acpEnabled !== false) {
       (agents || []).forEach(ag => {
         if (ag.type === 'internal') return;
         if (ag.enabled === false) return;
+        if (ag.available !== true) return;
         const supported = ag.supportedModels || (ag.model ? [ag.model] : []);
         const agModels: ModelMeta[] = supported.map(m => {
           const meta = parseModelMetadata(m, ag.name, ag.id);
@@ -184,45 +205,58 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     return list;
   }, [agents, providers, activeAgentId, acpEnabled]);
 
+  // Trigger availability scan when opening
+  useEffect(() => {
+    if (isOpen) {
+      void checkAgentsAvailability?.();
+    }
+  }, [isOpen, checkAgentsAvailability]);
+
   // Set default selected harness when opening
   useEffect(() => {
     if (isOpen) {
       const current = harnessGroups.find(h => h.isCurrent);
       setSelectedHarnessId(current ? current.id : (harnessGroups[0]?.id || 'agent-internal'));
+      setSelectedProviderFilter('all');
+      setHighlightedIdx(0);
       setTimeout(() => inputRef.current?.focus(), 40);
     } else {
       setSearch(prev => (prev ? '' : prev));
     }
   }, [isOpen, harnessGroups]);
 
-  // Handle outside click & escape key
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handlePointerDown = (e: MouseEvent) => {
-      const target = e.target as Node | null;
-      if (popoverRef.current?.contains(target)) return;
-      if (anchorRef?.current?.contains(target)) return;
-      onClose();
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen, onClose, anchorRef]);
-
   const activeHarness = useMemo(() => {
     return harnessGroups.find(h => h.id === selectedHarnessId) || harnessGroups[0];
   }, [harnessGroups, selectedHarnessId]);
+
+  const providerChoices = useMemo(() => {
+    if (!activeHarness || activeHarness.type !== 'internal') return [];
+    const seen = new Map<string, { name: string; key: string; count: number; hasApiKey: boolean }>();
+    for (const m of activeHarness.models) {
+      const pName = m.provider || 'Custom';
+      const existing = seen.get(pName);
+      if (existing) {
+        existing.count++;
+      } else {
+        const provCfg = (providers || []).find(p => p.name === pName);
+        const isLocalProv = m.isLocal || pName.toLowerCase().includes('ollama') || pName.toLowerCase().includes('lm studio');
+        const hasKey = Boolean(provCfg?.apiKey?.trim()) || isLocalProv;
+        seen.set(pName, {
+          name: pName,
+          key: m.providerKey || pName,
+          count: 1,
+          hasApiKey: hasKey
+        });
+      }
+    }
+    return Array.from(seen.values());
+  }, [activeHarness, providers]);
+
+  const filteredHarnessModels = useMemo(() => {
+    const models = activeHarness?.models || [];
+    if (selectedProviderFilter === 'all' || activeHarness?.type !== 'internal') return models;
+    return models.filter(m => m.provider === selectedProviderFilter);
+  }, [activeHarness, selectedProviderFilter]);
 
   // Search filter across ALL models and harnesses
   const searchResults = useMemo<ModelMeta[]>(() => {
@@ -257,6 +291,10 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     return all;
   }, [harnessGroups, search]);
 
+  useEffect(() => {
+    setHighlightedIdx(0);
+  }, [search, selectedHarnessId, selectedProviderFilter]);
+
   const handleSelectModel = async (model: ModelMeta, harnessId?: string) => {
     const targetAgentId = harnessId || model.agentId || 'agent-internal';
 
@@ -290,14 +328,49 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
     onClose();
   };
 
-  const handleCustomSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCustomSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
     const val = search.trim();
     if (!val) return;
     setCurrentModel(val);
     showToast(`Custom model set to ${val}`, 'info');
     onClose();
   };
+
+  const handleOpenProviderSettings = () => {
+    onClose();
+    if (openSettingsTab) {
+      openSettingsTab('model');
+    } else {
+      setSettingsActiveSection?.('model');
+      setMode?.('settings');
+    }
+  };
+
+  // Handle outside click & keyboard navigation
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (popoverRef.current?.contains(target)) return;
+      if (anchorRef?.current?.contains(target)) return;
+      onClose();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onClose, anchorRef]);
 
   const handleSetEffort = (effort: AgentReasoningLevel) => {
     setReasoningLevel(effort);
@@ -308,6 +381,29 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
   if (!isOpen) return null;
 
   const isSearching = search.trim().length > 0;
+  const activeList = isSearching ? searchResults : filteredHarnessModels;
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (activeList.length > 0) {
+        setHighlightedIdx(prev => (prev + 1) % activeList.length);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (activeList.length > 0) {
+        setHighlightedIdx(prev => (prev - 1 + activeList.length) % activeList.length);
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const target = activeList[highlightedIdx];
+      if (target) {
+        void handleSelectModel(target, isSearching ? target.agentId : activeHarness?.id);
+      } else if (isSearching) {
+        handleCustomSubmit();
+      }
+    }
+  };
 
   const content = (
     <div
@@ -321,12 +417,12 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
         top: coords.top,
         bottom: coords.bottom,
         width: coords.width,
-        maxHeight: '440px',
+        maxHeight: `${coords.maxHeight}px`,
         zIndex: 9999
       }}
       className="flex flex-col rounded-2xl border border-border/80 bg-panel/95 backdrop-blur-md shadow-2xl overflow-hidden font-sans text-foreground animate-in fade-in zoom-in-95 duration-100 select-none"
     >
-      {/* Top Search Bar */}
+      {/* Top Search Bar + Configure Providers Action */}
       <div className="flex items-center gap-2 h-10 px-3 border-b border-border/60 bg-surface/30 shrink-0">
         <Search className="size-4 text-foreground-subtle shrink-0" />
         <input
@@ -336,7 +432,8 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
           aria-expanded="true"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search models and harnesses..."
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search models, providers, or harnesses..."
           className="flex-1 min-w-0 bg-transparent text-ui-sm text-foreground placeholder:text-foreground-subtle/60 outline-none border-0 p-0"
         />
         {search && (
@@ -348,13 +445,22 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
             <X className="size-3.5" />
           </button>
         )}
+        <button
+          type="button"
+          onClick={handleOpenProviderSettings}
+          title="Configure API keys & model providers"
+          className="flex items-center gap-1 rounded-md border border-border/70 bg-surface px-2 py-1 text-2xs font-medium text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer shrink-0"
+        >
+          <Settings2 className="size-3" />
+          <span className="hidden sm:inline">Providers</span>
+        </button>
       </div>
 
       {/* Main 2-Column Body (PandaCode Split Layout) */}
-      <div className="grid grid-cols-[140px_minmax(0,1fr)] sm:grid-cols-[180px_minmax(0,1fr)] flex-1 min-h-0 overflow-hidden">
+      <div className="grid grid-cols-[140px_minmax(0,1fr)] sm:grid-cols-[172px_minmax(0,1fr)] flex-1 min-h-0 overflow-hidden">
         {/* Left Rail: Harnesses List */}
-        <div className="bg-surface/40 overflow-y-auto p-1 border-r border-border/60 scrollbar-thin flex flex-col gap-0.5">
-          <div className="px-2 py-1 text-[10px] font-bold text-foreground-subtle/70 uppercase tracking-wider">
+        <div className="bg-surface/40 overflow-y-auto p-1.5 border-r border-border/60 scrollbar-thin flex flex-col gap-0.5">
+          <div className="px-2 py-1 text-2xs font-semibold text-foreground-subtle/75 uppercase tracking-wider">
             Harnesses
           </div>
 
@@ -366,6 +472,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                 type="button"
                 onClick={() => {
                   setSelectedHarnessId(h.id);
+                  setSelectedProviderFilter('all');
                   if (isSearching) setSearch('');
                 }}
                 className={cn(
@@ -392,7 +499,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
         </div>
 
         {/* Right List: Models for Selected Harness (or Search Results) */}
-        <div className="overflow-y-auto p-2 scrollbar-thin space-y-1 min-h-0">
+        <div className="overflow-y-auto p-2 scrollbar-thin space-y-1 min-h-0 flex flex-col">
           {isSearching ? (
             /* Search Results Mode */
             searchResults.length === 0 ? (
@@ -408,18 +515,22 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                 </button>
               </div>
             ) : (
-              searchResults.map(item => {
+              searchResults.map((item, idx) => {
                 const isSelected = item.id === currentModel;
+                const isHighlighted = idx === highlightedIdx;
                 return (
                   <button
                     key={`${item.agentId}-${item.id}`}
                     type="button"
+                    onMouseEnter={() => setHighlightedIdx(idx)}
                     onClick={() => handleSelectModel(item, item.agentId)}
                     className={cn(
                       'flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-ui-xs text-left cursor-pointer transition-colors select-none group',
                       isSelected
                         ? 'bg-primary/15 text-primary font-semibold border border-primary/20'
-                        : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
+                        : isHighlighted
+                          ? 'bg-surface-hover text-foreground'
+                          : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
                     )}
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -428,15 +539,15 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                         {item.displayName}
                       </span>
                       {item.isLocal && (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 shrink-0">
+                        <span className="text-3xs px-1.5 py-0.2 rounded font-semibold bg-success/15 text-success border border-success/25 shrink-0">
                           Local
                         </span>
                       )}
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                      <span className="text-[10px] text-foreground-subtle font-mono">
-                        {item.contextWindow || item.agentName}
+                      <span className="text-2xs text-foreground-subtle font-mono">
+                        {item.contextWindow || item.provider || item.agentName}
                       </span>
                       {isSelected && (
                         <div className="size-4 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
@@ -449,28 +560,89 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
               })
             )
           ) : (
-            /* Standard Harness Catalog Mode (PandaCode Default) */
+            /* Standard Harness Catalog Mode */
             <>
               {/* Harness Group Header */}
               {activeHarness && (
-                <div className="flex items-center gap-2 px-2 py-1 mb-1 border-b border-border/40 pb-1.5">
+                <div className="flex items-center gap-2 px-2 py-1 mb-0.5 border-b border-border/40 pb-1.5 shrink-0">
                   <ProviderIcon provider={activeHarness.icon} size={15} />
-                  <span className="text-ui-xs font-bold text-foreground">
+                  <span className="text-ui-xs font-bold text-foreground truncate">
                     {activeHarness.name}
                   </span>
-                  <span className="text-[10px] text-foreground-subtle ml-auto">
-                    {activeHarness.models.length} models
+                  <span className="text-2xs text-foreground-subtle ml-auto shrink-0">
+                    {filteredHarnessModels.length} {filteredHarnessModels.length === 1 ? 'model' : 'models'}
                   </span>
                 </div>
               )}
 
-              {/* Option 1: Default (PandaCode signature entry) */}
-              {activeHarness && (
+              {/* Provider Filter Pills when viewing multi-provider Internal Engine */}
+              {providerChoices.length > 1 && (
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 pt-0.5 px-1 scrollbar-none shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProviderFilter('all')}
+                    className={cn(
+                      'px-2 py-0.5 rounded-md text-2xs font-medium shrink-0 transition-colors cursor-pointer',
+                      selectedProviderFilter === 'all'
+                        ? 'bg-foreground text-background'
+                        : 'bg-surface border border-border/60 text-foreground-subtle hover:text-foreground'
+                    )}
+                  >
+                    All
+                  </button>
+                  {providerChoices.map(prov => {
+                    const active = selectedProviderFilter === prov.name;
+                    return (
+                      <button
+                        key={prov.name}
+                        type="button"
+                        onClick={() => setSelectedProviderFilter(prov.name)}
+                        title={prov.hasApiKey ? `${prov.name} (${prov.count} models)` : `${prov.name} — API key not configured`}
+                        className={cn(
+                          'flex items-center gap-1 px-2 py-0.5 rounded-md text-2xs font-medium shrink-0 transition-colors cursor-pointer',
+                          active
+                            ? 'bg-foreground text-background'
+                            : 'bg-surface border border-border/60 text-foreground-subtle hover:text-foreground'
+                        )}
+                      >
+                        <ProviderIcon provider={prov.key} size={11} />
+                        <span className="truncate max-w-[90px]">{prov.name.replace(/\s+Claude$/i, '')}</span>
+                        <span
+                          className={cn(
+                            'size-1.5 rounded-full shrink-0',
+                            prov.hasApiKey ? 'bg-success' : 'bg-warning'
+                          )}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Empty state when Internal Engine has no enabled custom providers/models */}
+              {activeHarness?.type === 'internal' && filteredHarnessModels.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-8 px-3 text-center space-y-2.5">
+                  <p className="text-ui-xs text-foreground-subtle">
+                    No custom OpenAI or Anthropic provider configured.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleOpenProviderSettings}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-ui-xs font-semibold text-background hover:opacity-90 transition-opacity cursor-pointer shadow-2xs"
+                  >
+                    <Plus className="size-3.5" />
+                    <span>Add Custom Provider</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Option 1: Default (PandaCode signature entry — shown when models exist or on ACP harness) */}
+              {activeHarness && selectedProviderFilter === 'all' && (activeHarness.type === 'acp' || filteredHarnessModels.length > 0) && (
                 <button
                   type="button"
                   onClick={() => handleSelectDefault(activeHarness)}
                   className={cn(
-                    'flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-ui-xs text-left cursor-pointer transition-colors select-none group',
+                    'flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-ui-xs text-left cursor-pointer transition-colors select-none group shrink-0',
                     !currentModel || currentModel === 'default'
                       ? 'bg-primary/15 text-primary font-semibold border border-primary/20'
                       : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
@@ -480,7 +652,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                     <ProviderIcon provider={activeHarness.icon} size={14} className="shrink-0" />
                     <span className="font-semibold text-foreground">Default</span>
                   </div>
-                  <span className="text-[10px] text-foreground-subtle truncate max-w-[140px]">
+                  <span className="text-2xs text-foreground-subtle truncate max-w-[140px]">
                     Uses harness default
                   </span>
                   {(!currentModel || currentModel === 'default') && (
@@ -492,45 +664,78 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
               )}
 
               {/* Option 2..N: Harness Models */}
-              {(activeHarness?.models || []).map(item => {
+              {filteredHarnessModels.map((item, idx) => {
                 const isSelected = item.id === currentModel;
-                return (
-                  <button
-                    key={`${activeHarness?.id}-${item.id}`}
-                    type="button"
-                    onClick={() => handleSelectModel(item, activeHarness?.id)}
-                    className={cn(
-                      'flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-ui-xs text-left cursor-pointer transition-colors select-none group',
-                      isSelected
-                        ? 'bg-primary/15 text-primary font-semibold border border-primary/20'
-                        : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
-                    )}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <ProviderIcon provider={item.providerKey} size={14} className="shrink-0" />
-                      <span className="truncate font-medium text-foreground">
-                        {item.displayName}
-                      </span>
-                      {item.isLocal && (
-                        <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 shrink-0">
-                          Local
-                        </span>
-                      )}
-                    </div>
+                const isHighlighted = idx === highlightedIdx;
+                const prevProvider = idx > 0 ? filteredHarnessModels[idx - 1]?.provider : null;
+                const showProviderHeader =
+                  activeHarness?.type === 'internal' &&
+                  selectedProviderFilter === 'all' &&
+                  providerChoices.length > 1 &&
+                  item.provider &&
+                  item.provider !== prevProvider;
+                const provInfo = providerChoices.find(p => p.name === item.provider);
 
-                    <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                      {item.contextWindow && (
-                        <span className="text-[10px] text-foreground-subtle font-mono">
-                          {item.contextWindow} context
+                return (
+                  <React.Fragment key={`${activeHarness?.id}-${item.id}`}>
+                    {showProviderHeader && (
+                      <div className="flex items-center justify-between px-2 pt-2 pb-0.5 text-3xs font-semibold uppercase tracking-wider text-foreground-subtlest">
+                        <span className="truncate">{item.provider}</span>
+                        {provInfo && !provInfo.hasApiKey && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenProviderSettings();
+                            }}
+                            className="inline-flex items-center gap-1 font-sans normal-case text-warning hover:underline cursor-pointer"
+                            title="Add API key in Settings → Model settings"
+                          >
+                            <KeyRound className="size-2.5" />
+                            <span>Set API key</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onMouseEnter={() => setHighlightedIdx(idx)}
+                      onClick={() => handleSelectModel(item, activeHarness?.id)}
+                      className={cn(
+                        'flex items-center justify-between gap-2 w-full px-2.5 py-1.5 rounded-lg text-ui-xs text-left cursor-pointer transition-colors select-none group shrink-0',
+                        isSelected
+                          ? 'bg-primary/15 text-primary font-semibold border border-primary/20'
+                          : isHighlighted
+                            ? 'bg-surface-hover text-foreground'
+                            : 'text-foreground-subtle hover:text-foreground hover:bg-surface-hover'
+                      )}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <ProviderIcon provider={item.providerKey} size={14} className="shrink-0" />
+                        <span className="truncate font-medium text-foreground">
+                          {item.displayName}
                         </span>
-                      )}
-                      {isSelected && (
-                        <div className="size-4 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
-                          <Check className="size-2.5 stroke-[3]" />
-                        </div>
-                      )}
-                    </div>
-                  </button>
+                        {item.isLocal && (
+                          <span className="text-3xs px-1.5 py-0.2 rounded font-semibold bg-success/15 text-success border border-success/25 shrink-0">
+                            Local
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                        {item.contextWindow && (
+                          <span className="text-2xs text-foreground-subtle font-mono">
+                            {item.contextWindow}
+                          </span>
+                        )}
+                        {isSelected && (
+                          <div className="size-4 rounded-full bg-primary text-primary-foreground flex items-center justify-center shrink-0">
+                            <Check className="size-2.5 stroke-[3]" />
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  </React.Fragment>
                 );
               })}
             </>
@@ -539,34 +744,34 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
       </div>
 
       {/* Bottom Footer: Local LLM Status & PandaCode Segmented Reasoning Effort Control */}
-      <div className="border-t border-border/60 p-2 bg-surface/30 shrink-0 space-y-2">
-        {/* Local LLM Discovery Row */}
-        <div className="flex items-center justify-between text-[11px] px-1 text-foreground-subtle">
-          <div className="flex items-center gap-1.5">
+      <div className="border-t border-border/60 p-2 bg-surface/30 shrink-0 space-y-1.5">
+        {/* Local LLM & Agent Discovery Row */}
+        <div className="flex items-center justify-between text-2xs px-1 text-foreground-subtle">
+          <div className="flex items-center gap-1.5 min-w-0">
             <span
               className={cn(
                 "size-2 rounded-full shrink-0",
-                localOnlineCount > 0 ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]" : "bg-foreground-subtle/40"
+                localOnlineCount > 0 ? "bg-success" : "bg-foreground-subtle/40"
               )}
             />
             <span className="truncate">
-              Local LLMs: {localOnlineCount > 0 ? `${localOnlineCount} local server(s) detected` : 'Ollama & LM Studio offline'}
+              {harnessGroups.length - 1} ACP agent(s) · {localOnlineCount > 0 ? `${localOnlineCount} local LLM(s) online` : 'Local LLMs offline'}
             </span>
           </div>
           <button
             type="button"
-            onClick={() => void discoverLocalProviders()}
-            disabled={isScanningLocal}
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/70 hover:bg-surface-hover text-foreground-subtle hover:text-foreground cursor-pointer transition-colors text-[10px]"
-            title="Probe 127.0.0.1:11434 (Ollama) and 127.0.0.1:1234 (LM Studio)"
+            onClick={() => void handleScanAll()}
+            disabled={isScanningLocal || isScanningAgents}
+            className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-border/70 bg-surface hover:bg-surface-hover text-foreground-subtle hover:text-foreground cursor-pointer transition-colors text-2xs shrink-0"
+            title="Scan PATH for installed ACP/CLI agents and probe Ollama/LM Studio"
           >
-            <RefreshCw className={cn("size-3", isScanningLocal && "animate-spin text-primary")} />
-            <span>{isScanningLocal ? 'Scanning...' : 'Scan Local'}</span>
+            <RefreshCw className={cn("size-3", (isScanningLocal || isScanningAgents) && "animate-spin text-primary")} />
+            <span>{isScanningLocal || isScanningAgents ? 'Scanning...' : 'Scan Agents & Local'}</span>
           </button>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-foreground-subtle w-11 shrink-0">
+          <span className="text-2xs font-medium text-foreground-subtle w-11 shrink-0 px-1">
             Effort
           </span>
 
@@ -579,7 +784,7 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
                   type="button"
                   onClick={() => handleSetEffort(opt.id)}
                   className={cn(
-                    'flex-1 py-0.5 text-[11px] rounded-md transition-all text-center cursor-pointer select-none',
+                    'flex-1 py-0.5 text-2xs rounded-md transition-all text-center cursor-pointer select-none',
                     active
                       ? 'bg-panel text-foreground font-semibold shadow-xs'
                       : 'text-foreground-subtle hover:text-foreground'
@@ -592,12 +797,6 @@ export const ModelProviderPaletteModal: React.FC<ModelProviderPaletteModalProps>
             })}
           </div>
         </div>
-
-        {/* Effort Hint Text */}
-        <p className="text-[10px] text-foreground-subtle/80 pl-13 truncate">
-          {EFFORT_OPTIONS.find(o => o.id === (reasoningLevel || ''))?.desc ||
-            'Standard model reasoning configuration'}
-        </p>
       </div>
     </div>
   );

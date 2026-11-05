@@ -246,14 +246,11 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   }, [activeSession?.id, activeWorkspacePath]);
 
   const availablePickerAgents = useMemo(() => {
-    const list = agents.filter(ag => (ag.available !== false || ag.type === 'internal') && ag.enabled !== false && (ag.type === 'internal' || acpEnabled !== false));
+    const list = agents.filter(ag => (ag.available === true || ag.type === 'internal') && ag.enabled !== false && (ag.type === 'internal' || acpEnabled !== false));
     return list.length > 0 ? list : agents.filter(a => a.type === 'internal');
   }, [agents, acpEnabled]);
 
-  const uninstalledPickerAgents = useMemo(() => {
-    if (acpEnabled === false) return [];
-    return agents.filter(ag => ag.available === false && ag.type !== 'internal' && ag.enabled !== false);
-  }, [agents, acpEnabled]);
+  const uninstalledPickerAgents = useMemo(() => [], []);
 
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const autoVerifyEnabled = useAutoVerifyStore(s => s.enabled);
@@ -1743,7 +1740,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               </div>
             )}
 
-                        {/* PandaCode-Style Unified Harness, Model & Effort Trigger */}
+                        {/* Unified Harness, Model & Effort Trigger */}
             <div className="relative flex shrink items-center min-w-0" ref={modelPickerAnchorRef}>
               <button
                 type="button"
@@ -1756,28 +1753,32 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 aria-haspopup="dialog"
                 aria-expanded={isModelPickerOpen}
                 className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 @[420px]/composer:px-2.5 rounded-lg border text-ui-xs font-medium transition-all shadow-2xs group cursor-pointer select-none min-w-0 max-w-[130px] @[380px]/composer:max-w-[170px] @[460px]/composer:max-w-[230px] @[600px]/composer:max-w-[320px]",
+                  "flex items-center gap-1.5 px-2 py-1 @[420px]/composer:px-2.5 rounded-lg border text-ui-xs font-medium transition-all group cursor-pointer select-none min-w-0 max-w-[130px] @[380px]/composer:max-w-[170px] @[460px]/composer:max-w-[230px] @[600px]/composer:max-w-[320px]",
                   isModelPickerOpen
-                    ? "bg-primary/10 border-primary/40 text-primary shadow-xs ring-1 ring-primary/20"
-                    : "border-border/80 bg-surface/80 hover:bg-surface-hover hover:border-border text-foreground hover:text-foreground"
+                    ? "bg-surface-hover border-border text-foreground"
+                    : "border-transparent bg-transparent hover:bg-accent text-foreground-subtle hover:text-foreground"
                 )}
                 title={`Harness: ${effectiveAgent?.name || 'Agent'} · Model: ${modelMeta.displayName} · Effort: ${currentReasoning.label} (⌘M)`}
               >
-                <div className="size-4 rounded-md bg-surface border border-border/50 flex items-center justify-center shrink-0">
-                  <ProviderIcon provider={effectiveAgent?.icon || effectiveAgent?.provider || modelMeta.providerKey || 'agent-internal'} size={12} />
+                <div className="size-4 rounded-md flex items-center justify-center shrink-0">
+                  <ProviderIcon provider={effectiveAgent?.icon || effectiveAgent?.provider || modelMeta.providerKey || 'agent-internal'} size={13} />
                 </div>
-                <span className="font-semibold text-foreground truncate text-left min-w-0">
-                  {modelMeta.displayName}
-                </span>
-                <span className="text-[10px] px-1 py-0.2 rounded bg-surface border border-border text-foreground-subtle hidden @[560px]/composer:inline shrink-0">
-                  {effectiveAgent?.name?.replace(/\s*\([^)]*\)/, '') || effectiveAgent?.name || modelMeta.provider}
-                </span>
-                {currentReasoning.id !== 'off' && (
-                  <span className="text-[10px] px-1 py-0.2 rounded bg-primary/15 text-primary border border-primary/25 font-bold uppercase font-mono shrink-0 hidden @[440px]/composer:inline">
-                    {currentReasoning.label}
+                {modelMeta.displayName && (
+                  <span className="font-medium text-foreground truncate text-left min-w-0">
+                    {modelMeta.displayName}
                   </span>
                 )}
-                <ChevronDown className={cn("size-3 text-foreground-subtle group-hover:text-foreground transition-transform shrink-0", isModelPickerOpen && "rotate-180")} />
+                {(!modelMeta.displayName || (effectiveAgent?.type && effectiveAgent.type !== 'internal')) && (
+                  <span className="text-2xs text-foreground-subtle truncate hidden @[500px]/composer:inline shrink-0">
+                    {effectiveAgent?.name?.replace(/\s*\([^)]*\)/, '') || effectiveAgent?.name || modelMeta.provider}
+                  </span>
+                )}
+                {currentReasoning.id !== 'off' && (
+                  <span className="text-2xs px-1.5 py-0.2 rounded-md bg-surface border border-border/70 text-foreground-subtle font-medium capitalize shrink-0 hidden @[440px]/composer:inline">
+                    {currentReasoning.label.toLowerCase()}
+                  </span>
+                )}
+                <ChevronDown className={cn("size-3 text-foreground-subtle group-hover:text-foreground transition-transform shrink-0 opacity-70", isModelPickerOpen && "rotate-180")} />
               </button>
             </div>
 
@@ -1786,11 +1787,12 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               type="button"
               onClick={toggleAutoVerify}
               aria-label="Toggle Auto-Verification loop"
+              aria-pressed={autoVerifyEnabled}
               className={cn(
-                "flex items-center gap-1.5 px-2 py-1 rounded-lg border text-ui-xs font-medium transition-all shadow-2xs cursor-pointer select-none shrink-0",
+                "flex items-center gap-1.5 px-2 py-1 rounded-lg border text-ui-xs font-medium transition-all cursor-pointer select-none shrink-0",
                 autoVerifyEnabled
-                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/20"
-                  : "border-border/80 bg-surface/80 hover:bg-surface-hover hover:border-border text-foreground-subtle hover:text-foreground"
+                  ? "bg-success/10 border-success/35 text-success"
+                  : "border-transparent bg-transparent hover:bg-accent text-foreground-subtle hover:text-foreground"
               )}
               title={
                 autoVerifyEnabled
@@ -1798,9 +1800,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   : "Auto-Verify is OFF (Click to run tests after changes & auto self-correct)"
               }
             >
-              <ShieldCheck className={cn("size-3.5", autoVerifyEnabled ? "text-emerald-500" : "text-foreground-subtle")} />
+              <ShieldCheck className={cn("size-3.5", autoVerifyEnabled ? "text-success" : "text-foreground-subtle")} />
               <span className="hidden @[480px]/composer:inline font-medium">Verify</span>
-              {isVerifying && <Loader2 className="size-3 animate-spin text-emerald-500" />}
+              {isVerifying && <Loader2 className="size-3 animate-spin text-success" />}
             </button>
 
           </div>
@@ -1819,16 +1821,33 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
               }}
               aria-label={`Context window usage: ${displayUsage.formattedUsed} of ${displayUsage.formattedMax} tokens, ${displayUsage.percent.toFixed(1)} percent`}
               aria-expanded={isUsageModalOpen}
-              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-accent"
+              className="flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-full px-1.5 text-2xs font-mono tabular-nums text-foreground-subtle transition-colors hover:bg-accent hover:text-foreground"
               title={`Usage & Quotas: ${displayUsage.formattedUsed}/${displayUsage.formattedMax} (${displayUsage.percent.toFixed(1)}%)`}
             >
-              <svg className="size-3.5 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
-                <path className="text-border" strokeWidth="5" stroke="currentColor" fill="none"
+              <svg className="size-3.5 -rotate-90 shrink-0" viewBox="0 0 36 36" aria-hidden="true">
+                <path className="text-border" strokeWidth="4.5" stroke="currentColor" fill="none"
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                <path className="text-success" strokeWidth="5" strokeLinecap="round" stroke="currentColor" fill="none"
-                  strokeDasharray={`${Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 1 : 0).toFixed(1)}, 100`}
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <path
+                  className={cn(
+                    displayUsage.percent >= 85
+                      ? 'text-destructive'
+                      : displayUsage.percent >= 65
+                        ? 'text-warning'
+                        : 'text-success'
+                  )}
+                  strokeWidth="4.5"
+                  strokeLinecap="round"
+                  stroke="currentColor"
+                  fill="none"
+                  strokeDasharray={`${Math.max(displayUsage.percent, displayUsage.usedTokens > 0 ? 2 : 0).toFixed(1)}, 100`}
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
               </svg>
+              {displayUsage.usedTokens > 0 && (
+                <span className="hidden @[520px]/composer:inline">
+                  {Math.max(1, Math.round(displayUsage.percent))}%
+                </span>
+              )}
             </button>
 
             {isUsageContextOpen && (

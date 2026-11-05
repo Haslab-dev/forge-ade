@@ -987,12 +987,19 @@ export const AgentSidebar: React.FC<AgentSidebarProps> = () => {
   return (
     <aside
       data-testid="workspace-sidebar"
-      style={{ width: `${leftSidebarWidth}px` }}
+      style={{ width: `${leftSidebarWidth}px`, maxWidth: '26vw' }}
       className="bg-sidebar flex h-full shrink-0 flex-col overflow-hidden border-r border-sidebar-border text-sidebar-foreground select-none transition-colors"
     >
-      {/* Window-controls strip: traffic lights live here (full-height sidebar)
+      {/* Window-controls strip: traffic lights live here on macOS (full-height sidebar)
           + sidebar collapse + brand title */}
-      <div className="sidebar-window-strip flex shrink-0 items-center justify-between pl-[76px] pr-3 h-9">
+      <div
+        className={cn(
+          'sidebar-window-strip flex shrink-0 items-center justify-between pr-3 h-9',
+          typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '')
+            ? 'pl-[76px]'
+            : 'pl-2.5'
+        )}
+      >
         <div className="flex items-center gap-2">
           <button
             type="button"

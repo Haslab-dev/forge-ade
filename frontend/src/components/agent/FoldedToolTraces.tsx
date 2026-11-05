@@ -82,7 +82,7 @@ export const FoldedToolTraces: React.FC<FoldedToolTracesProps> = ({
   }
 
   return (
-    <div className={cn('w-full my-1.5 rounded-lg border border-border/70 bg-surface/30 overflow-hidden transition-all', className)}>
+    <div className={cn('w-full my-1.5 rounded-xl border border-border/70 bg-panel/60 shadow-2xs overflow-hidden transition-all', className)}>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -95,23 +95,25 @@ export const FoldedToolTraces: React.FC<FoldedToolTracesProps> = ({
           ) : hasFailed ? (
             <AlertTriangle className="size-3.5 text-destructive shrink-0" />
           ) : (
-            <Check className="size-3.5 text-success stroke-[2.5] shrink-0" />
+            <span className="flex size-4 items-center justify-center rounded-full bg-success/15 text-success shrink-0">
+              <Check className="size-2.5 stroke-[2.75]" />
+            </span>
           )}
-          <span className={cn('truncate font-medium select-none cursor-pointer', hasRunning && 'text-primary font-semibold live-tool-shine')}>
+          <span className={cn('truncate font-medium text-foreground/90 select-none cursor-pointer', hasRunning && 'text-primary font-semibold live-tool-shine')}>
             {summary}
           </span>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0 text-foreground-subtlest select-none cursor-pointer">
-          <span className="text-[10px] select-none cursor-pointer">
+        <div className="flex items-center gap-1.5 shrink-0 text-foreground-subtlest select-none cursor-pointer">
+          <span className="rounded bg-surface border border-border/60 px-1.5 py-0.5 text-3xs font-sans font-medium text-foreground-subtle select-none cursor-pointer">
             {expanded ? `Hide ${tools.length} steps` : `Show ${tools.length} steps`}
           </span>
-          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         </div>
       </button>
 
       {expanded && (
-        <div className="p-2 pt-1 border-t border-border/40 space-y-1.5 bg-surface/10 animate-in fade-in duration-100">
+        <div className="px-2.5 py-1.5 border-t border-border/40 space-y-1 bg-surface/15 animate-in fade-in duration-100">
           {children}
         </div>
       )}

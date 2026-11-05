@@ -57,7 +57,7 @@ export const FloatingTaskTracker: React.FC<FloatingTaskTrackerProps> = ({
   onCancelSchedule,
   className
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
@@ -114,33 +114,23 @@ export const FloatingTaskTracker: React.FC<FloatingTaskTrackerProps> = ({
     return schedules.filter((s) => s.active);
   }, [schedules]);
 
-  // Auto-expand tracker if new incomplete tasks or background tasks arrive
+  // Auto-expand tracker only when new background servers or schedules arrive after mount
   const prevCountRef = useRef(totalCount);
   const prevBgCountRef = useRef(runningBgCount);
   useEffect(() => {
-    if (
-      (totalCount > 0 && (inProgressCount > 0 || pendingCount > 0)) ||
-      runningBgCount > prevBgCountRef.current ||
-      activeSchedules.length > 0
-    ) {
-      if (
-        prevCountRef.current === 0 ||
-        completedCount === prevCountRef.current ||
-        runningBgCount > prevBgCountRef.current
-      ) {
-        setIsCollapsed(false);
-      }
+    if (runningBgCount > prevBgCountRef.current) {
+      setIsCollapsed(false);
     }
     prevCountRef.current = totalCount;
     prevBgCountRef.current = runningBgCount;
-  }, [
-    totalCount,
-    inProgressCount,
-    pendingCount,
-    completedCount,
-    runningBgCount,
-    activeSchedules.length
-  ]);
+  }, [totalCount, runningBgCount]);
+
+  const activeTask = useMemo(() => {
+    return (
+      tasks.find((t) => t.status === 'in_progress') ||
+      tasks.find((t) => !(t.status === 'completed' || t.completed))
+    );
+  }, [tasks]);
 
   // Don't render anything if there are no tasks, subagents, background tasks, or active schedules
   if (
@@ -186,49 +176,55 @@ export const FloatingTaskTracker: React.FC<FloatingTaskTrackerProps> = ({
     return (
       <div
         className={cn(
-          'absolute top-4 right-6 z-30 select-none animate-in fade-in zoom-in-95 duration-150',
+          'absolute top-3 right-5 z-30 select-none animate-in fade-in zoom-in-95 duration-150',
           className
         )}
       >
         <button
           type="button"
           onClick={() => setIsCollapsed(false)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-panel/95 hover:bg-panel border border-border/80 backdrop-blur-md shadow-xl text-ui-xs text-foreground cursor-pointer transition-all duration-200 group"
-          title="Expand task tracker"
+          className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-panel/95 hover:bg-surface-hover border border-border/80 backdrop-blur-md shadow-md text-ui-xs text-foreground cursor-pointer transition-all duration-150 group max-w-64"
+          title="Expand runtime & task tracker"
         >
           {runningBgCount > 0 ? (
-            <span className="flex items-center gap-1.5 text-primary font-medium">
-              <span className="size-2 rounded-full bg-primary animate-pulse" />
+            <span className="flex items-center gap-1.5 text-primary font-medium shrink-0">
+              <span className="size-1.5 rounded-full bg-success animate-pulse" />
               <span>
-                {runningBgCount === 1 ? '1 Server Active' : `${runningBgCount} Servers`}
+                {runningBgCount === 1 ? '1 Server' : `${runningBgCount} Servers`}
               </span>
             </span>
           ) : activeSchedules.length > 0 ? (
-            <span className="flex items-center gap-1.5 text-foreground-subtle font-medium">
-              <Clock className="size-3.5 text-foreground-subtle animate-spin" />
-              <span>Timer Active</span>
+            <span className="flex items-center gap-1.5 text-foreground-subtle font-medium shrink-0">
+              <Clock className="size-3 text-foreground-subtle animate-spin" />
+              <span>Timer</span>
             </span>
-          ) : runningSubagentsCount > 0 ? (
-            <Loader2 className="size-3.5 text-primary animate-spin" />
+          ) : runningSubagentsCount > 0 || inProgressCount > 0 ? (
+            <Loader2 className="size-3 text-primary animate-spin shrink-0" />
           ) : completedCount === totalCount && totalCount > 0 ? (
-            <CheckCircle2 className="size-3.5 text-success" />
+            <CheckCircle2 className="size-3 text-success shrink-0" />
           ) : (
-            <Sparkles className="size-3.5 text-foreground-subtle group-hover:text-foreground" />
+            <Sparkles className="size-3 text-foreground-subtle group-hover:text-foreground shrink-0" />
           )}
 
           {totalCount > 0 && (
-            <span className="font-mono text-foreground-subtle">
+            <span className="font-mono text-2xs tabular-nums text-foreground-subtle shrink-0">
               {completedCount}/{totalCount}
             </span>
           )}
 
+          {activeTask && (
+            <span className="truncate text-ui-xs text-foreground/90">
+              {activeTask.active_form || activeTask.title}
+            </span>
+          )}
+
           {runningSubagentsCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded-full bg-primary/15 text-primary text-ui-xs font-mono font-medium">
+            <span className="px-1.5 py-0.2 rounded-full bg-primary/15 text-primary text-2xs font-mono font-medium shrink-0">
               {runningSubagentsCount} agent
             </span>
           )}
 
-          <Maximize2 className="size-3 text-foreground-subtlest group-hover:text-foreground ml-1 transition-colors" />
+          <ChevronDown className="size-3 text-foreground-subtlest group-hover:text-foreground shrink-0 transition-colors" />
         </button>
       </div>
     );
@@ -256,7 +252,7 @@ export const FloatingTaskTracker: React.FC<FloatingTaskTrackerProps> = ({
             )}
             {runningBgCount > 0 && (
               <span className="px-1.5 py-0.5 rounded-md bg-surface text-foreground font-mono text-ui-xs flex items-center gap-1.5 border border-border/60">
-                <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="size-1.5 rounded-full bg-success animate-pulse" />
                 {runningBgCount} active
               </span>
             )}

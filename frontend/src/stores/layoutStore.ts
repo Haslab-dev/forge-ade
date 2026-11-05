@@ -96,8 +96,8 @@ export const useLayoutStore = create<LayoutStoreState>((set) => ({
   agentLeftSidebarOpen: getStoredBool('forge_ade_agent_left_sidebar', true),
   editorLeftSidebarOpen: getStoredBool('forge_ade_editor_left_sidebar', true),
   rightActionDrawerOpen: getStoredBool('forge_ade_right_sidebar', false),
-  leftSidebarWidth: getStoredNumber('forge_ade_left_sidebar_width', LEFT_SIDEBAR_MIN_WIDTH, 360),
-  rightPaneWidth: getStoredNumber('forge_ade_side_pane_width', RIGHT_PANE_MIN_WIDTH, 540),
+  leftSidebarWidth: getStoredNumber('forge_ade_left_sidebar_width', LEFT_SIDEBAR_MIN_WIDTH, 260),
+  rightPaneWidth: getStoredNumber('forge_ade_side_pane_width', RIGHT_PANE_MIN_WIDTH, 420),
 
   agentViewMode: 'session',
   leftSidebarView: 'tasks',

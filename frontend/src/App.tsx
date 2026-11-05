@@ -81,8 +81,11 @@ const SurfaceFallback: React.FC = () => (
 );
 
 /** Header left inset clearing the macOS traffic-lights corner (only needed
-    when no full-height sidebar carries the window controls). */
-const HEADER_TRAFFIC_LIGHTS_INSET_PX = 116;
+    on macOS when no full-height sidebar carries the window controls). */
+const isMacPlatform =
+  typeof navigator !== 'undefined' &&
+  /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '');
+const HEADER_TRAFFIC_LIGHTS_INSET_PX = isMacPlatform ? 116 : 0;
 
 const AppContent: React.FC = () => {
   const {
@@ -216,6 +219,7 @@ const AppContent: React.FC = () => {
             gitBranch={gitBranch || 'main'}
             isSidePaneOpen={isRightActionDrawerOpen}
             onToggleSidePane={() => setIsRightActionDrawerOpen(prev => !prev)}
+            isTerminalOpen={isBottomTerminalOpen}
             onToggleTerminal={() => setIsBottomTerminalOpen(prev => !prev)}
             sidebarOpen={isLeftSidebarOpen}
             onToggleSidebar={() => setIsLeftSidebarOpen(prev => !prev)}

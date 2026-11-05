@@ -40,6 +40,7 @@ interface WorkspaceHeaderProps {
   gitBranch?: string;
   /** draft = new-task view (no border), task = active session. */
   variant?: 'draft' | 'task';
+  isTerminalOpen?: boolean;
   onToggleTerminal?: () => void;
   isSidePaneOpen?: boolean;
   onToggleSidePane?: () => void;
@@ -83,6 +84,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   projectName,
   gitBranch,
   variant = 'draft',
+  isTerminalOpen = false,
   onToggleTerminal,
   isSidePaneOpen = false,
   onToggleSidePane,
@@ -320,7 +322,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       )}
     >
       {/* ── Single unified header row: toggle → title → chips → "…" ── */}
-      <div className="titlebar-drag flex h-[var(--workspace-topbar-height)] flex-1 min-w-0 items-center justify-between gap-3 pl-[88px] pr-3">
+      <div
+        style={{ paddingLeft: `${hideSidebarToggle ? 12 : Math.max(12, leftSafeInset)}px` }}
+        className="titlebar-drag flex h-[var(--workspace-topbar-height)] flex-1 min-w-0 items-center justify-between gap-3 pr-3"
+      >
         <div className="flex min-w-0 items-center gap-2 no-drag-region">
           {mode !== 'editor' && !hideSidebarToggle && onToggleSidebar && (
             <button
@@ -348,68 +353,100 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           {headerTaskMenu}
         </div>
 
-        {/* Action section */}
-        <div className="flex shrink-0 items-center gap-1 no-drag-region">
-          {/* Surface toggle — Agent and Editor are two separate surfaces with
-              their own workspace folders; switching carries the folder across. */}
-          <button
-            type="button"
-            onClick={() => switchSurface(isAgentSurface ? 'editor' : 'agent')}
-            aria-label={isAgentSurface ? 'Switch to Editor' : 'Switch to Agent'}
-            title={isAgentSurface ? 'Open in Editor (carries this folder)' : 'Open in Agent (carries this folder)'}
-            className="flex h-7 w-8 items-center justify-center rounded-md border border-border-default bg-toolbar-control transition-colors hover:bg-accent"
+        {/* Action section: Segmented surface switch + grouped dock controls + theme */}
+        <div className="flex shrink-0 items-center gap-1.5 no-drag-region">
+          {/* Segmented Agent / Editor surface switcher */}
+          <div
+            role="group"
+            aria-label="Workspace surface"
+            className="flex h-7 items-center rounded-lg border border-border-default/80 bg-surface/60 p-0.5 text-ui-xs"
           >
-            {isAgentSurface ? (
-              <Code2 className="size-4 text-foreground-subtle" />
-            ) : (
-              <Sparkles className="size-4 text-primary" />
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => activeWorkspacePath && ApiBridge.openInFinder(activeWorkspacePath)}
-            disabled={!activeWorkspacePath}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Open in Finder"
-            aria-label="Open workspace in Finder"
-          >
-            <Folder className="size-4" />
-          </button>
-          {/* Bottom dock terminal toggle (all modes) */}
-          {onToggleTerminal ? (
             <button
               type="button"
-              onClick={onToggleTerminal}
-              aria-pressed={false}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer"
-              title="Toggle terminal"
-              aria-label="Toggle terminal"
-            >
-              <SquareTerminal className="size-4" />
-            </button>
-          ) : null}
-          {/* Side-pane (Review/Terminal/Side chat) toggle — always visible in both Agent and Editor */}
-          {onToggleSidePane ? (
-            <button
-              type="button"
-              onClick={() => onToggleSidePane()}
-              aria-pressed={isSidePaneOpen}
+              onClick={() => !isAgentSurface && switchSurface('agent')}
+              aria-label={isAgentSurface ? 'Agent surface (active)' : 'Switch to Agent'}
+              aria-pressed={isAgentSurface}
+              title="Agent workspace"
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-lg transition-colors cursor-pointer",
-                isSidePaneOpen
-                  ? "bg-surface-hover text-foreground"
-                  : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+                'flex h-6 items-center gap-1 rounded-md px-2 font-medium transition-colors cursor-pointer',
+                isAgentSurface
+                  ? 'bg-card text-foreground shadow-2xs'
+                  : 'text-foreground-subtle hover:text-foreground'
               )}
-              title={isSidePaneOpen ? "Close side panel" : "Open side panel (Review / Chat)"}
-              aria-label="Toggle side pane"
             >
-              <PanelRight className="size-4" />
+              <Sparkles className="size-3.5 text-primary" />
+              <span className="hidden @[520px]/workspace-header:inline">Agent</span>
             </button>
-          ) : null}
+            <button
+              type="button"
+              onClick={() => isAgentSurface && switchSurface('editor')}
+              aria-label={!isAgentSurface ? 'Editor surface (active)' : 'Switch to Editor'}
+              aria-pressed={!isAgentSurface}
+              title="Code editor (carries this folder)"
+              className={cn(
+                'flex h-6 items-center gap-1 rounded-md px-2 font-medium transition-colors cursor-pointer',
+                !isAgentSurface
+                  ? 'bg-card text-foreground shadow-2xs'
+                  : 'text-foreground-subtle hover:text-foreground'
+              )}
+            >
+              <Code2 className="size-3.5" />
+              <span className="hidden @[520px]/workspace-header:inline">Editor</span>
+            </button>
+          </div>
+
+          <div className="mx-0.5 h-4 w-px bg-border/60" />
+
+          {/* Workspace & panel toggles */}
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => activeWorkspacePath && ApiBridge.openInFinder(activeWorkspacePath)}
+              disabled={!activeWorkspacePath}
+              className="flex size-7 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed"
+              title="Open in Finder"
+              aria-label="Open workspace in Finder"
+            >
+              <Folder className="size-4" />
+            </button>
+            {onToggleTerminal ? (
+              <button
+                type="button"
+                onClick={onToggleTerminal}
+                aria-pressed={isTerminalOpen}
+                className={cn(
+                  'flex size-7 items-center justify-center rounded-md transition-colors cursor-pointer',
+                  isTerminalOpen
+                    ? 'bg-surface-hover text-foreground'
+                    : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                )}
+                title="Toggle bottom terminal"
+                aria-label="Toggle terminal"
+              >
+                <SquareTerminal className="size-4" />
+              </button>
+            ) : null}
+            {onToggleSidePane ? (
+              <button
+                type="button"
+                onClick={() => onToggleSidePane()}
+                aria-pressed={isSidePaneOpen}
+                className={cn(
+                  'flex size-7 items-center justify-center rounded-md transition-colors cursor-pointer',
+                  isSidePaneOpen
+                    ? 'bg-surface-hover text-foreground'
+                    : 'text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                )}
+                title={isSidePaneOpen ? 'Close side panel' : 'Open side panel (Review / Chat)'}
+                aria-label="Toggle side pane"
+              >
+                <PanelRight className="size-4" />
+              </button>
+            ) : null}
+          </div>
 
           {/* Theme & Palette Picker */}
-          <div className="ml-1">
+          <div className="ml-0.5">
             <ThemePicker compact />
           </div>
         </div>

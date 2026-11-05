@@ -57,6 +57,11 @@ import { useWorkspace } from '../../stores/workspaceStore';
 import { ApiBridge } from '../../services/apiBridge';
 import { ProfileRow } from '../shell/ProfileRow';
 import { ProviderIcon } from '../agent/ProviderIcon';
+import {
+  BUILT_IN_THEMES,
+  type BuiltInThemeId,
+  getThemeColorsForAppearance
+} from '../../lib/themePalettes';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
   DetectAgentExecutable,
@@ -148,47 +153,23 @@ interface NavItem {
 
 const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
   {
-    id: 'basics',
-    label: 'Basics',
+    id: 'modelsAndAgents',
+    label: 'Models & Agents',
+    items: [
+      { id: 'model', label: 'Providers & Models', icon: Package },
+      { id: 'acpAgents', label: 'ACP & Agent CLIs', icon: Bot, badge: 'ACP' },
+      { id: 'mcps', label: 'MCP Servers', icon: Cable },
+      { id: 'skills', label: 'Skills', icon: WandSparkles },
+      { id: 'subagents', label: 'Sub-Agents & Roles', icon: Sparkles }
+    ]
+  },
+  {
+    id: 'workspace',
+    label: 'Workspace',
     items: [
       { id: 'general', label: 'General', icon: Settings2 },
       { id: 'appearance', label: 'Appearance', icon: Palette },
-      { id: 'model', label: 'Model settings', icon: Package },
-      { id: 'browser', label: 'Browser Use', icon: Globe2 },
-      { id: 'computerUse', label: 'Computer Use', icon: MonitorSmartphone }
-    ]
-  },
-  {
-    id: 'forgeade',
-    label: 'ForgeADE',
-    items: [
-      { id: 'acpAgents', label: 'ACP Orchestrators', icon: Cpu, badge: 'ACP' },
-      { id: 'cliConfigs', label: 'CLI Configs', icon: FolderCog },
-      { id: 'agentClis', label: 'Agent CLIs', icon: Bot },
-      { id: 'jev', label: 'Agent Router (Jev)', icon: Compass },
-      { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
-      { id: 'shortcuts', label: 'Keyboard Shortcuts', icon: KeyboardIcon }
-    ]
-  },
-  {
-    id: 'agentCapabilities',
-    label: 'Agent capabilities',
-    items: [
-      { id: 'subagents', label: 'Sub-Agents & Roles', icon: Sparkles, badge: 'Roles' },
-      { id: 'memory', label: 'Memory', icon: Brain },
-      { id: 'plugins', label: 'Plugins', icon: Blocks },
-      { id: 'mcps', label: 'MCP Servers', icon: Cable },
-      { id: 'skills', label: 'Skills', icon: WandSparkles },
-      { id: 'commands', label: 'Commands', icon: Terminal },
-      { id: 'hooks', label: 'Hooks', icon: Anchor }
-    ]
-  },
-  {
-    id: 'dataAndStats',
-    label: 'Data and statistics',
-    items: [
-      { id: 'indexing', label: 'Indexing', icon: ShieldCheck },
-      { id: 'usage', label: 'Usage stats', icon: BarChart3 }
+      { id: 'terminal', label: 'Terminal & Shortcuts', icon: SquareTerminal }
     ]
   }
 ];
@@ -196,14 +177,14 @@ const NAV_GROUPS: Array<{ id: string; label: string; items: NavItem[] }> = [
 const SECTION_TITLES: Record<SettingsSectionId, string> = {
   general: 'General',
   appearance: 'Appearance',
-  model: 'Model settings',
+  model: 'Providers & Models',
   browser: 'Browser Use',
   computerUse: 'Computer Use',
-  acpAgents: 'Agent Client Protocol (ACP) & Orchestrators',
-  cliConfigs: 'CLI Configs',
-  agentClis: 'Agent CLIs',
+  acpAgents: 'ACP & Agent CLIs',
+  cliConfigs: 'ACP & Agent CLIs',
+  agentClis: 'ACP & Agent CLIs',
   jev: 'Agent Router (Jev)',
-  terminal: 'Terminal',
+  terminal: 'Terminal & Shortcuts',
   shortcuts: 'Keyboard Shortcuts',
   subagents: 'Sub-Agents & Roles',
   memory: 'Memory',
@@ -234,6 +215,8 @@ export const SettingsScreen: React.FC = () => {
   const {
     theme,
     setTheme,
+    themePalette,
+    setThemePalette,
     toggleTheme,
     setIsCommandPaletteOpen,
     currentModel,
@@ -302,13 +285,34 @@ export const SettingsScreen: React.FC = () => {
     setPrivacySettings
   } = useWorkspace();
 
-  const activeSection = (settingsActiveSection || 'general') as SettingsSectionId;
+  const rawSection = (settingsActiveSection || 'model') as SettingsSectionId;
+  const activeSection: SettingsSectionId =
+    rawSection === 'cliConfigs' || rawSection === 'agentClis'
+      ? 'acpAgents'
+      : rawSection === 'shortcuts'
+        ? 'terminal'
+        : rawSection;
   const setActiveSection = (id: string) => setSettingsActiveSection(id);
+  const [navSearch, setNavSearch] = useState('');
+
+  const filteredNavGroups = useMemo(() => {
+    const q = navSearch.trim().toLowerCase();
+    if (!q) return NAV_GROUPS;
+    return NAV_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) =>
+          item.label.toLowerCase().includes(q) ||
+          group.label.toLowerCase().includes(q) ||
+          item.id.toLowerCase().includes(q)
+      )
+    })).filter((group) => group.items.length > 0);
+  }, [navSearch]);
 
   // Keep legacy persisted ids inside the visible nav.
   useEffect(() => {
     const visible = NAV_GROUPS.flatMap((group) => group.items.map((item) => item.id));
-    if (!visible.includes(activeSection)) setSettingsActiveSection('general');
+    if (!visible.includes(activeSection)) setSettingsActiveSection('model');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -320,35 +324,58 @@ export const SettingsScreen: React.FC = () => {
   return (
     <div
       data-testid="settings-page"
-      className="relative grid h-full min-h-full w-full grid-cols-[300px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background"
+      className="relative grid h-full min-h-full w-full grid-cols-[224px_minmax(0,1fr)] lg:grid-cols-[260px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] overflow-hidden bg-background"
     >
       {/* Full-height glass sidebar: window-controls
           strip, labeled sections, Onboard, and the profile row. */}
       <aside className="sidebar-glass flex min-h-0 flex-col overflow-hidden">
-        {/* Traffic-lights strip */}
-        <div className="sidebar-window-strip shrink-0" />
+        {/* Traffic-lights strip (macOS only) */}
+        {isMac ? <div className="sidebar-window-strip shrink-0" /> : <div className="h-3 shrink-0" />}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <div className="flex w-full flex-col px-3 pb-3">
+          <div className="flex w-full flex-col gap-2 px-3 pb-3">
             {/* Back to workspace */}
             <button
               type="button"
               onClick={goBackToWorkspace}
               data-testid="settings-back-button"
-              className="group flex h-8 w-full items-center gap-2.5 rounded-xl px-2.5 text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground"
+              className="group flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-foreground-subtle transition-colors hover:bg-foreground/5 hover:text-foreground cursor-pointer"
             >
               <ArrowLeft className="size-4 shrink-0" />
-              <span className="text-ui-base">Back to workspace</span>
+              <span className="text-ui-sm font-medium">Back to workspace</span>
             </button>
+
+            {/* Quick filter for settings sections */}
+            <div className="relative flex items-center">
+              <SearchIcon className="pointer-events-none absolute left-2.5 size-3.5 text-foreground-subtlest" />
+              <input
+                type="text"
+                value={navSearch}
+                onChange={(e) => setNavSearch(e.target.value)}
+                placeholder="Filter settings..."
+                aria-label="Filter settings sections"
+                className="h-7 w-full rounded-lg border border-border/70 bg-surface/60 pl-8 pr-6 text-ui-xs text-foreground placeholder:text-foreground-subtlest focus:border-input-border-focused focus:bg-surface focus:outline-none transition-colors"
+              />
+              {navSearch && (
+                <button
+                  type="button"
+                  onClick={() => setNavSearch('')}
+                  className="absolute right-2 text-2xs text-foreground-subtlest hover:text-foreground cursor-pointer"
+                  title="Clear filter"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
 
-          <nav aria-label="Sections" data-testid="settings-section-nav" className="flex flex-1 flex-col gap-6 px-3">
-            {NAV_GROUPS.map((group) => (
-              <div key={group.id} className="w-full space-y-1">
-                <div className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtlest">
+          <nav aria-label="Sections" data-testid="settings-section-nav" className="flex flex-1 flex-col gap-5 px-3 pb-4">
+            {filteredNavGroups.map((group) => (
+              <div key={group.id} className="w-full space-y-0.5">
+                <div className="px-2.5 pb-1 text-2xs font-semibold uppercase tracking-wider text-foreground-subtlest">
                   {group.label}
                 </div>
-                <div className="flex flex-col gap-1">
+                <div className="flex flex-col gap-0.5">
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const isActive = activeSection === item.id;
@@ -359,14 +386,14 @@ export const SettingsScreen: React.FC = () => {
                         onClick={() => setActiveSection(item.id)}
                         aria-current={isActive ? 'page' : undefined}
                         className={cn(
-                          'flex h-8 w-full items-center gap-2.5 rounded-xl px-2.5 text-left transition-colors',
+                          'flex h-7.5 w-full items-center gap-2 rounded-lg px-2.5 text-left transition-colors cursor-pointer',
                           isActive
-                            ? 'bg-foreground/10 text-foreground font-medium'
+                            ? 'bg-foreground/10 text-foreground font-medium shadow-2xs'
                             : 'text-foreground-subtle hover:bg-foreground/5 hover:text-foreground'
                         )}
                       >
-                        <Icon className="size-4 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate text-ui-base">
+                        <Icon className="size-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate text-ui-sm">
                           {item.label}
                         </span>
                         {item.badge ? (
@@ -395,10 +422,10 @@ export const SettingsScreen: React.FC = () => {
       <section className="relative flex min-h-0 flex-col border-l border-border bg-background">
         <div className="relative flex h-full min-h-0 flex-col">
           {/* Header drag row with section breadcrumb + help */}
-          <div className="h-12 shrink-0">
+          <div className="h-11 shrink-0 border-b border-border/50">
             <div className="flex h-full items-center justify-between px-5">
-              <span className="truncate text-ui-sm text-foreground-subtle">
-                {SECTION_TITLES[activeSection]}
+              <span className="truncate text-ui-xs font-medium text-foreground-subtle">
+                Settings <span className="mx-1.5 opacity-40">/</span> <span className="text-foreground">{SECTION_TITLES[activeSection]}</span>
               </span>
               <button
                 type="button"
@@ -412,25 +439,31 @@ export const SettingsScreen: React.FC = () => {
             </div>
           </div>
           <main className="min-h-0 flex-1 overflow-y-auto">
-            <div className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, 'flex flex-col gap-8')}>
+            <div className={cn(SETTINGS_FRAME_CONTENT_CLASSNAME, 'flex flex-col gap-6')}>
               <SectionTitle title={SECTION_TITLES[activeSection]} />
               <SectionErrorBoundary section={activeSection}>
-              <div className="space-y-8">
+              <div className="space-y-6">
                 {activeSection === 'general' && <GeneralSection />}
 
                 {activeSection === 'appearance' && (
-                  <AppearanceSection theme={theme} setTheme={(t) => setTheme(t as any)} />
+                  <AppearanceSection
+                    theme={theme}
+                    setTheme={(t) => setTheme(t as any)}
+                    themePalette={themePalette}
+                    setThemePalette={setThemePalette}
+                  />
                 )}
-
-                {activeSection === 'cliConfigs' && <CliConfigsSection />}
 
                 {activeSection === 'acpAgents' && <AcpAgentsSection />}
 
-                {activeSection === 'agentClis' && <AgentClisSection />}
-
                 {activeSection === 'jev' && <JevSection />}
 
-                {activeSection === 'terminal' && <TerminalSection />}
+                {activeSection === 'terminal' && (
+                  <div className="space-y-6">
+                    <TerminalSection />
+                    <ShortcutsSection />
+                  </div>
+                )}
 
                 {activeSection === 'computerUse' && (
                   <ComputerUseSection
@@ -465,8 +498,6 @@ export const SettingsScreen: React.FC = () => {
                     updateBrowserSettings={updateBrowserSettings}
                   />
                 )}
-
-                {activeSection === 'shortcuts' && <ShortcutsSection />}
 
                 {activeSection === 'subagents' && (
                   <SubagentsSettingsSection providers={providers} />
@@ -709,47 +740,111 @@ type PrivacySettingsDraft = { shareTerminalActivity: boolean; shareUserEdits: bo
 
 // ── Appearance ──────────────────────────────────────────────────────────────
 
-const AppearanceSection: React.FC<{ theme: string; setTheme: (t: string) => void }> = ({
-  theme,
-  setTheme
-}) => (
-  <>
-    <SettingsGroupCard>
-      <SettingsRow
-        label="Theme"
-        description="Choose the interface color scheme."
-        control={
-          <SettingsSelect
-            value={theme}
-            onChange={(value) => setTheme(value)}
-            options={[
-              { value: 'dark', label: 'Dark' },
-              { value: 'light', label: 'Light' }
-            ]}
-            className="w-40"
-          />
-        }
-      />
-    </SettingsGroupCard>
+const AppearanceSection: React.FC<{
+  theme: string;
+  setTheme: (t: string) => void;
+  themePalette?: BuiltInThemeId;
+  setThemePalette?: (p: BuiltInThemeId) => void;
+}> = ({ theme, setTheme, themePalette = 'forge-default', setThemePalette }) => {
+  const appearanceMode: 'light' | 'dark' = theme === 'light' ? 'light' : 'dark';
+  return (
+    <>
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Appearance Mode"
+          description="Choose between light and dark surface luminance."
+          control={
+            <SettingsSelect
+              value={theme}
+              onChange={(value) => setTheme(value)}
+              options={[
+                { value: 'dark', label: 'Dark' },
+                { value: 'light', label: 'Light' }
+              ]}
+              className="w-40"
+            />
+          }
+        />
+      </SettingsGroupCard>
 
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      <ThemePreviewCard
-        mode="light"
-        title="Light Preview"
-        themeName="Paper & Slate"
-        isActive={theme === 'light'}
-        onApply={() => setTheme('light')}
-      />
-      <ThemePreviewCard
-        mode="dark"
-        title="Dark Preview"
-        themeName="Zinc & Jet Black"
-        isActive={theme === 'dark'}
-        onApply={() => setTheme('dark')}
-      />
-    </div>
-  </>
-);
+      {setThemePalette && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <div>
+              <h3 className="text-ui-base font-medium text-foreground">Color Theme Palette</h3>
+              <p className="text-ui-xs text-foreground-subtle">
+                Select a curated IDE syntax and workspace color palette.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+            {Object.values(BUILT_IN_THEMES).map((t) => {
+              const isSelected = themePalette === t.id;
+              const colors = getThemeColorsForAppearance(t, appearanceMode);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setThemePalette(t.id)}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-xl border p-2.5 text-left transition-all cursor-pointer',
+                    isSelected
+                      ? 'border-primary/60 bg-primary/8 ring-1 ring-primary/30 shadow-2xs'
+                      : 'border-border bg-card hover:border-input-border-hover hover:bg-surface-hover/50'
+                  )}
+                >
+                  <div
+                    className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-black/15 shadow-inner overflow-hidden"
+                    style={{ background: colors.canvas }}
+                  >
+                    <div className="flex items-center gap-0.5">
+                      <span
+                        className="size-2 rounded-full"
+                        style={{ background: colors.accent }}
+                      />
+                      <span
+                        className="size-2 rounded-full opacity-80"
+                        style={{ background: colors.text }}
+                      />
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-ui-xs font-medium text-foreground">
+                      {t.label}
+                    </div>
+                    <div className="truncate text-2xs text-foreground-subtle capitalize">
+                      {t.id.replace('-', ' ')}
+                    </div>
+                  </div>
+                  {isSelected && (
+                    <Check className="size-3.5 shrink-0 text-primary" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <ThemePreviewCard
+          mode="light"
+          title="Light Preview"
+          themeName="Paper & Slate"
+          isActive={theme === 'light'}
+          onApply={() => setTheme('light')}
+        />
+        <ThemePreviewCard
+          mode="dark"
+          title="Dark Preview"
+          themeName="Zinc & Jet Black"
+          isActive={theme === 'dark'}
+          onApply={() => setTheme('dark')}
+        />
+      </div>
+    </>
+  );
+};
 
 const ThemePreviewCard: React.FC<{
   mode: 'light' | 'dark';
@@ -1068,12 +1163,22 @@ const CliConfigsSection: React.FC = () => {
 };
 
 const AcpAgentsSection: React.FC = () => {
-  const { agents, activeAgentId, setActiveAgentId, toggleAgentEnabled, acpEnabled, setAcpEnabled } = useWorkspace();
+  const {
+    agents,
+    activeAgentId,
+    setActiveAgentId,
+    toggleAgentEnabled,
+    acpEnabled,
+    setAcpEnabled,
+    checkAgentsAvailability
+  } = useWorkspace();
+  const { agentConfigs, loadAgentConfigs, saveAgentConfig, resetAgentConfig } = useSessionStore();
   const { toast } = useToast();
   const [detectedMap, setDetectedMap] = useState<Record<string, boolean>>({});
   const [isDetecting, setIsDetecting] = useState(false);
   const [mcpStatuses, setMcpStatuses] = useState<AgentMCPInstallStatus[]>([]);
   const [installingMap, setInstallingMap] = useState<Record<string, boolean>>({});
+  const [expandedCliId, setExpandedCliId] = useState<string | null>(null);
 
   const refreshMcpStatuses = useCallback(async () => {
     try {
@@ -1086,36 +1191,44 @@ const AcpAgentsSection: React.FC = () => {
 
   const checkExecutables = useCallback(async () => {
     setIsDetecting(true);
-    const results: Record<string, boolean> = {};
-    for (const ag of agents) {
-      if (ag.type === 'internal') {
-        results[ag.id] = true;
-        continue;
+    try {
+      await Promise.all([
+        checkAgentsAvailability ? checkAgentsAvailability() : Promise.resolve(),
+        loadAgentConfigs ? loadAgentConfigs() : Promise.resolve(),
+        refreshMcpStatuses()
+      ]);
+      const results: Record<string, boolean> = {};
+      for (const ag of agents) {
+        if (ag.type === 'internal') {
+          results[ag.id] = true;
+          continue;
+        }
+        const cmd = ag.command || (
+          ag.id === 'agent-agy' ? 'agy' :
+          ag.id === 'agent-claude' ? 'claude' :
+          ag.id === 'agent-codex' ? 'codex' :
+          ag.id === 'agent-opencode' ? 'opencode' :
+          ag.id === 'agent-commandcode' ? 'cmd' :
+          ag.id === 'agent-pi' ? 'pi-acp' :
+          ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
+        );
+        try {
+          const found = await DetectAgentExecutable(cmd);
+          results[ag.id] = found;
+        } catch {
+          results[ag.id] = false;
+        }
       }
-      const cmd = ag.command || (
-        ag.id === 'agent-agy' ? 'agy' :
-        ag.id === 'agent-claude' ? 'claude' :
-        ag.id === 'agent-codex' ? 'codex' :
-        ag.id === 'agent-opencode' ? 'opencode' :
-        ag.id === 'agent-commandcode' ? 'cmd' :
-        ag.id === 'agent-pi' ? 'pi-acp' :
-        ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
-      );
-      try {
-        const found = await DetectAgentExecutable(cmd);
-        results[ag.id] = found;
-      } catch {
-        results[ag.id] = false;
-      }
+      setDetectedMap(results);
+    } finally {
+      setIsDetecting(false);
     }
-    setDetectedMap(results);
-    await refreshMcpStatuses();
-    setIsDetecting(false);
-  }, [agents, refreshMcpStatuses]);
+  }, [agents, checkAgentsAvailability, loadAgentConfigs, refreshMcpStatuses]);
 
   useEffect(() => {
     void checkExecutables();
-  }, [checkExecutables]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const getAgentMcpStatus = (agentId: string): AgentMCPInstallStatus | undefined => {
     const clean = agentId.replace('agent-', '').replace('cli-', '').toLowerCase();
@@ -1175,209 +1288,241 @@ const AcpAgentsSection: React.FC = () => {
     }
   };
 
+  // Only show internal agent + available/installed ACP agents
+  const availableAcpAgents = useMemo(() => {
+    return agents.filter(ag => {
+      if (ag.type === 'internal') return true;
+      const isAvail = ag.available !== undefined ? ag.available : detectedMap[ag.id];
+      return isAvail === true;
+    });
+  }, [agents, detectedMap]);
+
+  // Only show available/installed terminal Agent CLIs
+  const availableCliConfigs = useMemo(() => {
+    return agentConfigs.filter(cfg => cfg.available === true);
+  }, [agentConfigs]);
+
   return (
-    <div className="space-y-6" data-testid="acp-agents-section">
-      {/* Master Enable ACP Switch */}
-      <div className="flex items-center justify-between p-4 rounded-xl border border-border bg-panel">
-        <div>
-          <h4 className="text-ui-sm font-semibold text-foreground">Enable ACP Agent Orchestrators</h4>
+    <div className="space-y-5" data-testid="acp-agents-section">
+      {/* Top Action & Master ACP Toggle Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-3.5 shadow-2xs">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h4 className="text-ui-sm font-semibold text-foreground">External ACP & Agent CLIs</h4>
+            <span className="rounded-md border border-border bg-surface px-1.5 py-0.5 font-mono text-3xs text-foreground-subtle">
+              {availableAcpAgents.length - 1} ACP · {availableCliConfigs.length} CLI installed
+            </span>
+          </div>
           <p className="text-ui-xs text-foreground-subtle mt-0.5">
-            Allow external agent CLIs (Google Antigravity, Claude, Codex, etc.) to run as ACP harnesses in the chat workspace.
+            Only agents installed on your system PATH are displayed below.
           </p>
         </div>
-        <Switch
-          checked={acpEnabled}
-          onCheckedChange={(checked) => {
-            setAcpEnabled(checked);
-            toast(checked ? 'ACP agents enabled' : 'ACP agents disabled; fallback to internal agent');
-          }}
-          label="Enable ACP Orchestrators"
-        />
-      </div>
-
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <p className="text-ui-base leading-6 text-foreground-subtle max-w-2xl">
-          ForgeADE supports autonomous agents through the <strong>Agent Client Protocol (ACP)</strong>. External CLIs communicate over stdio using JSON-RPC 2.0 streaming, providing real-time text, thinking, and granular tool execution deltas in the chat timeline.
-        </p>
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => void handleInstallAllMcp()}
-            disabled={isDetecting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 text-ui-xs font-medium transition-colors cursor-pointer"
-            title="Install Forge MCP into all found external agent configs"
-          >
-            <Cpu className="size-3.5" />
-            <span>Install Forge MCP to All</span>
-          </button>
           <button
             type="button"
             onClick={() => {
               void checkExecutables();
-              toast('Scanned PATH & configs for agent CLIs');
+              toast('Scanned PATH for ACP & Agent CLIs');
             }}
             disabled={isDetecting}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border bg-panel text-ui-xs font-medium text-foreground hover:bg-hover transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-ui-xs font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
           >
-            <RefreshCw className={cn("size-3.5", isDetecting && "animate-spin")} />
-            <span>Rescan CLIs</span>
+            <RefreshCw className={cn("size-3.5 text-primary", isDetecting && "animate-spin")} />
+            <span>{isDetecting ? 'Scanning...' : 'Scan ACP & CLI'}</span>
           </button>
+          {availableAcpAgents.length > 1 && (
+            <button
+              type="button"
+              onClick={() => void handleInstallAllMcp()}
+              disabled={isDetecting}
+              className="flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-ui-xs font-medium text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+              title="Install Forge MCP into all detected external agent configs"
+            >
+              <Cpu className="size-3.5" />
+              <span>Sync Forge MCP</span>
+            </button>
+          )}
+          <Switch
+            checked={acpEnabled}
+            onCheckedChange={(checked) => {
+              setAcpEnabled(checked);
+              toast(checked ? 'ACP agents enabled' : 'ACP agents disabled; fallback to internal agent');
+            }}
+            label="Enable ACP Orchestrators"
+          />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4">
-        {agents.map(ag => {
-          const isSelected = ag.id === activeAgentId;
-          const isACP = ag.type !== 'internal';
-          const detected = ag.available !== undefined ? ag.available : detectedMap[ag.id];
-          const mcpStatus = isACP ? getAgentMcpStatus(ag.id) : undefined;
-          const isInstalling = installingMap[ag.id] || false;
-          const cmd = ag.command || (
-            ag.id === 'agent-agy' ? 'agy' :
-            ag.id === 'agent-claude' ? 'claude' :
-            ag.id === 'agent-codex' ? 'codex' :
-            ag.id === 'agent-opencode' ? 'opencode' :
-            ag.id === 'agent-commandcode' ? 'cmd' :
-            ag.id === 'agent-pi' ? 'pi-acp' :
-            ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
-          );
+      {/* Installed ACP Harnesses */}
+      <div className="space-y-2.5">
+        <div className="px-1 text-2xs font-semibold uppercase tracking-wider text-foreground-subtlest">
+          Available Chat Harnesses ({availableAcpAgents.length})
+        </div>
+        <div className="grid grid-cols-1 gap-2.5">
+          {availableAcpAgents.map(ag => {
+            const isSelected = ag.id === activeAgentId;
+            const isACP = ag.type !== 'internal';
+            const mcpStatus = isACP ? getAgentMcpStatus(ag.id) : undefined;
+            const isInstalling = installingMap[ag.id] || false;
+            const cmd = ag.command || (
+              ag.id === 'agent-agy' ? 'agy' :
+              ag.id === 'agent-claude' ? 'claude' :
+              ag.id === 'agent-codex' ? 'codex' :
+              ag.id === 'agent-opencode' ? 'opencode' :
+              ag.id === 'agent-commandcode' ? 'cmd' :
+              ag.id === 'agent-pi' ? 'pi-acp' :
+              ag.id === 'agent-ohmypi' ? 'omp' : 'agy'
+            );
 
-          return (
-            <div
-              key={ag.id}
-              className={cn(
-                "rounded-xl border p-4 bg-panel transition-all",
-                isSelected ? "border-accent-primary ring-1 ring-accent-primary/20" : "border-border"
-              )}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="p-2 rounded-lg bg-[var(--color-background-button-secondary)] shrink-0 mt-0.5">
-                    <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={20} className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-ui-sm font-semibold text-foreground truncate">{ag.name}</h4>
-                      {isACP ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-accent-primary/15 text-accent-primary">ACP</span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] text-muted-foreground bg-[var(--color-background-button-secondary)]">internal</span>
-                      )}
-                      {isSelected && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success">Active Default</span>
-                      )}
+            return (
+              <div
+                key={ag.id}
+                className={cn(
+                  "rounded-xl border p-3.5 bg-card transition-all",
+                  isSelected ? "border-primary/60 ring-1 ring-primary/20" : "border-border"
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-surface">
+                      <ProviderIcon provider={ag.icon || ag.provider || 'agent-internal'} size={18} />
                     </div>
-                    <p className="text-ui-xs text-foreground-subtle mt-1">{ag.description}</p>
-                    
-                    {isACP && (
-                      <div className="flex items-center gap-2 mt-2 text-ui-xs flex-wrap">
-                        <span className="text-muted-foreground">Binary:</span>
-                        <code className="px-1.5 py-0.5 rounded bg-[var(--color-background-button-secondary)] font-mono text-[11px] text-foreground">
-                          {cmd}
-                        </code>
-                        {detected !== undefined && (
-                          <span className={cn(
-                            "flex items-center gap-1 font-medium text-[11px]",
-                            detected ? "text-success" : "text-amber-500"
-                          )}>
-                            <span className={cn("size-1.5 rounded-full", detected ? "bg-success" : "bg-amber-500")} />
-                            {detected ? (ag.binaryPath ? `Installed (${ag.binaryPath})` : "Installed in PATH") : "Not detected in PATH"}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-ui-sm font-semibold text-foreground truncate">{ag.name}</h4>
+                        <span className="px-1.5 py-0.2 rounded text-3xs font-mono uppercase bg-surface border border-border/60 text-foreground-subtle">
+                          {isACP ? `ACP · ${cmd}` : 'Built-in'}
+                        </span>
+                        {isSelected && (
+                          <span className="px-1.5 py-0.2 rounded text-3xs font-medium bg-success/15 text-success">
+                            Default
                           </span>
                         )}
                       </div>
-                    )}
+                      <p className="text-ui-xs text-foreground-subtle truncate mt-0.5">
+                        {ag.binaryPath || ag.description}
+                      </p>
+                    </div>
+                  </div>
 
-                    {ag.supportedModels && ag.supportedModels.length > 0 && (
-                      <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
-                        <span className="text-[10px] uppercase font-semibold text-muted-foreground tracking-wider">Models:</span>
-                        {ag.supportedModels.map(m => (
-                          <span key={m} className="px-1.5 py-0.5 rounded bg-[var(--color-background-button-secondary)] font-mono text-[10px] text-foreground/80">
-                            {m}
-                          </span>
-                        ))}
-                      </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isACP && (
+                      mcpStatus?.installed ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleUninstallMcp(ag.id)}
+                          disabled={isInstalling}
+                          className="inline-flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-1 text-3xs font-medium text-success hover:bg-destructive/15 hover:text-destructive hover:border-destructive/30 transition-colors cursor-pointer"
+                          title="Forge MCP configured (click to remove)"
+                        >
+                          <Check className="size-3" />
+                          <span>MCP Ready</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void handleInstallMcp(ag.id)}
+                          disabled={isInstalling}
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-3xs font-medium text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                          title={`Install Forge MCP into ${ag.name}`}
+                        >
+                          <Cpu className={cn("size-3", isInstalling && "animate-spin")} />
+                          <span>{isInstalling ? 'Installing...' : '+ Forge MCP'}</span>
+                        </button>
+                      )
+                    )}
+                    {!isSelected && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveAgentId(ag.id);
+                          toast(`Set ${ag.name} as active agent`);
+                        }}
+                        className="px-2.5 py-1 rounded-lg border border-border bg-surface text-ui-xs font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                      >
+                        Set Default
+                      </button>
+                    )}
+                    {isACP && (
+                      <Switch
+                        checked={ag.enabled}
+                        onCheckedChange={() => toggleAgentEnabled(ag.id)}
+                        label={`Enable ${ag.name}`}
+                      />
                     )}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  {!isSelected ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveAgentId(ag.id);
-                        toast(`Set ${ag.name} as active agent`);
-                      }}
-                      className="px-2.5 py-1 rounded-lg border border-border text-ui-xs font-medium text-foreground hover:bg-hover transition-colors cursor-pointer"
-                    >
-                      Use as Active
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-1 text-ui-xs text-success font-medium">
-                      <Check className="size-3.5" />
-                      <span>Active</span>
-                    </div>
-                  )}
-                  {ag.type !== 'internal' && (
-                    <Switch
-                      checked={ag.enabled}
-                      onCheckedChange={() => toggleAgentEnabled(ag.id)}
-                      label={`Enable ${ag.name}`}
-                    />
-                  )}
                 </div>
               </div>
+            );
+          })}
+        </div>
+      </div>
 
-              {/* ── Forge MCP Runner / Config Row ── */}
-              {isACP && (
-                <div className="mt-3.5 pt-3 border-t border-border/60 flex items-center justify-between gap-3 flex-wrap">
-                  <div className="flex items-center gap-2 text-ui-xs flex-wrap">
-                    <span className="text-muted-foreground font-medium">Forge MCP Interop:</span>
-                    {mcpStatus?.installed ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        <Check className="size-3 text-emerald-400" />
-                        <span>Configured</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted/40 text-muted-foreground border border-border">
-                        Not Installed
-                      </span>
-                    )}
-                    {mcpStatus?.configPath && (
-                      <span className="text-foreground-subtlest font-mono text-[10px] truncate max-w-[280px]" title={mcpStatus.configPath}>
-                        {mcpStatus.configPath}
-                      </span>
-                    )}
+      {/* Installed Terminal Agent CLIs */}
+      <div className="space-y-2.5 pt-2">
+        <div className="px-1 text-2xs font-semibold uppercase tracking-wider text-foreground-subtlest">
+          Installed Terminal Agent CLIs ({availableCliConfigs.length})
+        </div>
+        {availableCliConfigs.length === 0 ? (
+          <SettingsGroupCard>
+            <SettingsEmptyState>
+              No external terminal agent CLIs detected on PATH. Click &ldquo;Scan ACP &amp; CLI&rdquo; after installing a CLI.
+            </SettingsEmptyState>
+          </SettingsGroupCard>
+        ) : (
+          <div className="space-y-2">
+            {availableCliConfigs.map(cfg => {
+              const isExpanded = expandedCliId === cfg.id;
+              return (
+                <div key={cfg.id} className="rounded-xl border border-border bg-card overflow-hidden">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setExpandedCliId(isExpanded ? null : cfg.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setExpandedCliId(isExpanded ? null : cfg.id);
+                      }
+                    }}
+                    className="flex items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-surface-hover/50 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="size-2 rounded-full bg-success shrink-0" />
+                      <span className="text-ui-sm font-semibold text-foreground">{cfg.name}</span>
+                      <code className="rounded bg-surface border border-border/60 px-1.5 py-0.2 font-mono text-3xs text-foreground-subtle">
+                        {cfg.binaryPath || cfg.executable}
+                      </code>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <Switch
+                        checked={cfg.enabled}
+                        onCheckedChange={(checked) => void saveAgentConfig({ ...cfg, enabled: checked })}
+                        label={`${cfg.name} enabled`}
+                      />
+                      <ChevronDown className={cn("size-4 text-foreground-subtle transition-transform", isExpanded && "rotate-180")} />
+                    </div>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    {mcpStatus?.installed ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleUninstallMcp(ag.id)}
-                        disabled={isInstalling}
-                        className="px-2 py-1 rounded-md text-[11px] font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
-                      >
-                        Remove MCP
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void handleInstallMcp(ag.id)}
-                        disabled={isInstalling}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-ui-xs font-medium transition cursor-pointer"
-                        title={`Install Forge MCP into ${ag.name} configuration`}
-                      >
-                        <Cpu className={cn("size-3", isInstalling && "animate-spin")} />
-                        <span>{isInstalling ? "Installing..." : "Install Forge MCP"}</span>
-                      </button>
-                    )}
-                  </div>
+                  {isExpanded && (
+                    <div className="border-t border-border/60 p-3">
+                      <AgentCliCard
+                        config={cfg}
+                        onSave={async next => {
+                          await saveAgentConfig(next);
+                          toast(`${next.name} saved`);
+                        }}
+                        onReset={async () => {
+                          await resetAgentConfig(cfg.id);
+                          toast(`${cfg.name} restored to defaults`);
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1944,9 +2089,11 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
   const [isAddingModel, setIsAddingModel] = useState(false);
   const [newModelName, setNewModelName] = useState('');
   const [isAddingProvider, setIsAddingProvider] = useState(false);
+  const [newProviderProtocol, setNewProviderProtocol] = useState<'openai' | 'anthropic'>('openai');
   const [newProviderName, setNewProviderName] = useState('');
   const [newProviderBaseUrl, setNewProviderBaseUrl] = useState('');
   const [newProviderApiKey, setNewProviderApiKey] = useState('');
+  const [newProviderInitialModel, setNewProviderInitialModel] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefreshModels = async () => {
@@ -1959,181 +2106,221 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
     }
   };
 
-  return (
-    <div className="space-y-4">
-      {/* Editor Agent Tooling Default Model Card */}
-      <div className="rounded-xl border border-border bg-card p-4 shadow-2xs space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Sparkles className="size-4" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-ui-sm font-semibold text-foreground">Editor Agent Tooling Model</span>
-                <span className="rounded-md border border-border bg-surface px-1.5 py-0.5 text-ui-xs font-mono text-primary">
-                  ForgeADE Internal Agent
-                </span>
-              </div>
-              <p className="text-ui-xs text-foreground-subtle">
-                Dedicated model for Ghost Text autocomplete, Inline AI (⌘I), Ask Agent (⌘L), and Terminal Debugging.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-ui-xs text-foreground-subtle">Active Tooling Model:</span>
-            <span className="rounded-lg border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-ui-xs font-semibold text-primary">
-              {editorToolingModel || `${currentModel || 'claude-3-7-sonnet-20250219'} (Inherit Default)`}
+  const getProviderProtocol = (p: LLMProviderConfig): 'openai' | 'anthropic' => {
+    if (p.protocol === 'anthropic') return 'anthropic';
+    if (p.protocol === 'openai') return 'openai';
+    const idLower = (p.id || '').toLowerCase();
+    const urlLower = (p.baseUrl || '').toLowerCase();
+    if (idLower.includes('anthropic') || urlLower.includes('anthropic')) {
+      return 'anthropic';
+    }
+    return 'openai';
+  };
+
+  const renderProviderButton = (p: LLMProviderConfig) => {
+    const isSelected = !isAddingProvider && selectedProvider?.id === p.id;
+    const hasKey = Boolean(p.apiKey && p.apiKey.trim().length > 0);
+    const proto = getProviderProtocol(p);
+    const selectedCount = Array.isArray(p.selectedModels)
+      ? p.selectedModels.length
+      : (p.models?.length || 0);
+    return (
+      <button
+        key={p.id}
+        type="button"
+        onClick={() => {
+          setSelectedProviderId(p.id);
+          setIsAddingProvider(false);
+          setModelSearch('');
+        }}
+        className={cn(
+          'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all cursor-pointer',
+          isSelected
+            ? 'border border-border bg-card shadow-2xs font-medium'
+            : 'border border-transparent hover:bg-surface-hover/70'
+        )}
+      >
+        <div className="flex size-6 shrink-0 items-center justify-center rounded-md border border-border/60 bg-surface">
+          <ProviderIcon provider={proto === 'anthropic' ? 'anthropic' : 'openai'} size={14} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-ui-sm text-foreground">{p.name}</div>
+          <div className="flex items-center gap-1.5 text-3xs text-foreground-subtlest">
+            <span className="uppercase font-mono">{proto}</span>
+            <span>·</span>
+            <span>{selectedCount} {selectedCount === 1 ? 'model' : 'models'}</span>
+            <span>·</span>
+            <span className={hasKey ? 'text-success' : 'text-warning-foreground'}>
+              {hasKey ? 'Key set' : 'No key'}
             </span>
           </div>
         </div>
+        <div
+          className={cn(
+            'size-2 shrink-0 rounded-full',
+            p.enabled
+              ? hasKey
+                ? 'bg-success'
+                : 'bg-amber-400'
+              : 'bg-foreground-subtlest/40'
+          )}
+          title={
+            p.enabled
+              ? hasKey
+                ? 'Enabled & API key configured'
+                : 'Enabled (API key not set)'
+              : 'Disabled'
+          }
+        />
+      </button>
+    );
+  };
 
-        <div className="pt-2 border-t border-border flex flex-wrap items-center gap-1.5">
-          <span className="text-ui-xs text-foreground-subtle mr-1">Quick Select:</span>
+  const openAddProviderForm = (proto: 'openai' | 'anthropic' = 'openai') => {
+    setNewProviderProtocol(proto);
+    setNewProviderName('');
+    setNewProviderBaseUrl('');
+    setNewProviderApiKey('');
+    setNewProviderInitialModel('');
+    setIsAddingProvider(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="w-full overflow-hidden rounded-xl border border-border bg-card/30">
+      <div className="grid grid-cols-1 lg:grid-cols-[232px_minmax(0,1fr)]">
+        {/* Custom Provider list */}
+        <div className="flex flex-col gap-1 border-b border-border bg-surface/40 p-3 lg:border-b-0 lg:border-r">
+          <div className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wider text-foreground-subtlest">
+            Custom Providers
+          </div>
+          {providers.length === 0 ? (
+            <div className="px-2 py-2 text-2xs text-foreground-subtlest leading-relaxed">
+              No providers configured. Add a custom OpenAI or Anthropic endpoint.
+            </div>
+          ) : (
+            providers.map(renderProviderButton)
+          )}
           <button
             type="button"
-            onClick={() => setEditorToolingModel?.('')}
-            className={cn(
-              'px-2.5 py-1 rounded-md text-ui-xs font-mono transition-colors cursor-pointer',
-              !editorToolingModel
-                ? 'bg-primary text-white font-medium shadow-xs'
-                : 'bg-surface border border-border text-foreground hover:bg-surface-hover'
-            )}
-            title="Inherit primary chat model"
+            onClick={() => openAddProviderForm('openai')}
+            className="mt-1.5 flex w-full items-center gap-2 rounded-lg border border-dashed border-border/70 px-2.5 py-2 text-left transition-colors hover:border-border hover:bg-surface-hover cursor-pointer"
           >
-            Auto / Inherit
-          </button>
-          {[
-            'claude-3-7-sonnet-20250219',
-            'claude-3-5-haiku-20241022',
-            'gpt-4o-mini',
-            'gemini-2.0-flash',
-            'deepseek-r1',
-            'qwen2.5-coder:latest'
-          ].map((quickModel) => (
-            <button
-              key={quickModel}
-              type="button"
-              onClick={() => setEditorToolingModel?.(quickModel)}
-              className={cn(
-                'px-2.5 py-1 rounded-md text-ui-xs font-mono transition-colors cursor-pointer',
-                editorToolingModel === quickModel
-                  ? 'bg-primary text-white font-medium shadow-xs'
-                  : 'bg-surface border border-border text-foreground hover:bg-surface-hover'
-              )}
-            >
-              {quickModel.split('/').pop()?.split(':')[0]}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="w-full overflow-hidden rounded-xl border border-border">
-      <div className="grid grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
-        {/* Provider list */}
-        <div className="flex flex-col gap-1 border-b border-border p-4 md:border-b-0 md:border-r">
-          <div className="pb-1 text-ui-sm text-foreground-subtle">Providers</div>
-          {providers.map((p) => {
-            const isSelected = selectedProvider?.id === p.id;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  setSelectedProviderId(p.id);
-                  setIsAddingProvider(false);
-                  setModelSearch('');
-                }}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors',
-                  isSelected
-                    ? 'border border-border bg-card shadow-xs'
-                    : 'border border-transparent hover:bg-surface-hover'
-                )}
-              >
-                <ProviderLogo name={p.name} />
-                <span className="min-w-0 flex-1 truncate text-ui-base text-foreground">{p.name}</span>
-                {p.enabled && <div className="size-2 shrink-0 rounded-full bg-success" />}
-              </button>
-            );
-          })}
-          <div className="pb-1 pt-4 text-ui-sm text-foreground-subtle">Custom providers</div>
-          <button
-            type="button"
-            onClick={() => setIsAddingProvider(true)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-surface-hover"
-          >
-            <Plus className="size-4 text-foreground-subtle" />
-            <span className="text-ui-base text-foreground">Add provider</span>
+            <Plus className="size-3.5 text-foreground-subtle" />
+            <span className="text-ui-xs font-medium text-foreground">Add Custom Provider</span>
           </button>
         </div>
 
         {/* Detail */}
-        <div className="flex flex-col gap-5 p-6">
+        <div className="flex flex-col gap-4 p-5">
           {isAddingProvider ? (
             <form
               className="flex flex-col gap-4"
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!newProviderName.trim()) return;
-                const newId = `provider-${Date.now()}`;
+                const newId = `${newProviderProtocol}-custom-${Date.now()}`;
+                const defaultBaseUrl =
+                  newProviderProtocol === 'anthropic'
+                    ? 'https://api.anthropic.com/v1'
+                    : 'https://api.openai.com/v1';
+                const initialModels = newProviderInitialModel.trim()
+                  ? newProviderInitialModel
+                      .split(',')
+                      .map((m) => m.trim())
+                      .filter(Boolean)
+                  : [];
                 addProvider({
                   id: newId,
                   name: newProviderName.trim(),
-                  baseUrl: newProviderBaseUrl.trim() || undefined,
+                  protocol: newProviderProtocol,
+                  baseUrl: newProviderBaseUrl.trim() || defaultBaseUrl,
                   apiKey: newProviderApiKey.trim() || undefined,
                   enabled: true,
-                  models: ['default-model'],
-                  selectedModels: ['default-model']
+                  models: initialModels,
+                  selectedModels: initialModels
                 });
+                if (initialModels[0] && !currentModel) {
+                  setCurrentModel(initialModels[0]);
+                }
                 setSelectedProviderId(newId);
                 setIsAddingProvider(false);
                 setNewProviderName('');
                 setNewProviderBaseUrl('');
                 setNewProviderApiKey('');
+                setNewProviderInitialModel('');
               }}
             >
-              <div className="text-ui-lg font-semibold text-foreground">Add Remote Model Provider</div>
-              <div className="flex items-center gap-2 text-ui-xs">
-                <span className="text-foreground-subtle">Presets:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewProviderName('OpenAI-Compatible Remote');
-                    setNewProviderBaseUrl('https://api.openai.com/v1');
-                  }}
-                  className="rounded-md border border-border px-2 py-0.5 text-foreground hover:bg-surface-hover cursor-pointer"
-                >
-                  OpenAI Compatible (/v1)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNewProviderName('Anthropic-Compatible Remote');
-                    setNewProviderBaseUrl('https://api.anthropic.com/v1');
-                  }}
-                  className="rounded-md border border-border px-2 py-0.5 text-foreground hover:bg-surface-hover cursor-pointer"
-                >
-                  Anthropic Compatible (/v1)
-                </button>
+              <div>
+                <div className="text-ui-lg font-semibold text-foreground">Add Custom Provider</div>
+                <p className="text-ui-xs text-foreground-subtle mt-0.5">
+                  Configure a custom OpenAI-compatible or Anthropic-compatible API endpoint.
+                </p>
               </div>
+
+              <div className="space-y-1.5">
+                <label className="text-ui-xs font-medium text-foreground-subtle">API Protocol</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewProviderProtocol('openai')}
+                    className={cn(
+                      'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-all cursor-pointer',
+                      newProviderProtocol === 'openai'
+                        ? 'border-primary bg-primary/10 text-foreground font-semibold'
+                        : 'border-border bg-surface text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                    )}
+                  >
+                    <ProviderIcon provider="openai" size={15} />
+                    <div className="min-w-0">
+                      <div className="text-ui-xs font-semibold text-foreground">OpenAI Compatible</div>
+                      <div className="text-3xs text-foreground-subtlest font-mono truncate">/v1/chat/completions</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewProviderProtocol('anthropic')}
+                    className={cn(
+                      'flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-all cursor-pointer',
+                      newProviderProtocol === 'anthropic'
+                        ? 'border-primary bg-primary/10 text-foreground font-semibold'
+                        : 'border-border bg-surface text-foreground-subtle hover:bg-surface-hover hover:text-foreground'
+                    )}
+                  >
+                    <ProviderIcon provider="anthropic" size={15} />
+                    <div className="min-w-0">
+                      <div className="text-ui-xs font-semibold text-foreground">Anthropic Compatible</div>
+                      <div className="text-3xs text-foreground-subtlest font-mono truncate">/v1/messages</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               <FormField label="Provider Name">
                 <input
                   type="text"
                   value={newProviderName}
                   onChange={(e) => setNewProviderName(e.target.value)}
-                  placeholder="e.g. Remote OpenAI Gateway, OpenRouter, DeepSeek"
+                  placeholder={
+                    newProviderProtocol === 'anthropic'
+                      ? 'e.g. Custom Anthropic Gateway'
+                      : 'e.g. Custom OpenAI Gateway'
+                  }
                   className={btn.input}
                   required
                   autoFocus
                 />
               </FormField>
-              <FormField label="Base URL (Remote Endpoint)">
+              <FormField label="Base URL">
                 <input
                   type="text"
                   value={newProviderBaseUrl}
                   onChange={(e) => setNewProviderBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1 or https://api.anthropic.com/v1"
+                  placeholder={
+                    newProviderProtocol === 'anthropic'
+                      ? 'https://api.anthropic.com/v1'
+                      : 'https://api.openai.com/v1'
+                  }
                   className={cn(btn.input, 'font-mono')}
                 />
               </FormField>
@@ -2142,13 +2329,26 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                   type="password"
                   value={newProviderApiKey}
                   onChange={(e) => setNewProviderApiKey(e.target.value)}
-                  placeholder="sk-..."
-                  className={btn.input}
+                  placeholder={newProviderProtocol === 'anthropic' ? 'sk-ant-...' : 'sk-...'}
+                  className={cn(btn.input, 'font-mono')}
                 />
               </FormField>
-              <div className="mt-2 flex items-center gap-3">
+              <FormField label="Models (comma-separated, or click Fetch models after saving)">
+                <input
+                  type="text"
+                  value={newProviderInitialModel}
+                  onChange={(e) => setNewProviderInitialModel(e.target.value)}
+                  placeholder={
+                    newProviderProtocol === 'anthropic'
+                      ? 'e.g. claude-sonnet-4-20250514'
+                      : 'e.g. gpt-4o, deepseek-chat'
+                  }
+                  className={cn(btn.input, 'font-mono')}
+                />
+              </FormField>
+              <div className="mt-1 flex items-center gap-2.5">
                 <button type="submit" className={btn.primary}>
-                  Save Provider
+                  Save Custom Provider
                 </button>
                 <button type="button" className={btn.outline} onClick={() => setIsAddingProvider(false)}>
                   Cancel
@@ -2157,69 +2357,93 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
             </form>
           ) : selectedProvider ? (
             <>
-              <div className="flex w-full items-center justify-between pb-2">
-                <div className="flex items-center gap-3">
-                  <ProviderLogo name={selectedProvider.name} size="lg" />
-                  <div className="text-ui-lg font-semibold text-foreground">{selectedProvider.name}</div>
-                  <button
-                    type="button"
-                    onClick={() => updateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface shadow-2xs">
+                    <ProviderIcon
+                      provider={getProviderProtocol(selectedProvider) === 'anthropic' ? 'anthropic' : 'openai'}
+                      size={18}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-ui-md font-semibold text-foreground">{selectedProvider.name}</span>
+                      <span className="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-3xs uppercase text-foreground-subtle">
+                        {getProviderProtocol(selectedProvider)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateProvider(selectedProvider.id, { enabled: !selectedProvider.enabled })}
+                        className={cn(
+                          'rounded-full px-2.5 py-0.5 text-2xs font-semibold transition-colors cursor-pointer',
+                          selectedProvider.enabled
+                            ? 'bg-success/12 text-success border border-success/25'
+                            : 'bg-surface-hover text-foreground-subtle border border-border'
+                        )}
+                      >
+                        {selectedProvider.enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                    </div>
+                    <div className="text-2xs text-foreground-subtlest font-mono">
+                      {selectedProvider.baseUrl || 'No base URL'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
                     className={cn(
-                      'rounded-full px-3 py-1 text-ui-base font-semibold transition-colors',
-                      selectedProvider.enabled
-                        ? 'bg-success/10 text-success'
-                        : 'bg-surface-hover text-foreground-subtle'
+                      'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-2xs font-medium border',
+                      selectedProvider.apiKey?.trim()
+                        ? 'border-success/25 bg-success/10 text-success'
+                        : 'border-amber-500/25 bg-amber-500/10 text-warning-foreground'
                     )}
                   >
-                    {selectedProvider.enabled ? 'Enabled' : 'Disabled'}
-                  </button>
-                </div>
-                <div className="hidden items-center gap-3 sm:flex">
-                  <span className="text-ui-base text-foreground-subtle">Connection mode</span>
-                  <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-2 text-ui-base text-foreground">
-                    <span>API key</span>
-                  </div>
+                    <Key className="size-3" />
+                    {selectedProvider.apiKey?.trim() ? 'API Key Configured' : 'API Key Missing'}
+                  </span>
                 </div>
               </div>
 
-              <FormField label="Base URL">
-                <input
-                  type="text"
-                  value={selectedProvider.baseUrl || ''}
-                  onChange={(e) => updateProvider(selectedProvider.id, { baseUrl: e.target.value })}
-                  placeholder="https://api.openai.com/v1"
-                  className={cn(btn.input, 'w-full font-mono')}
-                />
-              </FormField>
-
-              <FormField label="API key">
-                <div className="flex w-full items-center rounded-lg border border-border bg-background px-3 py-1.5">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <FormField label="Base URL">
                   <input
-                    type={showApiKey ? 'text' : 'password'}
-                    value={selectedProvider.apiKey || ''}
-                    onChange={(e) => updateProvider(selectedProvider.id, { apiKey: e.target.value })}
-                    placeholder="Enter API Key..."
-                    className="flex-1 border-0 bg-transparent py-1.5 text-ui-sm text-foreground outline-none"
+                    type="text"
+                    value={selectedProvider.baseUrl || ''}
+                    onChange={(e) => updateProvider(selectedProvider.id, { baseUrl: e.target.value })}
+                    placeholder="https://api.openai.com/v1"
+                    className={cn(btn.input, 'w-full font-mono text-ui-xs')}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="p-1 text-foreground-subtle transition-colors hover:text-foreground"
-                  >
-                    {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </button>
-                </div>
-              </FormField>
+                </FormField>
 
-              <div className="flex w-full flex-col gap-3 pt-2">
+                <FormField label="API key">
+                  <div className="flex h-8 w-full items-center rounded-lg border border-border bg-input px-2.5 focus-within:border-input-border-focused">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      value={selectedProvider.apiKey || ''}
+                      onChange={(e) => updateProvider(selectedProvider.id, { apiKey: e.target.value })}
+                      placeholder="Enter API Key..."
+                      className="flex-1 border-0 bg-transparent text-ui-xs font-mono text-foreground outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="p-1 text-foreground-subtle transition-colors hover:text-foreground cursor-pointer"
+                    >
+                      {showApiKey ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                    </button>
+                  </div>
+                </FormField>
+              </div>
+
+              <div className="flex w-full flex-col gap-2.5 pt-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-ui-base text-foreground-subtle">Model list</span>
+                  <span className="text-ui-sm font-medium text-foreground">Available Models</span>
                   <button
                     type="button"
                     onClick={handleRefreshModels}
-                    className="flex items-center gap-1 text-xs font-medium text-success hover:underline cursor-pointer"
+                    className="flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-2xs font-medium text-foreground hover:bg-surface-hover cursor-pointer transition-colors"
                   >
-                    <RefreshCw className={cn('size-3', isRefreshing && 'animate-spin')} />
+                    <RefreshCw className={cn('size-3 text-success', isRefreshing && 'animate-spin')} />
                     <span>Fetch models</span>
                   </button>
                 </div>
@@ -2247,7 +2471,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                 </div>
 
                 {/* Selection Count & Quick Actions */}
-                <div className="flex items-center justify-between px-0.5 text-ui-xs text-foreground-subtle">
+                <div className="flex items-center justify-between px-0.5 text-2xs text-foreground-subtle">
                   <span>
                     {filteredModels.length} {filteredModels.length === 1 ? 'model' : 'models'}
                     {modelSearch ? ` (filtered from ${selectedProvider.models?.length || 0})` : ''}
@@ -2273,7 +2497,7 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                   </div>
                 </div>
 
-                <div className="flex max-h-[320px] flex-col gap-2 overflow-y-auto pr-1">
+                <div className="flex max-h-[280px] flex-col gap-1.5 overflow-y-auto pr-1">
                   {filteredModels.length === 0 ? (
                     <div className="py-8 text-center text-ui-xs text-foreground-subtle border border-dashed border-border/70 rounded-lg">
                       No models match &ldquo;{modelSearch}&rdquo;
@@ -2287,18 +2511,23 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                       return (
                         <div
                           key={modelName}
-                          className="group flex w-full items-center gap-3 rounded-[10px] border border-border bg-card p-3 shadow-2xs"
+                          className={cn(
+                            'group flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 transition-colors',
+                            isCurrentActive
+                              ? 'border-success/40 bg-success/5'
+                              : 'border-border/80 bg-card hover:border-border'
+                          )}
                         >
                           <button
                             type="button"
                             onClick={() => toggleModelSelection(selectedProvider.id, modelName)}
                             className={cn(
-                              'flex size-4 items-center justify-center rounded border transition-colors cursor-pointer',
+                              'flex size-4 shrink-0 items-center justify-center rounded border transition-colors cursor-pointer',
                               isSelected
                                 ? 'border-success bg-success text-white'
                                 : 'border-foreground-subtlest hover:border-foreground'
                             )}
-                            title={isSelected ? 'Unselect model' : 'Select model'}
+                            title={isSelected ? 'Visible in model picker' : 'Enable in model picker'}
                           >
                             {isSelected && <Check className="size-3 stroke-[3]" />}
                           </button>
@@ -2306,22 +2535,32 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                             type="button"
                             onClick={() => setCurrentModel(modelName)}
                             className={cn(
-                              'flex-1 truncate text-left font-mono text-ui-base cursor-pointer',
-                              isCurrentActive ? 'font-semibold text-success' : 'text-foreground hover:text-foreground-secondary'
+                              'min-w-0 flex-1 truncate text-left font-mono text-ui-xs cursor-pointer',
+                              isCurrentActive ? 'font-semibold text-success' : 'text-foreground hover:text-primary'
                             )}
                             title="Click to make primary active chat model"
                           >
                             {modelName}
-                            {isCurrentActive && <span className="ml-2 font-sans text-xs text-success">(Active)</span>}
                           </button>
-                          <KeyRoundIcon />
+                          <button
+                            type="button"
+                            onClick={() => setCurrentModel(modelName)}
+                            className={cn(
+                              'shrink-0 rounded-md px-2 py-0.5 text-3xs font-medium transition-colors cursor-pointer',
+                              isCurrentActive
+                                ? 'bg-success/15 text-success border border-success/30'
+                                : 'opacity-0 group-hover:opacity-100 bg-surface hover:bg-surface-hover text-foreground-subtle border border-border'
+                            )}
+                          >
+                            {isCurrentActive ? 'Active' : 'Use default'}
+                          </button>
                           <button
                             type="button"
                             onClick={() => deleteModelFromProvider(selectedProvider.id, modelName)}
-                            className="p-1 text-foreground-subtlest transition-colors hover:text-destructive cursor-pointer"
+                            className="p-1 text-foreground-subtlest opacity-60 group-hover:opacity-100 transition-colors hover:text-destructive cursor-pointer"
                             title="Remove model"
                           >
-                            <Trash2 className="size-4" />
+                            <Trash2 className="size-3.5" />
                           </button>
                         </div>
                       );
@@ -2356,44 +2595,92 @@ const ModelSettingsSection: React.FC<ModelSettingsSectionProps> = ({
                     </button>
                   </form>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingModel(true)}
-                    className="mt-1 flex w-fit items-center gap-2.5 rounded-lg border border-border px-4 py-2.5 text-foreground transition-colors hover:bg-surface-hover"
-                  >
-                    <Plus className="size-4 text-foreground-subtle" />
-                    <span className="text-ui-base">Add model</span>
-                  </button>
+                  <div className="mt-2 flex items-center justify-between border-t border-border/60 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingModel(true)}
+                      className="flex w-fit items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-ui-xs font-medium text-foreground transition-colors hover:bg-surface-hover cursor-pointer"
+                    >
+                      <Plus className="size-3.5 text-foreground-subtle" />
+                      <span>Add model</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        deleteProvider(selectedProvider.id);
+                        setSelectedProviderId(
+                          providers.find(p => p.id !== selectedProvider.id)?.id || ''
+                        );
+                      }}
+                      className="flex items-center gap-1 text-ui-xs text-destructive hover:underline cursor-pointer"
+                    >
+                      <Trash2 className="size-3.5" />
+                      <span>Delete provider</span>
+                    </button>
+                  </div>
                 )}
-
-                <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-                  <span className="text-xs text-foreground-subtle">
-                    Provider ID: {selectedProvider.id}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      deleteProvider(selectedProvider.id);
-                      setSelectedProviderId(
-                        providers.find(p => p.id !== selectedProvider.id)?.id || ''
-                      );
-                    }}
-                    className="flex items-center gap-1 text-xs text-destructive hover:underline"
-                  >
-                    <Trash2 className="size-3.5" />
-                    <span>Delete provider</span>
-                  </button>
-                </div>
               </div>
             </>
           ) : (
-            <div className="py-20 text-center text-foreground-subtle">
-              Select or add a model provider from the left column.
+            <div className="flex flex-col items-center justify-center py-12 px-4 text-center space-y-3">
+              <div className="flex size-10 items-center justify-center rounded-xl border border-border bg-surface text-foreground-subtle">
+                <Cpu className="size-5" />
+              </div>
+              <div className="space-y-1 max-w-sm">
+                <div className="text-ui-base font-semibold text-foreground">
+                  No Custom Provider Configured
+                </div>
+                <p className="text-ui-xs text-foreground-subtle leading-relaxed">
+                  Add a custom OpenAI-compatible or Anthropic-compatible provider endpoint to use models with ForgeADE Internal.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => openAddProviderForm('openai')}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-ui-xs font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                >
+                  <ProviderIcon provider="openai" size={13} />
+                  <span>+ OpenAI Compatible</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAddProviderForm('anthropic')}
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-ui-xs font-medium text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
+                >
+                  <ProviderIcon provider="anthropic" size={13} />
+                  <span>+ Anthropic Compatible</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
     </div>
+
+      {/* Compact Editor Inline AI Model row */}
+      <SettingsGroupCard>
+        <SettingsRow
+          label="Editor Inline AI Model"
+          description="Model used for Ghost Text autocomplete & Inline AI (⌘I)."
+          control={
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setEditorToolingModel?.('')}
+                className={cn(
+                  'rounded-lg px-2.5 py-1 font-mono text-2xs transition-colors cursor-pointer',
+                  !editorToolingModel
+                    ? 'bg-primary text-white font-medium'
+                    : 'border border-border bg-surface text-foreground-subtle hover:text-foreground'
+                )}
+              >
+                Auto ({currentModel || 'Default'})
+              </button>
+            </div>
+          }
+        />
+      </SettingsGroupCard>
     </div>
   );
 };
@@ -2418,28 +2705,6 @@ const FormField: React.FC<{ label: string; description?: React.ReactNode; childr
         })
       : children}
   </div>
-);
-
-const ProviderLogo: React.FC<{ name: string; size?: 'sm' | 'lg' }> = ({ name, size = 'sm' }) => {
-  const letter = name.charAt(0).toUpperCase();
-  const isZai = name.toLowerCase().includes('z.ai') || name.toLowerCase().includes('zai');
-  return (
-    <div
-      className={cn(
-        'flex shrink-0 items-center justify-center rounded-md font-bold',
-        size === 'lg' ? 'size-8 text-lg' : 'size-[22px] text-ui-sm',
-        isZai ? 'bg-[#111827] text-white dark:bg-[#F2F2F2] dark:text-foreground' : 'bg-surface-hover text-foreground'
-      )}
-    >
-      {letter}
-    </div>
-  );
-};
-
-const KeyRoundIcon: React.FC = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-4 shrink-0 text-foreground-subtlest">
-    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-  </svg>
 );
 
 // ── Browser Use ─────────────────────────────────────────────────────────────

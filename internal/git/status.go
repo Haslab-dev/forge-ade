@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,25 +291,37 @@ func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusR
 	return res, nil
 }
 
+const (
+	maxUntrackedLineCountFiles = 64
+	maxUntrackedLineCountBytes = 256 << 10 // 256 KB
+)
+
 // annotateNumstat fills Additions/Deletions from `git diff --numstat`
 // (worktree and index); untracked files get their line count as additions
 // since numstat does not cover them. Display-only metadata: any failure
 // leaves the counts at zero.
 func annotateNumstat(ctx context.Context, repoPath string, res *GitStatusResult) {
-	worktree := numstatMap(ctx, repoPath, false)
-	index := numstatMap(ctx, repoPath, true)
-
-	for i := range res.Staged {
-		if counts, ok := index[res.Staged[i].Path]; ok {
-			res.Staged[i].Additions, res.Staged[i].Deletions = counts[0], counts[1]
+	if len(res.Staged) > 0 {
+		index := numstatMap(ctx, repoPath, true)
+		for i := range res.Staged {
+			if counts, ok := index[res.Staged[i].Path]; ok {
+				res.Staged[i].Additions, res.Staged[i].Deletions = counts[0], counts[1]
+			}
 		}
 	}
-	for i := range res.Unstaged {
-		if counts, ok := worktree[res.Unstaged[i].Path]; ok {
-			res.Unstaged[i].Additions, res.Unstaged[i].Deletions = counts[0], counts[1]
+	if len(res.Unstaged) > 0 {
+		worktree := numstatMap(ctx, repoPath, false)
+		for i := range res.Unstaged {
+			if counts, ok := worktree[res.Unstaged[i].Path]; ok {
+				res.Unstaged[i].Additions, res.Unstaged[i].Deletions = counts[0], counts[1]
+			}
 		}
 	}
-	for i := range res.Untracked {
+	limit := len(res.Untracked)
+	if limit > maxUntrackedLineCountFiles {
+		limit = maxUntrackedLineCountFiles
+	}
+	for i := 0; i < limit; i++ {
 		res.Untracked[i].Additions = countUntrackedLines(repoPath, res.Untracked[i].Path)
 	}
 }
@@ -360,25 +373,51 @@ func numstatRenamePath(p string) string {
 
 // countUntrackedLines counts a new file's lines as additions. Binary
 // (NUL byte in the first 8KB) and oversized files report 0.
+// Uses a fixed 4KB stack buffer instead of reading the entire file into heap memory.
 func countUntrackedLines(repoPath, path string) int {
 	full := filepath.Join(repoPath, path)
 	info, err := os.Stat(full)
-	if err != nil || info.IsDir() || info.Size() > 1<<20 {
+	if err != nil || info.IsDir() || info.Size() == 0 || info.Size() > maxUntrackedLineCountBytes {
 		return 0
 	}
-	data, err := os.ReadFile(full)
-	if err != nil || len(data) == 0 {
+	f, err := os.Open(full)
+	if err != nil {
 		return 0
 	}
-	head := data
-	if len(head) > 8000 {
-		head = head[:8000]
+	defer f.Close()
+
+	var buf [4096]byte
+	lines := 0
+	totalRead := 0
+	var lastByte byte
+	for {
+		n, readErr := f.Read(buf[:])
+		if n > 0 {
+			chunk := buf[:n]
+			if totalRead < 8000 {
+				checkLen := 8000 - totalRead
+				if checkLen > n {
+					checkLen = n
+				}
+				if bytes.IndexByte(chunk[:checkLen], 0) >= 0 {
+					return 0
+				}
+			}
+			lines += bytes.Count(chunk, []byte{'\n'})
+			lastByte = chunk[n-1]
+			totalRead += n
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return 0
+		}
 	}
-	if bytes.IndexByte(head, 0) >= 0 {
+	if totalRead == 0 {
 		return 0
 	}
-	lines := bytes.Count(data, []byte("\n"))
-	if data[len(data)-1] != '\n' {
+	if lastByte != '\n' {
 		lines++
 	}
 	return lines
@@ -592,16 +631,25 @@ func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) 
 		if len(strings.TrimSpace(string(out2))) > 0 {
 			return string(out2), nil
 		}
-		// If untracked file, show whole file content as additions
+		// If untracked file, show whole file content as additions (capped at 1MB, non-binary)
 		fullPath := filepath.Join(repoPath, path)
-		if fileData, readErr := os.ReadFile(fullPath); readErr == nil {
-			lines := strings.Split(string(fileData), "\n")
-			var b strings.Builder
-			b.WriteString(fmt.Sprintf("--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", path, len(lines)))
-			for _, l := range lines {
-				b.WriteString("+" + l + "\n")
+		if info, statErr := os.Stat(fullPath); statErr == nil && !info.IsDir() && info.Size() <= 1<<20 {
+			if fileData, readErr := os.ReadFile(fullPath); readErr == nil {
+				head := fileData
+				if len(head) > 8000 {
+					head = head[:8000]
+				}
+				if bytes.IndexByte(head, 0) < 0 {
+					lines := strings.Split(string(fileData), "\n")
+					var b strings.Builder
+					b.Grow(len(fileData) + len(lines) + 64)
+					b.WriteString(fmt.Sprintf("--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", path, len(lines)))
+					for _, l := range lines {
+						b.WriteString("+" + l + "\n")
+					}
+					return b.String(), nil
+				}
 			}
-			return b.String(), nil
 		}
 	}
 	return string(out), nil

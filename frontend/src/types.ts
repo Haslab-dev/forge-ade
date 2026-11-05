@@ -503,6 +503,7 @@ export interface ModelItem {
 export interface LLMProviderConfig {
   id: string;
   name: string;
+  protocol?: 'openai' | 'anthropic';
   baseUrl?: string;
   apiKey?: string;
   enabled: boolean;

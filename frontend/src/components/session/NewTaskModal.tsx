@@ -27,7 +27,7 @@ const FALLBACK_AGENTS: AgentCLIConfig[] = [
 ];
 
 export const NewTaskModal: React.FC = () => {
-  const { isNewTaskOpen, closeNewTask, agentConfigs, createSession, newTaskWorkspacePath } = useSessionStore();
+  const { isNewTaskOpen, closeNewTask, agentConfigs, loadAgentConfigs, createSession, newTaskWorkspacePath } = useSessionStore();
   const {
     recentWorkspaces,
     setActiveWorkspacePath,
@@ -40,7 +40,8 @@ export const NewTaskModal: React.FC = () => {
     agents: workspaceAgents,
     setActiveAgentId,
     createNewSession,
-    acpEnabled
+    acpEnabled,
+    checkAgentsAvailability
   } = useWorkspace();
 
   const [step, setStep] = useState<'agent' | 'workspace'>('agent');
@@ -65,12 +66,10 @@ export const NewTaskModal: React.FC = () => {
   }, [workspaceAgents, acpEnabled]);
 
   const availableAcpAgents = useMemo(() => {
-    return allAcpAgents.filter(a => a.available !== false || a.type === 'internal');
+    return allAcpAgents.filter(a => a.type === 'internal' || a.available === true);
   }, [allAcpAgents]);
 
-  const uninstalledAcpAgents = useMemo(() => {
-    return allAcpAgents.filter(a => a.available === false && a.type !== 'internal');
-  }, [allAcpAgents]);
+  const uninstalledAcpAgents = useMemo<ACPAgent[]>(() => [], []);
 
   // Agent CLI list (dynamic from sessionStore, fallback to FALLBACK_AGENTS)
   const allCliAgents = useMemo(() => {
@@ -78,12 +77,10 @@ export const NewTaskModal: React.FC = () => {
   }, [agentConfigs]);
 
   const availableCliAgents = useMemo(() => {
-    return allCliAgents.filter(a => a.available !== false);
+    return allCliAgents.filter(a => a.available === true);
   }, [allCliAgents]);
 
-  const uninstalledCliAgents = useMemo(() => {
-    return allCliAgents.filter(a => a.available === false);
-  }, [allCliAgents]);
+  const uninstalledCliAgents = useMemo<AgentCLIConfig[]>(() => [], []);
 
   const q = searchQuery.trim().toLowerCase();
 
@@ -116,6 +113,8 @@ export const NewTaskModal: React.FC = () => {
 
   useEffect(() => {
     if (isNewTaskOpen) {
+      void checkAgentsAvailability?.();
+      void loadAgentConfigs?.();
       setStep('agent');
       setSelectedAgent(null);
       setActiveTab('all');
@@ -127,7 +126,7 @@ export const NewTaskModal: React.FC = () => {
       setCreating(false);
       setTimeout(() => inputRef.current?.focus(), 40);
     }
-  }, [isNewTaskOpen]);
+  }, [isNewTaskOpen, checkAgentsAvailability, loadAgentConfigs]);
 
   useEffect(() => {
     if (!isNewTaskOpen) return;

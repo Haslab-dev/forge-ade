@@ -23,6 +23,43 @@ export interface GitStoreState {
   refreshGitLog: (wsPath: string) => Promise<any[]>;
 }
 
+function areGitFilesEqual(a: GitFileStatus[], b: GitFileStatus[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.path !== y.path ||
+      x.status !== y.status ||
+      x.staging !== y.staging ||
+      x.additions !== y.additions ||
+      x.deletions !== y.deletions
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areGitCommitsEqual(a: any[], b: any[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      (x?.hash || x?.id) !== (y?.hash || y?.id) ||
+      x?.status !== y?.status ||
+      x?.decorations !== y?.decorations ||
+      x?.message !== y?.message
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export const useGitStore = create<GitStoreState>((set, get) => ({
   gitBranch: '',
   gitFiles: [],
@@ -72,7 +109,9 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   refreshGitStatus: async (wsPath: string) => {
     try {
       const result = await ApiBridge.gitStatus(wsPath);
-      const prevBranch = get().gitBranch;
+      const state = get();
+      const prevBranch = state.gitBranch;
+      const prevFiles = state.gitFiles;
       const rawBranch = result?.branch ? result.branch.trim() : '';
       const branch =
         rawBranch && rawBranch !== 'unknown' && rawBranch !== '(unknown)'
@@ -80,8 +119,11 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
           : prevBranch && prevBranch !== 'unknown' && prevBranch !== '(unknown)'
             ? prevBranch
             : 'main';
-      const files = result?.files || [];
-      set({ gitBranch: branch, gitFiles: files });
+      const incomingFiles = result?.files || [];
+      const files = areGitFilesEqual(prevFiles, incomingFiles) ? prevFiles : incomingFiles;
+      if (branch !== prevBranch || files !== prevFiles) {
+        set({ gitBranch: branch, gitFiles: files });
+      }
       return { branch, files };
     } catch (err) {
       console.warn('Failed to refresh git status:', err);
@@ -93,8 +135,12 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   refreshGitLog: async (wsPath: string) => {
     try {
       const commits = await ApiBridge.gitLog(wsPath);
-      const safeCommits = Array.isArray(commits) ? commits : [];
-      set({ gitCommits: safeCommits });
+      const incoming = Array.isArray(commits) ? commits : [];
+      const prevCommits = get().gitCommits;
+      const safeCommits = areGitCommitsEqual(prevCommits, incoming) ? prevCommits : incoming;
+      if (safeCommits !== prevCommits) {
+        set({ gitCommits: safeCommits });
+      }
       return safeCommits;
     } catch (err) {
       console.warn('Failed to refresh git log:', err);

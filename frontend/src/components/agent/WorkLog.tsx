@@ -277,9 +277,9 @@ export function WorkLogDetails({
       className={cn(
         'cursor-auto overflow-auto font-mono text-[length:var(--font-size-code,0.6875rem)] leading-relaxed',
         kind === 'text' &&
-          'ms-7 max-h-96 px-0.5 py-1 text-secondary-label select-text whitespace-pre-wrap break-words scrollbar-thin',
-        kind === 'panel' && 'ms-7 mt-0.5 mb-1.5 pb-2',
-        kind === 'media' && 'ms-7 mt-1 flex items-center justify-center',
+          'ms-5 pl-2.5 border-l border-border/50 max-h-96 py-1 text-secondary-label select-text whitespace-pre-wrap break-words scrollbar-thin',
+        kind === 'panel' && 'ms-5 pl-2.5 border-l border-border/50 mt-0.5 mb-1.5 pb-1',
+        kind === 'media' && 'ms-5 pl-2.5 border-l border-border/50 mt-1 flex items-center justify-center',
         className
       )}
       onClick={event => event.stopPropagation()}

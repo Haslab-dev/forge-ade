@@ -11,15 +11,18 @@ The `text-ui-*` sizes are registered as real Tailwind theme keys (`--text-ui-*` 
 
 ## The `text-ui` type scale
 
-The UI is a dense, IDE-like interface. All UI text uses the fixed scale — never raw px:
+The UI is a dense, IDE-like interface. All UI text uses the rem-based `text-ui-*` scale (which scales with the user's interface font preference; sizes below are at the default 16px root):
 
-| Class           | Size | Use for                                        |
-| --------------- | ---- | ---------------------------------------------- |
-| `text-ui-xs`    | 11px | Metadata, badges, kbd hints, file tree         |
-| `text-ui-sm`    | 12px | Secondary labels, buttons, list rows           |
-| `text-ui-base`  | 13px | Default body/UI text (`--ui-font-size`)        |
-| `text-ui-lg`    | 15px | Emphasized text, section headers               |
-| `text-ui-xl`    | 17px | Titles, empty-state headings                   |
+| Class           | Size (rem / @16px) | Use for                                        |
+| --------------- | ------------------ | ---------------------------------------------- |
+| `text-3xs`      | 0.625rem (10px)    | Micro counters, compact status badges          |
+| `text-2xs`      | 0.6875rem (11px)   | Kbd hints, dense metadata, diff stats          |
+| `text-ui-xs`    | 0.75rem (12px)     | Metadata, badges, compact controls, file tree  |
+| `text-ui-sm`    | 0.8125rem (13px)   | Secondary labels, buttons, list rows           |
+| `text-ui-base`  | 0.875rem (14px)    | Default body/UI text (`--ui-font-size`)        |
+| `text-ui-lg`    | 1.0625rem (17px)   | Emphasized text, section headers               |
+| `text-ui-xl`    | 1.375rem (22px)    | Titles, empty-state headings                   |
+| `text-ui-2xl`   | 1.625rem (26px)    | Hero titles                                    |
 
 Only exception: display numerals (e.g. `text-[30px]` stat figures) sit outside the scale on purpose.
 

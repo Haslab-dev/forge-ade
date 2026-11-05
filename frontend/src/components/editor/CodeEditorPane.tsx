@@ -528,7 +528,7 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
   const handleAskAgentRef = useRef(handleAskAgentAboutCode);
   handleAskAgentRef.current = handleAskAgentAboutCode;
 
-  const aiEngineRef = useRef(new AgentEngine());
+  const aiEngineRef = useRef<AgentEngine | null>(null);
   const fetchAiSuggestion = useCallback(async (
     ctx: PredictiveContext,
     cursor: number,
@@ -540,6 +540,9 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     const userPrompt = `Code before cursor:\n${ctx.prefix}\n\nLine prefix so far: "${ctx.linePrefix}"\nLine suffix: "${ctx.lineSuffix}"\n\nContinue the code immediately from the cursor:`;
 
     try {
+      if (!aiEngineRef.current) {
+        aiEngineRef.current = new AgentEngine();
+      }
       let accumulated = '';
       await aiEngineRef.current.streamSideChat(
         effectiveEditorModel,
@@ -1296,15 +1299,20 @@ export const CodeEditorPane: React.FC<CodeEditorPaneProps> = ({
     computeChangeMarks();
   }, [currentContent, activeTab?.id, computeChangeMarks]);
 
-  // Evict on-disk baselines for closed tabs — the map holds a full file copy
-  // per tab ever opened and would otherwise grow unbounded for the session.
+  // Evict on-disk baselines for closed tabs and bound the baseline cache to
+  // the 5 most recently active tabs so inactive tabs don't hold duplicate file copies.
   useEffect(() => {
     if (savedContentRef.current.size === 0) return;
     const live = new Set(displayedTabs.map(t => t.id));
     for (const id of Array.from(savedContentRef.current.keys())) {
       if (!live.has(id)) savedContentRef.current.delete(id);
     }
-  }, [displayedTabs]);
+    while (savedContentRef.current.size > 5) {
+      const oldest = savedContentRef.current.keys().next().value;
+      if (oldest === undefined || oldest === activeTab?.id) break;
+      savedContentRef.current.delete(oldest);
+    }
+  }, [displayedTabs, activeTab?.id]);
 
   // Baseline for gutter change markers: load the on-disk content once per tab.
   useEffect(() => {

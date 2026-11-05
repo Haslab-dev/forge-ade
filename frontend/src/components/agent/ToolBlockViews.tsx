@@ -275,7 +275,7 @@ export function ToolErrorBlock({ errorText }: { errorText: string }) {
   }
 
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-destructive/30 bg-destructive/10 p-3 font-mono text-ui-xs text-destructive leading-relaxed max-h-60 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words select-text scrollbar-thin">
+    <div className="mt-1 w-full max-w-full rounded-xl border border-destructive/30 bg-destructive/10 p-3 font-mono text-ui-xs text-destructive leading-relaxed max-h-60 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-words select-text scrollbar-thin">
       {cleanError}
     </div>
   );
@@ -323,20 +323,20 @@ export function ToolInlineDiffBlock({
     if (rawDiffText || oldStr || newStr) {
       const fallbackText = rawDiffText || (newStr ? `+ ${newStr}` : oldStr ? `- ${oldStr}` : '');
       return (
-        <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] rounded-xl border border-border/50 bg-card p-3 font-mono text-ui-xs text-foreground-secondary whitespace-pre-wrap break-words select-text">
+        <div className="mt-1 w-full rounded-xl border border-border/50 bg-card p-3 font-mono text-ui-xs text-foreground-secondary whitespace-pre-wrap break-words select-text">
           {fallbackText}
         </div>
       );
     }
     return (
-      <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] rounded-xl border border-border/50 bg-card p-3 font-mono text-ui-xs text-foreground-subtlest">
+      <div className="mt-1 w-full rounded-xl border border-border/50 bg-card p-3 font-mono text-ui-xs text-foreground-subtlest">
         No visual line changes to display
       </div>
     );
   }
 
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
+    <div className="mt-1 w-full max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
       <div className="max-h-72 overflow-y-auto overflow-x-auto p-1.5 scrollbar-thin">
         {lines.map((l, idx) => {
           const isAdd = l.type === 'add';
@@ -380,7 +380,7 @@ export function ToolWriteBlock({ content, ext }: { content: string; ext?: string
   const lines = useMemo(() => (content || '').split('\n'), [content]);
 
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-success/30 bg-success/5 border-l-[3px] border-l-success overflow-hidden text-ui-xs shadow-xs font-mono select-text">
+    <div className="mt-1 w-full max-w-full rounded-xl border border-success/30 bg-success/5 border-l-[3px] border-l-success overflow-hidden text-ui-xs shadow-xs font-mono select-text">
       <div className="max-h-72 overflow-y-auto overflow-x-auto p-2 scrollbar-thin">
         {lines.map((line, idx) => (
           <div key={idx} className="flex items-start px-2 py-0.5">
@@ -452,7 +452,7 @@ export function ToolReadBlock({
   };
 
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/80 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
+    <div className="mt-1 w-full max-w-full rounded-xl border border-border/50 bg-card/80 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
       {filePath && (
         <div className="flex items-center justify-between border-b border-border/40 bg-surface/60 px-3 py-1.5 select-none font-sans">
           <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
@@ -574,7 +574,7 @@ export function ToolTerminalBlock({
   };
 
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden font-mono text-ui-xs leading-relaxed shadow-xs select-text">
+    <div className="mt-1 w-full max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden font-mono text-ui-xs leading-relaxed shadow-xs select-text">
       {/* Terminal Card Header */}
       <div className="flex items-center justify-between border-b border-border/40 bg-surface/60 px-3 py-1.5 select-none">
         <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
@@ -653,14 +653,14 @@ export function ToolPythonBlock({
   const visibleOutputLines = isOutputLong && !showAllOutput ? outputLines.slice(0, 20) : outputLines;
 
   return (
-    <div className="mt-1.5 ml-6 w-[calc(100%-1.5rem)] max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
+    <div className="mt-1 w-full max-w-full rounded-xl border border-border/50 bg-card/90 overflow-hidden text-ui-xs shadow-xs font-mono select-text">
       {/* Code Header */}
       <div className="bg-surface/60 border-b border-border/40 px-3 py-1.5 flex items-center justify-between text-ui-xs text-foreground-subtle">
         <span className="font-semibold text-foreground-secondary flex items-center gap-1.5">
-          <Code2 className="w-3.5 h-3.5 text-blue-400" />
+          <Code2 className="w-3.5 h-3.5 text-primary" />
           <span>Python</span>
         </span>
-        <span className="text-[11px] text-foreground-subtlest font-mono">
+        <span className="text-2xs text-foreground-subtlest font-mono">
           {codeLines.length} {codeLines.length === 1 ? 'line' : 'lines'}
         </span>
       </div>
@@ -905,14 +905,14 @@ export function ToolExecutionCard({
   const isRunning = tool.status === 'running';
 
   const isBash = nameLower.includes('bash') || nameLower.includes('shell') || nameLower.includes('exec') || nameLower.includes('command') || nameLower.includes('terminal');
-  const isEdit = nameLower.includes('edit');
+  const isEdit = nameLower.includes('edit') || nameLower.includes('patch');
   const isWrite = nameLower.includes('write') || nameLower.includes('create');
   const isRead = nameLower.includes('read') || nameLower.includes('view') || nameLower.includes('cat');
+  const isSearch = nameLower.includes('search') || nameLower.includes('grep') || nameLower.includes('glob') || nameLower.includes('find');
   const isPython = nameLower.includes('python');
   const isSkill = nameLower.includes('skill');
 
   const parsedArgs = useMemo(() => parseToolArgs(tool.command || '', tool.toolName || ''), [tool.command, tool.toolName]);
-  const skillData = useMemo(() => isSkill ? parseSkillToolData(tool) : null, [isSkill, tool]);
   const shellCmd = useMemo(() => isBash ? extractShellCommand(tool, parsedArgs) : '', [isBash, tool, parsedArgs]);
 
   // Clean target file
@@ -921,9 +921,11 @@ export function ToolExecutionCard({
     fullPath = fullPath.slice(workspacePath.length).replace(/^\/+/, '');
   }
   fullPath = cleanArgPath(fullPath);
-  const targetFile = fullPath ? (fullPath.split('/').filter(Boolean).pop() || fullPath) : '';
+  const pathParts = fullPath ? fullPath.split('/').filter(Boolean) : [];
+  const targetFile = pathParts.length > 0 ? pathParts[pathParts.length - 1] : fullPath;
+  const targetDir = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : '';
 
-  // Icon & Kind Label matching Screenshot 2
+  // Icon & Kind Label
   let kind = 'Ran';
   let Icon = SquareTerminal;
 
@@ -938,6 +940,9 @@ export function ToolExecutionCard({
     Icon = Pencil;
   } else if (isRead) {
     kind = 'Read';
+    Icon = FileText;
+  } else if (isSearch) {
+    kind = 'Search';
     Icon = Search;
   } else if (isPython) {
     kind = 'Python';
@@ -1012,28 +1017,36 @@ export function ToolExecutionCard({
 
   const labelNode = isBash ? (
     <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-[length:var(--font-size-code,0.75rem)] select-none cursor-pointer', isRunning && 'live-tool-shine')}>
+      <span className="shrink-0 rounded bg-surface border border-border/60 px-1 py-0.2 text-3xs font-semibold text-primary/85 select-none">
+        $
+      </span>
       <span className="truncate text-foreground/90 font-medium select-none cursor-pointer" title={shellCmd || tool.command}>
         {shellCmd || 'terminal command'}
       </span>
     </div>
   ) : (
     <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate select-none cursor-pointer', isRunning && 'live-tool-shine')}>
-      <span className="shrink-0 select-none cursor-pointer">{kind}</span>
+      <span className="shrink-0 rounded bg-surface border border-border/60 px-1.5 py-0.2 font-mono text-3xs font-medium text-foreground-subtle select-none cursor-pointer">
+        {kind}
+      </span>
       {targetFile ? (
-        <button
-          type="button"
+        <span
           onClick={(e) => {
             e.stopPropagation();
             if (fullPath) void useWorkspace.getState().openSideFile(fullPath);
           }}
-          className="inline-flex min-w-0 max-w-[340px] items-center gap-1 truncate hover:text-primary transition-colors cursor-pointer text-left select-none"
+          className="inline-flex min-w-0 max-w-[380px] items-center gap-1.5 truncate hover:text-primary transition-colors cursor-pointer text-left select-none"
           title={`Open ${fullPath} in side preview`}
         >
-          <FileText className="size-3 shrink-0 opacity-70" />
-          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none">
+          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)] font-medium text-foreground/90 hover:text-primary select-none">
             {targetFile}
           </span>
-        </button>
+          {targetDir && (
+            <span className="hidden sm:inline truncate font-mono text-2xs text-foreground-subtlest select-none">
+              {targetDir}
+            </span>
+          )}
+        </span>
       ) : isPython ? (
         <span
           className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none cursor-pointer"

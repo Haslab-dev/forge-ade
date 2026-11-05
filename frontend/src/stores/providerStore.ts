@@ -39,6 +39,16 @@ let goProfilesCache: any[] = [];
 let lastSyncedFingerprint = '';
 let lastActivatedModel = '';
 
+const LEGACY_BUILTIN_PROVIDER_IDS = new Set([
+  'prov-anthropic',
+  'prov-openai',
+  'prov-openrouter',
+  'prov-deepseek',
+  'prov-ollama',
+  'prov-openai-compatible',
+  'prov-anthropic-compatible'
+]);
+
 function loadInitialProviders(): { providers: LLMProviderConfig[]; deletedIds: string[] } {
   let deletedIds: string[] = [];
   try {
@@ -52,16 +62,30 @@ function loadInitialProviders(): { providers: LLMProviderConfig[]; deletedIds: s
     if (saved) initialList = JSON.parse(saved);
   } catch {}
 
-  if (!initialList || initialList.length === 0) {
+  if (!Array.isArray(initialList)) {
     initialList = DEFAULT_PROVIDERS;
   }
-  // Strip out any legacy local placeholders (e.g. ollama) and deleted providers
-  initialList = initialList.filter(p => p.id !== 'prov-ollama' && !p.id.toLowerCase().includes('ollama'));
-  if (initialList.length === 0) {
-    initialList = DEFAULT_PROVIDERS;
-  }
+  // Strip out any legacy built-in / mock providers and deleted providers; only custom providers are kept
+  const beforeLen = initialList.length;
+  initialList = initialList.filter(
+    p =>
+      p &&
+      !LEGACY_BUILTIN_PROVIDER_IDS.has(p.id) &&
+      p.name !== 'OpenAI-Compatible Remote' &&
+      p.name !== 'Anthropic-Compatible Remote'
+  );
   if (Array.isArray(deletedIds) && deletedIds.length > 0) {
     initialList = initialList.filter(p => !deletedIds.includes(p.id));
+  }
+  if (beforeLen !== initialList.length) {
+    try {
+      localStorage.setItem('forge_ade_providers', JSON.stringify(initialList));
+      localStorage.setItem('my_ade_providers', JSON.stringify(initialList));
+      if (initialList.length === 0) {
+        localStorage.removeItem('forge_ade_current_model');
+        localStorage.removeItem('my_ade_current_model');
+      }
+    } catch {}
   }
   return { providers: initialList, deletedIds };
 }
@@ -323,11 +347,17 @@ export const useProviderStore = create<ProviderState>((set, get) => {
           const next = [...prev];
           for (const gp of profiles) {
             const id = gp?.id ?? gp?.Id;
+            const name = gp?.name ?? gp?.Name ?? '';
             const url = String(gp?.base_url ?? gp?.BaseUrl ?? '').replace(/\/+$/, '');
             if (!id && !url) continue;
 
-            if (id && deletedIds.includes(id)) {
-              DeleteProviderProfile(id).catch(() => {});
+            if (
+              (id && LEGACY_BUILTIN_PROVIDER_IDS.has(id)) ||
+              name === 'OpenAI-Compatible Remote' ||
+              name === 'Anthropic-Compatible Remote' ||
+              (id && deletedIds.includes(id))
+            ) {
+              if (id) DeleteProviderProfile(id).catch(() => {});
               continue;
             }
 

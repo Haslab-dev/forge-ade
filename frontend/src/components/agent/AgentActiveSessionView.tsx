@@ -52,7 +52,6 @@ import { AgentQuestionModal } from './AgentQuestionModal';
 import { ApiBridge } from '../../services/apiBridge';
 import { useAgentExecution, useAgentThreadSearch } from './hooks';
 import { getChronologicalTimeline, type TimelineItem } from '../../lib/timeline';
-import { MultiFileDiffReviewBar, type ModifiedFileItem } from '../diff/MultiFileDiffReviewBar';
 import { AgentApprovalBar } from './AgentApprovalBar';
 import { FoldedToolTraces } from './FoldedToolTraces';
 import { TurnChangesCard } from './TurnChangesCard';
@@ -444,15 +443,6 @@ export const AgentActiveSessionView: React.FC = () => {
     ? activeSession.diffs 
     : diffs;
 
-  const reviewFiles: ModifiedFileItem[] = useMemo(() => {
-    return (sessionDiffs || []).map(d => ({
-      path: d.filePath || d.fileName || 'unknown',
-      additions: d.additions,
-      deletions: d.deletions,
-      status: d.status
-    }));
-  }, [sessionDiffs]);
-
   const isSessionWorking = !!(
     activeSession?.status === 'running' ||
     activeSession?.goState === 'thinking' ||
@@ -688,7 +678,9 @@ export const AgentActiveSessionView: React.FC = () => {
     return turns;
   }, [activeSession?.messages]);
 
-  const showTurnTimeline = conversationTurns.length > 0;
+  // Only display the left-edge turn scrubber when there are at least 2 turns
+  // and the chat column has enough room so ticks never float as a stray dash.
+  const showTurnTimeline = conversationTurns.length > 1 && chatColumnWidth >= 560;
 
   const setProgrammaticScroll = useCallback((durationMs = 550) => {
     isProgrammaticScrollRef.current = true;
@@ -905,13 +897,6 @@ export const AgentActiveSessionView: React.FC = () => {
       showToast(err?.message || 'Failed to restore checkpoint', 'error');
     } finally {
       setRestoringCheckpointId(null);
-    }
-  };
-
-  const handleSelectReviewFile = (path: string) => {
-    const matched = sessionDiffs.find(d => (d.filePath || d.fileName) === path);
-    if (matched) {
-      openDiffInEditor(matched);
     }
   };
 
@@ -1221,7 +1206,13 @@ export const AgentActiveSessionView: React.FC = () => {
                       : undefined;
                     return (
                       <div className="group/user-row w-full max-w-full min-w-0 flex flex-col items-end gap-1">
-                        <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground select-text">
+                        <div className="relative max-w-[82%] rounded-2xl border border-border/50 bg-message px-3.5 py-2.5 text-message-foreground shadow-2xs select-text">
+                        {matchedSkill && (
+                          <div className="mb-1.5 inline-flex items-center gap-1 rounded-md border border-primary/25 bg-primary/10 px-2 py-0.5 text-2xs font-mono font-medium text-primary">
+                            <Sparkles className="size-3" />
+                            <span>/{matchedSkill.name}</span>
+                          </div>
+                        )}
                         {text && (
                           <p className="text-ui-base leading-relaxed text-message-foreground font-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere] select-text min-w-0">
                             {text}
@@ -1240,12 +1231,12 @@ export const AgentActiveSessionView: React.FC = () => {
                         )}
                         </div>
 
-                        <div className="flex w-full max-w-[80%] items-center justify-end gap-2 pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 group-hover/user-row:opacity-100">
+                        <div className="flex w-full max-w-[82%] items-center justify-end gap-2 pe-1 text-2xs tabular-nums opacity-0 transition-opacity duration-200 group-hover/user-row:opacity-100">
                           <p className="text-fg-tertiary">{formatRelativeTime(msg.timestamp)}</p>
                           <button
                             type="button"
                             onClick={() => handleCopy(text, msg.id || `u-${index}`)}
-                            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
                             title="Copy message"
                           >
                             {copiedMsgId === (msg.id || `u-${index}`) ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}
@@ -1619,18 +1610,25 @@ export const AgentActiveSessionView: React.FC = () => {
 
                         {/* 1. WORKED-FOR HEADER & PROCESS GROUP — covers thoughts, in-process texts, and tools */}
                         {hasWork ? (
-                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-2 border-b border-border-subtle pb-2 pt-1 select-none">
+                          <div className="w-full max-w-full min-w-0 flex flex-col items-start space-y-2 pb-1 pt-0.5 select-none">
                             <button
                               type="button"
                               aria-expanded={workOpen}
                               onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !workOpen }))}
-                              className="group/wb flex w-full items-center justify-between px-2 py-1 -mx-2 rounded-md hover:bg-surface-hover/50 text-ui-xs font-medium tabular-nums cursor-pointer select-none transition-colors"
+                              className="group/wb inline-flex max-w-full items-center gap-2 rounded-lg border border-border/60 bg-surface/60 hover:bg-surface-hover px-2.5 py-1 text-ui-xs font-medium tabular-nums cursor-pointer select-none transition-colors shadow-2xs"
                             >
+                              {isTurnRunning ? (
+                                <Loader2 className="size-3 text-primary animate-spin shrink-0" />
+                              ) : (
+                                <span className="flex size-3.5 items-center justify-center rounded-full bg-success/15 text-success shrink-0">
+                                  <Check className="size-2.5 stroke-[2.75]" />
+                                </span>
+                              )}
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span
                                   role="status"
                                   aria-live="polite"
-                                  className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
+                                  className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-foreground-subtle group-hover/wb:text-foreground'}`}
                                 >
                                   {isTurnRunning
                                     ? workingLabel
@@ -1650,7 +1648,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                             {/* When work block is expanded: show all intermediate process items with grouped WorkLogList */}
                             {workOpen && (
-                              <div className="w-full max-w-full min-w-0 space-y-2.5 my-1">
+                              <div className="w-full max-w-full min-w-0 space-y-2 my-1 pl-2.5 border-l-2 border-border/60 ml-2">
                                 {(() => {
                                   const chunks: { kind: 'tools' | 'item'; items: typeof processItems }[] = [];
                                   let currentTools: typeof processItems = [];
@@ -1770,11 +1768,17 @@ export const AgentActiveSessionView: React.FC = () => {
                           <span className="text-[10px] hidden sm:inline">Checkpoint</span>
                         </button>
 
-                        <div className="ml-1 text-xs tabular-nums text-muted-foreground flex items-center gap-2">
+                        <div className="ml-1 text-2xs tabular-nums text-muted-foreground flex items-center gap-2">
                           <span>{formatRelativeTime(msg.timestamp)}</span>
+                          {(activeSession?.model || matchedAgent?.name) && (
+                            <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface/70 text-foreground-subtle border border-border/50 font-mono text-3xs select-none">
+                              <ProviderIcon provider={matchedAgent?.icon || msg.authorProvider || activeSession?.provider || 'agent-internal'} size={10} />
+                              <span className="truncate max-w-[130px]">{activeSession?.model || matchedAgent?.name}</span>
+                            </span>
+                          )}
                           {isTaskStoppedOrDone && totalStepRuns > 0 && (
                             <span
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface text-foreground-subtle border border-border/50 text-[10px] font-mono font-medium select-none"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface text-foreground-subtle border border-border/50 text-3xs font-mono font-medium select-none"
                               title={`${matchedAgent?.name || 'Agent'} completed in ${totalStepRuns} step runs`}
                             >
                               <Check className="size-2.5 text-success stroke-[2.5]" />
@@ -1806,7 +1810,7 @@ export const AgentActiveSessionView: React.FC = () => {
             Shares the conversation reading measure (48rem, centered) with the
             message list so both align cleanly at medium–full widths. */}
         <div className={cn(
-          "pt-2 pb-5 bg-background transition-colors w-full min-w-0 shrink-0",
+          "pt-1.5 pb-2.5 sm:pb-4 bg-background transition-colors w-full min-w-0 shrink-0",
           isRightActionDrawerOpen ? "px-2 sm:px-3" : "px-4 sm:px-6"
         )}>
           <div className="max-w-[var(--app-chat-max-width,48rem)] mx-auto w-full min-w-0 space-y-3">
@@ -1822,98 +1826,6 @@ export const AgentActiveSessionView: React.FC = () => {
                 acpSessionId={activeSession.acpSessionId}
                 questions={activeSession.pendingQuestions!}
               />
-            )}
-
-            {/* Changed files card */}
-            {sessionDiffs.length > 0 && (
-              <div className="@container/changed-files w-full rounded-lg bg-secondary dark:bg-input/20 overflow-hidden transition-all">
-                <div className="flex items-center justify-between gap-2 rounded-t-lg bg-secondary px-3 py-2 dark:bg-linear-to-b dark:from-input/20 dark:to-input/20">
-                  <button
-                    type="button"
-                    onClick={() => setIsDiffCardExpanded(prev => !prev)}
-                    className="flex h-full min-w-0 flex-1 items-center gap-2 text-left text-xs font-medium text-foreground cursor-pointer"
-                  >
-                    <ChevronRight
-                      className={cn(
-                        "size-3.5 shrink-0 text-muted-foreground/70 transition-transform",
-                        isDiffCardExpanded ? "rotate-90" : "rotate-0"
-                      )}
-                    />
-                    <span className="min-w-0 truncate">
-                      {sessionDiffs.length} changed {sessionDiffs.length === 1 ? 'file' : 'files'}
-                    </span>
-                    <span className="shrink-0 font-mono text-xs tabular-nums">
-                      <span className="text-diff-addition-foreground">+{totalAdditions}</span>{' '}
-                      <span className="text-diff-deletion-foreground">-{totalDeletions}</span>
-                    </span>
-                  </button>
-
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => openDiffInEditor(sessionDiffs[0])}
-                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
-                      title="Open diff in the editor pane"
-                    >
-                      <FileDiffIcon className="size-3" />
-                      <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveInlineDiff(sessionDiffs[0])}
-                      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
-                      title="Rewind / Undo changes"
-                    >
-                      <RotateCcw className="size-3" />
-                      <span className="hidden @[24rem]/changed-files:inline">Rewind</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAgentViewMode('git')}
-                      className="rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
-                    >
-                      Git
-                    </button>
-                  </div>
-                </div>
-
-                {isDiffCardExpanded && (
-                  <div className="max-h-60 space-y-0.5 overflow-y-auto p-2 pt-0">
-                    {sessionDiffs.map(d => {
-                      const parts = d.filePath.split('/');
-                      const fname = parts.pop() || d.fileName;
-                      const dir = parts.join('/') || 'root';
-                      return (
-                        <div
-                          key={d.id}
-                          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-2 text-left transition-colors hover:bg-accent/60"
-                          onClick={() => {
-                            if (d.filePath) {
-                              openSideFile(d.filePath);
-                            } else {
-                              setActiveInlineDiff(d);
-                            }
-                          }}
-                        >
-                          <span className="shrink-0 text-muted-foreground/70">
-                            {getFileIcon(fname, 'size-3.5')}
-                          </span>
-                          <span className="min-w-0 truncate font-mono text-xs text-foreground/85 group-hover:text-foreground" title={d.filePath}>
-                            {fname}
-                          </span>
-                          <span className="hidden truncate font-mono text-2xs text-muted-foreground/70 sm:inline" title={dir}>
-                            {dir}
-                          </span>
-                          <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
-                            <span className="text-diff-addition-foreground">+{d.additions}</span>{' '}
-                            <span className="text-diff-deletion-foreground">-{d.deletions}</span>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
             )}
 
             {/* Floating Jump to latest button */}
@@ -1934,15 +1846,128 @@ export const AgentActiveSessionView: React.FC = () => {
               </div>
             )}
 
-            {/* Multi-File Diff Review Bar */}
-            {reviewFiles.length > 0 && (
-              <div className="mb-2 w-full overflow-hidden rounded-lg border border-border">
-                <MultiFileDiffReviewBar
-                  files={reviewFiles}
-                  onSelectFile={handleSelectReviewFile}
-                  onAcceptAll={handleAcceptAllReview}
-                  onRejectAll={handleRejectAllReview}
-                />
+            {/* Unified Changed Files & Diff Review Dock */}
+            {sessionDiffs.length > 0 && (
+              <div className="@container/changed-files w-full rounded-xl border border-border/80 bg-panel/90 shadow-xs overflow-hidden transition-all">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-ui-xs select-none">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto scrollbar-none">
+                    <button
+                      type="button"
+                      onClick={() => setIsDiffCardExpanded(prev => !prev)}
+                      className="flex shrink-0 items-center gap-1.5 font-medium text-foreground cursor-pointer hover:text-primary transition-colors"
+                    >
+                      <ChevronRight
+                        className={cn(
+                          'size-3.5 shrink-0 text-muted-foreground/70 transition-transform',
+                          isDiffCardExpanded ? 'rotate-90' : 'rotate-0'
+                        )}
+                      />
+                      <span>
+                        {sessionDiffs.length} {sessionDiffs.length === 1 ? 'file' : 'files'} changed
+                      </span>
+                      <span className="shrink-0 font-mono text-ui-xs tabular-nums">
+                        <span className="text-diff-addition-foreground">+{totalAdditions}</span>{' '}
+                        <span className="text-diff-deletion-foreground">-{totalDeletions}</span>
+                      </span>
+                    </button>
+
+                    {!isDiffCardExpanded && (
+                      <>
+                        <div className="h-3.5 w-px bg-border/70 shrink-0" />
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {sessionDiffs.slice(0, 4).map(d => {
+                            const fname = d.filePath.split('/').pop() || d.fileName;
+                            return (
+                              <button
+                                key={d.id}
+                                type="button"
+                                onClick={() => openDiffInEditor(d)}
+                                title={`Review ${d.filePath}`}
+                                className="flex items-center gap-1.5 rounded-md border border-border/60 bg-surface px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer shrink-0"
+                              >
+                                <span className="shrink-0 text-muted-foreground/70">
+                                  {getFileIcon(fname, 'size-3')}
+                                </span>
+                                <span className="truncate max-w-[140px] font-mono">{fname}</span>
+                                <span className="font-mono text-2xs tabular-nums">
+                                  <span className="text-diff-addition-foreground">+{d.additions}</span>{' '}
+                                  <span className="text-diff-deletion-foreground">-{d.deletions}</span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openDiffInEditor(sessionDiffs[0])}
+                      className="flex items-center gap-1 rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+                      title="Open diff in the editor pane"
+                    >
+                      <FileDiffIcon className="size-3" />
+                      <span className="hidden @[28rem]/changed-files:inline">Review diff</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleRejectAllReview()}
+                      className="flex items-center gap-1 rounded-md px-2 py-1 text-ui-xs font-medium text-destructive transition-colors hover:bg-destructive/10 cursor-pointer"
+                      title="Reject all changes (Restore pre-turn checkpoint)"
+                    >
+                      <X className="size-3" />
+                      <span>Reject All</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAcceptAllReview}
+                      className="flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1 text-ui-xs font-medium text-background transition-opacity hover:opacity-90 cursor-pointer shadow-2xs"
+                      title="Accept all changes"
+                    >
+                      <Check className="size-3" />
+                      <span>Accept All</span>
+                    </button>
+                  </div>
+                </div>
+
+                {isDiffCardExpanded && (
+                  <div className="max-h-56 space-y-0.5 overflow-y-auto border-t border-border/60 p-2">
+                    {sessionDiffs.map(d => {
+                      const parts = d.filePath.split('/');
+                      const fname = parts.pop() || d.fileName;
+                      const dir = parts.join('/') || 'root';
+                      return (
+                        <div
+                          key={d.id}
+                          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-2 text-left transition-colors hover:bg-accent/60"
+                          onClick={() => {
+                            if (d.filePath) {
+                              openSideFile(d.filePath);
+                            } else {
+                              setActiveInlineDiff(d);
+                            }
+                          }}
+                        >
+                          <span className="shrink-0 text-muted-foreground/70">
+                            {getFileIcon(fname, 'size-3.5')}
+                          </span>
+                          <span className="min-w-0 truncate font-mono text-ui-xs text-foreground/85 group-hover:text-foreground" title={d.filePath}>
+                            {fname}
+                          </span>
+                          <span className="hidden truncate font-mono text-2xs text-muted-foreground/70 sm:inline" title={dir}>
+                            {dir}
+                          </span>
+                          <span className="ml-auto shrink-0 font-mono text-2xs tabular-nums">
+                            <span className="text-diff-addition-foreground">+{d.additions}</span>{' '}
+                            <span className="text-diff-deletion-foreground">-{d.deletions}</span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
