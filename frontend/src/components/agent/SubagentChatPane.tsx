@@ -283,8 +283,7 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
 
                           // Tool call
                           const t = item.tool!;
-                          const tNameLower = (t.toolName || "").toLowerCase();
-                          const defaultOpen = tNameLower.includes("write") || tNameLower.includes("edit") || tNameLower.includes("bash") || tNameLower.includes("skill") || t.status === "failed";
+                          const defaultOpen = true;
                           const isToolOpen =
                             expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
 
@@ -294,7 +293,7 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
                               tool={t}
                               isOpen={isToolOpen}
                               onToggle={() =>
-                                setExpandedTools((p) => ({ ...p, [t.id]: !isToolOpen }))
+                                setExpandedTools((p) => ({ ...p, [t.id]: !(p[t.id] ?? true) }))
                               }
                               workspacePath={workspacePath}
                             />

@@ -69,7 +69,7 @@ export const FoldedToolTraces: React.FC<FoldedToolTracesProps> = ({
   tools,
   children,
   className,
-  defaultExpanded = false
+  defaultExpanded = true
 }) => {
   const { summary, hasRunning, hasFailed } = useMemo(() => summarizeToolsList(tools), [tools]);
   const [expanded, setExpanded] = useState(defaultExpanded || hasFailed);

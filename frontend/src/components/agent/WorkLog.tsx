@@ -151,7 +151,7 @@ export function WorkLogRow({
   trailing,
   wrapLabel = false,
   children,
-  defaultExpanded = false,
+  defaultExpanded = true,
   expanded: controlledExpanded,
   onToggle: controlledToggle,
   className,

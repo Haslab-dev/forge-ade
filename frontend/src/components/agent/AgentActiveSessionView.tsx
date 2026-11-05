@@ -856,10 +856,10 @@ export const AgentActiveSessionView: React.FC = () => {
     }));
   };
 
-  const toggleTool = (id: string) => {
+  const toggleTool = (id: string, currentlyOpen?: boolean) => {
     setExpandedTools(prev => ({
       ...prev,
-      [id]: !prev[id]
+      [id]: currentlyOpen !== undefined ? !currentlyOpen : !(prev[id] ?? true)
     }));
   };
 
@@ -1358,10 +1358,10 @@ export const AgentActiveSessionView: React.FC = () => {
                     const hasWork = processItems.length > 0;
                     const wbId = `wb-${msg.id || index}`;
                     // Worked group: streams open while the turn runs and
-                    // collapses to "Worked for Ns ›" once it finishes.
+                    // defaults to open so tool processes and thoughts are immediately readable.
                     const workOpen = expandedWork[wbId] !== undefined
                       ? expandedWork[wbId]
-                      : isTurnRunning;
+                      : true;
 
                     const totalThoughtSecs = (msg.thoughts || []).reduce((a, th) => a + (th.durationSeconds || 0), 0);
                     let workSecs = totalThoughtSecs;
@@ -1459,7 +1459,7 @@ export const AgentActiveSessionView: React.FC = () => {
                       const isWrite = nameLower.includes("write") || nameLower.includes("create");
                       const isSkill = nameLower.includes("skill");
                       const isFailed = t.status === "failed" || (t.output || "").includes("<tool_use_error>");
-                      const defaultOpen = isFailed || (t.status === 'running' && (isWrite || isEdit));
+                      const defaultOpen = true;
                       const isToolOpen = expandedTools[t.id] !== undefined ? expandedTools[t.id] : defaultOpen;
 
                       return (
@@ -1467,7 +1467,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           key={t.id}
                           tool={t}
                           isOpen={isToolOpen}
-                          onToggle={() => toggleTool(t.id)}
+                          onToggle={() => toggleTool(t.id, isToolOpen)}
                           workspacePath={activeSession.workspacePath}
                         />
                       );
@@ -1485,7 +1485,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                   key={st.id}
                                   tool={st}
                                   isOpen={isSkillOpen}
-                                  onToggle={() => toggleTool(st.id)}
+                                  onToggle={() => toggleTool(st.id, isSkillOpen)}
                                   workspacePath={activeSession.workspacePath}
                                 />
                               );
@@ -1498,7 +1498,7 @@ export const AgentActiveSessionView: React.FC = () => {
                             {subagentTools.map(st => {
                               const info = parseSubagentTool(st);
                               const isRunning = st.status === 'running';
-                              const isSubOpen = expandedTools[st.id] !== undefined ? expandedTools[st.id] : isRunning;
+                              const isSubOpen = expandedTools[st.id] !== undefined ? expandedTools[st.id] : true;
                               return (
                                 <div
                                   key={st.id}
@@ -1506,7 +1506,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                   data-testid="subagent-spawn-row"
                                 >
                                   <div
-                                    onClick={() => toggleTool(st.id)}
+                                    onClick={() => toggleTool(st.id, isSubOpen)}
                                     className="flex min-h-9 w-full max-w-full min-w-0 items-center gap-3 py-1.5 ps-4 pe-3 cursor-pointer select-none hover:bg-secondary/90 transition-colors"
                                   >
                                     <Bot className="size-4 shrink-0 text-muted-foreground" />
@@ -1580,7 +1580,7 @@ export const AgentActiveSessionView: React.FC = () => {
                             <button
                               type="button"
                               aria-expanded={workOpen}
-                              onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !prev[wbId] }))}
+                              onClick={() => setExpandedWork(prev => ({ ...prev, [wbId]: !workOpen }))}
                               className="group/wb flex h-5 min-w-0 items-center gap-1.5 px-1 text-ui-xs font-medium tabular-nums cursor-pointer w-fit select-none"
                             >
                               <span
@@ -1623,7 +1623,7 @@ export const AgentActiveSessionView: React.FC = () => {
                                     if (chunk.kind === 'tools') {
                                       const toolsList = chunk.items.map(it => it.tool!).filter(Boolean);
                                       return (
-                                        <FoldedToolTraces key={`folded-tools-${cIdx}`} tools={toolsList} className="w-full">
+                                        <FoldedToolTraces key={`folded-tools-${cIdx}`} tools={toolsList} defaultExpanded={true} className="w-full">
                                           <WorkLogList className="w-full">
                                             {chunk.items.map(it => renderTimelineItem(it))}
                                           </WorkLogList>

@@ -1734,14 +1734,14 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
                           {m.toolExecutions && m.toolExecutions.length > 0 && (
                             <div className="space-y-1.5 mb-2.5 w-full max-w-full min-w-0">
                               {m.toolExecutions.map(t => {
-                                const isExpanded = expandedSideTools[t.id] ?? false;
+                                const isExpanded = expandedSideTools[t.id] ?? true;
                                 const isRunning = t.status === 'running';
                                 const isFailed = t.status === 'failed';
                                 return (
                                   <div key={t.id} className="rounded-[8px] bg-surface bg-panel border border-border overflow-hidden text-xs max-w-full min-w-0">
                                     <button
                                       type="button"
-                                      onClick={() => setExpandedSideTools(prev => ({ ...prev, [t.id]: !isExpanded }))}
+                                      onClick={() => setExpandedSideTools(prev => ({ ...prev, [t.id]: !(prev[t.id] ?? true) }))}
                                       className="w-full px-2.5 py-1.5 flex items-center justify-between text-left hover:bg-surface-hover dark:hover:bg-[#222225] transition-colors cursor-pointer"
                                     >
                                       <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
