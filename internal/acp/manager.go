@@ -35,6 +35,7 @@ type Manager struct {
 	activeTools        map[string]map[string]activeToolInfo // sessionID -> toolCallID -> info
 	sessionHasStreamed map[string]bool                      // sessionID -> whether message text was streamed
 	turnStepSeen       map[string]map[int]bool              // sessionID -> set of stepIndex seen in current turn
+	turnToolSeen       map[string]map[string]bool           // sessionID -> set of toolCallID seen in current turn
 }
 
 func NewManager(bus *events.Bus) *Manager {
@@ -46,6 +47,7 @@ func NewManager(bus *events.Bus) *Manager {
 		activeTools:        make(map[string]map[string]activeToolInfo),
 		sessionHasStreamed: make(map[string]bool),
 		turnStepSeen:       make(map[string]map[int]bool),
+		turnToolSeen:       make(map[string]map[string]bool),
 	}
 }
 
@@ -127,6 +129,27 @@ func (m *Manager) recordUsageLocked(sessionID string, u *ContextUsage) {
 		"usage":       sess.Usage,
 		"promptCount": sess.PromptCount,
 	})
+}
+
+func (m *Manager) recordToolStepLocked(sessionID string, toolID string) {
+	if m.turnToolSeen == nil {
+		m.turnToolSeen = make(map[string]map[string]bool)
+	}
+	if m.turnToolSeen[sessionID] == nil {
+		m.turnToolSeen[sessionID] = make(map[string]bool)
+	}
+	if toolID != "" {
+		m.turnToolSeen[sessionID][toolID] = true
+	}
+	if sess, ok := m.sessions[sessionID]; ok {
+		toolCount := len(m.turnToolSeen[sessionID])
+		stepCount := len(m.turnStepSeen[sessionID])
+		if toolCount > stepCount {
+			sess.StepCount = toolCount
+		} else {
+			sess.StepCount = stepCount
+		}
+	}
 }
 
 // resolveExecutablePath searches system PATH and standard user CLI install paths
@@ -891,6 +914,10 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		m.turnStepSeen = make(map[string]map[int]bool)
 	}
 	m.turnStepSeen[sessionID] = make(map[int]bool)
+	if m.turnToolSeen == nil {
+		m.turnToolSeen = make(map[string]map[string]bool)
+	}
+	m.turnToolSeen[sessionID] = make(map[string]bool)
 	m.saveSessionsLocked()
 	effectivePrompt := enrichPromptWithBoardGuidance(session, prompt)
 	m.mu.Unlock()
@@ -1430,7 +1457,13 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 				}
 				m.turnStepSeen[sessionID][su.StepIndex] = true
 				if sess, ok := m.sessions[sessionID]; ok {
-					sess.StepCount = len(m.turnStepSeen[sessionID])
+					stepCount := len(m.turnStepSeen[sessionID])
+					toolCount := len(m.turnToolSeen[sessionID])
+					if stepCount > toolCount {
+						sess.StepCount = stepCount
+					} else {
+						sess.StepCount = toolCount
+					}
 				}
 				m.mu.Unlock()
 			}
@@ -1471,6 +1504,11 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 					}
 				}
 				if su.State == "ACTIVE" {
+					if toolID != "" {
+						m.mu.Lock()
+						m.recordToolStepLocked(sessionID, toolID)
+						m.mu.Unlock()
+					}
 					m.emitEvent("agent:tool_start", map[string]interface{}{
 						"sessionId":    sessionID,
 						"session_id":   sessionID,
@@ -1577,6 +1615,11 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 						"delta":      c.Thinking,
 					})
 				} else if c.Type == "tool_use" {
+					if c.ID != "" {
+						m.mu.Lock()
+						m.recordToolStepLocked(sessionID, c.ID)
+						m.mu.Unlock()
+					}
 					m.emitEvent("agent:tool_start", map[string]interface{}{
 						"sessionId":    sessionID,
 						"session_id":   sessionID,
@@ -1836,6 +1879,11 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 				if toolName == "" {
 					toolName = "bash"
 				}
+				if itemPayload.Item.ID != "" {
+					m.mu.Lock()
+					m.recordToolStepLocked(sessionID, itemPayload.Item.ID)
+					m.mu.Unlock()
+				}
 				m.emitEvent("agent:tool_start", map[string]interface{}{
 					"sessionId":    sessionID,
 					"session_id":   sessionID,
@@ -2052,6 +2100,9 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 				name:  toolName,
 				title: title,
 				args:  rawInput,
+			}
+			if toolID != "" {
+				m.recordToolStepLocked(sessionID, toolID)
 			}
 		}
 		m.mu.Unlock()

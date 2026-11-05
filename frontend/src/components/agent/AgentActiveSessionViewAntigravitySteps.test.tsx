@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { AgentActiveSessionView } from './AgentActiveSessionView';
 
@@ -103,20 +103,28 @@ describe('AgentActiveSessionView - Antigravity Step Runs and Accordion Defaults'
     expect(stepBadge.textContent).toContain('Done in 3 steps');
   });
 
-  it('keeps worked and group tools accordion default open, while individual tools calling are default closed', () => {
+  it('keeps worked accordion closed when task is done, and when opened shows group tools open with individual tools closed', () => {
     const { container } = render(<AgentActiveSessionView />);
 
-    // 1. Worked accordion is open (shows process items)
+    // 1. Worked accordion is closed by default when task is done
     const workedBtn = screen.getAllByRole('button').find(b => b.textContent?.includes('Done in 3 steps'));
     expect(workedBtn).toBeDefined();
+    expect(workedBtn?.getAttribute('aria-expanded')).toBe('false');
 
-    // 2. Group tools accordion (FoldedToolTraces) is default open
+    // Group tools should not be visible while worked accordion is closed
+    expect(screen.queryByText(/Hide 3 steps/i)).toBeNull();
+
+    // 2. Click to open worked accordion
+    fireEvent.click(workedBtn!);
+    expect(workedBtn?.getAttribute('aria-expanded')).toBe('true');
+
+    // 3. Group tools accordion (FoldedToolTraces) is default open inside
     expect(screen.getByText(/Hide 3 steps/i)).toBeInTheDocument();
 
-    // 3. Tool rows are visible inside the group tools accordion
+    // 4. Tool rows are visible inside the group tools accordion
     expect(screen.getByText(/npm test/i)).toBeInTheDocument();
 
-    // 4. Individual tool calling output bodies are default CLOSED
+    // 5. Individual tool calling output bodies are default CLOSED
     expect(screen.queryByText('tests passed 100%')).toBeNull();
     expect(screen.queryByText('content of index.ts')).toBeNull();
   });
@@ -197,5 +205,40 @@ describe('AgentActiveSessionView - Antigravity Step Runs and Accordion Defaults'
     // Turn 2 shows "Done in 2 steps" (NOT cumulative 5 steps!)
     expect(screen.getByTitle(/Antigravity completed in 2 step runs/i)).toBeInTheDocument();
     expect(screen.queryByTitle(/Antigravity completed in 5 step runs/i)).toBeNull();
+  });
+
+  it('renders "Done in X steps" by default for other agents (Claude, Codex, Internal) when task is completed', () => {
+    mockActiveSession = {
+      id: 'sess-claude-1',
+      agentId: 'agent-claude',
+      status: 'completed',
+      messages: [
+        { id: 'u1', role: 'user', content: 'Design architecture', timestamp: '3m ago' },
+        {
+          id: 'a1',
+          role: 'agent',
+          content: 'Architecture proposed',
+          timestamp: '2m ago',
+          thoughts: [{ id: 'th1', thoughtText: 'Analyzing dependencies', durationSeconds: 5 }],
+          toolExecutions: [
+            { id: 'tool-1', toolName: 'readFile', status: 'completed' },
+            { id: 'tool-2', toolName: 'writeFile', status: 'completed' }
+          ],
+          totalSteps: 2
+        }
+      ],
+      tasks: [],
+      diffs: []
+    };
+
+    render(<AgentActiveSessionView />);
+
+    // Worked accordion shows "Done in 2 steps"
+    const workedButtons = screen.getAllByRole('button');
+    const workedBtn = workedButtons.find(b => b.textContent?.includes('Done in 2 steps'));
+    expect(workedBtn).toBeDefined();
+
+    // Both worked header and footer badge show "Done in 2 steps"
+    expect(screen.getAllByText(/Done in 2 steps/i)).toHaveLength(2);
   });
 });

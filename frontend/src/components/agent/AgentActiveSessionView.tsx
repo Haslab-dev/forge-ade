@@ -700,7 +700,7 @@ export const AgentActiveSessionView: React.FC = () => {
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    setProgrammaticScroll(behavior === 'smooth' ? 550 : 150);
+    setProgrammaticScroll(behavior === 'smooth' ? 350 : 150);
     userScrolledUpRef.current = false;
     wasAtBottomRef.current = true;
     setIsScrolledUp(false);
@@ -716,15 +716,11 @@ export const AgentActiveSessionView: React.FC = () => {
       } else {
         el.scrollTop = el.scrollHeight;
       }
-      chatBottomRef.current?.scrollIntoView({ behavior: b, block: 'end' });
     };
 
-    // Staggered multi-stage scroll to ensure DOM layout, textarea resize, and fonts settle
+    // Staggered frame scroll to ensure DOM reflow and font settling
     performScroll(behavior);
     requestAnimationFrame(() => performScroll(behavior));
-    setTimeout(() => performScroll(behavior), 50);
-    setTimeout(() => performScroll('auto'), 120);
-    setTimeout(() => performScroll('auto'), 250);
   }, [setProgrammaticScroll]);
 
   // Update active turn based on scroll position and track user scroll intent
@@ -847,6 +843,13 @@ export const AgentActiveSessionView: React.FC = () => {
     }
     return () => ro.disconnect();
   }, []);
+
+  // Guard against ancestor container scroll displacement
+  useEffect(() => {
+    if (chatColumnRef.current && chatColumnRef.current.scrollTop !== 0) {
+      chatColumnRef.current.scrollTop = 0;
+    }
+  });
 
   if (!activeSession) return null;
 
@@ -1082,7 +1085,12 @@ export const AgentActiveSessionView: React.FC = () => {
                   type="button"
                   onClick={() => {
                     const el = document.getElementById(`turn-${turn.userMessageId}`);
-                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    if (el && chatScrollRef.current) {
+                      const containerRect = chatScrollRef.current.getBoundingClientRect();
+                      const elRect = el.getBoundingClientRect();
+                      const targetTop = chatScrollRef.current.scrollTop + (elRect.top - containerRect.top) - 24;
+                      chatScrollRef.current.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+                    }
                   }}
                   onMouseEnter={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
@@ -1140,7 +1148,7 @@ export const AgentActiveSessionView: React.FC = () => {
           onWheel={handleWheel}
           data-agent-chat="true"
           className={cn(
-            "flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 space-y-6 select-text relative w-full min-w-0",
+            "flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 space-y-6 select-text relative w-full min-w-0 overscroll-y-contain",
             isRightActionDrawerOpen ? "px-3 sm:px-4" : "px-6 sm:px-8"
           )}
         >
@@ -1362,10 +1370,10 @@ export const AgentActiveSessionView: React.FC = () => {
                     const hasWork = processItems.length > 0;
                     const wbId = `wb-${msg.id || index}`;
                     // Worked group: streams open while the turn runs and
-                    // defaults to open so tool processes and thoughts are immediately readable.
+                    // collapses when task is done / finished.
                     const workOpen = expandedWork[wbId] !== undefined
                       ? expandedWork[wbId]
-                      : true;
+                      : isTurnRunning;
 
                     const totalThoughtSecs = (msg.thoughts || []).reduce((a, th) => a + (th.durationSeconds || 0), 0);
                     let workSecs = totalThoughtSecs;
@@ -1621,7 +1629,7 @@ export const AgentActiveSessionView: React.FC = () => {
                               >
                                 {isTurnRunning
                                   ? workingLabel
-                                  : isAntigravityAgent && isTaskStoppedOrDone && totalStepRuns > 0
+                                  : isTaskStoppedOrDone && totalStepRuns > 0
                                   ? `Worked for ${formatElapsedSeconds(workSecs)} · Done in ${totalStepRuns} ${totalStepRuns === 1 ? 'step' : 'steps'}`
                                   : `Worked for ${formatElapsedSeconds(workSecs)}`}
                               </span>
@@ -1755,10 +1763,10 @@ export const AgentActiveSessionView: React.FC = () => {
 
                         <div className="ml-1 text-xs tabular-nums text-muted-foreground flex items-center gap-2">
                           <span>{formatRelativeTime(msg.timestamp)}</span>
-                          {isAntigravityAgent && isTaskStoppedOrDone && totalStepRuns > 0 && (
+                          {isTaskStoppedOrDone && totalStepRuns > 0 && (
                             <span
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface text-foreground-subtle border border-border/50 text-[10px] font-mono font-medium select-none"
-                              title={`Antigravity completed in ${totalStepRuns} step runs`}
+                              title={`${matchedAgent?.name || 'Agent'} completed in ${totalStepRuns} step runs`}
                             >
                               <Check className="size-2.5 text-success stroke-[2.5]" />
                               <span>Done in {totalStepRuns} {totalStepRuns === 1 ? 'step' : 'steps'}</span>

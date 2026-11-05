@@ -801,3 +801,53 @@ func TestTurnStepsPerTaskNotCumulative(t *testing.T) {
 		t.Errorf("expected Turn 2 turn_end total_steps 2, got %d", turnEndTotalSteps)
 	}
 }
+
+func TestTurnStepsForAllAgents(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "test-all-agents-steps"
+	sess := &Session{
+		ID:       sessionID,
+		AgentID:  "agent-codex",
+		Protocol: "codex-appserver",
+		Status:   "running",
+	}
+	cli := &Client{stdin: testNopWriteCloser{io.Discard}}
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = sess
+	mgr.clients[sessionID] = cli
+	if mgr.turnStepSeen == nil {
+		mgr.turnStepSeen = make(map[string]map[int]bool)
+	}
+	mgr.turnStepSeen[sessionID] = make(map[int]bool)
+	if mgr.turnToolSeen == nil {
+		mgr.turnToolSeen = make(map[string]map[string]bool)
+	}
+	mgr.turnToolSeen[sessionID] = make(map[string]bool)
+	mgr.mu.Unlock()
+
+	var turnEndTotalSteps int
+	bus.Subscribe(events.EventType("agent:turn_end"), func(e events.Event) {
+		if val, ok := e.Data["total_steps"].(int); ok {
+			turnEndTotalSteps = val
+		}
+	})
+
+	// Simulate Codex app-server item/started
+	mgr.handleNotification(sessionID, "item/started", []byte(`{"item":{"id":"call-1","type":"commandExecution","toolName":"bash","command":"go test"}}`))
+	mgr.handleNotification(sessionID, "item/started", []byte(`{"item":{"id":"call-2","type":"toolCall","toolName":"readFile","command":"src/main.go"}}`))
+
+	mgr.mu.RLock()
+	if sess.StepCount != 2 {
+		t.Errorf("expected StepCount to be 2 for Codex agent, got %d", sess.StepCount)
+	}
+	mgr.mu.RUnlock()
+
+	// Simulate turn completion
+	mgr.handleNotification(sessionID, "turn/completed", []byte(`{"turn":{"status":"completed"}}`))
+
+	if turnEndTotalSteps != 2 {
+		t.Errorf("expected turn_end total_steps 2 for Codex agent, got %d", turnEndTotalSteps)
+	}
+}

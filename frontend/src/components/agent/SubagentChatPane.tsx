@@ -51,10 +51,12 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
 
-  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: 'smooth' });
+    }
   }, [messages.length, isRunning]);
 
   const handleCopy = (text: string, id: string) => {
@@ -154,7 +156,7 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
       </div>
 
       {/* Message Stream */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 select-text">
+      <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-4 select-text overscroll-y-contain">
         {messages.length === 0 ? (
           <div className="py-12 text-center text-foreground-subtlest space-y-2">
             <Sparkles className="size-7 mx-auto opacity-60 text-foreground-subtle" />
@@ -171,7 +173,7 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
             const workItems = getWorkItems(msg);
             const hasWork = workItems.length > 0;
             const wbId = `wb-${msg.id || idx}`;
-            const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : true;
+            const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : isRunning;
             const hasText = !!(msg.content && msg.content.trim());
 
             if (isUser) {
@@ -322,7 +324,6 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
             );
           })
         )}
-        <div ref={chatBottomRef} />
       </div>
 
       {/* Permission Approval Gate */}

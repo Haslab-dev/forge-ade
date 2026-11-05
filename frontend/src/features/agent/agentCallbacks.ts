@@ -281,7 +281,8 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
                 cleanedTurnTexts[Number(k)] = cleanRawToolTags(v || '');
               }
             }
-            const reportedSteps = turnData?.total_steps || turnData?.step_count || m.totalSteps || m.stepCount;
+            const fallbackSteps = (m.toolExecutions || []).length + (m.thoughts || []).length;
+            const reportedSteps = turnData?.total_steps || turnData?.step_count || m.totalSteps || m.stepCount || (fallbackSteps > 0 ? fallbackSteps : undefined);
             if (cancelled) {
               const base = cleanedContent
                 .replace(/\s*\(\*?stopped by user\*?\)/gi, '')
