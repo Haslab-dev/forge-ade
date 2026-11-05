@@ -30,6 +30,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
     openFolder,
     closeWorkspace,
     gitBranch,
+    setGitBranch,
     refreshGitStatus,
     refreshGitLog
   } = useWorkspace();
@@ -100,6 +101,7 @@ export const AgentHomeView: React.FC<AgentHomeViewProps> = () => {
     setSwitchingBranch(targetBranch);
     try {
       await ApiBridge.gitCheckout(activeWorkspacePath, targetBranch);
+      setGitBranch(targetBranch);
       await refreshGitStatus();
       await refreshGitLog();
       setIsBranchDropdownOpen(false);

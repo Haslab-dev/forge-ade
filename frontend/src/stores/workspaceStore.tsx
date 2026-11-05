@@ -349,6 +349,7 @@ export interface WorkspaceContextType {
 
   // Git State
   gitBranch: string;
+  setGitBranch: (branch: string | ((prev: string) => string)) => void;
   gitFiles: Array<{ path: string; status: string; staging?: 'staged' | 'unstaged' | 'untracked'; dir?: string; additions?: number; deletions?: number }>;
   gitCommits: any[];
   refreshGitStatus: () => Promise<void>;
@@ -2867,6 +2868,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     acceptDiff: async (diffId) => {
       await useGitStore.getState().acceptDiff(diffId, get().refreshFiles);
     },
+    setGitBranch: (branch) => useGitStore.getState().setGitBranch(branch),
     refreshGitStatus: async () => {
       await useGitStore.getState().refreshGitStatus(get().activeWorkspacePath);
     },

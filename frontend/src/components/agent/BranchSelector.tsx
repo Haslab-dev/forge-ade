@@ -45,8 +45,15 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   align = 'start',
   className,
 }) => {
-  const { activeWorkspacePath, gitBranch, gitFiles, refreshGitStatus, refreshGitLog, refreshFiles } =
-    useWorkspace();
+  const {
+    activeWorkspacePath,
+    gitBranch,
+    gitFiles,
+    setGitBranch,
+    refreshGitStatus,
+    refreshGitLog,
+    refreshFiles,
+  } = useWorkspace();
 
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
@@ -57,6 +64,9 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
   const [branchError, setBranchError] = useState('');
   const [gitGraphOpen, setGitGraphOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  const displayBranch =
+    gitBranch && gitBranch !== 'unknown' && gitBranch !== '(unknown)' ? gitBranch : 'main';
 
   const menuRef = useDropdownDismiss(() => {
     setOpen(false);
@@ -112,7 +122,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
         onClick={() => void openMenu()}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Git branch: ${gitBranch}`}
+        aria-label={`Git branch: ${displayBranch}`}
         className={cn(
           'inline-flex h-7 cursor-pointer items-center gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground/80 sm:h-6',
           open && 'bg-accent text-foreground',
@@ -120,7 +130,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
         title="Git branch"
       >
         <GitBranch className="size-3 shrink-0 opacity-70" />
-        <span className="max-w-[80px] @[440px]/composer:max-w-[180px] truncate">{gitBranch}</span>
+        <span className="max-w-[80px] @[440px]/composer:max-w-[180px] truncate">{displayBranch}</span>
         <ChevronDown className="size-3 shrink-0 opacity-50" />
       </button>
 
@@ -167,6 +177,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
                     setCreatingBranch(false);
                     setNewBranchName('');
                     setOpen(false);
+                    setGitBranch(name);
                     refreshAfterCheckout();
                   } catch (err: any) {
                     setBranchError(err?.message || String(err));
@@ -215,7 +226,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
                 <p className="px-2 py-1.5 text-ui-sm text-fg-tertiary">No branches</p>
               ) : (
                 filteredBranches.map(b => {
-                  const isCurrent = b === gitBranch;
+                  const isCurrent = b === displayBranch;
                   return (
                     <button
                       key={b}
@@ -231,6 +242,7 @@ export const BranchSelector: React.FC<BranchSelectorProps> = ({
                         try {
                           await ApiBridge.gitCheckout(activeWorkspacePath, b);
                           setOpen(false);
+                          setGitBranch(b);
                           refreshAfterCheckout();
                         } catch (err: any) {
                           // Uncommitted changes etc. keep the menu open and show why.

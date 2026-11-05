@@ -2,6 +2,8 @@ package git
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -143,4 +145,51 @@ func TestGetStatusInvalidationStorm(t *testing.T) {
 	}
 	wg.Wait()
 	close(stop)
+}
+
+func TestResolveBranchNeverUnknown(t *testing.T) {
+	repo := t.TempDir()
+	ctx := context.Background()
+
+	// Initialize git repo with branch 'feature-alpha'
+	run := func(args ...string) {
+		t.Helper()
+		cmd := gitCmd(ctx, repo, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %s", args, string(out))
+		}
+	}
+	run("init", "-b", "feature-alpha")
+	run("config", "user.name", "Test User")
+	run("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# Test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README.md")
+	run("commit", "-m", "init")
+
+	e := NewEngine()
+	st, err := e.GetStatus(ctx, repo)
+	if err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if st.Branch != "feature-alpha" {
+		t.Fatalf("expected branch 'feature-alpha', got %q", st.Branch)
+	}
+
+	// Create an index.lock to simulate lock contention during branch checkout
+	lockFile := filepath.Join(repo, ".git", "index.lock")
+	if err := os.WriteFile(lockFile, []byte("locked"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(lockFile)
+
+	e.Invalidate(repo)
+	stLocked, err := e.GetStatus(ctx, repo)
+	if err != nil {
+		t.Fatalf("GetStatus with index.lock: %v", err)
+	}
+	if stLocked.Branch != "feature-alpha" {
+		t.Fatalf("expected branch 'feature-alpha' even with lock, got %q", stLocked.Branch)
+	}
 }

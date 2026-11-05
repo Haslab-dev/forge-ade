@@ -72,13 +72,21 @@ export const useGitStore = create<GitStoreState>((set, get) => ({
   refreshGitStatus: async (wsPath: string) => {
     try {
       const result = await ApiBridge.gitStatus(wsPath);
-      const branch = result?.branch || '';
+      const prevBranch = get().gitBranch;
+      const rawBranch = result?.branch ? result.branch.trim() : '';
+      const branch =
+        rawBranch && rawBranch !== 'unknown' && rawBranch !== '(unknown)'
+          ? rawBranch
+          : prevBranch && prevBranch !== 'unknown' && prevBranch !== '(unknown)'
+            ? prevBranch
+            : 'main';
       const files = result?.files || [];
       set({ gitBranch: branch, gitFiles: files });
       return { branch, files };
     } catch (err) {
       console.warn('Failed to refresh git status:', err);
-      return { branch: '', files: [] };
+      const prevBranch = get().gitBranch;
+      return { branch: prevBranch && prevBranch !== 'unknown' ? prevBranch : '', files: [] };
     }
   },
 

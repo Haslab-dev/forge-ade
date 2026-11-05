@@ -141,6 +141,7 @@ interface GitControlPanelProps {
 export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff }) => {
   const {
     gitBranch,
+    setGitBranch,
     gitFiles,
     gitCommits,
     refreshGitStatus,
@@ -670,6 +671,7 @@ export const GitControlPanel: React.FC<GitControlPanelProps> = ({ onOpenFullDiff
                         setSwitchingBranch(b);
                         try {
                           await ApiBridge.gitCheckout(cwd, b);
+                          setGitBranch(b);
                           await refreshGitStatus();
                           await refreshGitLog();
                           await refreshFiles();

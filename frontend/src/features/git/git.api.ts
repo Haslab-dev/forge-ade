@@ -119,7 +119,8 @@ export class GitApi {
     try {
       const res = await WailsGetGitStatus(cwd || '');
       if (res && typeof res === 'object') {
-        const branch = res.branch || 'main';
+        const rawBranch = typeof res.branch === 'string' ? res.branch.trim() : '';
+        const branch = rawBranch && rawBranch !== 'unknown' && rawBranch !== '(unknown)' ? rawBranch : 'main';
         const files: GitFileStatus[] = [];
         if (Array.isArray(res.staged)) {
           res.staged.forEach((f: any) =>
@@ -185,13 +186,24 @@ export class GitApi {
   public static async gitCheckout(repoPathOrBranch: string, branchOrRepoPath?: string): Promise<void> {
     let cwd = '';
     let branch = '';
-    if (branchOrRepoPath !== undefined) {
-      if (repoPathOrBranch.startsWith('/') || repoPathOrBranch.includes('\\') || repoPathOrBranch === '.') {
+    if (branchOrRepoPath !== undefined && branchOrRepoPath !== '') {
+      const secondLooksLikePath =
+        branchOrRepoPath.startsWith('/') ||
+        branchOrRepoPath.startsWith('./') ||
+        branchOrRepoPath.startsWith('../') ||
+        /^[a-zA-Z]:[\\/]/.test(branchOrRepoPath);
+      const firstLooksLikePath =
+        repoPathOrBranch.startsWith('/') ||
+        repoPathOrBranch.startsWith('./') ||
+        repoPathOrBranch.startsWith('../') ||
+        /^[a-zA-Z]:[\\/]/.test(repoPathOrBranch);
+
+      if (secondLooksLikePath && !firstLooksLikePath) {
+        cwd = branchOrRepoPath;
+        branch = repoPathOrBranch;
+      } else {
         cwd = repoPathOrBranch;
         branch = branchOrRepoPath;
-      } else {
-        branch = repoPathOrBranch;
-        cwd = branchOrRepoPath;
       }
     } else {
       branch = repoPathOrBranch;

@@ -42,6 +42,9 @@ type GitStatusResult struct {
 // the entry mid-wait. The previous implementation fell through to the TTL
 // branch with the mutex already unlocked and crashed on double Unlock.
 func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
+	if root, ok := FindRepoRoot(repoPath); ok {
+		repoPath = root
+	}
 	for {
 		e.statusMu.Lock()
 		ent, ok := e.statusCache[repoPath]
@@ -85,19 +88,97 @@ func (e *Engine) GetStatus(ctx context.Context, repoPath string) (*GitStatusResu
 	}
 }
 
+// resolveBranch retrieves the current branch name safely via rev-parse,
+// symbolic-ref, direct .git/HEAD inspection, or status cache, avoiding "unknown".
+func (e *Engine) resolveBranch(ctx context.Context, repoPath string) string {
+	if root, ok := FindRepoRoot(repoPath); ok {
+		repoPath = root
+	}
+
+	// 1. Try rev-parse --abbrev-ref HEAD
+	cmd := gitCmd(ctx, repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if out, err := cmd.Output(); err == nil {
+		b := strings.TrimSpace(string(out))
+		if b != "" && b != "HEAD" {
+			return b
+		}
+	}
+
+	// 2. Try symbolic-ref --short HEAD
+	cmdRef := gitCmd(ctx, repoPath, "symbolic-ref", "--short", "HEAD")
+	if out, err := cmdRef.Output(); err == nil {
+		b := strings.TrimSpace(string(out))
+		if b != "" {
+			return b
+		}
+	}
+
+	// 3. Fallback: inspect .git/HEAD directly without spawning git processes
+	headFile := filepath.Join(repoPath, ".git", "HEAD")
+	if data, err := os.ReadFile(headFile); err == nil {
+		content := strings.TrimSpace(string(data))
+		if strings.HasPrefix(content, "ref: refs/heads/") {
+			return strings.TrimPrefix(content, "ref: refs/heads/")
+		}
+		// Worktrees / git submodules gitdir pointer
+		if strings.HasPrefix(content, "gitdir:") {
+			gitDir := strings.TrimSpace(strings.TrimPrefix(content, "gitdir:"))
+			if !filepath.IsAbs(gitDir) {
+				gitDir = filepath.Join(repoPath, gitDir)
+			}
+			if data2, err2 := os.ReadFile(filepath.Join(gitDir, "HEAD")); err2 == nil {
+				c2 := strings.TrimSpace(string(data2))
+				if strings.HasPrefix(c2, "ref: refs/heads/") {
+					return strings.TrimPrefix(c2, "ref: refs/heads/")
+				}
+			}
+		}
+		if len(content) >= 7 {
+			return fmt.Sprintf("(detached at %s)", content[:7])
+		}
+	}
+
+	// 4. Fallback to existing non-empty branch in status cache
+	e.statusMu.Lock()
+	if ent, ok := e.statusCache[repoPath]; ok && ent.res != nil && ent.res.Branch != "" && ent.res.Branch != "unknown" && ent.res.Branch != "(unknown)" {
+		prev := ent.res.Branch
+		e.statusMu.Unlock()
+		return prev
+	}
+	e.statusMu.Unlock()
+
+	return "main"
+}
+
 func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusResult, error) {
+	if root, ok := FindRepoRoot(repoPath); ok {
+		repoPath = root
+	}
 	// -uall lists every untracked FILE individually (VS Code behavior) instead
 	// of collapsing an untracked directory into a single "? dir/" entry whose
 	// filename is empty and can't be staged/opened.
 	cmd := gitCmd(ctx, repoPath, "status", "--porcelain=v2", "-b", "-uall")
 
 	outBytes, err := cmd.CombinedOutput()
+	// If index.lock contention happened (e.g. during branch checkout), retry once
+	if err != nil && strings.Contains(string(outBytes), "index.lock") {
+		select {
+		case <-time.After(60 * time.Millisecond):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		cmdRetry := gitCmd(ctx, repoPath, "status", "--porcelain=v2", "-b", "-uall")
+		outBytes, err = cmdRetry.CombinedOutput()
+	}
+
 	if err != nil {
+		branch := e.resolveBranch(ctx, repoPath)
 		return &GitStatusResult{
-			Branch:    "unknown",
+			Branch:    branch,
 			Staged:    []FileStatus{},
 			Unstaged:  []FileStatus{},
 			Untracked: []FileStatus{},
+			Conflicts: []FileStatus{},
 		}, nil
 	}
 
@@ -199,6 +280,10 @@ func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusR
 				})
 			}
 		}
+	}
+
+	if res.Branch == "" || res.Branch == "unknown" || res.Branch == "(unknown)" {
+		res.Branch = e.resolveBranch(ctx, repoPath)
 	}
 
 	annotateNumstat(ctx, repoPath, res)

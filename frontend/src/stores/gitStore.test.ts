@@ -56,4 +56,28 @@ describe('useGitStore (Zustand)', () => {
     useGitStore.getState().rejectDiff('d1');
     expect(useGitStore.getState().diffs[0].status).toBe('rejected');
   });
+
+  it('preserves existing branch and does not overwrite with unknown', async () => {
+    useGitStore.setState({ gitBranch: 'feature-custom' });
+    vi.mocked(ApiBridge.gitStatus).mockResolvedValueOnce({
+      branch: 'unknown',
+      files: [],
+    } as any);
+
+    const res = await useGitStore.getState().refreshGitStatus('/workspace');
+    expect(res.branch).toBe('feature-custom');
+    expect(useGitStore.getState().gitBranch).toBe('feature-custom');
+  });
+
+  it('falls back to main if no previous branch and unknown returned', async () => {
+    useGitStore.setState({ gitBranch: '' });
+    vi.mocked(ApiBridge.gitStatus).mockResolvedValueOnce({
+      branch: 'unknown',
+      files: [],
+    } as any);
+
+    const res = await useGitStore.getState().refreshGitStatus('/workspace');
+    expect(res.branch).toBe('main');
+    expect(useGitStore.getState().gitBranch).toBe('main');
+  });
 });

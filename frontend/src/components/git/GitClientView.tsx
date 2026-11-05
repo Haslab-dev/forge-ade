@@ -81,6 +81,7 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
   const {
     activeWorkspacePath,
     gitBranch,
+    setGitBranch,
     gitFiles,
     gitCommits,
     refreshGitStatus,
@@ -552,6 +553,7 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     setIsSwitchingBranch(true);
     try {
       await ApiBridge.gitCheckout(cwd, branch);
+      setGitBranch(branch);
       setBranchMenuOpen(false);
       showToast(`Switched to branch ${branch}`, 'info');
       await refreshGitStatus();
@@ -574,6 +576,7 @@ export const GitClientView: React.FC<GitClientViewProps> = ({ onClose, className
     if (!name) return;
     try {
       await ApiBridge.gitCreateBranch(cwd, name);
+      setGitBranch(name);
       setNewBranchName('');
       setIsCreatingBranch(false);
       setBranchMenuOpen(false);

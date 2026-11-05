@@ -63,6 +63,9 @@ type statusEntry struct {
 // re-runs git status. Call after any mutation (stage, commit, discard...) or
 // after file-system changes that may affect the working tree.
 func (e *Engine) invalidate(repoPath string) {
+	if root, ok := FindRepoRoot(repoPath); ok {
+		repoPath = root
+	}
 	e.statusMu.Lock()
 	delete(e.statusCache, repoPath)
 	e.statusMu.Unlock()
