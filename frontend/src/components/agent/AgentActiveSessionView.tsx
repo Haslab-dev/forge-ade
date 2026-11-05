@@ -701,7 +701,7 @@ export const AgentActiveSessionView: React.FC = () => {
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    setProgrammaticScroll(behavior === 'smooth' ? 350 : 150);
+    setProgrammaticScroll(behavior === 'smooth' ? 550 : 150);
     userScrolledUpRef.current = false;
     wasAtBottomRef.current = true;
     setIsScrolledUp(false);
@@ -719,9 +719,13 @@ export const AgentActiveSessionView: React.FC = () => {
       }
     };
 
-    // Staggered frame scroll to ensure DOM reflow and font settling
+    // Staggered multi-stage scroll to ensure DOM layout, textarea resize, and fonts settle
     performScroll(behavior);
     requestAnimationFrame(() => performScroll(behavior));
+    setTimeout(() => performScroll(behavior), 50);
+    setTimeout(() => performScroll(behavior), 120);
+    setTimeout(() => performScroll('auto'), 250);
+    setTimeout(() => performScroll('auto'), 450);
   }, [setProgrammaticScroll]);
 
   // Update active turn based on scroll position and track user scroll intent
@@ -1789,7 +1793,7 @@ export const AgentActiveSessionView: React.FC = () => {
             })
           )}
 
-          <div ref={chatBottomRef} className="h-4 shrink-0" />
+          <div ref={chatBottomRef} className="h-28 sm:h-36 shrink-0" />
           </div>
         </div>
 
