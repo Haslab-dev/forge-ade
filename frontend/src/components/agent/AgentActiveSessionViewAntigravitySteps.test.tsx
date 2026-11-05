@@ -158,6 +158,11 @@ describe('AgentActiveSessionView - Antigravity Step Runs and Accordion Defaults'
     expect(screen.queryByText(/Done in/i)).toBeNull();
     // Action footer badge should NOT be present
     expect(screen.queryByTitle(/Antigravity completed/i)).toBeNull();
+
+    // Worked accordion MUST be OPEN while in progress
+    const runningWorkedBtn = screen.getAllByRole('button').find(b => b.textContent?.includes('Working'));
+    expect(runningWorkedBtn).toBeDefined();
+    expect(runningWorkedBtn?.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('renders per-task step count for second turn instead of cumulative session step count', () => {

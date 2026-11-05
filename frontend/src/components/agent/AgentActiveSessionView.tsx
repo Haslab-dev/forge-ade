@@ -454,8 +454,9 @@ export const AgentActiveSessionView: React.FC = () => {
   }, [sessionDiffs]);
 
   const isSessionWorking = !!(
-    (activeSession?.goState === 'thinking' || activeSession?.goState === 'executing') ||
-    (activeSession?.status === 'running' && activeSession?.messages?.some(m => m.isThinking))
+    activeSession?.status === 'running' ||
+    activeSession?.goState === 'thinking' ||
+    activeSession?.goState === 'executing'
   );
 
   const lastAgentMsg = activeSession?.messages?.slice().reverse().find(m => m.role === 'agent');
@@ -1369,11 +1370,10 @@ export const AgentActiveSessionView: React.FC = () => {
                     // Has collapsible work? Yes if there are thoughts, tools, or in-process intermediate texts.
                     const hasWork = processItems.length > 0;
                     const wbId = `wb-${msg.id || index}`;
-                    // Worked group: streams open while the turn runs and
-                    // collapses when task is done / finished.
-                    const workOpen = expandedWork[wbId] !== undefined
-                      ? expandedWork[wbId]
-                      : isTurnRunning;
+                    // Worked group: open when in progress, close when done.
+                    const workOpen = isTurnRunning
+                      ? (expandedWork[wbId] !== false)
+                      : (expandedWork[wbId] === true);
 
                     const totalThoughtSecs = (msg.thoughts || []).reduce((a, th) => a + (th.durationSeconds || 0), 0);
                     let workSecs = totalThoughtSecs;

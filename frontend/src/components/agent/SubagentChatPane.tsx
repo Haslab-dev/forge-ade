@@ -173,7 +173,9 @@ export const SubagentChatPane: React.FC<SubagentChatPaneProps> = ({
             const workItems = getWorkItems(msg);
             const hasWork = workItems.length > 0;
             const wbId = `wb-${msg.id || idx}`;
-            const workOpen = expandedWork[wbId] !== undefined ? expandedWork[wbId] : isRunning;
+            const workOpen = isRunning
+              ? (expandedWork[wbId] !== false)
+              : (expandedWork[wbId] === true);
             const hasText = !!(msg.content && msg.content.trim());
 
             if (isUser) {
