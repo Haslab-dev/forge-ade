@@ -246,8 +246,10 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	agentKey = strings.TrimPrefix(agentKey, "agent-")
 
 	resumeID := strings.TrimSpace(opts.ResumeSessionID)
-	if resumeID == "" && strings.TrimSpace(opts.SessionID) != "" {
-		resumeID = strings.TrimSpace(opts.SessionID)
+	// Internal Forge ADE session handles (starting with session- or acp-) must never be forwarded
+	// to external CLI agents as resume identifiers.
+	if strings.HasPrefix(resumeID, "session-") || strings.HasPrefix(resumeID, "acp-") {
+		resumeID = ""
 	}
 
 	protocol := "acp"
@@ -417,13 +419,38 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 
 	client.OnClose = func(err error) {
 		m.mu.Lock()
-		if sess, ok := m.sessions[sessionID]; ok {
+		sess, ok := m.sessions[sessionID]
+		var wasRunning bool
+		var remoteSessID string
+		if ok {
+			wasRunning = (sess.Status == "running")
 			sess.Status = "closed"
 			sess.UpdatedAt = time.Now().UnixMilli()
+			remoteSessID = sess.RemoteSessionID
 			m.saveSessionsLocked()
 		}
 		m.mu.Unlock()
 		log.Printf("[acp] session %s client closed (err: %v)", sessionID, err)
+
+		errMsg := ""
+		if err != nil {
+			errMsg = err.Error()
+		}
+		if wasRunning {
+			m.emitEvent("agent:turn_end", map[string]interface{}{
+				"sessionId":         sessionID,
+				"session_id":        sessionID,
+				"remoteSessionId":   remoteSessID,
+				"remote_session_id": remoteSessID,
+				"status":            "closed",
+				"error":             errMsg,
+			})
+		}
+		m.emitEvent("agent:stopped", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+			"error":      errMsg,
+		})
 	}
 
 	// Set up notification dispatcher
@@ -1290,18 +1317,43 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		var initPayload struct {
 			ConversationID string `json:"conversation_id"`
 			SessionID      string `json:"session_id"`
+			UUID           string `json:"uuid"`
+			Init           struct {
+				Tools          []string `json:"tools"`
+				PermissionMode string   `json:"permission_mode"`
+			} `json:"init"`
 		}
 		_ = json.Unmarshal(raw, &initPayload)
-		if initPayload.ConversationID != "" || initPayload.SessionID != "" {
+		cid := initPayload.ConversationID
+		if cid == "" {
+			cid = initPayload.SessionID
+		}
+		if cid == "" {
+			cid = initPayload.UUID
+		}
+		if cid != "" {
 			m.mu.Lock()
 			if sess, ok := m.sessions[sessionID]; ok {
-				if initPayload.ConversationID != "" {
-					sess.RemoteSessionID = initPayload.ConversationID
-				} else if initPayload.SessionID != "" {
-					sess.RemoteSessionID = initPayload.SessionID
-				}
+				sess.RemoteSessionID = cid
 			}
 			m.mu.Unlock()
+		}
+		if len(initPayload.Init.Tools) > 0 {
+			var cmds []AvailableCommand
+			for _, t := range initPayload.Init.Tools {
+				if t != "" {
+					cmds = append(cmds, AvailableCommand{Name: t})
+				}
+			}
+			m.mu.Lock()
+			if sess, ok := m.sessions[sessionID]; ok {
+				sess.AvailableCommands = cmds
+			}
+			m.mu.Unlock()
+			m.emitEvent("agent:available_commands", map[string]interface{}{
+				"sessionId": sessionID,
+				"commands":  cmds,
+			})
 		}
 		if initCh != nil {
 			select {
@@ -1326,6 +1378,8 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		// Google Antigravity agy
 		var payload struct {
 			StepUpdate struct {
+				ConversationID  string                 `json:"conversation_id"`
+				SessionID       string                 `json:"session_id"`
 				StepIndex       int                    `json:"step_index"`
 				State           string                 `json:"state"`
 				StepType        string                 `json:"step_type"`
@@ -1340,6 +1394,17 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		}
 		if err := json.Unmarshal(raw, &payload); err == nil {
 			su := payload.StepUpdate
+			cid := su.ConversationID
+			if cid == "" {
+				cid = su.SessionID
+			}
+			if cid != "" {
+				m.mu.Lock()
+				if sess, ok := m.sessions[sessionID]; ok && sess.RemoteSessionID == "" {
+					sess.RemoteSessionID = cid
+				}
+				m.mu.Unlock()
+			}
 			if su.StepIndex > 0 {
 				m.mu.Lock()
 				if sess, ok := m.sessions[sessionID]; ok {
@@ -1586,22 +1651,53 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 
 	case "result":
 		var resPayload struct {
-			SessionID string        `json:"session_id"`
-			UUID      string        `json:"uuid"`
-			Usage     *ContextUsage `json:"usage"`
+			SessionID      string        `json:"session_id"`
+			ConversationID string        `json:"conversation_id"`
+			UUID           string        `json:"uuid"`
+			Usage          *ContextUsage `json:"usage"`
+			Result         struct {
+				SessionID      string        `json:"session_id"`
+				ConversationID string        `json:"conversation_id"`
+				UUID           string        `json:"uuid"`
+				Status         string        `json:"status"`
+				Usage          *ContextUsage `json:"usage"`
+			} `json:"result"`
 		}
 		_ = json.Unmarshal(raw, &resPayload)
+
+		remoteID := resPayload.ConversationID
+		if remoteID == "" {
+			remoteID = resPayload.SessionID
+		}
+		if remoteID == "" {
+			remoteID = resPayload.UUID
+		}
+		if remoteID == "" {
+			remoteID = resPayload.Result.ConversationID
+		}
+		if remoteID == "" {
+			remoteID = resPayload.Result.SessionID
+		}
+		if remoteID == "" {
+			remoteID = resPayload.Result.UUID
+		}
+
+		usage := resPayload.Usage
+		if usage == nil {
+			usage = resPayload.Result.Usage
+		}
+
 		m.mu.Lock()
+		var remoteSessID string
 		if sess, ok := m.sessions[sessionID]; ok {
 			sess.Status = "idle"
 			sess.UpdatedAt = time.Now().UnixMilli()
-			if resPayload.SessionID != "" {
-				sess.RemoteSessionID = resPayload.SessionID
-			} else if resPayload.UUID != "" {
-				sess.RemoteSessionID = resPayload.UUID
+			if remoteID != "" {
+				sess.RemoteSessionID = remoteID
 			}
-			if resPayload.Usage != nil {
-				m.recordUsageLocked(sessionID, resPayload.Usage)
+			remoteSessID = sess.RemoteSessionID
+			if usage != nil {
+				m.recordUsageLocked(sessionID, usage)
 			}
 			m.saveSessionsLocked()
 		}
@@ -1618,12 +1714,15 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		m.mu.Unlock()
 
 		m.emitEvent("agent:turn_end", map[string]interface{}{
-			"sessionId":   sessionID,
-			"session_id":  sessionID,
-			"status":      "completed",
-			"usage":       turnUsage,
-			"total_steps": totalSteps,
-			"step_count":  totalSteps,
+			"sessionId":         sessionID,
+			"session_id":        sessionID,
+			"remoteSessionId":   remoteSessID,
+			"remote_session_id": remoteSessID,
+			"conversation_id":   remoteSessID,
+			"status":            "completed",
+			"usage":             turnUsage,
+			"total_steps":       totalSteps,
+			"step_count":        totalSteps,
 		})
 	}
 }

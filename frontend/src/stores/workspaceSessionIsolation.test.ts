@@ -195,4 +195,46 @@ describe('Strict Session Configuration & Steer Queue Isolation', () => {
     expect(steerStore.getQueue('session-steer-a')).toEqual(['Add comprehensive unit tests']);
     expect(steerStore.getQueue('session-steer-b')).toEqual(['Implement dark mode']);
   });
+
+  it('hydrates session from savedSessions into sessions on setActiveSessionId and accepts prompts', () => {
+    const store = useWorkspace.getState();
+
+    const historicalSession: AgentSession = {
+      id: 'sess-historical-1',
+      title: 'Historical Session',
+      status: 'idle',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      agentId: 'agent-agy',
+      model: 'gemini-2.5-pro',
+      workspacePath: '/data/workspace/forge-ade',
+      messages: [
+        { id: 'm1', role: 'user', content: 'initial task', timestamp: '1m ago' }
+      ]
+    };
+
+    // Initialize with session only in savedSessions and not in active sessions
+    useWorkspace.setState({
+      sessions: [],
+      savedSessions: [historicalSession],
+      activeSessionId: null
+    });
+
+    // Selecting historical session
+    useWorkspace.getState().setActiveSessionId('sess-historical-1');
+
+    // Must be hydrated into active sessions array
+    const stateAfterSelect = useWorkspace.getState();
+    expect(stateAfterSelect.activeSessionId).toBe('sess-historical-1');
+    expect(stateAfterSelect.sessions.some(s => s.id === 'sess-historical-1')).toBe(true);
+
+    // Submitting a new prompt to this resumed session
+    useWorkspace.getState().sendAgentPrompt('continue next step');
+
+    const stateAfterPrompt = useWorkspace.getState();
+    const active = stateAfterPrompt.sessions.find(s => s.id === 'sess-historical-1');
+    expect(active).toBeDefined();
+    expect(active?.status).toBe('running');
+    expect(active?.messages.some(m => m.content === 'continue next step')).toBe(true);
+  });
 });

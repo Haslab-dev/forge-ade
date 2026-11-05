@@ -2,6 +2,7 @@ package acp
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -604,5 +605,131 @@ func TestManagerCancelStopsProcessAndSuppressesEvents(t *testing.T) {
 
 	if deltaEmitted {
 		t.Errorf("expected stream event delta to be suppressed after cancellation")
+	}
+}
+
+func TestStreamResultExtractsNestedConversationID(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "test-agy-result-sess"
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = &Session{
+		ID:       sessionID,
+		AgentID:  "agent-agy",
+		Protocol: "agy-stream",
+		Status:   "running",
+	}
+	mgr.mu.Unlock()
+
+	var turnEndData map[string]interface{}
+	bus.Subscribe(events.EventType("agent:turn_end"), func(e events.Event) {
+		turnEndData = e.Data
+	})
+
+	rawResult := []byte(`{
+		"event": "result",
+		"result": {
+			"conversation_id": "conv-nested-uuid-1234",
+			"status": "SUCCESS",
+			"response": "Done!",
+			"duration_seconds": 1.25,
+			"usage": {
+				"input_tokens": 500,
+				"output_tokens": 20
+			}
+		}
+	}`)
+
+	mgr.handleStreamEvent(sessionID, "result", rawResult, nil)
+
+	mgr.mu.RLock()
+	sess := mgr.sessions[sessionID]
+	mgr.mu.RUnlock()
+
+	if sess.RemoteSessionID != "conv-nested-uuid-1234" {
+		t.Errorf("expected RemoteSessionID 'conv-nested-uuid-1234', got '%s'", sess.RemoteSessionID)
+	}
+	if sess.Status != "idle" {
+		t.Errorf("expected session status 'idle', got '%s'", sess.Status)
+	}
+	if turnEndData == nil {
+		t.Fatalf("expected agent:turn_end event to be emitted")
+	}
+	if turnEndData["remoteSessionId"] != "conv-nested-uuid-1234" {
+		t.Errorf("expected turnEndData remoteSessionId 'conv-nested-uuid-1234', got '%v'", turnEndData["remoteSessionId"])
+	}
+}
+
+func TestClientOnCloseEmitsTurnEndWhenRunning(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "test-close-running-sess"
+	sess := &Session{
+		ID:              sessionID,
+		AgentID:         "agent-claude",
+		Protocol:        "claude-stream",
+		RemoteSessionID: "claude-uuid-789",
+		Status:          "running",
+	}
+	client := &Client{}
+
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = sess
+	mgr.clients[sessionID] = client
+	mgr.mu.Unlock()
+
+	var turnEndEmitted bool
+	var turnEndStatus string
+	var stoppedEmitted bool
+	bus.Subscribe(events.EventType("agent:turn_end"), func(e events.Event) {
+		turnEndEmitted = true
+		if s, ok := e.Data["status"].(string); ok {
+			turnEndStatus = s
+		}
+	})
+	bus.Subscribe(events.EventType("agent:stopped"), func(e events.Event) {
+		stoppedEmitted = true
+	})
+
+	// Simulate client closing while running
+	client.OnClose = func(err error) {
+		mgr.mu.Lock()
+		s, ok := mgr.sessions[sessionID]
+		var wasRunning bool
+		var remoteSessID string
+		if ok {
+			wasRunning = (s.Status == "running")
+			s.Status = "closed"
+			s.UpdatedAt = time.Now().UnixMilli()
+			remoteSessID = s.RemoteSessionID
+		}
+		mgr.mu.Unlock()
+
+		if wasRunning {
+			mgr.emitEvent("agent:turn_end", map[string]interface{}{
+				"sessionId":       sessionID,
+				"session_id":      sessionID,
+				"remoteSessionId": remoteSessID,
+				"status":          "closed",
+			})
+		}
+		mgr.emitEvent("agent:stopped", map[string]interface{}{
+			"sessionId":  sessionID,
+			"session_id": sessionID,
+		})
+	}
+
+	client.OnClose(errors.New("process exited with status 1"))
+
+	if !turnEndEmitted {
+		t.Errorf("expected agent:turn_end to be emitted on close during running turn")
+	}
+	if turnEndStatus != "closed" {
+		t.Errorf("expected turn_end status 'closed', got '%s'", turnEndStatus)
+	}
+	if !stoppedEmitted {
+		t.Errorf("expected agent:stopped to be emitted")
 	}
 }

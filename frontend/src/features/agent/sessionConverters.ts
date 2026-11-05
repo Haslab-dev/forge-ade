@@ -47,8 +47,15 @@ export function normalizeLoadedSession(s: any): AgentSession | null {
   const reasoningLevel = s.reasoningLevel || 'medium';
   const agentId = s.agentId || 'agent-internal';
 
+  let remoteSessionId = s.remoteSessionId || s.remote_session_id;
+  if (typeof remoteSessionId === 'string' && (remoteSessionId.startsWith('session-') || remoteSessionId.startsWith('acp-'))) {
+    remoteSessionId = undefined;
+  }
+
   return {
     ...s,
+    acpSessionId: undefined,
+    remoteSessionId,
     agentId,
     executionMode,
     reasoningLevel,

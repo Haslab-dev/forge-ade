@@ -1749,8 +1749,12 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
           currentModel: targetModel,
           agentExecutionMode: targetMode,
           reasoningLevel: targetReasoning,
-          sessions: prev.sessions.map(s => s.id === id ? { ...s, ...updatedTarget } : s),
-          savedSessions: prev.savedSessions.map(s => s.id === id ? { ...s, ...updatedTarget } : s)
+          sessions: prev.sessions.some(s => s.id === id)
+            ? prev.sessions.map(s => s.id === id ? { ...s, ...updatedTarget } : s)
+            : [updatedTarget, ...prev.sessions],
+          savedSessions: prev.savedSessions.some(s => s.id === id)
+            ? prev.savedSessions.map(s => s.id === id ? { ...s, ...updatedTarget } : s)
+            : [updatedTarget, ...prev.savedSessions]
         }));
 
         try {
@@ -2430,7 +2434,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         return;
       }
 
-      const activeSessionObj = get().sessions.find(s => s.id === activeSessionId);
+      const activeSessionObj = get().sessions.find(s => s.id === activeSessionId) || get().savedSessions.find(s => s.id === activeSessionId);
       const agentIdToUse = activeSessionObj?.agentId || get().activeAgentId;
       const agentObj = get().agents.find(a => a.id === agentIdToUse) || get().activeAgent;
       const userMsg: AgentMessage = {
@@ -2450,9 +2454,8 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         thoughts: []
       };
 
-      updateStore(prev => ({
-        sessions: prev.sessions.map(s => {
-          if (s.id !== activeSessionId) return s;
+      updateStore(prev => {
+        const updateSessionFn = (s: AgentSession): AgentSession => {
           const isDefault = !s.title || s.title === 'New Session' || s.title.startsWith('session-');
           return {
             ...s,
@@ -2461,8 +2464,20 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
             updatedAt: new Date().toISOString(),
             messages: [...s.messages.map(m => m.isThinking ? { ...m, isThinking: false } : m), userMsg, agentPlaceholder]
           };
-        })
-      }));
+        };
+
+        const existsInSessions = prev.sessions.some(s => s.id === activeSessionId);
+        const baseSession = existsInSessions ? null : (prev.savedSessions.find(s => s.id === activeSessionId) || activeSessionObj);
+
+        const updatedSessions = existsInSessions
+          ? prev.sessions.map(s => s.id === activeSessionId ? updateSessionFn(s) : s)
+          : (baseSession ? [updateSessionFn(baseSession), ...prev.sessions] : prev.sessions);
+
+        return {
+          sessions: updatedSessions,
+          savedSessions: prev.savedSessions.map(s => s.id === activeSessionId ? updateSessionFn(s) : s)
+        };
+      });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('forge:chat-submitted'));
@@ -3088,8 +3103,11 @@ async function ensureGoHarness(storeSession: AgentSession): Promise<string | nul
 
 async function executeAgentMessage(storeSessionId: string, prompt: string, sessionOverride?: AgentSession) {
   const store = useWorkspace.getState();
-  const storeSession = sessionOverride || store.sessions.find(s => s.id === storeSessionId);
+  const storeSession = sessionOverride || store.sessions.find(s => s.id === storeSessionId) || store.savedSessions.find(s => s.id === storeSessionId);
   if (!storeSession) return;
+  if (!store.sessions.some(s => s.id === storeSessionId)) {
+    store.setSessions(prev => [storeSession, ...prev]);
+  }
 
   const agentObj = store.agents.find(a => a.id === storeSession.agentId) || store.activeAgent;
 
@@ -3120,7 +3138,11 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
 
       const rawModel = storeSession.model || (agentObj.type !== 'internal' ? agentObj.model : store.currentModel);
       const effectiveModel = (rawModel && rawModel !== 'default' && rawModel !== 'Default') ? rawModel : '';
-      const resumeRemoteId = storeSession.remoteSessionId || previousId || storeSession.acpSessionId;
+      
+      let resumeRemoteId = storeSession.remoteSessionId;
+      if (typeof resumeRemoteId === 'string' && (resumeRemoteId.startsWith('session-') || resumeRemoteId.startsWith('acp-'))) {
+        resumeRemoteId = undefined;
+      }
 
       const acpSession = await ACPStartSession({
         agentId: agentObj.id,
@@ -3138,12 +3160,15 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
         const newAcpId = acpSession.id;
         acpId = newAcpId;
         storeSession.acpSessionId = newAcpId;
-        storeSession.remoteSessionId = acpSession.remoteSessionId || acpSession.id;
+        const validRemoteId = acpSession.remoteSessionId && !acpSession.remoteSessionId.startsWith('session-') && !acpSession.remoteSessionId.startsWith('acp-')
+          ? acpSession.remoteSessionId
+          : (resumeRemoteId || undefined);
+        storeSession.remoteSessionId = validRemoteId;
         const initialCmds = (acpSession as any).availableCommands || agentObj.commands || [];
         store.setSessions(prev => prev.map(s => s.id === storeSession.id ? {
           ...s,
           acpSessionId: newAcpId,
-          remoteSessionId: acpSession.remoteSessionId || acpSession.id,
+          remoteSessionId: validRemoteId,
           availableCommands: s.availableCommands && s.availableCommands.length > 0 ? s.availableCommands : initialCmds,
           goState: 'idle'
         } : s));

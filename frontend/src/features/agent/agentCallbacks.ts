@@ -317,10 +317,17 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
           }
           return m;
         });
+        const incomingRemote = turnData?.remoteSessionId || turnData?.remote_session_id || turnData?.conversation_id;
+        const validIncoming = typeof incomingRemote === 'string' && incomingRemote && !incomingRemote.startsWith('session-') && !incomingRemote.startsWith('acp-')
+          ? incomingRemote
+          : undefined;
+        const finalRemoteId = validIncoming || (s.remoteSessionId && !s.remoteSessionId.startsWith('session-') && !s.remoteSessionId.startsWith('acp-') ? s.remoteSessionId : undefined);
+
         const finishedSession: AgentSession = {
           ...s,
           status: 'completed' as const,
           goState: 'idle',
+          remoteSessionId: finalRemoteId,
           pendingTools: [],
           pendingQuestions: [],
           messages: msgs
