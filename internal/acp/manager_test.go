@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -731,5 +732,72 @@ func TestClientOnCloseEmitsTurnEndWhenRunning(t *testing.T) {
 	}
 	if !stoppedEmitted {
 		t.Errorf("expected agent:stopped to be emitted")
+	}
+}
+
+type testNopWriteCloser struct {
+	io.Writer
+}
+
+func (testNopWriteCloser) Close() error { return nil }
+
+func TestTurnStepsPerTaskNotCumulative(t *testing.T) {
+	bus := events.NewBus()
+	mgr := NewManager(bus)
+
+	sessionID := "test-per-task-steps"
+	sess := &Session{
+		ID:       sessionID,
+		AgentID:  "agent-agy",
+		Protocol: "agy-stream",
+		Status:   "idle",
+	}
+	cli := &Client{stdin: testNopWriteCloser{io.Discard}}
+	mgr.mu.Lock()
+	mgr.sessions[sessionID] = sess
+	mgr.clients[sessionID] = cli
+	mgr.mu.Unlock()
+
+	var turnEndTotalSteps int
+	bus.Subscribe(events.EventType("agent:turn_end"), func(e events.Event) {
+		if val, ok := e.Data["total_steps"].(int); ok {
+			turnEndTotalSteps = val
+		}
+	})
+
+	// === Turn 1: steps 1, 2, 3 ===
+	_ = mgr.Prompt(sessionID, "Task 1")
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":1,"state":"ACTIVE"}}`), nil)
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":1,"state":"DONE"}}`), nil)
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":2,"state":"DONE"}}`), nil)
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":3,"state":"DONE"}}`), nil)
+
+	mgr.mu.RLock()
+	if sess.StepCount != 3 {
+		t.Errorf("expected Turn 1 StepCount to be 3, got %d", sess.StepCount)
+	}
+	mgr.mu.RUnlock()
+
+	mgr.handleStreamEvent(sessionID, "result", []byte(`{"event":"result","result":{"status":"SUCCESS"}}`), nil)
+	if turnEndTotalSteps != 3 {
+		t.Errorf("expected Turn 1 turn_end total_steps 3, got %d", turnEndTotalSteps)
+	}
+
+	// === Turn 2: steps 4, 5 (cumulative index continues from agy) ===
+	_ = mgr.Prompt(sessionID, "Task 2")
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":4,"state":"ACTIVE"}}`), nil)
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":4,"state":"DONE"}}`), nil)
+	mgr.handleStreamEvent(sessionID, "step_update", []byte(`{"event":"step_update","step_update":{"step_index":5,"state":"DONE"}}`), nil)
+
+	mgr.mu.RLock()
+	// Turn 2 MUST only have 2 steps, NOT 5 (cumulative sum) and NOT 0
+	if sess.StepCount != 2 {
+		t.Errorf("expected Turn 2 StepCount to be 2 for Task 2, got %d", sess.StepCount)
+	}
+	mgr.mu.RUnlock()
+
+	mgr.handleStreamEvent(sessionID, "result", []byte(`{"event":"result","result":{"status":"SUCCESS"}}`), nil)
+	if turnEndTotalSteps != 2 {
+		t.Errorf("expected Turn 2 turn_end total_steps 2, got %d", turnEndTotalSteps)
 	}
 }

@@ -34,6 +34,7 @@ type Manager struct {
 	pendingDecisions   map[string]chan string               // requestID -> decision channel
 	activeTools        map[string]map[string]activeToolInfo // sessionID -> toolCallID -> info
 	sessionHasStreamed map[string]bool                      // sessionID -> whether message text was streamed
+	turnStepSeen       map[string]map[int]bool              // sessionID -> set of stepIndex seen in current turn
 }
 
 func NewManager(bus *events.Bus) *Manager {
@@ -44,6 +45,7 @@ func NewManager(bus *events.Bus) *Manager {
 		pendingDecisions:   make(map[string]chan string),
 		activeTools:        make(map[string]map[string]activeToolInfo),
 		sessionHasStreamed: make(map[string]bool),
+		turnStepSeen:       make(map[string]map[int]bool),
 	}
 }
 
@@ -436,6 +438,10 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 		if err != nil {
 			errMsg = err.Error()
 		}
+		var totalSteps int
+		if ok {
+			totalSteps = sess.StepCount
+		}
 		if wasRunning {
 			m.emitEvent("agent:turn_end", map[string]interface{}{
 				"sessionId":         sessionID,
@@ -444,6 +450,8 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 				"remote_session_id": remoteSessID,
 				"status":            "closed",
 				"error":             errMsg,
+				"total_steps":       totalSteps,
+				"step_count":        totalSteps,
 			})
 		}
 		m.emitEvent("agent:stopped", map[string]interface{}{
@@ -879,6 +887,10 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	session.StepCount = 0
 	session.UpdatedAt = time.Now().UnixMilli()
 	m.sessionHasStreamed[sessionID] = false
+	if m.turnStepSeen == nil {
+		m.turnStepSeen = make(map[string]map[int]bool)
+	}
+	m.turnStepSeen[sessionID] = make(map[int]bool)
 	m.saveSessionsLocked()
 	effectivePrompt := enrichPromptWithBoardGuidance(session, prompt)
 	m.mu.Unlock()
@@ -1202,15 +1214,18 @@ func (m *Manager) Cancel(sessionID string) error {
 		})
 	}
 
+	totalSteps := session.StepCount
 	m.emitEvent("agent:stopped", map[string]interface{}{
 		"sessionId":  sessionID,
 		"session_id": sessionID,
 	})
 
 	m.emitEvent("agent:turn_end", map[string]interface{}{
-		"sessionId":  sessionID,
-		"session_id": sessionID,
-		"status":     "stopped",
+		"sessionId":   sessionID,
+		"session_id":  sessionID,
+		"status":      "stopped",
+		"total_steps": totalSteps,
+		"step_count":  totalSteps,
 	})
 
 	return nil
@@ -1407,10 +1422,15 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			}
 			if su.StepIndex > 0 {
 				m.mu.Lock()
+				if m.turnStepSeen == nil {
+					m.turnStepSeen = make(map[string]map[int]bool)
+				}
+				if m.turnStepSeen[sessionID] == nil {
+					m.turnStepSeen[sessionID] = make(map[int]bool)
+				}
+				m.turnStepSeen[sessionID][su.StepIndex] = true
 				if sess, ok := m.sessions[sessionID]; ok {
-					if su.StepIndex > sess.StepCount {
-						sess.StepCount = su.StepIndex
-					}
+					sess.StepCount = len(m.turnStepSeen[sessionID])
 				}
 				m.mu.Unlock()
 			}

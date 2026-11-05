@@ -1385,23 +1385,20 @@ export const AgentActiveSessionView: React.FC = () => {
                       msg.authorProvider === 'agy' ||
                       (matchedAgent?.id === 'agent-agy' || (matchedAgent?.name || '').toLowerCase().includes('antigravity'));
 
-                    // Calculate total steps for Antigravity (max tool step index, thoughts/tools count, or reported totalSteps)
+                    // Calculate total steps for Antigravity: strictly for THIS task/message, NOT cumulative session steps!
                     let totalStepRuns = msg.totalSteps || msg.stepCount || 0;
                     if (!totalStepRuns) {
-                      for (const t of allTools) {
-                        const m = t.id?.match(/agy-tool-(\d+)/);
-                        if (m) {
-                          const idx = parseInt(m[1], 10);
-                          if (idx > totalStepRuns) totalStepRuns = idx;
-                        }
+                      const toolCount = allTools.length;
+                      const thoughtCount = (msg.thoughts || []).length;
+                      if (toolCount > 0 || thoughtCount > 0) {
+                        totalStepRuns = toolCount + thoughtCount;
                       }
                     }
-                    if (!totalStepRuns) {
-                      totalStepRuns = (msg.thoughts?.length || 0) + allTools.length;
-                    }
-                    if (!totalStepRuns && !isTurnRunning) {
-                      totalStepRuns = timelineItems.length || 1;
-                    }
+
+                    // A task is considered stopped or completed only when it is no longer running or thinking
+                    const isTaskStoppedOrDone = !isTurnRunning && !isCurrentlyThinking && !msg.isThinking && (
+                      activeSession?.status !== 'running' || msg.id !== lastAgentMsgId
+                    );
 
                     if (!hasWork && !isTurnRunning && finalItems.length === 0) {
                       return null;
@@ -1623,8 +1620,8 @@ export const AgentActiveSessionView: React.FC = () => {
                                 className={`block truncate ${isTurnRunning ? 'live-tool-shine font-medium' : 'text-muted-foreground group-hover/wb:text-foreground'}`}
                               >
                                 {isTurnRunning
-                                  ? (isAntigravityAgent && totalStepRuns > 0 ? `${workingLabel} · Step ${totalStepRuns}` : workingLabel)
-                                  : isAntigravityAgent && totalStepRuns > 0
+                                  ? workingLabel
+                                  : isAntigravityAgent && isTaskStoppedOrDone && totalStepRuns > 0
                                   ? `Worked for ${formatElapsedSeconds(workSecs)} · Done in ${totalStepRuns} ${totalStepRuns === 1 ? 'step' : 'steps'}`
                                   : `Worked for ${formatElapsedSeconds(workSecs)}`}
                               </span>
@@ -1758,7 +1755,7 @@ export const AgentActiveSessionView: React.FC = () => {
 
                         <div className="ml-1 text-xs tabular-nums text-muted-foreground flex items-center gap-2">
                           <span>{formatRelativeTime(msg.timestamp)}</span>
-                          {isAntigravityAgent && !isTurnRunning && totalStepRuns > 0 && (
+                          {isAntigravityAgent && isTaskStoppedOrDone && totalStepRuns > 0 && (
                             <span
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-surface text-foreground-subtle border border-border/50 text-[10px] font-mono font-medium select-none"
                               title={`Antigravity completed in ${totalStepRuns} step runs`}
