@@ -62,7 +62,7 @@ import { HtmlRenderFrame } from './HtmlRenderFrame';
 import { getFileIcon } from '../../lib/file-icons';
 import { highlightCodeLine } from '../../lib/diff-highlight';
 import { AgentEngine } from '../../services/agentEngine';
-import { AgentMessage } from '../../types';
+import { AgentMessage, FileDiff } from '../../types';
 import { SubagentChatPane } from './SubagentChatPane';
 
 export type SidePaneTab = 'terminal' | 'sideChat' | 'browser' | 'subagent' | 'deck';
