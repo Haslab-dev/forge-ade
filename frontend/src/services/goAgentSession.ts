@@ -223,7 +223,11 @@ class GoAgentSessionManager {
       const cb = this.callbacks.get(data?.session_id);
       // Auto snapshot workspace checkpoint on turn end
       const sessionId = data?.session_id;
-      const workspace = useWorkspace.getState().activeWorkspacePath;
+      const allSessions = useWorkspace.getState().sessions;
+      const allSaved = useWorkspace.getState().savedSessions;
+      const matchingSession = allSessions?.find(s => s.goSessionId === sessionId || s.id === sessionId) ||
+        allSaved?.find(s => s.goSessionId === sessionId || s.id === sessionId);
+      const workspace = matchingSession?.workspacePath || useWorkspace.getState().activeWorkspacePath;
       if (workspace && sessionId) {
         void CreateSessionCheckpoint(workspace, sessionId, `turn-${data.turn || Date.now()}`, `Turn ${data.turn || ''} snapshot`);
       }

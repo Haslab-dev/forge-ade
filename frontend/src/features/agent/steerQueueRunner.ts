@@ -1,8 +1,8 @@
 import { useSteerQueueStore } from '../../stores/steerQueueStore';
 import { showToast } from '../../lib/toast';
 
-type PromptSender = (prompt: string) => void;
-type SessionFinder = (sessionId: string) => { id: string; status: string } | undefined;
+type PromptSender = (prompt: string, sessionId?: string) => void;
+type SessionFinder = (sessionId: string) => { id: string; status: string; title?: string; workspacePath?: string } | undefined;
 
 let promptSender: PromptSender | null = null;
 let sessionFinder: SessionFinder | null = null;
@@ -51,9 +51,13 @@ export function processNextSteerQueueItem(sessionId: string): boolean {
       try {
         const currSession = sessionFinder ? sessionFinder(sessionId) : undefined;
         if (!currSession || currSession.status !== 'running') {
-          showToast('Steering next queued instruction...', 'info');
+          const sessionTitle = currSession?.title || '';
+          const toastMsg = sessionTitle
+            ? `Steering next queued instruction for "${sessionTitle}"...`
+            : 'Steering next queued instruction...';
+          showToast(toastMsg, 'info');
           if (promptSender) {
-            promptSender(nextInstruction);
+            promptSender(nextInstruction, sessionId);
           }
         }
       } finally {

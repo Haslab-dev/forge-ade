@@ -237,4 +237,54 @@ describe('Strict Session Configuration & Steer Queue Isolation', () => {
     expect(active?.status).toBe('running');
     expect(active?.messages.some(m => m.content === 'continue next step')).toBe(true);
   });
+
+  it('sends prompt to targetSessionId without hijacking currently opened project/session', () => {
+    const sessionProjA: AgentSession = {
+      id: 'session-project-a',
+      title: 'Project A Session',
+      status: 'idle',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      agentId: 'agent-internal',
+      model: 'gemini-2.5-pro',
+      workspacePath: '/data/workspace/project-a',
+      messages: []
+    };
+
+    const sessionProjB: AgentSession = {
+      id: 'session-project-b',
+      title: 'Project B Session',
+      status: 'idle',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      agentId: 'agent-agy',
+      model: 'claude-3-7-sonnet',
+      workspacePath: '/data/workspace/project-b',
+      messages: []
+    };
+
+    useWorkspace.setState({
+      sessions: [sessionProjA, sessionProjB],
+      activeSessionId: 'session-project-b',
+      agentWorkspacePath: '/data/workspace/project-b'
+    });
+
+    // Send prompt targeting Project A's session while user has Project B opened
+    useWorkspace.getState().sendAgentPrompt('Build Project A backend', 'session-project-a');
+
+    const state = useWorkspace.getState();
+    // activeSessionId and activeWorkspacePath MUST remain Project B
+    expect(state.activeSessionId).toBe('session-project-b');
+    expect(state.activeWorkspacePath).toBe('/data/workspace/project-b');
+
+    // Project A session should have the message and be running
+    const projA = state.sessions.find(s => s.id === 'session-project-a');
+    expect(projA?.status).toBe('running');
+    expect(projA?.messages.some(m => m.content === 'Build Project A backend')).toBe(true);
+
+    // Project B session MUST NOT have received the prompt!
+    const projB = state.sessions.find(s => s.id === 'session-project-b');
+    expect(projB?.status).toBe('idle');
+    expect(projB?.messages).toHaveLength(0);
+  });
 });

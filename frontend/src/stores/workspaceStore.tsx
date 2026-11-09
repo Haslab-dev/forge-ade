@@ -476,10 +476,10 @@ export interface WorkspaceContextType {
   saveTabToDisk: (fileId: string, content: string) => Promise<void>;
   setDiagnostics: (diags: LSPDiagnostic[]) => void;
   createNewSession: (initialPrompt?: string, agentId?: string, forcedId?: string) => string;
-  sendAgentPrompt: (promptText: string) => void;
-  steerAgentPrompt: (instruction: string) => Promise<void>;
-  stopAgentExecution: () => void;
-  compactCurrentSession: () => Promise<void>;
+  sendAgentPrompt: (promptText: string, targetSessionId?: string) => void;
+  steerAgentPrompt: (instruction: string, targetSessionId?: string) => Promise<void>;
+  stopAgentExecution: (targetSessionId?: string) => void;
+  compactCurrentSession: (targetSessionId?: string) => Promise<void>;
   deleteSession: (id: string) => void;
 
   // Persistent Sessions & History
@@ -2494,7 +2494,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       return newId;
     },
 
-    sendAgentPrompt: (promptText) => {
+    sendAgentPrompt: (promptText, targetSessionId) => {
       if (!promptText.trim()) return;
       let effectivePrompt = promptText.trim();
       if (effectivePrompt.startsWith('/')) {
@@ -2508,14 +2508,22 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         }
       }
 
-      if (effectivePrompt.toLowerCase() === '/compact') {
-        void get().compactCurrentSession();
+      if (targetSessionId) {
+        const found = get().sessions.find(s => s.id === targetSessionId) || get().savedSessions.find(s => s.id === targetSessionId);
+        if (!found) {
+          console.warn('[workspaceStore] sendAgentPrompt: targetSessionId not found:', targetSessionId);
+          return;
+        }
+      }
+
+      const activeSessionId = targetSessionId || get().activeSessionId;
+      if (!activeSessionId) {
+        get().createNewSession(promptText);
         return;
       }
 
-      const activeSessionId = get().activeSessionId;
-      if (!activeSessionId) {
-        get().createNewSession(promptText);
+      if (effectivePrompt.toLowerCase() === '/compact') {
+        void get().compactCurrentSession(activeSessionId);
         return;
       }
 
@@ -2564,23 +2572,23 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         };
       });
 
-      if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && (!targetSessionId || targetSessionId === get().activeSessionId)) {
         window.dispatchEvent(new CustomEvent('forge:chat-submitted'));
       }
 
       void executeAgentMessage(activeSessionId, effectivePrompt);
     },
 
-    steerAgentPrompt: async (instruction) => {
+    steerAgentPrompt: async (instruction, targetSessionId) => {
       const trimmed = instruction.trim();
-      const activeSessionId = get().activeSessionId;
+      const activeSessionId = targetSessionId || get().activeSessionId;
       if (!trimmed || !activeSessionId) return;
 
-      const currentSession = get().sessions.find(s => s.id === activeSessionId);
+      const currentSession = get().sessions.find(s => s.id === activeSessionId) || get().savedSessions.find(s => s.id === activeSessionId);
       if (!currentSession) return;
 
       if (currentSession.status !== 'running') {
-        get().sendAgentPrompt(trimmed);
+        get().sendAgentPrompt(trimmed, activeSessionId);
         return;
       }
 
@@ -2646,9 +2654,9 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       }
     },
 
-    stopAgentExecution: () => {
-      const activeSessionId = get().activeSessionId;
-      const current = activeSessionId ? get().sessions.find(s => s.id === activeSessionId) : null;
+    stopAgentExecution: (targetSessionId) => {
+      const activeSessionId = (typeof targetSessionId === 'string' && targetSessionId) ? targetSessionId : get().activeSessionId;
+      const current = activeSessionId ? (get().sessions.find(s => s.id === activeSessionId) || get().savedSessions.find(s => s.id === activeSessionId)) : null;
       if (current?.goSessionId) {
         StopAgentTurn(current.goSessionId);
         goAgentSessions.unregister(current.goSessionId);
@@ -2694,10 +2702,10 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       processNextSteerQueueItem(activeSessionId);
     },
 
-    compactCurrentSession: async () => {
-      const activeSessionId = get().activeSessionId;
+    compactCurrentSession: async (targetSessionId) => {
+      const activeSessionId = (typeof targetSessionId === 'string' && targetSessionId) ? targetSessionId : get().activeSessionId;
       if (!activeSessionId) return;
-      const sess = get().sessions.find(s => s.id === activeSessionId);
+      const sess = get().sessions.find(s => s.id === activeSessionId) || get().savedSessions.find(s => s.id === activeSessionId);
       if (!sess) return;
 
       if (!sess.messages || sess.messages.length <= 2) {
@@ -3125,8 +3133,8 @@ globalOpenSideFileFn = (rawPath, line) => {
 
 // Register steer queue handlers & auto-steer subscriber
 registerSteerQueueHandlers({
-  sendPrompt: (prompt) => useWorkspace.getState().sendAgentPrompt(prompt),
-  findSession: (id) => useWorkspace.getState().sessions.find(s => s.id === id)
+  sendPrompt: (prompt, sessionId) => useWorkspace.getState().sendAgentPrompt(prompt, sessionId),
+  findSession: (id) => useWorkspace.getState().sessions.find(s => s.id === id) || useWorkspace.getState().savedSessions.find(s => s.id === id)
 });
 
 useWorkspace.subscribe((state, prevState) => {
@@ -3140,24 +3148,26 @@ useWorkspace.subscribe((state, prevState) => {
 });
 
 // ── Agent Message Execution Helpers ──────────────────────────────────────────
-function makeAgentCallbacks(storeSessionId: string, goSessionId: string) {
+function makeAgentCallbacks(storeSessionId: string, goSessionId: string, sessionWs?: string) {
   const store = useWorkspace.getState();
+  const session = store.sessions.find(s => s.id === storeSessionId) || store.savedSessions.find(s => s.id === storeSessionId);
+  const effectiveWs = sessionWs || session?.workspacePath || store.activeWorkspacePath || '';
   return createAgentCallbacks({
     storeSessionId,
     goSessionId,
-    activeWorkspacePath: store.activeWorkspacePath,
+    activeWorkspacePath: effectiveWs,
     addDiff: (d) => store.addDiff(d),
     updateSession: (sessionId, updater) => {
       store.setSessions(prev => prev.map(s => s.id === sessionId ? updater(s) : s));
     },
     onTurnComplete: (sessionId, hasDiffs) => {
       if (!hasDiffs) return;
-      const s = useWorkspace.getState().sessions.find(x => x.id === sessionId);
-      const wsPath = s?.workspacePath || useWorkspace.getState().activeWorkspacePath || '';
+      const s = useWorkspace.getState().sessions.find(x => x.id === sessionId) || useWorkspace.getState().savedSessions.find(x => x.id === sessionId);
+      const wsPath = s?.workspacePath || effectiveWs || '';
       if (!wsPath || wsPath === 'general') return;
 
       void useAutoVerifyStore.getState().runVerification(sessionId, wsPath, (failurePrompt) => {
-        useWorkspace.getState().sendAgentPrompt(failurePrompt);
+        useWorkspace.getState().sendAgentPrompt(failurePrompt, sessionId);
       });
     }
   });
@@ -3165,7 +3175,7 @@ function makeAgentCallbacks(storeSessionId: string, goSessionId: string) {
 
 async function ensureGoHarness(storeSession: AgentSession): Promise<string | null> {
   const store = useWorkspace.getState();
-  const makeGoCallbacks = (storeSessionId: string, goSessionId: string) => makeAgentCallbacks(storeSessionId, goSessionId);
+  const makeGoCallbacks = (storeSessionId: string, goSessionId: string) => makeAgentCallbacks(storeSessionId, goSessionId, storeSession.workspacePath);
 
   if (storeSession.goSessionId) {
     goAgentSessions.register(storeSession.goSessionId, makeGoCallbacks(storeSession.id, storeSession.goSessionId));
@@ -3333,6 +3343,8 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
     goId = null;
   }
 
+  const effectiveWorkspacePath = storeSession.workspacePath || store.activeWorkspacePath || '';
+
   if (!goId) {
     await streamAgentSessionDirectly({
       engine,
@@ -3341,7 +3353,7 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
       sessionOverride,
       sessions: store.sessions,
       currentModel: storeSession.model || store.currentModel,
-      activeWorkspacePath: store.activeWorkspacePath,
+      activeWorkspacePath: effectiveWorkspacePath,
       gitFiles: store.gitFiles,
       gitBranch: store.gitBranch,
       addDiff: (d) => store.addDiff(d),
@@ -3358,7 +3370,7 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
       SetAgentSessionModel(goId, effectiveModel).catch(() => {});
     }
     await useProviderStore.getState().activateGoModel(effectiveModel);
-    await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, storeSession.workspacePath || store.activeWorkspacePath));
+    await goAgentSessions.send(goId, prompt, extractMentionedPaths(prompt, effectiveWorkspacePath));
   } catch (err: any) {
     console.warn('[workspaceStore] Go send failed, falling back to direct stream:', err);
     await streamAgentSessionDirectly({
@@ -3368,7 +3380,7 @@ async function executeAgentMessage(storeSessionId: string, prompt: string, sessi
       sessionOverride,
       sessions: store.sessions,
       currentModel: storeSession.model || store.currentModel,
-      activeWorkspacePath: store.activeWorkspacePath,
+      activeWorkspacePath: effectiveWorkspacePath,
       gitFiles: store.gitFiles,
       gitBranch: store.gitBranch,
       addDiff: (d) => store.addDiff(d),

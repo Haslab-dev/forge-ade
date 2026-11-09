@@ -65,7 +65,7 @@ describe('steerQueueRunner - processNextSteerQueueItem', () => {
     // Advance timer to trigger execution
     vi.advanceTimersByTime(100);
 
-    expect(mockSendAgentPrompt).toHaveBeenCalledWith('run test suite');
+    expect(mockSendAgentPrompt).toHaveBeenCalledWith('run test suite', 'sess-1');
   });
 
   it('prevents concurrent duplicate processing for the same session', () => {
@@ -84,6 +84,36 @@ describe('steerQueueRunner - processNextSteerQueueItem', () => {
 
     vi.advanceTimersByTime(100);
     expect(mockSendAgentPrompt).toHaveBeenCalledTimes(1);
-    expect(mockSendAgentPrompt).toHaveBeenCalledWith('first task');
+    expect(mockSendAgentPrompt).toHaveBeenCalledWith('first task', 'sess-1');
+  });
+
+  it('dispatches the queued prompt to its own session rather than an active session', () => {
+    mockSessions = [
+      {
+        id: 'sess-project-a',
+        title: 'Project A Task',
+        status: 'idle',
+        workspacePath: '/path/to/project-a',
+        messages: []
+      },
+      {
+        id: 'sess-project-b',
+        title: 'Project B Task',
+        status: 'idle',
+        workspacePath: '/path/to/project-b',
+        messages: []
+      }
+    ];
+
+    useSteerQueueStore.getState().addToQueue('sess-project-a', 'Compile Project A');
+
+    // Process queued item for Project A while user is viewing Project B
+    const dispatched = processNextSteerQueueItem('sess-project-a');
+    expect(dispatched).toBe(true);
+
+    vi.advanceTimersByTime(100);
+
+    // MUST be dispatched with sess-project-a, NOT sess-project-b!
+    expect(mockSendAgentPrompt).toHaveBeenCalledWith('Compile Project A', 'sess-project-a');
   });
 });

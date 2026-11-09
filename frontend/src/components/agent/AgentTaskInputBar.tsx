@@ -2040,7 +2040,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                 )}
                 <button
                   type="button"
-                  onClick={stopAgentExecution}
+                  onClick={() => stopAgentExecution()}
                   aria-label="Stop execution"
                   className={cn(
                     "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs transition-colors hover:bg-destructive",
