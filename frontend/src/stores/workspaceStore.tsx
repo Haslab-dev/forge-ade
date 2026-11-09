@@ -405,7 +405,10 @@ export interface WorkspaceContextType {
   sideFileTabs: Array<{ path: string; name: string; line?: number }>;
   activeSideFile: string | null;
   activeSideFileLine?: number;
-  openSideFile: (path: string, line?: number) => void;
+  sideFileDiffMode: Record<string, boolean>;
+  sideFileDiffs: Record<string, FileDiff>;
+  setSideFileDiffMode: (path: string, diffMode: boolean) => void;
+  openSideFile: (path: string, line?: number, opts?: { diffMode?: boolean; diff?: FileDiff }) => void;
   closeSideFile: (path: string) => void;
   closeSideFiles: (paths: string[], nextActive?: string | null) => void;
   openSideBrowser: (url?: string) => void;
@@ -955,6 +958,15 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
     sideFileTabs: [],
     activeSideFile: null,
     activeSideFileLine: undefined,
+    sideFileDiffMode: {},
+    sideFileDiffs: {},
+    setSideFileDiffMode: (path, diffMode) =>
+      updateStore(prev => ({
+        sideFileDiffMode: {
+          ...prev.sideFileDiffMode,
+          [path]: diffMode
+        }
+      })),
 
     // 3. Agent Sessions & Execution
     sessions: initialSessions,
@@ -1314,7 +1326,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       }
     },
 
-    openSideFile: async (rawPath, line) => {
+    openSideFile: async (rawPath, line, opts) => {
       const parsed = parseFilePath(rawPath, get().activeWorkspacePath);
       const path = parsed.cleanPath || rawPath;
       const targetLine = line !== undefined ? line : parsed.line;
@@ -1345,10 +1357,29 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
         const tabs = existing
           ? prev.sideFileTabs.map(t => (t.path === path ? { ...t, line: targetLine } : t))
           : [...prev.sideFileTabs, { path, name, line: targetLine }];
+
+        const nextDiffMode = { ...prev.sideFileDiffMode };
+        if (opts?.diffMode !== undefined) {
+          nextDiffMode[path] = opts.diffMode;
+          if (parsed.cleanPath && parsed.cleanPath !== rawPath) {
+            nextDiffMode[rawPath] = opts.diffMode;
+          }
+        }
+
+        const nextDiffs = { ...prev.sideFileDiffs };
+        if (opts?.diff) {
+          nextDiffs[path] = opts.diff;
+          if (parsed.cleanPath && parsed.cleanPath !== rawPath) {
+            nextDiffs[rawPath] = opts.diff;
+          }
+        }
+
         return {
           sideFileTabs: tabs,
           activeSideFile: path,
-          activeSideFileLine: targetLine
+          activeSideFileLine: targetLine,
+          sideFileDiffMode: nextDiffMode,
+          sideFileDiffs: nextDiffs
         };
       });
       get().setIsRightActionDrawerOpen(true);
@@ -1358,9 +1389,15 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
       updateStore(prev => {
         const rest = prev.sideFileTabs.filter(t => t.path !== path);
         const nextActive = prev.activeSideFile === path ? (rest.length > 0 ? rest[rest.length - 1].path : null) : prev.activeSideFile;
+        const diffMode = { ...prev.sideFileDiffMode };
+        delete diffMode[path];
+        const diffs = { ...prev.sideFileDiffs };
+        delete diffs[path];
         return {
           sideFileTabs: rest,
-          activeSideFile: nextActive
+          activeSideFile: nextActive,
+          sideFileDiffMode: diffMode,
+          sideFileDiffs: diffs
         };
       });
     },

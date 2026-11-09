@@ -178,4 +178,90 @@ describe('TurnChangesCard', () => {
       'export const port = 3000;'
     );
   });
+
+  it('computes real line additions and deletions from Target and Replacement without fake fallback', () => {
+    const tools: ToolExecution[] = [
+      {
+        id: 'agy-edit-1',
+        toolName: 'edit_file',
+        command: JSON.stringify({
+          Path: 'src/component.tsx',
+          Target: 'const a = 1;\nconst b = 2;',
+          Replacement: 'const a = 10;\nconst b = 20;\nconst c = 30;\nconst d = 40;'
+        }),
+        status: 'completed'
+      }
+    ];
+
+    const changes = extractTurnChanges(tools);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].filePath).toBe('src/component.tsx');
+    expect(changes[0].additions).toBe(4);
+    expect(changes[0].deletions).toBe(2);
+    expect(changes[0].diff).toBeDefined();
+    expect(changes[0].diff?.originalContent).toContain('const a = 1;');
+    expect(changes[0].diff?.modifiedContent).toContain('const a = 10;');
+  });
+
+  it('resolves real additions and deletions from sessionDiffs when tool has no inline diff', () => {
+    const sessionDiffs: FileDiff[] = [
+      {
+        id: 'sess-diff-1',
+        filePath: 'src/services/api.ts',
+        fileName: 'api.ts',
+        originalContent: 'old code',
+        modifiedContent: 'new code',
+        additions: 14,
+        deletions: 6,
+        status: 'accepted',
+        timestamp: '12:00'
+      }
+    ];
+
+    const tools: ToolExecution[] = [
+      {
+        id: 'tool-api-1',
+        toolName: 'edit_file',
+        command: '{"path": "src/services/api.ts"}',
+        status: 'completed'
+      }
+    ];
+
+    const changes = extractTurnChanges(tools, undefined, sessionDiffs);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].additions).toBe(14);
+    expect(changes[0].deletions).toBe(6);
+    expect(changes[0].diff).toBe(sessionDiffs[0]);
+  });
+
+  it('calls onOpenFile with file path and diff object when clicked to open in sidebar', () => {
+    const tools: ToolExecution[] = [
+      {
+        id: 'tool-open-1',
+        toolName: 'edit_file',
+        command: '{"path": "src/index.ts", "Target": "let x = 1;", "Replacement": "let x = 2;\nlet y = 3;"}',
+        status: 'completed'
+      }
+    ];
+
+    const onOpenFile = vi.fn();
+    render(
+      <TurnChangesCard
+        tools={tools}
+        onOpenFile={onOpenFile}
+      />
+    );
+
+    // Expand
+    fireEvent.click(screen.getByText(/Modified 1 file in this turn/i));
+    expect(screen.getByText('index.ts')).toBeInTheDocument();
+
+    // File row click should trigger onOpenFile with path and diff
+    fireEvent.click(screen.getByText('index.ts'));
+    expect(onOpenFile).toHaveBeenCalledWith('src/index.ts', expect.objectContaining({
+      filePath: 'src/index.ts',
+      additions: 2,
+      deletions: 1
+    }));
+  });
 });

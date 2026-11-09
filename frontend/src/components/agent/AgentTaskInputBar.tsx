@@ -64,6 +64,60 @@ export interface SlashCommandItem {
   category: string;
 }
 
+export interface ParsedSteerItem {
+  promptText: string;
+  attachments: Array<{
+    path: string;
+    name: string;
+    isImage: boolean;
+  }>;
+  rawAttachmentsBlock: string;
+}
+
+const STEER_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
+
+export function parseSteerQueueItem(item: string): ParsedSteerItem {
+  if (!item) {
+    return { promptText: '', attachments: [], rawAttachmentsBlock: '' };
+  }
+
+  const attachedSectionRegex = /(?:^|\n+)(?:Please review the following attached files:[\s\n]*)?Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i;
+  const legacySectionRegex = /(?:^|\n+)Please review the following attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i;
+
+  let match = attachedSectionRegex.exec(item);
+  if (!match) {
+    match = legacySectionRegex.exec(item);
+  }
+
+  let promptText = item;
+  const attachments: Array<{ path: string; name: string; isImage: boolean }> = [];
+
+  if (match) {
+    const rawPaths = match[1].split('\n').map(l => l.trim()).filter(l => l.startsWith('@'));
+    for (const line of rawPaths) {
+      let p = line.replace(/^@/, '').trim();
+      if (p.includes(' (')) p = p.slice(0, p.indexOf(' (')).trim();
+      if (!p) continue;
+      const cleanPath = p.replace(/\\/g, '/');
+      const name = cleanPath.split('/').filter(Boolean).pop() || cleanPath;
+      const ext = name.split('.').pop()?.toLowerCase() || '';
+      const isImage = STEER_IMAGE_EXTENSIONS.includes(ext);
+      attachments.push({ path: cleanPath, name, isImage });
+    }
+    promptText = item.replace(match[0], '').trim();
+  }
+
+  if (promptText === 'Please review the following attached files:' || promptText === 'Please review the attached file(s).') {
+    promptText = '';
+  }
+
+  return {
+    promptText,
+    attachments,
+    rawAttachmentsBlock: match ? match[0].trim() : ''
+  };
+}
+
 interface AgentTaskInputBarProps {
   placeholder?: string;
   headerNode?: React.ReactNode;
@@ -445,14 +499,48 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
     prevRunningRef.current = isRunning;
   }, [isRunning, sessionId]);
 
+  const buildPromptWithAttachments = (
+    rawText: string,
+    files: typeof attachedFiles
+  ): string => {
+    let effective = rawText.trim();
+    if (files.length > 0) {
+      const fileRefs = files
+        .map(f => f.path || f.name)
+        .filter(Boolean)
+        .filter(p => !effective.includes(p));
+      if (fileRefs.length > 0) {
+        const fileList = fileRefs.map(p => {
+          let ref = p;
+          if (activeWorkspacePath && activeWorkspacePath !== 'general' && p.startsWith(activeWorkspacePath)) {
+            ref = p.slice(activeWorkspacePath.length).replace(/^[/\\]+/, '');
+          }
+          return `@${ref}`;
+        }).join('\n');
+        effective = effective
+          ? `${effective}\n\nAttached files:\n${fileList}`
+          : `Attached files:\n${fileList}`;
+      }
+    }
+    return effective;
+  };
+
   const handleSteer = (instructionToSteer?: string) => {
-    const text = (instructionToSteer ?? prompt).trim();
+    let textToSteer = instructionToSteer;
+    if (textToSteer === undefined) {
+      if (!prompt.trim() && attachedFiles.length === 0) return;
+      textToSteer = buildPromptWithAttachments(prompt, attachedFiles);
+    }
+    const text = (textToSteer || '').trim();
     if (!text) return;
+
     void steerAgentPrompt(text);
-    if (!instructionToSteer) {
-      addPromptHistory(text);
-      setHistoryIndex(-1);
-      draftPromptRef.current = '';
+    if (instructionToSteer === undefined) {
+      if (prompt.trim()) {
+        addPromptHistory(prompt.trim());
+        setHistoryIndex(-1);
+        draftPromptRef.current = '';
+      }
       setPrompt('');
       setAttachedFiles([]);
       useComposerDraftStore.getState().clearDraft(draftKey);
@@ -460,13 +548,20 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
   };
 
   const handleQueueSteer = () => {
-    const text = prompt.trim();
-    if (!text) return;
-    addPromptHistory(text);
-    setHistoryIndex(-1);
-    draftPromptRef.current = '';
-    addToSteerQueue(sessionId, text);
+    if (!prompt.trim() && attachedFiles.length === 0) return;
+    const effectiveText = buildPromptWithAttachments(prompt, attachedFiles);
+    if (!effectiveText) return;
+
+    if (prompt.trim()) {
+      addPromptHistory(prompt.trim());
+      setHistoryIndex(-1);
+      draftPromptRef.current = '';
+    }
+    addToSteerQueue(sessionId, effectiveText);
     setPrompt('');
+    setAttachedFiles([]);
+    useComposerDraftStore.getState().clearDraft(draftKey);
+    textareaRef.current?.focus();
   };
 
   // --- Steering queue row helpers (stacked tray) ----------------------------
@@ -478,14 +573,36 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
 
   const startEditQueuedSteer = (idx: number) => {
     setEditingIdx(idx);
-    setEditText(steerQueue[idx]);
+    const parsed = parseSteerQueueItem(steerQueue[idx] || '');
+    setEditText(parsed.promptText);
   };
 
   const commitEditQueuedSteer = () => {
     if (editingIdx === null) return;
-    const text = editText.trim();
-    if (text) {
-      updateSteerQueueItem(sessionId, editingIdx, text);
+    const currentItem = steerQueue[editingIdx];
+    if (currentItem === undefined) {
+      setEditingIdx(null);
+      return;
+    }
+    const parsed = parseSteerQueueItem(currentItem);
+    const trimmed = editText.trim();
+
+    let newItem = trimmed;
+    if (parsed.rawAttachmentsBlock) {
+      if (trimmed) {
+        const cleanAttachments = parsed.rawAttachmentsBlock.startsWith('Please review the following attached files:')
+          ? parsed.rawAttachmentsBlock.replace(/^Please review the following attached files:\s*/i, 'Attached files:\n')
+          : parsed.rawAttachmentsBlock;
+        newItem = `${trimmed}\n\n${cleanAttachments}`;
+      } else {
+        newItem = parsed.rawAttachmentsBlock;
+      }
+    }
+
+    if (newItem) {
+      updateSteerQueueItem(sessionId, editingIdx, newItem);
+    } else {
+      removeFromSteerQueue(sessionId, editingIdx);
     }
     setEditingIdx(null);
   };
@@ -509,31 +626,13 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       draftPromptRef.current = '';
     }
 
-    let effectivePrompt = prompt.trim();
+    const effectivePrompt = buildPromptWithAttachments(prompt, attachedFiles);
     if (effectivePrompt.toLowerCase() === '/usage') {
       setIsUsageModalOpen(true);
       setPrompt('');
       setAttachedFiles([]);
       useComposerDraftStore.getState().clearDraft(draftKey);
       return;
-    }
-    if (attachedFiles.length > 0) {
-      const fileRefs = attachedFiles
-        .map(f => f.path || f.name)
-        .filter(Boolean)
-        .filter(p => !effectivePrompt.includes(p));
-      if (fileRefs.length > 0) {
-        const fileList = fileRefs.map(p => {
-          let ref = p;
-          if (activeWorkspacePath && activeWorkspacePath !== 'general' && p.startsWith(activeWorkspacePath)) {
-            ref = p.slice(activeWorkspacePath.length).replace(/^[/\\]+/, '');
-          }
-          return `@${ref}`;
-        }).join('\n');
-        effectivePrompt = effectivePrompt
-          ? `${effectivePrompt}\n\nAttached files:\n${fileList}`
-          : `Please review the following attached files:\n${fileList}`;
-      }
     }
 
     if (onSubmitPrompt) {
@@ -902,7 +1001,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
       return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      if (isRunning && prompt.trim()) {
+      if (isRunning && (prompt.trim() || attachedFiles.length > 0)) {
         e.preventDefault();
         handleSteer();
         return;
@@ -1140,7 +1239,9 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             </button>
           </div>
           <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-0.5">
-            {steerQueue.map((item, idx) => (
+            {steerQueue.map((item, idx) => {
+              const parsed = parseSteerQueueItem(item);
+              return (
               <div
                 key={`${idx}-${item.slice(0, 12)}`}
                 draggable={editingIdx !== idx}
@@ -1194,15 +1295,36 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                       }
                     }}
                     autoFocus
+                    placeholder="Type instruction..."
                     className="min-w-0 flex-1 bg-transparent border-0 text-ui-xs text-foreground focus:outline-none px-0.5"
                   />
                 ) : (
-                  <span
-                    className="min-w-0 flex-1 text-ui-xs text-foreground font-normal break-words cursor-default"
+                  <div
+                    className="min-w-0 flex-1 flex items-center flex-wrap gap-1.5 text-ui-xs text-foreground font-normal break-words cursor-default"
                     onDoubleClick={() => startEditQueuedSteer(idx)}
                   >
-                    {item}
-                  </span>
+                    {parsed.promptText ? (
+                      <span className="truncate max-w-full">{parsed.promptText}</span>
+                    ) : (
+                      <span className="text-foreground-subtle italic text-2xs">
+                        {parsed.attachments.length > 0 ? (parsed.attachments.some(a => a.isImage) ? 'Attached image' : 'Attached file') : ''}
+                      </span>
+                    )}
+                    {parsed.attachments.map((att, attIdx) => (
+                      <span
+                        key={attIdx}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-2xs bg-accent/40 text-secondary-label border border-border-default/60 shrink-0 font-medium"
+                        title={att.path}
+                      >
+                        {att.isImage ? (
+                          <ImageIcon className="size-3 text-info" />
+                        ) : (
+                          <FileText className="size-3 text-foreground-muted" />
+                        )}
+                        <span className="max-w-[120px] truncate">{att.name}</span>
+                      </span>
+                    ))}
+                  </div>
                 )}
 
                 <div className="flex items-center gap-1 shrink-0">
@@ -1239,7 +1361,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
                   </button>
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         </div>
       )}
@@ -1886,7 +2008,7 @@ export const AgentTaskInputBar: React.FC<AgentTaskInputBarProps> = ({
             {/* Send / Steer / Queue / Stop */}
             {isRunning ? (
               <div className="flex shrink-0 items-center gap-1.5">
-                {prompt.trim() && (
+                {(prompt.trim() || attachedFiles.length > 0) && (
                   <>
                     <button
                       type="button"

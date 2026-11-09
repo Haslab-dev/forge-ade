@@ -13,6 +13,7 @@ import {
 import { cn } from '../../lib/utils';
 import type { ToolExecution, FileDiff } from '../../types';
 import { parseToolArgs, cleanArgPath } from './ToolBlockViews';
+import { parseTwoFilesDiff } from '../diff/DiffViewer';
 import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
 
@@ -27,7 +28,8 @@ export interface TurnFileChange {
 
 export function extractTurnChanges(
   tools: ToolExecution[],
-  workspacePath?: string
+  workspacePath?: string,
+  sessionDiffs?: FileDiff[]
 ): TurnFileChange[] {
   if (!tools || tools.length === 0) return [];
 
@@ -35,7 +37,7 @@ export function extractTurnChanges(
 
   for (const t of tools) {
     const nameLower = (t.toolName || '').toLowerCase();
-    const isEdit = nameLower.includes('edit') || nameLower.includes('patch');
+    const isEdit = nameLower.includes('edit') || nameLower.includes('patch') || nameLower.includes('replace');
     const isWrite = nameLower.includes('write') || nameLower.includes('create');
 
     if (!isEdit && !isWrite && !t.diff) continue;
@@ -57,23 +59,75 @@ export function extractTurnChanges(
     // Calculate additions and deletions
     let adds = 0;
     let dels = 0;
+    let diff: FileDiff | undefined = t.diff;
 
-    if (t.diff) {
-      adds = t.diff.additions || 0;
-      dels = t.diff.deletions || 0;
+    // Check if sessionDiffs has a matching diff
+    if (!diff && sessionDiffs && sessionDiffs.length > 0) {
+      diff = sessionDiffs.find(d =>
+        d.filePath === rawPath ||
+        d.filePath.endsWith('/' + rawPath) ||
+        rawPath.endsWith('/' + d.filePath)
+      );
+    }
+
+    if (diff) {
+      adds = typeof diff.additions === 'number' ? diff.additions : 0;
+      dels = typeof diff.deletions === 'number' ? diff.deletions : 0;
+      // Re-calculate real line additions and deletions if both are 0 but contents are present
+      if (adds === 0 && dels === 0 && (diff.originalContent !== undefined || diff.modifiedContent !== undefined)) {
+        const { lines } = parseTwoFilesDiff(diff.originalContent || '', diff.modifiedContent || '');
+        adds = lines.filter(l => l.type === 'add').length;
+        dels = lines.filter(l => l.type === 'del').length;
+      }
+    } else if (Boolean(parsedArgs.oldString || parsedArgs.newString)) {
+      // Direct Target/Replacement or old_string/new_string tool execution
+      const oldStr = parsedArgs.oldString || '';
+      const newStr = parsedArgs.newString || '';
+      const { lines } = parseTwoFilesDiff(oldStr, newStr);
+      adds = lines.filter(l => l.type === 'add').length;
+      dels = lines.filter(l => l.type === 'del').length;
+      if (adds === 0 && dels === 0 && (oldStr || newStr)) {
+        adds = newStr ? newStr.split('\n').length : 0;
+        dels = oldStr ? oldStr.split('\n').length : 0;
+      }
+      diff = {
+        id: `diff-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        filePath: rawPath,
+        fileName,
+        originalContent: oldStr,
+        modifiedContent: newStr,
+        additions: adds,
+        deletions: dels,
+        status: 'accepted',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        kind: 'agent'
+      };
     } else if (isWrite) {
       const code = parsedArgs.content || '';
       adds = code ? code.split('\n').length : 1;
+      dels = 0;
+      diff = {
+        id: `diff-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        filePath: rawPath,
+        fileName,
+        originalContent: '',
+        modifiedContent: code,
+        additions: adds,
+        deletions: 0,
+        status: 'accepted',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        kind: 'agent'
+      };
     } else if (isEdit) {
       const diffText = t.output || '';
-      if (diffText.includes('@@')) {
+      if (diffText.includes('@@') || diffText.includes('--- ') || diffText.includes('+++ ')) {
         for (const l of diffText.split('\n')) {
           if (l.startsWith('+') && !l.startsWith('+++')) adds++;
           else if (l.startsWith('-') && !l.startsWith('---')) dels++;
         }
       }
-      if (adds === 0 && dels === 0) {
-        adds = 1;
+      if (adds === 0 && dels === 0 && parsedArgs.content) {
+        adds = parsedArgs.content.split('\n').length;
       }
     }
 
@@ -81,8 +135,8 @@ export function extractTurnChanges(
     if (existing) {
       existing.additions += adds;
       existing.deletions += dels;
-      if (!existing.diff && t.diff) {
-        existing.diff = t.diff;
+      if (!existing.diff && diff) {
+        existing.diff = diff;
       }
     } else {
       changeMap.set(rawPath, {
@@ -91,7 +145,7 @@ export function extractTurnChanges(
         directory,
         additions: adds,
         deletions: dels,
-        diff: t.diff
+        diff
       });
     }
   }
@@ -102,14 +156,16 @@ export function extractTurnChanges(
 interface TurnChangesCardProps {
   tools: ToolExecution[];
   workspacePath?: string;
+  sessionDiffs?: FileDiff[];
   onOpenDiff?: (diff: FileDiff) => void;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string, diff?: FileDiff) => void;
   className?: string;
 }
 
 export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
   tools,
   workspacePath,
+  sessionDiffs,
   onOpenDiff,
   onOpenFile,
   className
@@ -117,7 +173,7 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
   const [expanded, setExpanded] = useState(false);
   const [isReverting, setIsReverting] = useState(false);
   const [reverted, setReverted] = useState(false);
-  const changes = useMemo(() => extractTurnChanges(tools, workspacePath), [tools, workspacePath]);
+  const changes = useMemo(() => extractTurnChanges(tools, workspacePath, sessionDiffs), [tools, workspacePath, sessionDiffs]);
 
   if (changes.length === 0) return null;
 
@@ -166,12 +222,8 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
             Modified {changes.length} {changes.length === 1 ? 'file' : 'files'} in this turn
           </span>
           <div className="flex items-center gap-1 font-mono text-2xs tabular-nums shrink-0 ml-1">
-            {totalAdditions > 0 && (
-              <span className="text-diff-addition-foreground font-semibold">+{totalAdditions}</span>
-            )}
-            {totalDeletions > 0 && (
-              <span className="text-diff-deletion-foreground font-semibold">-{totalDeletions}</span>
-            )}
+            <span className="text-diff-addition-foreground font-semibold">+{totalAdditions}</span>
+            <span className="text-diff-deletion-foreground font-semibold">-{totalDeletions}</span>
           </div>
         </button>
 
@@ -200,15 +252,21 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
             </button>
           )}
 
-          {onOpenDiff && changes.some(c => c.diff) && (
+          {(onOpenDiff || onOpenFile) && changes.length > 0 && (
             <button
               type="button"
               onClick={() => {
-                const target = changes.find(c => c.diff);
-                if (target?.diff) onOpenDiff(target.diff);
+                const target = changes.find(c => c.diff) || changes[0];
+                if (target) {
+                  if (target.diff && onOpenDiff) {
+                    onOpenDiff(target.diff);
+                  } else if (onOpenFile) {
+                    onOpenFile(target.filePath, target.diff);
+                  }
+                }
               }}
               className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-foreground-subtle hover:text-foreground hover:bg-surface-hover transition-colors cursor-pointer"
-              title="Review turn diffs"
+              title="Review turn diffs in sidebar"
             >
               <Eye className="size-3" />
               <span>Review Diff</span>
@@ -230,11 +288,11 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
                   if (item.diff && onOpenDiff) {
                     onOpenDiff(item.diff);
                   } else if (onOpenFile) {
-                    onOpenFile(item.filePath);
+                    onOpenFile(item.filePath, item.diff);
                   }
                 }}
                 className="flex items-center gap-2 min-w-0 truncate text-left cursor-pointer group-hover:text-primary transition-colors"
-                title={item.filePath}
+                title={`Open ${item.filePath} in sidebar diff mode`}
               >
                 <FileText className="size-3.5 text-foreground-subtle shrink-0" />
                 <span className="font-mono text-xs font-medium text-foreground truncate">
@@ -246,20 +304,19 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
               </button>
 
               <div className="flex items-center gap-2 shrink-0">
-                <span className="font-mono text-2xs tabular-nums">
-                  {item.additions > 0 && (
-                    <span className="text-diff-addition-foreground">+{item.additions} </span>
-                  )}
-                  {item.deletions > 0 && (
-                    <span className="text-diff-deletion-foreground">-{item.deletions}</span>
-                  )}
+                <span className="font-mono text-2xs tabular-nums flex items-center gap-1">
+                  <span className="text-diff-addition-foreground font-medium">+{item.additions}</span>
+                  <span className="text-diff-deletion-foreground font-medium">-{item.deletions}</span>
                 </span>
                 {onOpenFile && (
                   <button
                     type="button"
-                    onClick={() => onOpenFile(item.filePath)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenFile(item.filePath, item.diff);
+                    }}
                     className="p-1 rounded text-foreground-subtle hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                    title="Open file in editor"
+                    title="Open file in sidebar diff mode"
                   >
                     <ExternalLink className="size-3" />
                   </button>

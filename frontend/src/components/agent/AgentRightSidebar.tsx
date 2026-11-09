@@ -39,7 +39,8 @@ import {
   Eye,
   BarChart3,
   ShieldAlert,
-  Sparkles
+  Sparkles,
+  GitCompare
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatElapsedSeconds } from './artifactsUtils';
@@ -241,6 +242,9 @@ export const AgentRightSidebar: React.FC<AgentRightSidebarProps> = ({ initialTab
     openSideFile,
     closeSideFile,
     closeSideFiles,
+    sideFileDiffMode,
+    sideFileDiffs,
+    setSideFileDiffMode,
     revalidateFileMutations,
     setMode,
     openFileInEditor,
@@ -1397,6 +1401,46 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
         const showDeckViewer = isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
         const showHtmlPreview = isHtmlOrSvg && !isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
 
+        const targetDiff: FileDiff | undefined =
+          sideFileDiffs?.[filePath] ||
+          sideFileDiffs?.[relPath] ||
+          activeSession?.diffs?.find(d => d.filePath === filePath || d.filePath === relPath || filePath.endsWith(d.filePath) || d.filePath.endsWith(filePath)) ||
+          diffs?.find(d => d.filePath === filePath || d.filePath === relPath || filePath.endsWith(d.filePath) || d.filePath.endsWith(filePath)) ||
+          (() => {
+            const gitMatch = gitFiles?.find(g => g.path === filePath || g.path === relPath || filePath.endsWith(g.path) || g.path.endsWith(filePath));
+            if (gitMatch) {
+              return {
+                id: `git-${filePath}`,
+                filePath,
+                fileName,
+                originalContent: '',
+                modifiedContent: '',
+                additions: gitMatch.additions ?? 0,
+                deletions: gitMatch.deletions ?? 0,
+                status: 'pending' as const,
+                timestamp: '',
+                kind: 'git' as const
+              };
+            }
+            return undefined;
+          })();
+
+        const effectiveDiff: FileDiff | undefined = targetDiff || (sideFileDiffMode?.[filePath] ? {
+          id: `side-diff-${filePath}`,
+          filePath,
+          fileName,
+          originalContent: '',
+          modifiedContent: '',
+          additions: 0,
+          deletions: 0,
+          status: 'pending' as const,
+          timestamp: '',
+          kind: 'git' as const
+        } : undefined);
+
+        const isDiffAvailable = Boolean(effectiveDiff);
+        const isDiffMode = Boolean(sideFileDiffMode?.[filePath] && effectiveDiff);
+
         return (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {/* Breadcrumb header */}
@@ -1407,6 +1451,22 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
                 <span className="truncate text-foreground" title={filePath}>{relPath}</span>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                {isDiffAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => setSideFileDiffMode(filePath, !isDiffMode)}
+                    className={cn(
+                      "flex h-6 px-2 items-center gap-1 rounded text-ui-xs font-mono transition-colors cursor-pointer",
+                      isDiffMode
+                        ? "bg-primary/20 text-primary border border-primary/30"
+                        : "text-foreground-subtle hover:bg-surface-hover hover:text-foreground border border-transparent"
+                    )}
+                    title="Toggle Diff / Code view"
+                  >
+                    <GitCompare className="w-3.5 h-3.5" />
+                    <span>{isDiffMode ? 'Diff' : 'Code'}</span>
+                  </button>
+                )}
                 {isDeckOrMotion && (
                   <button
                     type="button"
@@ -1461,7 +1521,15 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
             </div>
 
             {/* Content */}
-            {data?.isImage ? (
+            {isDiffMode && effectiveDiff ? (
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-background">
+                <DiffViewer
+                  diff={effectiveDiff}
+                  onClose={() => setSideFileDiffMode(filePath, false)}
+                  isInline
+                />
+              </div>
+            ) : data?.isImage ? (
               <div
                 className="flex-1 min-h-0 overflow-auto flex items-center justify-center p-6 bg-surface"
                 style={{

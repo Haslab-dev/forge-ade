@@ -264,14 +264,22 @@ class GoAgentSessionManager {
         ? ''
         : reversePatch(modified, patch);
       const fileName = path.split('/').pop() || path;
+      let additions = typeof display.additions === 'number' ? display.additions : 0;
+      let deletions = typeof display.deletions === 'number' ? display.deletions : 0;
+      if (additions === 0 && deletions === 0 && patch) {
+        for (const l of patch.split('\n')) {
+          if (l.startsWith('+') && !l.startsWith('+++')) additions++;
+          else if (l.startsWith('-') && !l.startsWith('---')) deletions++;
+        }
+      }
       return {
         id: `go-diff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         filePath: path,
         fileName,
         originalContent: original,
         modifiedContent: modified,
-        additions: typeof display.additions === 'number' ? display.additions : 0,
-        deletions: typeof display.deletions === 'number' ? display.deletions : 0,
+        additions,
+        deletions,
         status: 'accepted',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         kind: 'agent',
@@ -337,7 +345,8 @@ export function extractMentionedPaths(prompt: string, workspacePath: string): st
   const out: string[] = [];
 
   // Parse lines in "Attached files:" section explicitly (including absolute attachment paths)
-  const attachedSection = prompt.match(/(?:^|\n+)Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i);
+  const attachedSection = prompt.match(/(?:^|\n+)(?:Please review the following attached files:[\s\n]*)?Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i)
+    || prompt.match(/(?:^|\n+)Please review the following attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i);
   if (attachedSection) {
     const lines = attachedSection[1].split('\n').map(l => l.trim());
     for (const line of lines) {

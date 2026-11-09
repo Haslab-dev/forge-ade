@@ -987,8 +987,12 @@ export const AgentActiveSessionView: React.FC = () => {
     }
 
     // Also parse "Attached files:\n@path1\n@path2"
-    const attachedFilesSectionRegex = /(?:^|\n+)Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i;
-    const afMatch = attachedFilesSectionRegex.exec(rawContent);
+    const attachedFilesSectionRegex = /(?:^|\n+)(?:Please review the following attached files:[\s\n]*)?Attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i;
+    let afMatch = attachedFilesSectionRegex.exec(rawContent);
+    if (!afMatch) {
+      const legacySectionRegex = /(?:^|\n+)Please review the following attached files:\s*([\s\S]*?)(?=(?:\n\n[^\n@]|\n[A-Z]|$))/i;
+      afMatch = legacySectionRegex.exec(rawContent);
+    }
     if (afMatch) {
       const pathsBlock = afMatch[1];
       const pathLines = pathsBlock.split('\n').map(l => l.trim()).filter(l => l.startsWith('@'));
@@ -1715,8 +1719,9 @@ export const AgentActiveSessionView: React.FC = () => {
                           <TurnChangesCard
                             tools={allTools}
                             workspacePath={activeSession?.workspacePath}
-                            onOpenDiff={(diff) => openDiffInEditor(diff)}
-                            onOpenFile={(path) => void openSideFile(path)}
+                            sessionDiffs={activeSession?.diffs || []}
+                            onOpenDiff={(diff) => void openSideFile(diff.filePath, undefined, { diffMode: true, diff })}
+                            onOpenFile={(path, diff) => void openSideFile(path, undefined, { diffMode: true, diff })}
                           />
                         )}
 
@@ -1881,7 +1886,7 @@ export const AgentActiveSessionView: React.FC = () => {
                               <button
                                 key={d.id}
                                 type="button"
-                                onClick={() => openDiffInEditor(d)}
+                                onClick={() => openSideFile(d.filePath, undefined, { diffMode: true, diff: d })}
                                 title={`Review ${d.filePath}`}
                                 className="flex items-center gap-1.5 rounded-md border border-border/60 bg-surface px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-surface-hover hover:text-foreground transition-colors cursor-pointer shrink-0"
                               >
@@ -1904,9 +1909,16 @@ export const AgentActiveSessionView: React.FC = () => {
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => openDiffInEditor(sessionDiffs[0])}
+                      onClick={() => {
+                        const target = sessionDiffs[0];
+                        if (target?.filePath) {
+                          openSideFile(target.filePath, undefined, { diffMode: true, diff: target });
+                        } else if (target) {
+                          openDiffInEditor(target);
+                        }
+                      }}
                       className="flex items-center gap-1 rounded-md px-2 py-1 text-ui-xs text-secondary-label transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
-                      title="Open diff in the editor pane"
+                      title="Open diff in sidebar or editor pane"
                     >
                       <FileDiffIcon className="size-3" />
                       <span className="hidden @[28rem]/changed-files:inline">Review diff</span>
@@ -1944,7 +1956,7 @@ export const AgentActiveSessionView: React.FC = () => {
                           className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 pl-2 text-left transition-colors hover:bg-accent/60"
                           onClick={() => {
                             if (d.filePath) {
-                              openSideFile(d.filePath);
+                              openSideFile(d.filePath, undefined, { diffMode: true, diff: d });
                             } else {
                               setActiveInlineDiff(d);
                             }

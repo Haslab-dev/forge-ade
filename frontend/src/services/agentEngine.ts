@@ -85,7 +85,7 @@ export class AgentEngine {
       fileName,
       originalContent,
       modifiedContent: newContent,
-      additions: Math.max(1, additions),
+      additions: additions === 0 && deletions === 0 && originalContent !== newContent ? 1 : additions,
       deletions,
       status: 'pending',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
