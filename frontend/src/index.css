@@ -937,8 +937,9 @@ select:focus, select:focus-visible {
       4.5rem 100%,
       100% 100%;
     background-repeat: no-repeat;
+    -webkit-background-clip: text;
     background-clip: text;
-    animation: live-tool-shine 2.2s steps(30) infinite;
+    animation: live-tool-shine 2.4s ease-in-out infinite;
     animation-play-state: var(--visible-animation-state, paused);
   }
 }

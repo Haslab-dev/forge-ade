@@ -1888,6 +1888,7 @@ export const useWorkspace = create<WorkspaceStoreState>((set, get) => {
             agentType: targetAgent?.type,
             provider: targetAgent?.type !== 'internal' ? targetAgent?.provider : (s.provider || targetAgent?.provider),
             ...(explicitModel ? { model: explicitModel } : {}),
+            ...(updatedTarget ? { messages: updatedTarget.messages } : {}),
             updatedAt: new Date().toISOString()
           };
           if (!updatedTarget) updatedTarget = updated;
