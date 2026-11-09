@@ -539,14 +539,15 @@ export function globalOpenSideFile(rawPath: string, line?: number) {
 const workspaceStateCache = new Map<string, WindowWorkspaceState>();
 const engine = new AgentEngine();
 const sessionPersistMap = new Map<string, string>();
-let sessionPersistTimer: number | null = null;
+let sessionPersistTimer: any = null;
 const explicitModelConfig = { agentId: '', model: '' };
 
 function scheduleSessionPersist(sessions: AgentSession[], activeWorkspacePath: string) {
+  if (typeof window === 'undefined') return;
   if (sessionPersistTimer !== null) {
-    window.clearTimeout(sessionPersistTimer);
+    clearTimeout(sessionPersistTimer);
   }
-  sessionPersistTimer = window.setTimeout(() => {
+  sessionPersistTimer = setTimeout(() => {
     sessionPersistTimer = null;
     try {
       const trimmed = sessions.slice(0, 40).map(s => ({
