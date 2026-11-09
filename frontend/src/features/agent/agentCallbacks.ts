@@ -196,7 +196,7 @@ export function createAgentCallbacks(config: AgentCallbacksConfig) {
     onStateChange: (snap: any) => {
       const state = snap.state || snap.State || '';
       updateSession(storeSessionId, s => {
-        if (s.goSessionId !== goSessionId) return s;
+        if (s.goSessionId !== goSessionId && s.acpSessionId !== goSessionId) return s;
         const paused = state === 'awaiting_approval' || state === 'awaiting_input';
         const msgs = paused
           ? s.messages.map((m, idx) =>

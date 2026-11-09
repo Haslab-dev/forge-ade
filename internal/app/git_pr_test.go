@@ -1,12 +1,16 @@
 package app
 
 import (
+	"os"
 	"testing"
 )
 
 func TestPullRequests_LiveGh(t *testing.T) {
 	app := &App{}
 	repoPath := "/data/workspace/forge-ade"
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		t.Skipf("Skipping live test: repo path %s does not exist", repoPath)
+	}
 
 	prs, err := app.GetPullRequests(repoPath, "all")
 	if err != nil {

@@ -166,9 +166,11 @@ export function extractShellCommand(tool: ToolExecution, parsedArgs?: ParsedTool
   return firstLine || clean;
 }
 
-export function parseReadOutput(output: string): { filePath?: string; totalLines?: number; content: string } {
+export function parseReadOutput(output: any): { filePath?: string; totalLines?: number; content: string } {
   if (!output) return { content: '' };
-  const headerMatch = output.match(/^Contents of ([^\n(]+)(?:\s*\((\d+)\s+total lines\))?:\n([\s\S]*)$/);
+  const strOutput = typeof output === 'string' ? output : (typeof output === 'object' ? JSON.stringify(output) : String(output));
+  if (!strOutput) return { content: '' };
+  const headerMatch = strOutput.match(/^Contents of ([^\n(]+)(?:\s*\((\d+)\s+total lines\))?:\n([\s\S]*)$/);
   if (headerMatch) {
     return {
       filePath: headerMatch[1].trim(),
@@ -176,7 +178,7 @@ export function parseReadOutput(output: string): { filePath?: string; totalLines
       content: headerMatch[3]
     };
   }
-  return { content: output };
+  return { content: strOutput };
 }
 
 export interface InlineDiffLine {
@@ -949,7 +951,7 @@ export function ToolExecutionCard({
     Icon = Code2;
   } else if (isBash) {
     kind = 'Ran';
-    Icon = Terminal;
+    Icon = SquareTerminal;
   } else {
     kind = (tool.toolName || 'Tool').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
     Icon = Wrench;
@@ -968,8 +970,8 @@ export function ToolExecutionCard({
       }
     }
     if (isEdit) {
-      const diffText = tool.output || '';
-      if (diffText.includes('@@')) {
+      const diffText = typeof tool.output === 'string' ? tool.output : '';
+      if (diffText && diffText.includes('@@')) {
         let add = 0;
         let del = 0;
         for (const l of diffText.split('\n')) {
@@ -1016,17 +1018,23 @@ export function ToolExecutionCard({
         : 'completed';
 
   const labelNode = isBash ? (
-    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-[length:var(--font-size-code,0.75rem)] select-none cursor-pointer', isRunning && 'live-tool-shine')}>
+    <div className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-[length:var(--font-size-code,0.75rem)] select-none">
       <span className="shrink-0 rounded bg-surface border border-border/60 px-1 py-0.2 text-3xs font-semibold text-primary/85 select-none">
         $
       </span>
-      <span className="truncate text-foreground/90 font-medium select-none cursor-pointer" title={shellCmd || tool.command}>
+      <span
+        className={cn(
+          'truncate text-foreground/90 font-medium select-none',
+          isRunning && 'live-tool-shine text-primary'
+        )}
+        title={shellCmd || tool.command}
+      >
         {shellCmd || 'terminal command'}
       </span>
     </div>
   ) : (
-    <div className={cn('flex min-w-0 flex-1 items-center gap-1.5 truncate select-none cursor-pointer', isRunning && 'live-tool-shine')}>
-      <span className="shrink-0 rounded bg-surface border border-border/60 px-1.5 py-0.2 font-mono text-3xs font-medium text-foreground-subtle select-none cursor-pointer">
+    <div className="flex min-w-0 flex-1 items-center gap-1.5 truncate select-none">
+      <span className="shrink-0 rounded bg-surface border border-border/60 px-1.5 py-0.2 font-mono text-3xs font-medium text-foreground-subtle select-none">
         {kind}
       </span>
       {targetFile ? (
@@ -1038,7 +1046,12 @@ export function ToolExecutionCard({
           className="inline-flex min-w-0 max-w-[380px] items-center gap-1.5 truncate hover:text-primary transition-colors cursor-pointer text-left select-none"
           title={`Open ${fullPath} in side preview`}
         >
-          <span className="truncate font-mono text-[length:var(--font-size-code,0.6875rem)] font-medium text-foreground/90 hover:text-primary select-none">
+          <span
+            className={cn(
+              'truncate font-mono text-[length:var(--font-size-code,0.6875rem)] font-medium text-foreground/90 hover:text-primary select-none',
+              isRunning && 'live-tool-shine text-primary'
+            )}
+          >
             {targetFile}
           </span>
           {targetDir && (
@@ -1049,13 +1062,22 @@ export function ToolExecutionCard({
         </span>
       ) : isPython ? (
         <span
-          className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none cursor-pointer"
+          className={cn(
+            'min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none',
+            isRunning && 'live-tool-shine text-primary'
+          )}
           title={parsedArgs.content || parsedArgs.cmd || tool.command}
         >
           {parsedArgs.content ? parsedArgs.content.trim().split('\n')[0].slice(0, 90) : (parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : ''))}
         </span>
       ) : (
-        <span className="min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none cursor-pointer" title={tool.command}>
+        <span
+          className={cn(
+            'min-w-0 flex-1 truncate font-mono text-[length:var(--font-size-code,0.6875rem)] select-none',
+            isRunning && 'live-tool-shine text-primary'
+          )}
+          title={tool.command}
+        >
           {parsedArgs.cmd || (tool.command !== '{}' && tool.command !== '{ }' ? tool.command : '')}
         </span>
       )}

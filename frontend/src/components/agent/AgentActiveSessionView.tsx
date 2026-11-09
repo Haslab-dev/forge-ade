@@ -449,7 +449,7 @@ export const AgentActiveSessionView: React.FC = () => {
     activeSession?.goState === 'executing'
   );
 
-  const lastAgentMsg = activeSession?.messages?.slice().reverse().find(m => m.role === 'agent');
+  const lastAgentMsg = activeSession?.messages?.slice().reverse().find(m => m.role === 'agent' || (m as any).role === 'assistant');
   const lastAgentMsgId = lastAgentMsg?.id;
 
   const { liveElapsed } = useAgentExecution(isSessionWorking, lastAgentMsgId);
@@ -665,7 +665,7 @@ export const AgentActiveSessionView: React.FC = () => {
           userPrompt: chatText(msg.content) || 'Task prompt',
           timestamp: msg.timestamp
         };
-      } else if (msg.role === 'agent' && currentTurn) {
+      } else if ((msg.role === 'agent' || (msg as any).role === 'assistant') && currentTurn) {
         if (!currentTurn.agentPreview) {
           const thoughtPreview = msg.thoughts?.[0]?.thoughtText || '';
           currentTurn.agentPreview = chatText(msg.content) || thoughtPreview || 'Running tools...';
@@ -693,7 +693,7 @@ export const AgentActiveSessionView: React.FC = () => {
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    setProgrammaticScroll(behavior === 'smooth' ? 550 : 150);
+    setProgrammaticScroll(behavior === 'smooth' ? 350 : 150);
     userScrolledUpRef.current = false;
     wasAtBottomRef.current = true;
     setIsScrolledUp(false);
@@ -701,23 +701,19 @@ export const AgentActiveSessionView: React.FC = () => {
     const performScroll = (b: ScrollBehavior) => {
       const el = chatScrollRef.current;
       if (!el) return;
+      const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
       if (b === 'smooth') {
         el.scrollTo({
-          top: el.scrollHeight,
+          top: maxScroll,
           behavior: 'smooth'
         });
       } else {
-        el.scrollTop = el.scrollHeight;
+        el.scrollTop = maxScroll;
       }
     };
 
-    // Staggered multi-stage scroll to ensure DOM layout, textarea resize, and fonts settle
     performScroll(behavior);
     requestAnimationFrame(() => performScroll(behavior));
-    setTimeout(() => performScroll(behavior), 50);
-    setTimeout(() => performScroll(behavior), 120);
-    setTimeout(() => performScroll('auto'), 250);
-    setTimeout(() => performScroll('auto'), 450);
   }, [setProgrammaticScroll]);
 
   // Update active turn based on scroll position and track user scroll intent
@@ -786,7 +782,9 @@ export const AgentActiveSessionView: React.FC = () => {
     if (userScrolledUpRef.current) return;
 
     // Use direct scroll assignment to eliminate smooth-scroll jank/flicker while streaming chunks
-    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    const el = chatScrollRef.current;
+    const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.scrollTop = maxScroll;
   }, [activeSession?.messages, activeSession?.status]);
 
   // Snap to bottom when a new user message or turn begins
@@ -824,14 +822,20 @@ export const AgentActiveSessionView: React.FC = () => {
     }
   }, [mode, isLeftSidebarOpen, activeSession?.id, scrollToBottom]);
 
-  // Auto-scroll on container AND inner content resize if user was at bottom
+  // Auto-scroll on container AND inner content resize, with strict scroll clamping
   useEffect(() => {
     const el = chatScrollRef.current;
     const content = chatContentRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      if (el.clientHeight > 0 && (wasAtBottomRef.current || !userScrolledUpRef.current)) {
-        el.scrollTop = el.scrollHeight;
+      if (el.clientHeight > 0) {
+        const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+        if (wasAtBottomRef.current || !userScrolledUpRef.current) {
+          el.scrollTop = maxScroll;
+        } else if (el.scrollTop > maxScroll) {
+          // If user scrolled up but content shrunk, prevent stranded out-of-bounds scroll
+          el.scrollTop = maxScroll;
+        }
       }
     });
     ro.observe(el);
@@ -841,12 +845,31 @@ export const AgentActiveSessionView: React.FC = () => {
     return () => ro.disconnect();
   }, []);
 
-  // Guard against ancestor container scroll displacement
+  // Guard against ancestor container scroll displacement (window, document, body, chatColumn)
   useEffect(() => {
-    if (chatColumnRef.current && chatColumnRef.current.scrollTop !== 0) {
-      chatColumnRef.current.scrollTop = 0;
-    }
-  });
+    const resetAncestorScroll = () => {
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (document.documentElement.scrollTop !== 0) {
+        document.documentElement.scrollTop = 0;
+      }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
+      }
+      if (chatColumnRef.current && chatColumnRef.current.scrollTop !== 0) {
+        chatColumnRef.current.scrollTop = 0;
+      }
+    };
+
+    resetAncestorScroll();
+    window.addEventListener('scroll', resetAncestorScroll, { passive: true });
+    window.addEventListener('focusin', resetAncestorScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', resetAncestorScroll);
+      window.removeEventListener('focusin', resetAncestorScroll);
+    };
+  }, []);
 
   if (!activeSession) return null;
 
