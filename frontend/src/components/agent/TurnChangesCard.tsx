@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   FileCode2,
   ChevronRight,
@@ -16,6 +16,7 @@ import { parseToolArgs, cleanArgPath } from './ToolBlockViews';
 import { parseTwoFilesDiff } from '../diff/DiffViewer';
 import { ApiBridge } from '../../services/apiBridge';
 import { showToast } from '../../lib/toast';
+import { useWorkspace } from '../../stores/workspaceStore';
 
 export interface TurnFileChange {
   filePath: string;
@@ -29,7 +30,8 @@ export interface TurnFileChange {
 export function extractTurnChanges(
   tools: ToolExecution[],
   workspacePath?: string,
-  sessionDiffs?: FileDiff[]
+  sessionDiffs?: FileDiff[],
+  gitFiles?: Array<{ path: string; status?: string; additions?: number; deletions?: number }>
 ): TurnFileChange[] {
   if (!tools || tools.length === 0) return [];
 
@@ -70,6 +72,14 @@ export function extractTurnChanges(
       );
     }
 
+    // Check if gitFiles has a matching file
+    const gitMatch = Array.isArray(gitFiles) ? gitFiles.find(g =>
+      g.path === rawPath ||
+      g.path === cleanArgPath(rawPath) ||
+      g.path.endsWith('/' + rawPath) ||
+      rawPath.endsWith('/' + g.path)
+    ) : undefined;
+
     if (diff) {
       adds = typeof diff.additions === 'number' ? diff.additions : 0;
       dels = typeof diff.deletions === 'number' ? diff.deletions : 0;
@@ -79,6 +89,21 @@ export function extractTurnChanges(
         adds = lines.filter(l => l.type === 'add').length;
         dels = lines.filter(l => l.type === 'del').length;
       }
+    } else if (gitMatch && (typeof gitMatch.additions === 'number' || typeof gitMatch.deletions === 'number')) {
+      adds = gitMatch.additions ?? 0;
+      dels = gitMatch.deletions ?? 0;
+      diff = {
+        id: `git-${rawPath}`,
+        filePath: rawPath,
+        fileName,
+        originalContent: '',
+        modifiedContent: '',
+        additions: adds,
+        deletions: dels,
+        status: 'pending',
+        timestamp: '',
+        kind: 'git'
+      };
     } else if (Boolean(parsedArgs.oldString || parsedArgs.newString)) {
       // Direct Target/Replacement or old_string/new_string tool execution
       const oldStr = parsedArgs.oldString || '';
@@ -102,22 +127,6 @@ export function extractTurnChanges(
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         kind: 'agent'
       };
-    } else if (isWrite) {
-      const code = parsedArgs.content || '';
-      adds = code ? code.split('\n').length : 1;
-      dels = 0;
-      diff = {
-        id: `diff-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        filePath: rawPath,
-        fileName,
-        originalContent: '',
-        modifiedContent: code,
-        additions: adds,
-        deletions: 0,
-        status: 'accepted',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        kind: 'agent'
-      };
     } else if (isEdit) {
       const diffText = t.output || '';
       if (diffText.includes('@@') || diffText.includes('--- ') || diffText.includes('+++ ')) {
@@ -125,16 +134,51 @@ export function extractTurnChanges(
           if (l.startsWith('+') && !l.startsWith('+++')) adds++;
           else if (l.startsWith('-') && !l.startsWith('---')) dels++;
         }
+        diff = {
+          id: `diff-turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          filePath: rawPath,
+          fileName,
+          originalContent: '',
+          modifiedContent: diffText,
+          additions: adds,
+          deletions: dels,
+          status: 'accepted',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          kind: 'git'
+        };
       }
       if (adds === 0 && dels === 0 && parsedArgs.content) {
         adds = parsedArgs.content.split('\n').length;
       }
     }
 
+    if (!diff && isWrite) {
+      const code = parsedArgs.content || '';
+      adds = code ? code.split('\n').length : 1;
+      dels = 0;
+      diff = {
+        id: `git-${rawPath}`,
+        filePath: rawPath,
+        fileName,
+        originalContent: '',
+        modifiedContent: '',
+        additions: adds,
+        deletions: 0,
+        status: 'pending',
+        timestamp: '',
+        kind: 'git'
+      };
+    }
+
     const existing = changeMap.get(rawPath);
     if (existing) {
-      existing.additions += adds;
-      existing.deletions += dels;
+      if (gitMatch) {
+        existing.additions = adds;
+        existing.deletions = dels;
+      } else {
+        existing.additions += adds;
+        existing.deletions += dels;
+      }
       if (!existing.diff && diff) {
         existing.diff = diff;
       }
@@ -173,7 +217,79 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
   const [expanded, setExpanded] = useState(false);
   const [isReverting, setIsReverting] = useState(false);
   const [reverted, setReverted] = useState(false);
-  const changes = useMemo(() => extractTurnChanges(tools, workspacePath, sessionDiffs), [tools, workspacePath, sessionDiffs]);
+  const [asyncDiffStats, setAsyncDiffStats] = useState<Record<string, { additions: number; deletions: number; diffText?: string }>>({});
+
+  const storeGitFiles = useWorkspace(s => s?.gitFiles);
+  const activeWorkspacePath = useWorkspace(s => s?.activeWorkspacePath);
+  const effectiveWs = workspacePath || activeWorkspacePath;
+
+  const initialChanges = useMemo(
+    () => extractTurnChanges(tools, effectiveWs, sessionDiffs, Array.isArray(storeGitFiles) ? storeGitFiles : undefined),
+    [tools, effectiveWs, sessionDiffs, storeGitFiles]
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    if (typeof window !== 'undefined' && typeof (useWorkspace as any)?.getState === 'function') {
+      void (useWorkspace as any).getState().refreshGitStatus?.()?.catch?.(() => {});
+    }
+
+    const loadRealDiffStats = async () => {
+      if (!initialChanges.length || !effectiveWs) return;
+      const stats: Record<string, { additions: number; deletions: number; diffText?: string }> = {};
+
+      for (const item of initialChanges) {
+        try {
+          const diffText = await ApiBridge.gitDiff(item.filePath, effectiveWs);
+          if (diffText && (diffText.includes('@@') || diffText.startsWith('diff --git'))) {
+            let adds = 0;
+            let dels = 0;
+            for (const l of diffText.split('\n')) {
+              if (l.startsWith('+++') || l.startsWith('---')) continue;
+              if (l.startsWith('+')) adds++;
+              else if (l.startsWith('-')) dels++;
+            }
+            stats[item.filePath] = { additions: adds, deletions: dels, diffText };
+          }
+        } catch {
+          // ignore error in non-git workspace
+        }
+      }
+
+      if (isMounted && Object.keys(stats).length > 0) {
+        setAsyncDiffStats(stats);
+      }
+    };
+
+    void loadRealDiffStats();
+    return () => { isMounted = false; };
+  }, [tools, effectiveWs, storeGitFiles, initialChanges.length]);
+
+  const changes = useMemo(() => {
+    return initialChanges.map(c => {
+      const stat = asyncDiffStats[c.filePath];
+      if (stat) {
+        return {
+          ...c,
+          additions: stat.additions,
+          deletions: stat.deletions,
+          diff: {
+            id: c.diff?.id || `git-${c.filePath}`,
+            filePath: c.filePath,
+            fileName: c.fileName,
+            originalContent: '',
+            modifiedContent: stat.diffText || '',
+            additions: stat.additions,
+            deletions: stat.deletions,
+            status: 'pending' as const,
+            timestamp: c.diff?.timestamp || '',
+            kind: 'git' as const
+          }
+        };
+      }
+      return c;
+    });
+  }, [initialChanges, asyncDiffStats]);
 
   if (changes.length === 0) return null;
 
@@ -186,13 +302,23 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
     try {
       let revertedCount = 0;
       for (const change of changes) {
-        if (change.diff?.originalContent !== undefined) {
-          const targetPath = workspacePath ? `${workspacePath}/${change.filePath}` : change.filePath;
+        if (change.diff?.originalContent) {
+          const targetPath = effectiveWs ? `${effectiveWs}/${change.filePath}` : change.filePath;
           await ApiBridge.writeFile(targetPath, change.diff.originalContent);
           revertedCount++;
+        } else {
+          try {
+            await ApiBridge.gitDiscard(change.filePath, effectiveWs);
+            revertedCount++;
+          } catch (e) {
+            console.warn('Failed to gitDiscard:', e);
+          }
         }
       }
       setReverted(true);
+      if (typeof (useWorkspace as any)?.getState === 'function') {
+        void (useWorkspace as any).getState().refreshGitStatus?.()?.catch?.(() => {});
+      }
       showToast(`Reverted changes in ${revertedCount} file(s)`, 'success');
     } catch (err: any) {
       showToast(`Failed to revert: ${err?.message || 'Unknown error'}`, 'error');
@@ -228,7 +354,7 @@ export const TurnChangesCard: React.FC<TurnChangesCardProps> = ({
         </button>
 
         <div className="flex items-center gap-1 shrink-0">
-          {changes.some(c => c.diff?.originalContent !== undefined) && (
+          {changes.length > 0 && (
             <button
               type="button"
               disabled={isReverting || reverted}

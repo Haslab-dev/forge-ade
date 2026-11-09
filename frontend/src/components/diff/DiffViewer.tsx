@@ -364,23 +364,23 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const isUnifiedDiffText = useMemo(() => {
+    const mod = diff.modifiedContent || '';
+    return mod.startsWith('diff --git') || mod.startsWith('@@ ') || mod.startsWith('--- ') || mod.includes('\n@@ -');
+  }, [diff.modifiedContent]);
+
   // Check if content is unified diff format
   const isUnifiedDiff = useMemo(() => {
     if (diff.kind === 'git') return true;
-    const mod = diff.modifiedContent || '';
-    if (!diff.originalContent && mod) return true;
-    if (mod.startsWith('diff --git') || mod.startsWith('@@ ') || mod.startsWith('--- ') || mod.includes('\n@@ -')) {
-      return true;
-    }
-    return false;
-  }, [diff.kind, diff.originalContent, diff.modifiedContent]);
+    return isUnifiedDiffText;
+  }, [diff.kind, isUnifiedDiffText]);
 
   // Fetch real git diff if not provided
   useEffect(() => {
     let isMounted = true;
     const loadRealDiff = async () => {
-      // Only fetch if we don't already have text
-      if (!diff.modifiedContent && !diff.originalContent) {
+      // Only fetch if we don't already have unified diff text or if diff is git kind
+      if ((diff.kind === 'git' && !isUnifiedDiffText) || (!diff.modifiedContent && !diff.originalContent)) {
         setIsLoadingDiff(true);
         try {
           let diffText = '';
@@ -408,7 +408,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
     };
     loadRealDiff();
     return () => { isMounted = false; };
-  }, [diff.id, diff.filePath, diff.originalContent, diff.modifiedContent, activeWorkspacePath]);
+  }, [diff.id, diff.filePath, diff.kind, diff.originalContent, diff.modifiedContent, isUnifiedDiffText, activeWorkspacePath]);
 
   const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
   // Large multi-thousand-line diffs easily crash the webview with 60k+ DOM
@@ -418,7 +418,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, onClose, isInline 
   // Parse diff into structured file sections
   const fileSections: FileDiffSection[] = useMemo(() => {
     if (isUnifiedDiff) {
-      const text = diff.modifiedContent || rawGitDiff;
+      const text = isUnifiedDiffText ? (diff.modifiedContent || '') : rawGitDiff;
       const fallback = (diff.filePath && diff.filePath !== 'Working Tree Changes') ? diff.filePath : (diff.fileName || '');
       return parseUnifiedDiffByFiles(text, fallback);
     }

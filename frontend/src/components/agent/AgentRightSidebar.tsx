@@ -1401,29 +1401,55 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
         const showDeckViewer = isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
         const showHtmlPreview = isHtmlOrSvg && !isDeckOrMotion && (sideFilePreviewMode[filePath] ?? true);
 
-        const targetDiff: FileDiff | undefined =
+        const gitMatch = gitFiles?.find(g => g.path === filePath || g.path === relPath || filePath.endsWith(g.path) || g.path.endsWith(filePath));
+        const gitDiffObj: FileDiff | undefined = gitMatch ? {
+          id: `git-${filePath}`,
+          filePath,
+          fileName,
+          originalContent: '',
+          modifiedContent: '',
+          additions: gitMatch.additions ?? 0,
+          deletions: gitMatch.deletions ?? 0,
+          status: 'pending' as const,
+          timestamp: '',
+          kind: 'git' as const
+        } : undefined;
+
+        let rawTargetDiff: FileDiff | undefined =
           sideFileDiffs?.[filePath] ||
           sideFileDiffs?.[relPath] ||
           activeSession?.diffs?.find(d => d.filePath === filePath || d.filePath === relPath || filePath.endsWith(d.filePath) || d.filePath.endsWith(filePath)) ||
           diffs?.find(d => d.filePath === filePath || d.filePath === relPath || filePath.endsWith(d.filePath) || d.filePath.endsWith(filePath)) ||
-          (() => {
-            const gitMatch = gitFiles?.find(g => g.path === filePath || g.path === relPath || filePath.endsWith(g.path) || g.path.endsWith(filePath));
-            if (gitMatch) {
-              return {
-                id: `git-${filePath}`,
-                filePath,
-                fileName,
-                originalContent: '',
-                modifiedContent: '',
-                additions: gitMatch.additions ?? 0,
-                deletions: gitMatch.deletions ?? 0,
-                status: 'pending' as const,
-                timestamp: '',
-                kind: 'git' as const
-              };
-            }
-            return undefined;
-          })();
+          gitDiffObj;
+
+        // If targetDiff has no originalContent, kind is not 'git', and modifiedContent is not unified diff text,
+        // it contains raw source code which would falsely display all lines as additions.
+        // In that case, fall back to Git diff!
+        const isUnifiedText = Boolean(
+          rawTargetDiff?.modifiedContent && (
+            rawTargetDiff.modifiedContent.startsWith('diff --git') ||
+            rawTargetDiff.modifiedContent.startsWith('@@ ') ||
+            rawTargetDiff.modifiedContent.startsWith('--- ') ||
+            rawTargetDiff.modifiedContent.includes('\n@@ -')
+          )
+        );
+
+        if (rawTargetDiff && !rawTargetDiff.originalContent && rawTargetDiff.kind !== 'git' && !isUnifiedText) {
+          rawTargetDiff = gitDiffObj || {
+            id: `git-${filePath}`,
+            filePath,
+            fileName,
+            originalContent: '',
+            modifiedContent: '',
+            additions: gitMatch?.additions ?? 0,
+            deletions: gitMatch?.deletions ?? 0,
+            status: 'pending' as const,
+            timestamp: '',
+            kind: 'git' as const
+          };
+        }
+
+        const targetDiff: FileDiff | undefined = rawTargetDiff;
 
         const effectiveDiff: FileDiff | undefined = targetDiff || (sideFileDiffMode?.[filePath] ? {
           id: `side-diff-${filePath}`,
@@ -1431,8 +1457,8 @@ Please diagnose any errors, explain what happened, and fix the issues.`;
           fileName,
           originalContent: '',
           modifiedContent: '',
-          additions: 0,
-          deletions: 0,
+          additions: gitMatch?.additions ?? 0,
+          deletions: gitMatch?.deletions ?? 0,
           status: 'pending' as const,
           timestamp: '',
           kind: 'git' as const

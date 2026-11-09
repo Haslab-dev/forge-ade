@@ -74,8 +74,14 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
         content = p.content || p.Content || p.text || p.Text || p.code || p.Code || 
                   p.body || p.Body || p.file_content || p.CodeContent || p.codeContent || '';
         
-        oldString = p.old_string || p.oldString || p.OldString || p.old || p.target || p.Target || p.target_string || p.TargetString || '';
-        newString = p.new_string || p.newString || p.NewString || p.new || p.replacement || p.Replacement || p.replacement_string || p.ReplacementString || '';
+        oldString = p.old_string || p.oldString || p.OldString || p.old || p.oldText || p.old_text || p.oldStr || p.old_str ||
+                    p.target || p.Target || p.target_string || p.TargetString || p.targetContent || p.TargetContent ||
+                    p.search || p.Search || p.before || p.Before || p.original || p.Original ||
+                    p.original_content || p.originalContent || p.OriginalContent || '';
+        newString = p.new_string || p.newString || p.NewString || p.new || p.newText || p.new_text || p.newStr || p.new_str ||
+                    p.replacement || p.Replacement || p.replacement_string || p.ReplacementString || p.replacementContent || p.ReplacementContent ||
+                    p.replace || p.Replace || p.after || p.After || p.modified || p.Modified ||
+                    p.modified_content || p.modifiedContent || p.ModifiedContent || '';
 
         // Case-insensitive key loop fallback if any fields are still empty
         for (const [key, val] of Object.entries(p)) {
@@ -90,10 +96,18 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
           if (!content && (k === 'content' || k === 'text' || k === 'code' || k === 'body' || k === 'file_content' || k === 'codecontent')) {
             content = val;
           }
-          if (!oldString && (k === 'old_string' || k === 'oldstring' || k === 'old' || k === 'target' || k === 'target_string')) {
+          if (!oldString && (
+            k === 'old_string' || k === 'oldstring' || k === 'old' || k === 'oldtext' || k === 'old_text' ||
+            k === 'target' || k === 'target_string' || k === 'targetcontent' || k === 'search' || k === 'before' ||
+            k === 'original' || k === 'original_content' || k === 'originalcontent'
+          )) {
             oldString = val;
           }
-          if (!newString && (k === 'new_string' || k === 'newstring' || k === 'new' || k === 'replacement' || k === 'replacement_string')) {
+          if (!newString && (
+            k === 'new_string' || k === 'newstring' || k === 'new' || k === 'newtext' || k === 'new_text' ||
+            k === 'replacement' || k === 'replacement_string' || k === 'replacementcontent' || k === 'replace' || k === 'after' ||
+            k === 'modified' || k === 'modified_content' || k === 'modifiedcontent'
+          )) {
             newString = val;
           }
         }
@@ -105,9 +119,9 @@ export function parseToolArgs(raw: string, toolName: string): ParsedToolArgs {
       if (cm) cmd = cm[1];
       const ctm = str.match(/"(?:content|text|code|body|file_content|CodeContent)":\s*"([\s\S]+?)"(?:\s*,\s*"|\s*})/i);
       if (ctm) content = ctm[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-      const oldM = str.match(/"(?:old_string|old|target)":\s*"([\s\S]+?)"(?:\s*,\s*"|\s*})/i);
+      const oldM = str.match(/"(?:old_string|oldString|old_text|oldText|old|target|Target|target_string|targetContent|search|before|original)":\s*"([\s\S]+?)"(?:\s*,\s*"|\s*})/i);
       if (oldM) oldString = oldM[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
-      const newM = str.match(/"(?:new_string|new|replacement)":\s*"([\s\S]+?)"(?:\s*,\s*"|\s*})/i);
+      const newM = str.match(/"(?:new_string|newString|new_text|newText|new|replacement|Replacement|replacement_string|replacementContent|replace|after|modified)":\s*"([\s\S]+?)"(?:\s*,\s*"|\s*})/i);
       if (newM) newString = newM[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
     }
   }

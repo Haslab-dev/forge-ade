@@ -264,4 +264,65 @@ describe('TurnChangesCard', () => {
       deletions: 1
     }));
   });
+
+  it('extracts real additions and deletions from gitFiles matching the modified file', () => {
+    const gitFiles = [
+      { path: 'src/config.ts', status: 'M', additions: 4, deletions: 2 }
+    ];
+
+    const tools: ToolExecution[] = [
+      {
+        id: 'tool-write-1',
+        toolName: 'write_file',
+        command: '{"path": "src/config.ts", "content": "const a = 1;\\nconst b = 2;\\nconst c = 3;\\nconst d = 4;\\nconst e = 5;\\n"}',
+        status: 'completed'
+      }
+    ];
+
+    const changes = extractTurnChanges(tools, undefined, undefined, gitFiles);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].filePath).toBe('src/config.ts');
+    // Must use real git additions and deletions (4, 2), NOT total lines in content (6)
+    expect(changes[0].additions).toBe(4);
+    expect(changes[0].deletions).toBe(2);
+    expect(changes[0].diff?.kind).toBe('git');
+    expect(changes[0].diff?.originalContent).toBe('');
+    expect(changes[0].diff?.modifiedContent).toBe('');
+  });
+
+  it('creates git-kind diff with empty contents on write_file without gitMatch to prevent all-lines addition preview', () => {
+    const tools: ToolExecution[] = [
+      {
+        id: 'tool-write-2',
+        toolName: 'write_file',
+        command: '{"path": "src/newfile.ts", "content": "console.log(1);\\nconsole.log(2);\\n"}',
+        status: 'completed'
+      }
+    ];
+
+    const changes = extractTurnChanges(tools);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].filePath).toBe('src/newfile.ts');
+    expect(changes[0].diff?.kind).toBe('git');
+    expect(changes[0].diff?.originalContent).toBe('');
+    expect(changes[0].diff?.modifiedContent).toBe('');
+  });
+
+  it('extracts tool args with alternative names like search/replace and oldText/newText', () => {
+    const tools: ToolExecution[] = [
+      {
+        id: 'tool-edit-alt',
+        toolName: 'edit_file',
+        command: '{"path": "src/app.ts", "search": "const x = 1;", "replace": "const x = 2;\\nconst y = 3;"}',
+        status: 'completed'
+      }
+    ];
+
+    const changes = extractTurnChanges(tools);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].additions).toBe(2);
+    expect(changes[0].deletions).toBe(1);
+    expect(changes[0].diff?.originalContent).toBe('const x = 1;');
+    expect(changes[0].diff?.modifiedContent).toBe('const x = 2;\nconst y = 3;');
+  });
 });
