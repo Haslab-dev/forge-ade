@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -163,6 +164,80 @@ func NewAgentState(engine *Engine, workspacePath string, invalidate func()) *Age
 	}
 
 	return as
+}
+
+// ExecutionModeIcon returns the Tabler SVG icon for the active execution mode.
+func (as *AgentState) ExecutionModeIcon() *ui.SVG {
+	switch as.ExecutionMode {
+	case ModeAsk:
+		return TablerHand
+	case ModeCode:
+		return TablerPencil
+	case ModePlan:
+		return TablerShieldCheck
+	default:
+		return TablerShieldAlert
+	}
+}
+
+// ExecutionModeLabel returns the user-facing label for the active execution mode.
+func (as *AgentState) ExecutionModeLabel() string {
+	switch as.ExecutionMode {
+	case ModeAsk:
+		return "Ask"
+	case ModeCode:
+		return "Edits"
+	case ModePlan:
+		return "Auto"
+	default:
+		return "Full"
+	}
+}
+
+// CycleExecutionMode advances to the next execution autonomy level.
+func (as *AgentState) CycleExecutionMode() {
+	switch as.ExecutionMode {
+	case ModeAsk:
+		as.ExecutionMode = ModeCode
+	case ModeCode:
+		as.ExecutionMode = ModePlan
+	case ModePlan:
+		as.ExecutionMode = ModeBypass
+	default:
+		as.ExecutionMode = ModeAsk
+	}
+}
+
+// ReasoningEffortLabel returns the user-facing label for the active reasoning effort.
+func (as *AgentState) ReasoningEffortLabel() string {
+	switch as.ReasoningEffort {
+	case EffortOff:
+		return "Off"
+	case EffortLow:
+		return "Low"
+	case EffortHigh:
+		return "High"
+	case EffortMax:
+		return "Max"
+	default:
+		return "Med"
+	}
+}
+
+// CycleReasoningEffort advances to the next thinking budget level.
+func (as *AgentState) CycleReasoningEffort() {
+	switch as.ReasoningEffort {
+	case EffortOff:
+		as.ReasoningEffort = EffortLow
+	case EffortLow:
+		as.ReasoningEffort = EffortMedium
+	case EffortMedium:
+		as.ReasoningEffort = EffortHigh
+	case EffortHigh:
+		as.ReasoningEffort = EffortMax
+	default:
+		as.ReasoningEffort = EffortOff
+	}
 }
 
 type diskSessionRaw struct {
@@ -1009,6 +1084,14 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 	t := c.Theme()
 	sess := as.ActiveSession()
 
+	if sess == nil || len(as.Messages) == 0 {
+		as.renderAgentHome(c)
+		if as.ShowModelPicker {
+			as.renderModelPickerModal(c)
+		}
+		return
+	}
+
 	sessionTitle := "Agent Assistant"
 	if sess != nil {
 		sessionTitle = sess.Title
@@ -1066,64 +1149,56 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 		})
 
 		// Message List
-		if len(as.Messages) == 0 {
-			ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
-				TablerIcon(c, TablerSparkles, 32)
-				ui.Text(c, "No messages in this session").FontSize(15).Bold().TextColor(t.TextMuted)
-				ui.Text(c, "Type a prompt below or use slash commands like /goal or /help.").TextColor(t.TextMuted)
-			})
-		} else {
-			ui.List(c, &as.ListState, len(as.Messages), func(i int) {
-				if i >= len(as.Messages) {
-					return
-				}
-				m := as.Messages[i]
-				if m.Role == "user" {
-					ui.Row(c).Padding(4, 0).Children(func() {
-						ui.Spacer(c)
-						ui.Text(c, m.Text).Selectable().Padding(10, 14).Radius(12).Background(t.Surface).MaxWidth(560)
+		ui.List(c, &as.ListState, len(as.Messages), func(i int) {
+			if i >= len(as.Messages) {
+				return
+			}
+			m := as.Messages[i]
+			if m.Role == "user" {
+				ui.Row(c).Padding(4, 0).Children(func() {
+					ui.Spacer(c)
+					ui.Text(c, m.Text).Selectable().Padding(10, 14).Radius(12).Background(t.Surface).MaxWidth(560)
+				})
+			} else {
+				ui.Column(c).Padding(4, 0).MaxWidth(800).Gap(6).Children(func() {
+					// Assistant turn header
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerSparkles, 13)
+						ui.Text(c, as.ActiveModel).FontSize(11).Bold().TextColor(t.TextMuted)
+						ui.Text(c, m.Timestamp.Format("15:04")).FontSize(10).TextColor(t.TextMuted)
 					})
-				} else {
-					ui.Column(c).Padding(4, 0).MaxWidth(800).Gap(6).Children(func() {
-						// Assistant turn header
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-							TablerIcon(c, TablerSparkles, 13)
-							ui.Text(c, as.ActiveModel).FontSize(11).Bold().TextColor(t.TextMuted)
-							ui.Text(c, m.Timestamp.Format("15:04")).FontSize(10).TextColor(t.TextMuted)
-						})
 
-						// 1. Thinking / WorkLog Block
-						if m.Thinking != "" || m.IsThinking {
-							as.renderThinkingBlock(c, m)
-						}
+					// 1. Thinking / WorkLog Block
+					if m.Thinking != "" || m.IsThinking {
+						as.renderThinkingBlock(c, m)
+					}
 
-						// 2. Folded Tool Traces Card
-						if len(m.Tools) > 0 {
-							as.renderFoldedToolTraces(c, m)
-						}
+					// 2. Folded Tool Traces Card
+					if len(m.Tools) > 0 {
+						as.renderFoldedToolTraces(c, m)
+					}
 
-						// 3. Turn Changes Card
-						if len(m.Changes) > 0 {
-							as.renderTurnChangesCard(c, m)
-						}
+					// 3. Turn Changes Card
+					if len(m.Changes) > 0 {
+						as.renderTurnChangesCard(c, m)
+					}
 
-						// 4. Pending Approval Bar
-						if m.PendingApproval != nil && !m.PendingApproval.Resolved {
-							as.renderApprovalBar(c, m)
-						}
+					// 4. Pending Approval Bar
+					if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+						as.renderApprovalBar(c, m)
+					}
 
-						// 5. Response Markdown Body
-						if m.Text != "" {
-							if m.Done {
-								markdown.View(c, m.Text, &as.MdOpts)
-							} else {
-								markdown.Stream(c, m.Text, &as.MdOpts)
-							}
+					// 5. Response Markdown Body
+					if m.Text != "" {
+						if m.Done {
+							markdown.View(c, m.Text, &as.MdOpts)
+						} else {
+							markdown.Stream(c, m.Text, &as.MdOpts)
 						}
-					})
-				}
-			}).Grow(1).Padding(16, 20).Gap(14).Justify(ui.End)
-		}
+					}
+				})
+			}
+		}).Grow(1).Padding(16, 20).Gap(14).Justify(ui.End)
 
 		// Floating Task Checklist (docked above composer)
 		if as.TaskManager != nil {
@@ -1320,6 +1395,140 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 		if as.ShowModelPicker {
 			as.renderModelPickerModal(c)
 		}
+	})
+}
+
+// renderAgentHome renders ForgeADE's landing view when a session has no messages or when starting a new task draft.
+func (as *AgentState) renderAgentHome(c *ui.Context) {
+	t := c.Theme()
+	projectName := filepath.Base(as.workspacePath)
+	if projectName == "" || projectName == "." {
+		projectName = "General"
+	}
+
+	ui.Column(c).Grow(1).Fill().Center().Gap(20).Padding(24, 32).Children(func() {
+		// Brand Glyph + Heading
+		ui.Column(c).AlignItems(ui.Center).Gap(14).Children(func() {
+			ui.Icon(c, ForgeSparkSVG).Width(52).Height(52)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "What should we do in").FontSize(24).Bold()
+				ui.Text(c, projectName).FontSize(24).Bold().TextColor(t.Accent)
+				ui.Text(c, "?").FontSize(24).Bold()
+			})
+		})
+
+		// Kybern Centered Composer Box
+		ui.Column(c).Width(680).Radius(12).BorderWidth(1).BorderColor(t.Border).Background(t.Surface).Children(func() {
+			// Landing Context Strip: Project chip & Git Branch chip
+			ui.Row(c).Gap(8).Padding(8, 12, 4, 12).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerFolder, 13)
+					ui.Text(c, projectName).FontSize(11).Bold()
+				})
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerGitBranch, 12)
+					ui.Text(c, "main").FontSize(11).TextColor(t.TextMuted)
+				})
+			})
+
+			// Input field
+			ui.TextInput(c, &as.InputText).Placeholder("Ask anything, @ threads or files, $ skills, or / commands").Grow(1).Padding(8, 12)
+
+			// Bottom Composer Toolbar
+			ui.Row(c).Gap(8).Padding(8, 12).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+				// Execution mode pill
+				execPill := ui.Button(c, "")
+				execPill.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, as.ExecutionModeIcon(), 12)
+						ui.Text(c, as.ExecutionModeLabel()).FontSize(10).Bold()
+					})
+				})
+				if execPill.Clicked() {
+					as.CycleExecutionMode()
+				}
+
+				// Reasoning effort pill
+				reasonPill := ui.Button(c, "")
+				reasonPill.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerBrain, 12)
+						ui.Text(c, as.ReasoningEffortLabel()).FontSize(10)
+					})
+				})
+				if reasonPill.Clicked() {
+					as.CycleReasoningEffort()
+				}
+
+				// Model Switcher Chip
+				modelChip := ui.Button(c, "")
+				modelChip.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerSparkles, 12)
+						ui.Text(c, as.ActiveModel).FontSize(10).Bold().MaxWidth(140)
+					})
+				})
+				if modelChip.Clicked() {
+					as.ShowModelPicker = true
+				}
+
+				// Auto-Verify toggle
+				var verifyBtn ui.Element
+				if as.AutoVerify {
+					verifyBtn = ui.PrimaryButton(c, "")
+				} else {
+					verifyBtn = ui.Button(c, "")
+				}
+				verifyBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerShieldCheck, 12)
+						ui.Text(c, "Verify").FontSize(10)
+					})
+				})
+				if verifyBtn.Clicked() {
+					as.AutoVerify = !as.AutoVerify
+				}
+
+				ui.Box(c).Grow(1)
+
+				// Send button
+				sendBtn := ui.PrimaryButton(c, "")
+				sendBtn.Children(func() {
+					TablerIcon(c, TablerSend, 13)
+				})
+				if sendBtn.Clicked() {
+					as.SubmitMessage()
+				}
+			})
+		})
+
+		// Quick-Start Prompt Suggestions
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			suggestions := []struct {
+				icon   *ui.SVG
+				label  string
+				prompt string
+			}{
+				{TablerCompass, "Explore architecture", "Summarize the architecture of this repository, key packages, and entry points."},
+				{TablerBug, "Find & fix a bug", "Help me diagnose and fix an issue in the codebase: "},
+				{TablerFlask, "Run & improve tests", "Run the test suite, identify any failing or missing unit tests, and propose improvements."},
+				{TablerGitPullRequest, "Review working tree", "Review uncommitted git changes in this workspace for bugs, edge cases, and style."},
+			}
+
+			for _, s := range suggestions {
+				thisS := s
+				btn := ui.Button(c, "")
+				btn.Children(func() {
+					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, thisS.icon, 13)
+						ui.Text(c, thisS.label).FontSize(11)
+					})
+				})
+				if btn.Clicked() {
+					as.InputText = thisS.prompt
+				}
+			}
+		})
 	})
 }
 

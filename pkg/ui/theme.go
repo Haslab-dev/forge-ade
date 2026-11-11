@@ -13,12 +13,15 @@ const (
 	ModeEditor = 1 // Code Editor Mode
 )
 
-// Right Side Drawer Tabs
+// Right Side Drawer Tabs (matching ForgeADE AgentRightSidebar)
 const (
-	RightTabGit      = 0
-	RightTabDatabase = 1
-	RightTabTasks    = 2
-	RightTabAgent    = 3
+	RightTabChanges  = 0
+	RightTabTerminal = 1
+	RightTabChat     = 2
+	RightTabTasks    = 3
+	RightTabGit      = 4
+	RightTabDatabase = 5
+	RightTabAgent    = 2 // alias for RightTabChat (backward compatibility)
 )
 
 // Editor Activity Bar Tabs

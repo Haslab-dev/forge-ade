@@ -97,6 +97,17 @@ func (e *Engine) GetGitBranches(repoPath string) ([]string, error) {
 	return e.GitEngine.GetBranches(ctx, repoPath)
 }
 
+// GetGitDiff returns the unified diff for a single file against HEAD.
+func (e *Engine) GetGitDiff(repoPath, path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	diff, err := e.GitEngine.GetFileDiff(ctx, repoPath, path)
+	if err != nil {
+		return ""
+	}
+	return diff
+}
+
 // GetGitCommitGraph returns commit history log.
 func (e *Engine) GetGitCommitGraph(repoPath string, limit int) (*git.CommitGraphResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
