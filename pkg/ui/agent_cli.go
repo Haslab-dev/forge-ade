@@ -221,32 +221,55 @@ func (mgr *AgentCLIManager) RenderTerminalSessionSurface(c *ui.Context, sessionI
 	}
 
 	ui.Column(c).Fill().Children(func() {
-		// 1. Session Top Bar
+		// 1. Session Top Bar with Tabler Icons
 		ui.Row(c).Gap(10).Padding(8, 14).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, "🤖").FontSize(14)
+			TablerIcon(c, TablerRobot, 16)
 			ui.Text(c, sess.AgentName).Bold().FontSize(13)
 			ui.Text(c, sess.Title).FontSize(12).TextColor(t.TextMuted)
 
 			ui.Box(c).Grow(1)
 
-			// Status badge
+			// Status badge with Tabler icons
 			if sess.Status == "running" {
-				ui.Text(c, "🟢 Running").FontSize(11).TextColor(t.Accent)
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerLoader, 13)
+					ui.Text(c, "Running").FontSize(11).TextColor(t.Accent)
+				})
 			} else {
-				ui.Text(c, fmt.Sprintf("⚪ Stopped (code %d)", sess.ExitCode)).FontSize(11).TextColor(t.TextMuted)
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerCircle, 13)
+					ui.Text(c, fmt.Sprintf("Stopped (code %d)", sess.ExitCode)).FontSize(11).TextColor(t.TextMuted)
+				})
 			}
 
-			// Elapsed time
+			// Elapsed time with TablerClock
 			elapsed := time.Since(sess.StartedAt).Truncate(time.Second)
-			ui.Text(c, fmt.Sprintf("⏱ %s", elapsed)).FontSize(11).TextColor(t.TextMuted)
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerClock, 13)
+				ui.Text(c, fmt.Sprintf("%s", elapsed)).FontSize(11).TextColor(t.TextMuted)
+			})
 
-			// Actions: Restart / Stop
+			// Actions: Restart / Stop with Tabler Icons
 			if sess.Status == "running" {
-				if ui.Button(c, "⏹ Stop").FontSize(11).Clicked() {
+				stopBtn := ui.Button(c, "")
+				stopBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerSquare, 12)
+						ui.Text(c, "Stop").FontSize(11)
+					})
+				})
+				if stopBtn.Clicked() {
 					mgr.StopSession(sess.ID)
 				}
 			} else {
-				if ui.PrimaryButton(c, "↻ Restart").FontSize(11).Clicked() {
+				restartBtn := ui.PrimaryButton(c, "")
+				restartBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerRefresh, 12)
+						ui.Text(c, "Restart").FontSize(11).Bold()
+					})
+				})
+				if restartBtn.Clicked() {
 					sess.Status = "running"
 					sess.StartedAt = time.Now()
 					if sess.Terminal != nil {

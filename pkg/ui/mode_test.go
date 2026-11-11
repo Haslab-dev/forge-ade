@@ -137,4 +137,13 @@ func TestAppUIModeSwitch(t *testing.T) {
 	if app.RightDrawerTab != RightTabGit {
 		t.Fatalf("expected right drawer tab RightTabGit")
 	}
+
+	// Toggle agent sidebar views: Tasks vs Files (parity with ForgeADE)
+	if app.AgentSidebarView != AgentSidebarTasks {
+		t.Fatalf("expected initial AgentSidebarTasks, got %d", app.AgentSidebarView)
+	}
+	app.AgentSidebarView = AgentSidebarFiles
+	if app.AgentSidebarView != AgentSidebarFiles {
+		t.Fatalf("expected AgentSidebarFiles, got %d", app.AgentSidebarView)
+	}
 }

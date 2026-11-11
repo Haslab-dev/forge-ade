@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 func TestSettingsManager(t *testing.T) {
@@ -126,25 +128,28 @@ func TestAgentStateTabCountsAndContextUsage(t *testing.T) {
 	}
 }
 
-func TestFileIconBadge(t *testing.T) {
-	tests := map[string]string{
-		"main.go":       "🔵",
-		"app.tsx":       "🟦",
-		"index.js":      "🟨",
-		"package.json":  "🟧",
-		"README.md":     "📝",
-		"index.html":    "🌐",
-		"styles.css":    "🎨",
-		"data.sqlite":   "🗄",
-		"script.sh":     "⚡",
-		"config.yaml":   "⚙",
-		"unknown.xyz":   "📄",
+func TestFileIconSVG(t *testing.T) {
+	tests := map[string]*ui.SVG{
+		"main.go":       TablerBrandGolang,
+		"app.tsx":       TablerBrandTypescript,
+		"index.js":      TablerBrandJavascript,
+		"package.json":  TablerJson,
+		"README.md":     TablerMarkdown,
+		"index.html":    TablerBrandHtml5,
+		"styles.css":    TablerBrandCss3,
+		"data.sqlite":   TablerDatabase,
+		"script.sh":     TablerTerminal,
+		"config.yaml":   TablerSettings,
+		"unknown.xyz":   TablerFile,
 	}
 
 	for path, expectedIcon := range tests {
-		got := fileIconBadge(filepath.Join("some/dir", path))
+		got := FileIconSVG(filepath.Join("some/dir", path))
+		if got == nil {
+			t.Errorf("FileIconSVG(%s) is nil", path)
+		}
 		if got != expectedIcon {
-			t.Errorf("fileIconBadge(%s) = %s, expected %s", path, got, expectedIcon)
+			t.Errorf("FileIconSVG(%s) mismatch", path)
 		}
 	}
 }

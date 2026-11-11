@@ -216,16 +216,25 @@ func (em *EditorManager) RenderTabBar(c *ui.Context) {
 
 			var tabBtn ui.Element
 			if isActive {
-				tabBtn = ui.PrimaryButton(c, tabLabel).FontSize(12)
+				tabBtn = ui.PrimaryButton(c, "")
 			} else {
-				tabBtn = ui.Button(c, tabLabel).FontSize(12)
+				tabBtn = ui.Button(c, "")
 			}
+			tabBtn.Children(func() {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, FileIconSVG(doc.RelativePath), 13)
+					ui.Text(c, tabLabel).FontSize(12)
+				})
+			})
 			if tabBtn.Clicked() {
 				em.ActivePath = path
 			}
 
 			// Tab close icon button
-			closeBtn := ui.Button(c, "×").FontSize(11)
+			closeBtn := ui.Button(c, "")
+			closeBtn.Children(func() {
+				TablerIcon(c, TablerX, 11)
+			})
 			if closeBtn.Clicked() {
 				em.CloseTab(path)
 			}
@@ -238,21 +247,34 @@ func (em *EditorManager) RenderTabBar(c *ui.Context) {
 		ui.Box(c).Grow(1)
 
 		// Split Editor button
-		splitIcon := "◫ Split"
-		if em.IsSplit {
-			splitIcon = "▣ Single"
-		}
-		if ui.Button(c, splitIcon).FontSize(11).Clicked() {
+		splitBtn := ui.Button(c, "")
+		splitBtn.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerColumns, 13)
+				label := "Split"
+				if em.IsSplit {
+					label = "Single"
+				}
+				ui.Text(c, label).FontSize(11)
+			})
+		})
+		if splitBtn.Clicked() {
 			em.IsSplit = !em.IsSplit
 		}
 
 		// Diff View toggle button
 		var diffBtn ui.Element
 		if em.IsDiffView {
-			diffBtn = ui.PrimaryButton(c, "Diff").FontSize(11)
+			diffBtn = ui.PrimaryButton(c, "")
 		} else {
-			diffBtn = ui.Button(c, "Diff").FontSize(11)
+			diffBtn = ui.Button(c, "")
 		}
+		diffBtn.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerGitCompare, 13)
+				ui.Text(c, "Diff").FontSize(11)
+			})
+		})
 		if diffBtn.Clicked() {
 			em.IsDiffView = !em.IsDiffView
 		}
@@ -262,7 +284,14 @@ func (em *EditorManager) RenderTabBar(c *ui.Context) {
 		ui.Switch(c, &em.SoftWrap)
 
 		// Save File button
-		if ui.Button(c, "💾 Save").FontSize(11).Clicked() {
+		saveBtn := ui.Button(c, "")
+		saveBtn.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerDeviceFloppy, 13)
+				ui.Text(c, "Save").FontSize(11)
+			})
+		})
+		if saveBtn.Clicked() {
 			_ = em.SaveActiveFile()
 		}
 	})

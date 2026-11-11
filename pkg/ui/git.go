@@ -182,7 +182,7 @@ func (gm *GitManager) GenerateAICommit(instruction string) {
 			gm.StatusMsg = fmt.Sprintf("AI Commit error: %v", err)
 		} else if strings.TrimSpace(msg) != "" {
 			gm.CommitMsg = strings.TrimSpace(msg)
-			gm.StatusMsg = "✨ AI commit message generated"
+			gm.StatusMsg = "AI commit message generated"
 		}
 		gm.mu.Unlock()
 
@@ -200,35 +200,52 @@ func (gm *GitManager) RenderGit(c *ui.Context) {
 	defer gm.mu.RUnlock()
 
 	ui.Column(c).Fill().Children(func() {
-		// Header Toolbar
+		// Header Toolbar with Tabler Icons
 		ui.Row(c).Gap(10).Padding(8, 14).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			ui.Text(c, "Source Control").Bold().FontSize(13)
 			if gm.Branch != "" {
-				ui.Text(c, fmt.Sprintf("⎇ %s", gm.Branch)).FontSize(11).Bold().TextColor(t.Accent)
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerGitBranch, 13)
+					ui.Text(c, gm.Branch).FontSize(11).Bold().TextColor(t.Accent)
+				})
 			}
 			ui.Box(c).Grow(1)
-			if ui.Button(c, "↻").FontSize(11).Clicked() {
+			refreshBtn := ui.Button(c, "")
+			refreshBtn.Children(func() {
+				TablerIcon(c, TablerRefresh, 13)
+			})
+			if refreshBtn.Clicked() {
 				go gm.Refresh()
 			}
 		})
 
-		// Sub-Tabs: [Changes] [History] [Branches]
+		// Sub-Tabs: [Changes] [History] [Branches] with Tabler Icons
 		ui.Row(c).Gap(4).Padding(6, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			tabNames := []string{
-				fmt.Sprintf("Changes (%d)", len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked)),
-				"History",
-				"Branches",
+			subtabs := []struct {
+				Tab   int
+				Label string
+				Icon  *ui.SVG
+			}{
+				{GitTabChanges, fmt.Sprintf("Changes (%d)", len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked)), TablerFileDiff},
+				{GitTabHistory, "History", TablerHistory},
+				{GitTabBranches, "Branches", TablerGitBranch},
 			}
-			for i, name := range tabNames {
-				idx := i
+			for _, st := range subtabs {
+				thisTab := st
 				var btn ui.Element
-				if gm.ActiveTab == idx {
-					btn = ui.PrimaryButton(c, name).FontSize(11)
+				if gm.ActiveTab == thisTab.Tab {
+					btn = ui.PrimaryButton(c, "")
 				} else {
-					btn = ui.Button(c, name).FontSize(11)
+					btn = ui.Button(c, "")
 				}
+				btn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, thisTab.Icon, 12)
+						ui.Text(c, thisTab.Label).FontSize(11).Bold()
+					})
+				})
 				if btn.Clicked() {
-					gm.ActiveTab = idx
+					gm.ActiveTab = thisTab.Tab
 				}
 			}
 		})
@@ -256,8 +273,14 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 		}
 
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			// Commit Button
-			commitBtn := ui.PrimaryButton(c, fmt.Sprintf("Commit (%d)", len(gm.Staged))).FontSize(11)
+			// Commit Button with TablerGitCommit
+			commitBtn := ui.PrimaryButton(c, "")
+			commitBtn.Children(func() {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerGitCommit, 13)
+					ui.Text(c, fmt.Sprintf("Commit (%d)", len(gm.Staged))).FontSize(11).Bold()
+				})
+			})
 			if len(gm.Staged) == 0 || strings.TrimSpace(gm.CommitMsg) == "" {
 				commitBtn.Disabled(true)
 			}
@@ -265,8 +288,14 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 				go gm.Commit()
 			}
 
-			// AI Commit Generator Button
-			aiBtn := ui.Button(c, "✨ AI Commit").FontSize(11)
+			// AI Commit Generator Button with TablerSparkles
+			aiBtn := ui.Button(c, "")
+			aiBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerSparkles, 13)
+					ui.Text(c, "AI Commit").FontSize(11)
+				})
+			})
 			if gm.IsGeneratingAI {
 				aiBtn.Disabled(true)
 			}
@@ -274,9 +303,16 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 				go gm.GenerateAICommit("")
 			}
 
-			// Stage All Button
+			// Stage All Button with TablerPlus
 			if len(gm.Unstaged)+len(gm.Untracked) > 0 {
-				if ui.Button(c, "+ Stage All").FontSize(11).Clicked() {
+				stageAllBtn := ui.Button(c, "")
+				stageAllBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerPlus, 12)
+						ui.Text(c, "Stage All").FontSize(11)
+					})
+				})
+				if stageAllBtn.Clicked() {
 					go gm.StageAll()
 				}
 			}
@@ -310,7 +346,11 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 					if f.Additions > 0 || f.Deletions > 0 {
 						ui.Text(c, fmt.Sprintf("+%d −%d", f.Additions, f.Deletions)).FontSize(10).TextColor(t.TextMuted)
 					}
-					if ui.Button(c, "−").FontSize(11).Clicked() {
+					unstageBtn := ui.Button(c, "")
+					unstageBtn.Children(func() {
+						TablerIcon(c, TablerMinus, 11)
+					})
+					if unstageBtn.Clicked() {
 						go gm.Unstage(filePath)
 					}
 				})
@@ -333,7 +373,11 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 					if f.Additions > 0 || f.Deletions > 0 {
 						ui.Text(c, fmt.Sprintf("+%d −%d", f.Additions, f.Deletions)).FontSize(10).TextColor(t.TextMuted)
 					}
-					if ui.Button(c, "+").FontSize(11).Clicked() {
+					stageBtn := ui.Button(c, "")
+					stageBtn.Children(func() {
+						TablerIcon(c, TablerPlus, 11)
+					})
+					if stageBtn.Clicked() {
 						go gm.Stage(filePath)
 					}
 				})
@@ -353,7 +397,11 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 					if fileRow.Clicked() && gm.OnFileSelect != nil {
 						gm.OnFileSelect(filePath, false)
 					}
-					if ui.Button(c, "+").FontSize(11).Clicked() {
+					stageBtn := ui.Button(c, "")
+					stageBtn.Children(func() {
+						TablerIcon(c, TablerPlus, 11)
+					})
+					if stageBtn.Clicked() {
 						go gm.Stage(filePath)
 					}
 				})
@@ -361,8 +409,9 @@ func (gm *GitManager) renderChangesTab(c *ui.Context) {
 		}
 
 		if len(gm.Staged) == 0 && len(gm.Unstaged) == 0 && len(gm.Untracked) == 0 {
-			ui.Column(c).Grow(1).Center().Padding(36, 0).Children(func() {
-				ui.Text(c, "✔ Working tree clean").FontSize(14).Bold().TextColor(t.TextMuted)
+			ui.Column(c).Grow(1).Center().Padding(36, 0).Gap(8).Children(func() {
+				TablerIcon(c, TablerCircleCheck, 24)
+				ui.Text(c, "Working tree clean").FontSize(14).Bold().TextColor(t.TextMuted)
 				ui.Text(c, "No uncommitted modifications.").FontSize(12).TextColor(t.TextMuted)
 			})
 		}
@@ -412,7 +461,7 @@ func (gm *GitManager) renderBranchesTab(c *ui.Context) {
 					row.Background(t.Border)
 				}
 				row.Children(func() {
-					ui.Text(c, "⎇").FontSize(11).TextColor(t.Accent)
+					TablerIcon(c, TablerGitBranch, 13)
 					ui.Text(c, branchName).FontSize(12).Bold().Grow(1)
 					if isCurrent {
 						ui.Text(c, "Active").FontSize(10).TextColor(t.Accent)

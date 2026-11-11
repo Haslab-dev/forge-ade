@@ -98,10 +98,21 @@ func (tm *TaskManager) RenderChecklist(c *ui.Context) {
 	ui.Column(c).Margin(8, 16).Padding(10, 14).Radius(8).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Children(func() {
 		// Header row with Goal & toggle
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "ACTIVE GOAL").FontSize(10).Bold().TextColor(t.TextMuted)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerChecklist, 13)
+				ui.Text(c, "ACTIVE GOAL").FontSize(10).Bold().TextColor(t.TextMuted)
+			})
 			ui.Box(c).Grow(1)
 			ui.Text(c, fmt.Sprintf("%d/%d completed", completed, total)).FontSize(11).TextColor(t.Accent)
-			if ui.Button(c, map[bool]string{true: "▴", false: "▾"}[tm.IsExpanded]).Clicked() {
+			toggleBtn := ui.Button(c, "")
+			toggleBtn.Children(func() {
+				if tm.IsExpanded {
+					TablerIcon(c, TablerChevronUp, 12)
+				} else {
+					TablerIcon(c, TablerChevronDown, 12)
+				}
+			})
+			if toggleBtn.Clicked() {
 				tm.IsExpanded = !tm.IsExpanded
 			}
 		})
@@ -118,11 +129,16 @@ func (tm *TaskManager) RenderChecklist(c *ui.Context) {
 					isCurrent := task.Status == TaskInProgress
 
 					ui.Row(c.Key("task-"+tid)).Gap(8).AlignItems(ui.Center).Children(func() {
-						checkLabel := "☐"
-						if isDone {
-							checkLabel = "☑"
-						}
-						checkBtn := ui.Button(c, checkLabel).FontSize(12)
+						checkBtn := ui.Button(c, "")
+						checkBtn.Children(func() {
+							if isDone {
+								TablerIcon(c, TablerCircleCheck, 13)
+							} else if isCurrent {
+								TablerIcon(c, TablerLoader, 13)
+							} else {
+								TablerIcon(c, TablerCircle, 13)
+							}
+						})
 						if checkBtn.Clicked() {
 							go tm.ToggleTask(tid)
 						}

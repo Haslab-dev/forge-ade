@@ -142,21 +142,32 @@ func (dm *DatabaseManager) RenderDatabase(c *ui.Context) {
 	defer dm.mu.RUnlock()
 
 	ui.Column(c).Fill().Children(func() {
-		// Top Toolbar
+		// Top Toolbar with Tabler Icons
 		ui.Row(c).Gap(12).Padding(8, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, "Database Viewer").Bold().FontSize(14)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerDatabase, 15)
+				ui.Text(c, "Database Viewer").Bold().FontSize(14)
+			})
 			if dm.Info != nil {
 				ui.Text(c, fmt.Sprintf("%s (%s)", dm.Info.FileName, dm.Info.Type)).FontSize(12).TextColor(t.Accent)
 			}
 			ui.Box(c).Grow(1)
-			if ui.Button(c, "↻ Rescan").Clicked() {
+			rescanBtn := ui.Button(c, "")
+			rescanBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerRefresh, 13)
+					ui.Text(c, "Rescan").FontSize(11)
+				})
+			})
+			if rescanBtn.Clicked() {
 				go dm.ScanDatabases()
 			}
 		})
 
 		if len(dm.Databases) == 0 {
 			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, "No SQLite / DuckDB databases detected").FontSize(15).Bold().TextColor(t.TextMuted)
+				TablerIcon(c, TablerDatabase, 28)
+				ui.Text(c, "No SQLite / DuckDB databases detected").FontSize(15).Bold().TextColor(t.TextMuted).Padding(6, 0, 0, 0)
 				ui.Text(c, "Add a .sqlite, .sqlite3, .db, or .duckdb file to your workspace.").TextColor(t.TextMuted)
 			})
 			return
@@ -174,13 +185,14 @@ func (dm *DatabaseManager) RenderDatabase(c *ui.Context) {
 					ui.Scroll(c).Grow(1).Padding(4, 8).Children(func() {
 						for _, tb := range dm.Info.Tables {
 							tName := tb.Name
-							row := ui.Row(c.Key("db-table-"+tName)).Padding(6, 8).Radius(6).AlignItems(ui.Center)
+							row := ui.Row(c.Key("db-table-"+tName)).Padding(6, 8).Radius(6).Gap(6).AlignItems(ui.Center)
 							if tName == dm.ActiveTable {
 								row.Background(t.Accent).TextColor(t.AccentText)
 							} else if row.Hovered() {
 								row.Background(t.Border)
 							}
 
+							TablerIcon(c, TablerTable, 13)
 							ui.Text(c, tName).FontSize(12).Grow(1)
 							ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(11).TextColor(t.TextMuted)
 
@@ -199,10 +211,16 @@ func (dm *DatabaseManager) RenderDatabase(c *ui.Context) {
 					in := ui.TextInput(c, &dm.SQLQuery).Placeholder("Write read-only SQL query (e.g. SELECT * FROM users LIMIT 25)...").Grow(1)
 					if in.Submitted() && !dm.IsExecuting {
 						go dm.ExecuteQuery()
-					}
+					}  
 
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						runBtn := ui.PrimaryButton(c, "Execute SQL (⌘Enter)")
+						runBtn := ui.PrimaryButton(c, "")
+						runBtn.Children(func() {
+							ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+								TablerIcon(c, TablerPlayerPlay, 13)
+								ui.Text(c, "Execute SQL (⌘Enter)").FontSize(11).Bold()
+							})
+						})
 						if dm.IsExecuting {
 							runBtn.Disabled(true)
 						}

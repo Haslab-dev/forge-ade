@@ -9,8 +9,8 @@ import (
 
 // Workspace Surface Modes (ForgeADE Dual-Surface architecture)
 const (
-	ModeAgent  = 0 // ✨ Autonomous Agent Mode
-	ModeEditor = 1 // 💻 Code Editor Mode
+	ModeAgent  = 0 // Autonomous Agent Mode
+	ModeEditor = 1 // Code Editor Mode
 )
 
 // Right Side Drawer Tabs
@@ -377,31 +377,54 @@ func (tm *ThemeManager) RenderThemePicker(c *ui.Context) {
 
 	ui.Modal(c, &tm.IsOpen, func() {
 		ui.Column(c).Width(480).Radius(12).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 20).Gap(14).Children(func() {
-			// Header
+			// Header with Tabler Icon
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "🎨 Theme & Appearance").Bold().FontSize(15)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerPalette, 16)
+					ui.Text(c, "Theme & Appearance").Bold().FontSize(15)
+				})
 				ui.Box(c).Grow(1)
-				if ui.Button(c, "✕").FontSize(12).Clicked() {
+				closeBtn := ui.Button(c, "")
+				closeBtn.Children(func() {
+					TablerIcon(c, TablerX, 13)
+				})
+				if closeBtn.Clicked() {
 					tm.IsOpen = false
 				}
 			})
 
-			// 1. Appearance Switcher (Dark / Light)
+			// 1. Appearance Switcher (Dark / Light) with Tabler Icons
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "APPEARANCE").FontSize(10).Bold().TextColor(t.TextMuted)
 				ui.Row(c).Gap(8).Children(func() {
-					darkBtn := ui.Button(c, "🌙 Dark")
+					var darkBtn ui.Element
 					if tm.Appearance == "dark" {
-						darkBtn = ui.PrimaryButton(c, "🌙 Dark")
+						darkBtn = ui.PrimaryButton(c, "")
+					} else {
+						darkBtn = ui.Button(c, "")
 					}
+					darkBtn.Children(func() {
+						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerMoon, 13)
+							ui.Text(c, "Dark").FontSize(11).Bold()
+						})
+					})
 					if darkBtn.Clicked() {
 						tm.Appearance = "dark"
 					}
 
-					lightBtn := ui.Button(c, "☀️ Light")
+					var lightBtn ui.Element
 					if tm.Appearance == "light" {
-						lightBtn = ui.PrimaryButton(c, "☀️ Light")
+						lightBtn = ui.PrimaryButton(c, "")
+					} else {
+						lightBtn = ui.Button(c, "")
 					}
+					lightBtn.Children(func() {
+						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerSun, 13)
+							ui.Text(c, "Light").FontSize(11).Bold()
+						})
+					})
 					if lightBtn.Clicked() {
 						tm.Appearance = "light"
 					}

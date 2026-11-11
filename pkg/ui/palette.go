@@ -85,9 +85,16 @@ func (pm *PaletteManager) RenderPalette(c *ui.Context) {
 	ui.Modal(c, &pm.IsOpen, func() {
 		ui.Column(c).Width(540).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(12, 16).Gap(8).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Quick Open File").Bold().FontSize(13)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerSearch, 15)
+					ui.Text(c, "Quick Open File").Bold().FontSize(13)
+				})
 				ui.Box(c).Grow(1)
-				if ui.Button(c, "✕").Clicked() {
+				closeBtn := ui.Button(c, "")
+				closeBtn.Children(func() {
+					TablerIcon(c, TablerX, 13)
+				})
+				if closeBtn.Clicked() {
 					pm.Close()
 				}
 			})
@@ -104,11 +111,12 @@ func (pm *PaletteManager) RenderPalette(c *ui.Context) {
 			ui.Column(c).Gap(4).Padding(4, 0).Children(func() {
 				for i, file := range matches {
 					filePath := file.RelativePath
-					row := ui.Row(c.Key("palette-"+filePath)).Padding(6, 10).Radius(6).AlignItems(ui.Center)
+					row := ui.Row(c.Key("palette-"+filePath)).Padding(6, 10).Radius(6).Gap(6).AlignItems(ui.Center)
 					if row.Hovered() || i == pm.SelectedIndex {
 						row.Background(t.Accent).TextColor(t.AccentText)
 					}
 
+					TablerIcon(c, FileIconSVG(filePath), 13)
 					ui.Text(c, filePath).FontSize(12).Grow(1)
 
 					if row.Clicked() {

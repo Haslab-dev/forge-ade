@@ -365,7 +365,10 @@ func (mgr *ACPManager) RenderPermissionModal(c *ui.Context) {
 
 	ui.Modal(c, &open, func() {
 		ui.Column(c).Width(440).Radius(12).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 20).Gap(12).Children(func() {
-			ui.Text(c, "🛡️ Permission Requested").Bold().FontSize(15)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerShieldAlert, 18)
+				ui.Text(c, "Permission Requested").Bold().FontSize(15)
+			})
 			ui.Text(c, fmt.Sprintf("Agent requested permission to execute: %s", req.ToolName)).FontSize(12).TextColor(t.TextMuted)
 
 			if req.Command != "" {

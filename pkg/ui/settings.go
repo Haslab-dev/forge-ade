@@ -30,10 +30,10 @@ var ProviderDefaultModels = map[string]string{
 
 // SettingsTab Constants
 const (
-	SettingsTabModels     = 0 // 🤖 Models & Providers
-	SettingsTabAppearance = 1 // 🎨 Appearance & Themes
-	SettingsTabAgents     = 2 // 🔌 Agent Protocols (ACP)
-	SettingsTabShortcuts  = 3 // ⌨ Keyboard Shortcuts
+	SettingsTabModels     = 0 // Models & Providers
+	SettingsTabAppearance = 1 // Appearance & Themes
+	SettingsTabAgents     = 2 // Agent Protocols (ACP)
+	SettingsTabShortcuts  = 3 // Keyboard Shortcuts
 )
 
 // SettingsManager manages provider credentials, models, and application preferences.
@@ -139,28 +139,50 @@ func (sm *SettingsManager) RenderSettings(c *ui.Context) {
 
 	ui.Modal(c, &sm.IsOpen, func() {
 		ui.Column(c).Width(640).Radius(12).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 20).Gap(12).Children(func() {
-			// Title Header
+			// Title Header with Tabler Icon
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "⚙ Settings & Preferences").Bold().FontSize(15)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerSettings, 16)
+					ui.Text(c, "Settings & Preferences").Bold().FontSize(15)
+				})
 				ui.Box(c).Grow(1)
-				if ui.Button(c, "✕").Clicked() {
+				closeBtn := ui.Button(c, "")
+				closeBtn.Children(func() {
+					TablerIcon(c, TablerX, 13)
+				})
+				if closeBtn.Clicked() {
 					sm.IsOpen = false
 				}
 			})
 
-			// Navigation Tabs: [Models] [Appearance] [ACP Agents] [Shortcuts]
+			// Navigation Tabs: [Models] [Appearance] [ACP Agents] [Shortcuts] with Tabler Icons
 			ui.Row(c).Gap(6).Children(func() {
-				tabs := []string{"🤖 Models & Providers", "🎨 Appearance", "🔌 ACP Agents", "⌨ Shortcuts"}
-				for i, name := range tabs {
-					idx := i
+				tabDefs := []struct {
+					Idx   int
+					Label string
+					Icon  *ui.SVG
+				}{
+					{SettingsTabModels, "Models & Providers", TablerBrain},
+					{SettingsTabAppearance, "Appearance", TablerPalette},
+					{SettingsTabAgents, "ACP Agents", TablerPlug},
+					{SettingsTabShortcuts, "Shortcuts", TablerKeyboard},
+				}
+				for _, tab := range tabDefs {
+					tDef := tab
 					var btn ui.Element
-					if sm.ActiveTab == idx {
-						btn = ui.PrimaryButton(c, name).FontSize(11)
+					if sm.ActiveTab == tDef.Idx {
+						btn = ui.PrimaryButton(c, "")
 					} else {
-						btn = ui.Button(c, name).FontSize(11)
+						btn = ui.Button(c, "")
 					}
+					btn.Children(func() {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, tDef.Icon, 13)
+							ui.Text(c, tDef.Label).FontSize(11).Bold()
+						})
+					})
 					if btn.Clicked() {
-						sm.ActiveTab = idx
+						sm.ActiveTab = tDef.Idx
 					}
 				}
 			})
@@ -281,25 +303,37 @@ func (sm *SettingsManager) renderAppearanceTab(c *ui.Context) {
 			}
 		})
 
-		// Appearance Switcher: Dark vs Light
+		// Appearance Switcher: Dark vs Light with Tabler Icons
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "APPEARANCE").FontSize(10).Bold().TextColor(t.TextMuted).Width(120)
 			var darkBtn ui.Element
 			if sm.ThemeMgr.Appearance == "dark" {
-				darkBtn = ui.PrimaryButton(c, "🌙 Dark").FontSize(11)
+				darkBtn = ui.PrimaryButton(c, "")
 			} else {
-				darkBtn = ui.Button(c, "🌙 Dark").FontSize(11)
+				darkBtn = ui.Button(c, "")
 			}
+			darkBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerMoon, 13)
+					ui.Text(c, "Dark").FontSize(11).Bold()
+				})
+			})
 			if darkBtn.Clicked() {
 				sm.ThemeMgr.Appearance = "dark"
 			}
 
 			var lightBtn ui.Element
 			if sm.ThemeMgr.Appearance == "light" {
-				lightBtn = ui.PrimaryButton(c, "☀️ Light").FontSize(11)
+				lightBtn = ui.PrimaryButton(c, "")
 			} else {
-				lightBtn = ui.Button(c, "☀️ Light").FontSize(11)
+				lightBtn = ui.Button(c, "")
 			}
+			lightBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerSun, 13)
+					ui.Text(c, "Light").FontSize(11).Bold()
+				})
+			})
 			if lightBtn.Clicked() {
 				sm.ThemeMgr.Appearance = "light"
 			}
@@ -365,7 +399,10 @@ func (sm *SettingsManager) renderAgentsTab(c *ui.Context) {
 							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 								ui.Text(c, ag.Name).Bold().FontSize(12)
 								if ag.Available {
-									ui.Text(c, "✔ On PATH").FontSize(10).TextColor(t.Accent)
+									ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+										TablerIcon(c, TablerCircleCheck, 12)
+										ui.Text(c, "On PATH").FontSize(10).TextColor(t.Accent)
+									})
 								} else {
 									ui.Text(c, "Not detected").FontSize(10).TextColor(t.TextMuted)
 								}
@@ -394,8 +431,10 @@ func (sm *SettingsManager) renderShortcutsTab(c *ui.Context) {
 		{"⌘B / Ctrl+B", "Toggle left workspace sidebar"},
 		{"⌘N / Ctrl+N", "Create new task session"},
 		{"⌘J / Ctrl+J", "Toggle collapsible right side drawer"},
-		{"⌘1 / Ctrl+1", "Switch surface to ✨ Autonomous Agent Mode"},
-		{"⌘2 / Ctrl+2", "Switch surface to 💻 Code Editor Mode"},
+		{"⌘/ / Ctrl+/", "Toggle theme and appearance picker modal"},
+		{"⌘` / Ctrl+`", "Toggle collapsible bottom terminal drawer"},
+		{"⌘1 / Ctrl+1", "Switch surface to Autonomous Agent Mode"},
+		{"⌘2 / Ctrl+2", "Switch surface to Code Editor Mode"},
 		{"⌘Enter", "Send chat prompt or commit staged git changes"},
 	}
 

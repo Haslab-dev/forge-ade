@@ -9,6 +9,12 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// Agent sidebar view modes
+const (
+	AgentSidebarTasks = 0
+	AgentSidebarFiles = 1
+)
+
 // AppUI is the top-level native UI application state matching ForgeADE's Dual-Surface design.
 type AppUI struct {
 	Engine              *Engine
@@ -27,6 +33,7 @@ type AppUI struct {
 	Mode                int    // ModeAgent (0) or ModeEditor (1)
 	ActiveTaskKind      string // "agent" or "cli"
 	ShowLeftSidebar     bool   // Left sidebar visibility
+	AgentSidebarView    int    // AgentSidebarTasks (0) or AgentSidebarFiles (1)
 	ShowBottomTerminal  bool   // Collapsible bottom terminal drawer
 	ShowRightDrawer     bool   // Collapsible right side pane
 	RightDrawerTab      int    // RightTabGit, RightTabDatabase, RightTabTasks, RightTabAgent
@@ -213,6 +220,12 @@ func (a *AppUI) View(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
 	}
+	if c.Shortcut(ui.Cmd, ui.KeySlash) {
+		a.ThemeMgr.Toggle()
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyBackquote) {
+		a.ShowBottomTerminal = !a.ShowBottomTerminal
+	}
 
 	ui.Column(c).Fill().Children(func() {
 		// 1. Top Unified Workspace Header (WorkspaceHeader)
@@ -257,8 +270,11 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 	}
 
 	ui.Row(c).Gap(10).Padding(7, 14).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		// Left: Sidebar Toggle
-		sidebarBtn := ui.Button(c, map[bool]string{true: "◧", false: "◻"}[a.ShowLeftSidebar]).FontSize(12)
+		// Left: Sidebar Toggle with Tabler Icon
+		sidebarBtn := ui.Button(c, "")
+		sidebarBtn.Children(func() {
+			TablerIcon(c, TablerPanelLeft, 16)
+		})
 		if sidebarBtn.Clicked() {
 			a.ShowLeftSidebar = !a.ShowLeftSidebar
 		}
@@ -266,71 +282,136 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		// Title
 		ui.Text(c, title).Bold().FontSize(13).MaxWidth(280)
 
-		// Project folder chip
-		projectChip := ui.Button(c, projectName).FontSize(11)
+		// Project folder chip with TablerFolder
+		projectChip := ui.Button(c, "")
+		projectChip.Children(func() {
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerFolder, 14)
+				ui.Text(c, projectName).FontSize(11).Bold()
+			})
+		})
 		if projectChip.Clicked() {
 			a.Palette.Toggle()
 		}
 
-		// Git Branch chip
+		// Git Branch chip with TablerGitBranch
 		if a.Git != nil && a.Git.Branch != "" {
 			dirtyMarker := ""
 			if len(a.Git.Staged)+len(a.Git.Unstaged)+len(a.Git.Untracked) > 0 {
 				dirtyMarker = " *"
 			}
-			branchChip := ui.Button(c, fmt.Sprintf("%s%s", a.Git.Branch, dirtyMarker)).FontSize(11)
+			branchChip := ui.Button(c, "")
+			branchChip.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerGitBranch, 13)
+					ui.Text(c, fmt.Sprintf("%s%s", a.Git.Branch, dirtyMarker)).FontSize(11)
+				})
+			})
 			if branchChip.Clicked() {
 				a.ShowRightDrawer = true
 				a.RightDrawerTab = RightTabGit
 			}
 		}
 
-		// Task "…" menu
-		moreBtn := ui.Button(c, "…").FontSize(12)
+		// Task "…" menu with TablerDots
+		moreBtn := ui.Button(c, "")
+		moreBtn.Children(func() {
+			TablerIcon(c, TablerDots, 15)
+		})
 		if moreBtn.Clicked() {
 			a.ShowTaskMenuModal = true
 		}
 
 		ui.Box(c).Grow(1)
 
-		// Mode Switcher: [✨ Agent] | [💻 Editor]
-		ui.Segmented(c, &a.Mode, "Agent", "Editor").Label("Surface")
+		// Mode Switcher: [✨ Agent] | [💻 Editor] with Tabler icons
+		ui.Row(c).Gap(2).Padding(2).Radius(8).Background(t.Border).AlignItems(ui.Center).Children(func() {
+			var agentBtn ui.Element
+			if a.Mode == ModeAgent {
+				agentBtn = ui.PrimaryButton(c, "")
+			} else {
+				agentBtn = ui.Button(c, "")
+			}
+			agentBtn.Children(func() {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerSparkles, 14)
+					ui.Text(c, "Agent").FontSize(11).Bold()
+				})
+			})
+			if agentBtn.Clicked() {
+				a.Mode = ModeAgent
+			}
+
+			var editorBtn ui.Element
+			if a.Mode == ModeEditor {
+				editorBtn = ui.PrimaryButton(c, "")
+			} else {
+				editorBtn = ui.Button(c, "")
+			}
+			editorBtn.Children(func() {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerCode, 14)
+					ui.Text(c, "Editor").FontSize(11).Bold()
+				})
+			})
+			if editorBtn.Clicked() {
+				a.Mode = ModeEditor
+			}
+		})
 
 		ui.Box(c).Grow(1)
 
 		// Right controls: Search, Theme Picker, Bottom Terminal Toggle, Side Pane Toggle, Settings
-		searchBtn := ui.Button(c, "Find (⌘P)").FontSize(11)
+		searchBtn := ui.Button(c, "")
+		searchBtn.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerSearch, 14)
+				ui.Text(c, "Find").FontSize(11)
+			})
+		})
 		if searchBtn.Clicked() {
 			a.Palette.Toggle()
 		}
 
 		// Theme & Palette Picker button
-		themeBtn := ui.Button(c, "Theme").FontSize(11)
+		themeBtn := ui.Button(c, "")
+		themeBtn.Children(func() {
+			TablerIcon(c, TablerPalette, 15)
+		})
 		if themeBtn.Clicked() {
 			a.ThemeMgr.Toggle()
 		}
 
 		var termToggleBtn ui.Element
 		if a.ShowBottomTerminal {
-			termToggleBtn = ui.PrimaryButton(c, "Terminal").FontSize(11)
+			termToggleBtn = ui.PrimaryButton(c, "")
 		} else {
-			termToggleBtn = ui.Button(c, "Terminal").FontSize(11)
+			termToggleBtn = ui.Button(c, "")
 		}
+		termToggleBtn.Children(func() {
+			TablerIcon(c, TablerTerminal, 15)
+		})
 		if termToggleBtn.Clicked() {
 			a.ShowBottomTerminal = !a.ShowBottomTerminal
 		}
 
 		var sideDrawerBtn ui.Element
 		if a.ShowRightDrawer {
-			sideDrawerBtn = ui.PrimaryButton(c, "Side Pane").FontSize(11)
+			sideDrawerBtn = ui.PrimaryButton(c, "")
 		} else {
-			sideDrawerBtn = ui.Button(c, "Side Pane").FontSize(11)
+			sideDrawerBtn = ui.Button(c, "")
 		}
+		sideDrawerBtn.Children(func() {
+			TablerIcon(c, TablerPanelRight, 15)
+		})
 		if sideDrawerBtn.Clicked() {
 			a.ShowRightDrawer = !a.ShowRightDrawer
 		}
 
-		settingsBtn := ui.Button(c, "Settings").FontSize(11)
+		settingsBtn := ui.Button(c, "")
+		settingsBtn.Children(func() {
+			TablerIcon(c, TablerSettings, 15)
+		})
 		if settingsBtn.Clicked() {
 			a.Settings.Toggle()
 		}
@@ -375,147 +456,226 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		// Top brand bar
 		ui.Row(c).Padding(10, 14).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			ui.Text(c, "ForgeADE").Bold().FontSize(13)
-			ui.Text(c, "Agent").FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, "Agent").FontSize(10).TextColor(t.TextMuted)
 			ui.Box(c).Grow(1)
-			if ui.Button(c, "◧").FontSize(11).Clicked() {
+			collapseBtn := ui.Button(c, "")
+			collapseBtn.Children(func() {
+				TablerIcon(c, TablerPanelLeft, 14)
+			})
+			if collapseBtn.Clicked() {
 				a.ShowLeftSidebar = false
 			}
 		})
 
 		// Primary Action Buttons: + New Task (⌘N), Search (⌘P)
 		ui.Column(c).Padding(8, 12).Gap(6).Children(func() {
-			if ui.PrimaryButton(c, "+ New Task (⌘N)").Clicked() {
+			newTaskBtn := ui.PrimaryButton(c, "")
+			newTaskBtn.Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerPlus, 14)
+					ui.Text(c, "New Task (⌘N)").FontSize(11).Bold()
+				})
+			})
+			if newTaskBtn.Clicked() {
 				a.ShowNewTaskModal = true
 				a.NewTaskTitle = ""
 			}
-			if ui.Button(c, "🔍 Search (⌘P)").Clicked() {
+
+			searchBtn := ui.Button(c, "")
+			searchBtn.Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerSearch, 14)
+					ui.Text(c, "Search (⌘P)").FontSize(11)
+				})
+			})
+			if searchBtn.Clicked() {
 				a.Palette.Toggle()
 			}
 		})
 
-		// Project & Sort Header
-		ui.Row(c).Padding(4, 14).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "TASKS").FontSize(10).Bold().TextColor(t.TextMuted)
-			ui.Box(c).Grow(1)
-			if ui.Button(c, "+").FontSize(11).Clicked() {
-				a.Agent.NewSession("")
-				a.ActiveTaskKind = "agent"
+		// Sidebar Mode Switcher: [Tasks] vs [Files] (matches ForgeADE)
+		ui.Row(c).Gap(4).Padding(2, 12).Children(func() {
+			var tasksTab ui.Element
+			if a.AgentSidebarView == AgentSidebarTasks {
+				tasksTab = ui.PrimaryButton(c, "")
+			} else {
+				tasksTab = ui.Button(c, "")
+			}
+			tasksTab.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerChecklist, 12)
+					ui.Text(c, "Tasks").FontSize(10).Bold()
+				})
+			})
+			if tasksTab.Clicked() {
+				a.AgentSidebarView = AgentSidebarTasks
+			}
+
+			var filesTab ui.Element
+			if a.AgentSidebarView == AgentSidebarFiles {
+				filesTab = ui.PrimaryButton(c, "")
+			} else {
+				filesTab = ui.Button(c, "")
+			}
+			filesTab.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerFiles, 12)
+					ui.Text(c, "Files").FontSize(10).Bold()
+				})
+			})
+			if filesTab.Clicked() {
+				a.AgentSidebarView = AgentSidebarFiles
 			}
 		})
 
-		// Search Input Filter
-		ui.Row(c).Padding(4, 12).Children(func() {
-			ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
-		})
+		if a.AgentSidebarView == AgentSidebarFiles {
+			// Embedded Project File Explorer in Agent Sidebar
+			ui.Column(c).Grow(1).Children(func() {
+				a.renderFileTree(c)
+			})
+		} else {
+			// Project & Sort Header
+			ui.Row(c).Padding(4, 14).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "TASKS").FontSize(10).Bold().TextColor(t.TextMuted)
+				ui.Box(c).Grow(1)
+				plusBtn := ui.Button(c, "")
+				plusBtn.Children(func() {
+					TablerIcon(c, TablerPlus, 12)
+				})
+				if plusBtn.Clicked() {
+					a.Agent.NewSession("")
+					a.ActiveTaskKind = "agent"
+				}
+			})
 
-		// Filter Tabs: Active, Pinned, Archived with counts
-		activeCount, pinnedCount, archivedCount := a.Agent.TabCounts()
-		tabCounts := map[string]int{
-			"active":   activeCount,
-			"pinned":   pinnedCount,
-			"archived": archivedCount,
-		}
-		ui.Row(c).Gap(4).Padding(6, 12).AlignItems(ui.Center).Children(func() {
-			for _, tab := range []string{"active", "pinned", "archived"} {
-				thisTab := tab
-				label := fmt.Sprintf("%s (%d)", strings.Title(thisTab), tabCounts[thisTab])
-				var btn ui.Element
-				if a.Agent.ActiveFilterTab == thisTab {
-					btn = ui.PrimaryButton(c, label).FontSize(10)
-				} else {
-					btn = ui.Button(c, label).FontSize(10)
-				}
-				if btn.Clicked() {
-					a.Agent.ActiveFilterTab = thisTab
-				}
+			// Search Input Filter
+			ui.Row(c).Padding(4, 12).Children(func() {
+				ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
+			})
+
+			// Filter Tabs: Active, Pinned, Archived with counts
+			activeCount, pinnedCount, archivedCount := a.Agent.TabCounts()
+			tabCounts := map[string]int{
+				"active":   activeCount,
+				"pinned":   pinnedCount,
+				"archived": archivedCount,
 			}
-		})
-
-		// Scrollable Task Sessions List
-		sessions := a.Agent.FilteredSessions()
-		ui.Scroll(c).Grow(1).Children(func() {
-			ui.Column(c).Padding(4, 8).Gap(4).Children(func() {
-				// 1. Agent ACP Sessions
-				for _, sess := range sessions {
-					s := sess
-					isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
-					statusIcon := "•"
-					if s.Status == "running" {
-						statusIcon = "●"
-					} else if s.Status == "completed" {
-						statusIcon = "✔"
+			ui.Row(c).Gap(4).Padding(6, 12).AlignItems(ui.Center).Children(func() {
+				for _, tab := range []string{"active", "pinned", "archived"} {
+					thisTab := tab
+					label := fmt.Sprintf("%s (%d)", strings.Title(thisTab), tabCounts[thisTab])
+					var btn ui.Element
+					if a.Agent.ActiveFilterTab == thisTab {
+						btn = ui.PrimaryButton(c, label).FontSize(10)
+					} else {
+						btn = ui.Button(c, label).FontSize(10)
 					}
-
-					card := ui.Row(c.Key("sess-"+s.ID)).Padding(8, 10).Radius(6).Gap(8).AlignItems(ui.Center)
-					if isActive {
-						card.Background(t.Border)
-					}
-					card.Children(func() {
-						ui.Text(c, statusIcon).FontSize(10)
-						ui.Column(c).Grow(1).Children(func() {
-							ui.Text(c, s.Title).Bold().FontSize(12).MaxWidth(160)
-							ui.Row(c).Gap(6).Children(func() {
-								ui.Text(c, s.Model).FontSize(10).TextColor(t.TextMuted)
-							})
-						})
-
-						// Pin button
-						pinLabel := "☆"
-						if s.Pinned {
-							pinLabel = "★"
-						}
-						if ui.Button(c, pinLabel).FontSize(11).Clicked() {
-							a.Agent.TogglePin(s.ID)
-						}
-					})
-					if card.Clicked() {
-						a.ActiveTaskKind = "agent"
-						a.Agent.SelectSession(s.ID)
-					}
-				}
-
-				// 2. Active CLI Sessions
-				if a.CLIMgr != nil {
-					for _, cliSess := range a.CLIMgr.Sessions {
-						cs := cliSess
-						isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
-						cliCard := ui.Row(c.Key("cli-sess-"+cs.ID)).Padding(8, 10).Radius(6).Gap(8).AlignItems(ui.Center)
-						if isActive {
-							cliCard.Background(t.Border)
-						}
-						cliCard.Children(func() {
-							ui.Text(c, "CLI").FontSize(10).Bold().TextColor(t.Accent)
-							ui.Column(c).Grow(1).Children(func() {
-								ui.Text(c, cs.Title).Bold().FontSize(12).MaxWidth(160)
-								ui.Text(c, fmt.Sprintf("%s · CLI Task", cs.AgentName)).FontSize(10).TextColor(t.TextMuted)
-							})
-						})
-						if cliCard.Clicked() {
-							a.ActiveTaskKind = "cli"
-							a.CLIMgr.ActiveID = cs.ID
-						}
+					if btn.Clicked() {
+						a.Agent.ActiveFilterTab = thisTab
 					}
 				}
 			})
-		})
 
-		// Bottom Profile / Utility Row
+			// Scrollable Task Sessions List
+			sessions := a.Agent.FilteredSessions()
+			ui.Scroll(c).Grow(1).Children(func() {
+				ui.Column(c).Padding(4, 8).Gap(4).Children(func() {
+					// 1. Agent ACP Sessions
+					for _, sess := range sessions {
+						s := sess
+						isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
+
+						card := ui.Row(c.Key("sess-"+s.ID)).Padding(8, 10).Radius(6).Gap(8).AlignItems(ui.Center)
+						if isActive {
+							card.Background(t.Border)
+						}
+						card.Children(func() {
+							if s.Status == "running" {
+								TablerIcon(c, TablerLoader, 13)
+							} else if s.Status == "completed" {
+								TablerIcon(c, TablerCircleCheck, 13)
+							} else {
+								TablerIcon(c, TablerCircle, 13)
+							}
+
+							ui.Column(c).Grow(1).Children(func() {
+								ui.Text(c, s.Title).Bold().FontSize(12).MaxWidth(150)
+								ui.Row(c).Gap(6).Children(func() {
+									ui.Text(c, s.Model).FontSize(10).TextColor(t.TextMuted)
+								})
+							})
+
+							// Pin button with Tabler icon
+							pinBtn := ui.Button(c, "")
+							pinBtn.Children(func() {
+								if s.Pinned {
+									TablerIcon(c, TablerPinFilled, 13)
+								} else {
+									TablerIcon(c, TablerPin, 13)
+								}
+							})
+							if pinBtn.Clicked() {
+								a.Agent.TogglePin(s.ID)
+							}
+						})
+						if card.Clicked() {
+							a.ActiveTaskKind = "agent"
+							a.Agent.SelectSession(s.ID)
+						}
+					}
+
+					// 2. Active CLI Sessions
+					if a.CLIMgr != nil {
+						for _, cliSess := range a.CLIMgr.Sessions {
+							cs := cliSess
+							isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
+							cliCard := ui.Row(c.Key("cli-sess-"+cs.ID)).Padding(8, 10).Radius(6).Gap(8).AlignItems(ui.Center)
+							if isActive {
+								cliCard.Background(t.Border)
+							}
+							cliCard.Children(func() {
+								TablerIcon(c, TablerTerminal, 14)
+								ui.Column(c).Grow(1).Children(func() {
+									ui.Text(c, cs.Title).Bold().FontSize(12).MaxWidth(150)
+									ui.Text(c, fmt.Sprintf("%s · CLI Task", cs.AgentName)).FontSize(10).TextColor(t.TextMuted)
+								})
+							})
+							if cliCard.Clicked() {
+								a.ActiveTaskKind = "cli"
+								a.CLIMgr.ActiveID = cs.ID
+							}
+						}
+					}
+				})
+			})
+		}
+
+		// Bottom Profile / Utility Row with Tabler Icons
 		ui.Row(c).Padding(10, 14).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			ui.Column(c).Grow(1).Children(func() {
-				ui.Text(c, "Model Profile").FontSize(10).Bold().TextColor(t.TextMuted)
-				ui.Text(c, a.Agent.ActiveModel).FontSize(11).Bold()
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).Children(func() {
+				TablerIcon(c, TablerBrain, 16)
+				ui.Column(c).Children(func() {
+					ui.Text(c, "Model Profile").FontSize(9).Bold().TextColor(t.TextMuted)
+					ui.Text(c, a.Agent.ActiveModel).FontSize(11).Bold().MaxWidth(110)
+				})
 			})
 
 			// Utility buttons: Tasks, Git, Settings
-			if ui.Button(c, "Tasks").FontSize(11).Clicked() {
+			tasksBtn := ui.Button(c, "")
+			tasksBtn.Children(func() { TablerIcon(c, TablerChecklist, 14) })
+			if tasksBtn.Clicked() {
 				a.ShowRightDrawer = true
 				a.RightDrawerTab = RightTabTasks
 			}
-			if ui.Button(c, "Git").FontSize(11).Clicked() {
+			gitBtn := ui.Button(c, "")
+			gitBtn.Children(func() { TablerIcon(c, TablerGitBranch, 14) })
+			if gitBtn.Clicked() {
 				a.ShowRightDrawer = true
 				a.RightDrawerTab = RightTabGit
 			}
-			if ui.Button(c, "Settings").FontSize(11).Clicked() {
+			settingsBtn := ui.Button(c, "")
+			settingsBtn.Children(func() { TablerIcon(c, TablerSettings, 14) })
+			if settingsBtn.Clicked() {
 				a.Settings.Toggle()
 			}
 		})
@@ -528,41 +688,46 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 
 	// 1. Left Activity Bar + Sidebar
 	if a.ShowLeftSidebar {
-		// Activity Bar (Explorer, Git, DB, Settings)
+		// Activity Bar (Explorer, Git, DB, Settings) with Tabler Icons
 		ui.Column(c).Width(48).Background(t.Surface).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Padding(8, 0).AlignItems(ui.Center).Gap(8).Children(func() {
 			var expBtn ui.Element
 			if a.EditorActivity == ActivityExplorer {
-				expBtn = ui.PrimaryButton(c, "📁").FontSize(14)
+				expBtn = ui.PrimaryButton(c, "")
 			} else {
-				expBtn = ui.Button(c, "📁").FontSize(14)
+				expBtn = ui.Button(c, "")
 			}
+			expBtn.Children(func() { TablerIcon(c, TablerFiles, 16) })
 			if expBtn.Clicked() {
 				a.EditorActivity = ActivityExplorer
 			}
 
 			var gitBtn ui.Element
 			if a.EditorActivity == ActivityGit {
-				gitBtn = ui.PrimaryButton(c, "⎇").FontSize(14)
+				gitBtn = ui.PrimaryButton(c, "")
 			} else {
-				gitBtn = ui.Button(c, "⎇").FontSize(14)
+				gitBtn = ui.Button(c, "")
 			}
+			gitBtn.Children(func() { TablerIcon(c, TablerGitBranch, 16) })
 			if gitBtn.Clicked() {
 				a.EditorActivity = ActivityGit
 			}
 
 			var dbBtn ui.Element
 			if a.EditorActivity == ActivityDatabase {
-				dbBtn = ui.PrimaryButton(c, "🗄").FontSize(14)
+				dbBtn = ui.PrimaryButton(c, "")
 			} else {
-				dbBtn = ui.Button(c, "🗄").FontSize(14)
+				dbBtn = ui.Button(c, "")
 			}
+			dbBtn.Children(func() { TablerIcon(c, TablerDatabase, 16) })
 			if dbBtn.Clicked() {
 				a.EditorActivity = ActivityDatabase
 			}
 
 			ui.Box(c).Grow(1)
 
-			if ui.Button(c, "⚙").FontSize(14).Clicked() {
+			settingsBtn := ui.Button(c, "")
+			settingsBtn.Children(func() { TablerIcon(c, TablerSettings, 16) })
+			if settingsBtn.Clicked() {
 				a.Settings.Toggle()
 			}
 		})
@@ -603,34 +768,6 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 	}
 }
 
-func fileIconBadge(path string) string {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".go":
-		return "🔵"
-	case ".ts", ".tsx":
-		return "🟦"
-	case ".js", ".jsx":
-		return "🟨"
-	case ".json":
-		return "🟧"
-	case ".md":
-		return "📝"
-	case ".html":
-		return "🌐"
-	case ".css":
-		return "🎨"
-	case ".sql", ".db", ".sqlite", ".duckdb":
-		return "🗄"
-	case ".sh", ".bash", ".zsh":
-		return "⚡"
-	case ".yml", ".yaml", ".toml":
-		return "⚙"
-	default:
-		return "📄"
-	}
-}
-
 // renderFileTree renders the workspace file explorer tree.
 func (a *AppUI) renderFileTree(c *ui.Context) {
 	t := c.Theme()
@@ -638,15 +775,33 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 	ui.Row(c).Padding(10, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		ui.Text(c, "FILES").FontSize(10).Bold().TextColor(t.TextMuted)
 		ui.Box(c).Grow(1)
-		if ui.Button(c, "+ File").FontSize(11).Clicked() {
+		newFileBtn := ui.Button(c, "")
+		newFileBtn.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerFilePlus, 13)
+				ui.Text(c, "File").FontSize(11)
+			})
+		})
+		if newFileBtn.Clicked() {
 			a.ShowNewFileModal = true
 			a.NewFileName = ""
 		}
-		if ui.Button(c, "+ Folder").FontSize(11).Clicked() {
+		newFolderBtn := ui.Button(c, "")
+		newFolderBtn.Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerFolderPlus, 13)
+				ui.Text(c, "Folder").FontSize(11)
+			})
+		})
+		if newFolderBtn.Clicked() {
 			a.ShowNewFolderModal = true
 			a.NewFolderName = ""
 		}
-		if ui.Button(c, "↻").FontSize(11).Clicked() {
+		refreshBtn := ui.Button(c, "")
+		refreshBtn.Children(func() {
+			TablerIcon(c, TablerRefresh, 13)
+		})
+		if refreshBtn.Clicked() {
 			a.Workspace.Refresh()
 			if a.Git != nil {
 				go a.Git.Refresh()
@@ -662,17 +817,16 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 		ui.TextInput(c, &a.Workspace.FilterQuery).Placeholder("Filter files...").Grow(1)
 	})
 
-	// File List
+	// File List with Tabler Vector SVG Icons
 	filtered := a.Workspace.FilteredFiles()
 	ui.Sidebar(c, &a.SelectedFile, func() {
 		for _, f := range filtered {
-			icon := fileIconBadge(f.RelativePath)
-			label := fmt.Sprintf("%s %s", icon, f.RelativePath)
+			label := f.RelativePath
 			doc := a.Editor.GetDoc(f.FullPath)
 			if doc != nil && doc.Editor.Buffer.Modified() {
 				label += " •"
 			}
-			item := ui.SidebarItem(c, f.RelativePath, nil, label)
+			item := ui.SidebarItem(c, f.RelativePath, FileIconSVG(f.RelativePath), label)
 			if item.Clicked() {
 				a.SelectedFile = f.RelativePath
 				fullPath := a.Workspace.ResolveFullPath(f.RelativePath)
@@ -698,11 +852,18 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 	t := c.Theme()
 
 	ui.Column(c).Height(220).Background(t.Surface).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-		// Terminal Drawer Header
+		// Terminal Drawer Header with Tabler icons
 		ui.Row(c).Padding(6, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, ">_ Terminal (bash)").Bold().FontSize(12)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerTerminal, 14)
+				ui.Text(c, "Terminal (bash)").Bold().FontSize(12)
+			})
 			ui.Box(c).Grow(1)
-			if ui.Button(c, "✕").FontSize(11).Clicked() {
+			closeBtn := ui.Button(c, "")
+			closeBtn.Children(func() {
+				TablerIcon(c, TablerX, 13)
+			})
+			if closeBtn.Clicked() {
 				a.ShowBottomTerminal = false
 			}
 		})
@@ -717,26 +878,48 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 	t := c.Theme()
 
 	ui.Column(c).Width(380).Background(t.Surface).BorderWidth(0, 0, 0, 1).BorderColor(t.Border).Children(func() {
-		// Drawer Header Tabs
+		// Drawer Header Tabs with Tabler Icons
 		ui.Row(c).Gap(4).Padding(6, 10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			tabNames := []string{"⎇ Git", "🗄 DB", "📋 Tasks"}
-			if a.Mode == ModeEditor {
-				tabNames = append(tabNames, "✨ Agent")
+			tabs := []struct {
+				Tab  int
+				Name string
+				Icon *ui.SVG
+			}{
+				{RightTabGit, "Git", TablerGitBranch},
+				{RightTabDatabase, "DB", TablerDatabase},
+				{RightTabTasks, "Tasks", TablerChecklist},
 			}
-			for i, name := range tabNames {
-				idx := i
+			if a.Mode == ModeEditor {
+				tabs = append(tabs, struct {
+					Tab  int
+					Name string
+					Icon *ui.SVG
+				}{RightTabAgent, "Agent", TablerSparkles})
+			}
+			for _, tab := range tabs {
+				tTab := tab
 				var btn ui.Element
-				if a.RightDrawerTab == idx {
-					btn = ui.PrimaryButton(c, name).FontSize(11)
+				if a.RightDrawerTab == tTab.Tab {
+					btn = ui.PrimaryButton(c, "")
 				} else {
-					btn = ui.Button(c, name).FontSize(11)
+					btn = ui.Button(c, "")
 				}
+				btn.Children(func() {
+					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, tTab.Icon, 13)
+						ui.Text(c, tTab.Name).FontSize(11).Bold()
+					})
+				})
 				if btn.Clicked() {
-					a.RightDrawerTab = idx
+					a.RightDrawerTab = tTab.Tab
 				}
 			}
 			ui.Box(c).Grow(1)
-			if ui.Button(c, "✕").FontSize(11).Clicked() {
+			closeBtn := ui.Button(c, "")
+			closeBtn.Children(func() {
+				TablerIcon(c, TablerX, 13)
+			})
+			if closeBtn.Clicked() {
 				a.ShowRightDrawer = false
 			}
 		})
@@ -786,9 +969,15 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 	}
 
 	ui.Row(c).Gap(16).Padding(4, 14).AlignItems(ui.Center).Background(t.Surface).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-		ui.Text(c, fmt.Sprintf("📁 %s", projectName)).FontSize(11).TextColor(t.TextMuted)
+		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+			TablerIcon(c, TablerFolder, 13)
+			ui.Text(c, projectName).FontSize(11).TextColor(t.TextMuted)
+		})
 		if curPath != "" {
-			ui.Text(c, curPath).FontSize(11)
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, FileIconSVG(curPath), 13)
+				ui.Text(c, curPath).FontSize(11)
+			})
 		}
 		ui.Box(c).Grow(1)
 
@@ -797,10 +986,16 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 		ui.Text(c, "UTF-8").FontSize(11).TextColor(t.TextMuted)
 
 		if a.Git != nil && a.Git.Branch != "" {
-			ui.Text(c, fmt.Sprintf("⎇ %s", a.Git.Branch)).FontSize(11).TextColor(t.Accent)
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerGitBranch, 12)
+				ui.Text(c, a.Git.Branch).FontSize(11).TextColor(t.Accent)
+			})
 		}
 
-		ui.Text(c, a.Agent.ActiveModel).FontSize(11).TextColor(t.TextMuted)
+		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			TablerIcon(c, TablerCpu, 12)
+			ui.Text(c, a.Agent.ActiveModel).FontSize(11).TextColor(t.TextMuted)
+		})
 		ui.Text(c, "⌘S Save · ⌘P Open · ⌘B Sidebar · ⌘1 Agent · ⌘2 Editor").FontSize(10).TextColor(t.TextMuted)
 	})
 }
@@ -889,11 +1084,18 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowNewTaskModal {
 		ui.Modal(c, &a.ShowNewTaskModal, func() {
 			ui.Column(c).Width(520).Radius(12).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 20).Gap(12).Children(func() {
-				// Modal Header
+				// Modal Header with Tabler icons
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "✨ New Task Session").Bold().FontSize(15)
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerSparkles, 16)
+						ui.Text(c, "New Task Session").Bold().FontSize(15)
+					})
 					ui.Box(c).Grow(1)
-					if ui.Button(c, "✕").FontSize(12).Clicked() {
+					closeBtn := ui.Button(c, "")
+					closeBtn.Children(func() {
+						TablerIcon(c, TablerX, 13)
+					})
+					if closeBtn.Clicked() {
 						a.ShowNewTaskModal = false
 					}
 				})
@@ -902,24 +1104,36 @@ func (a *AppUI) renderModals(c *ui.Context) {
 				ui.Text(c, "TASK OBJECTIVE").FontSize(10).Bold().TextColor(t.TextMuted)
 				ui.TextInput(c, &a.NewTaskTitle).Placeholder("Describe task objective (e.g. Implement auth flow or fix bug)...").Grow(1).AutoFocus()
 
-				// Agent Protocol Selector: ACP Agents vs Agent CLIs
+				// Agent Protocol Selector: ACP Agents vs Agent CLIs with Tabler Icons
 				ui.Row(c).Gap(6).Children(func() {
 					var acpTab ui.Element
 					if a.NewTaskAgentType == "acp" {
-						acpTab = ui.PrimaryButton(c, "✨ ACP Agents").FontSize(11)
+						acpTab = ui.PrimaryButton(c, "")
 					} else {
-						acpTab = ui.Button(c, "✨ ACP Agents").FontSize(11)
+						acpTab = ui.Button(c, "")
 					}
+					acpTab.Children(func() {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerSparkles, 13)
+							ui.Text(c, "ACP Agents").FontSize(11).Bold()
+						})
+					})
 					if acpTab.Clicked() {
 						a.NewTaskAgentType = "acp"
 					}
 
 					var cliTab ui.Element
 					if a.NewTaskAgentType == "cli" {
-						cliTab = ui.PrimaryButton(c, "💻 Interactive Agent CLIs").FontSize(11)
+						cliTab = ui.PrimaryButton(c, "")
 					} else {
-						cliTab = ui.Button(c, "💻 Interactive Agent CLIs").FontSize(11)
+						cliTab = ui.Button(c, "")
 					}
+					cliTab.Children(func() {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerTerminal, 13)
+							ui.Text(c, "Interactive Agent CLIs").FontSize(11).Bold()
+						})
+					})
 					if cliTab.Clicked() {
 						a.NewTaskAgentType = "cli"
 					}
@@ -942,7 +1156,10 @@ func (a *AppUI) renderModals(c *ui.Context) {
 										ui.Text(c, ag.Description).FontSize(10).TextColor(t.TextMuted).MaxWidth(360)
 									})
 									if ag.Available {
-										ui.Text(c, "✔ Ready").FontSize(10).TextColor(t.Accent)
+										ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+											TablerIcon(c, TablerCircleCheck, 12)
+											ui.Text(c, "Ready").FontSize(10).TextColor(t.Accent)
+										})
 									} else {
 										ui.Text(c, "Not on PATH").FontSize(10).TextColor(t.TextMuted)
 									}
@@ -971,7 +1188,10 @@ func (a *AppUI) renderModals(c *ui.Context) {
 										ui.Text(c, cfg.Name).Bold().FontSize(12)
 										ui.Text(c, fmt.Sprintf("Executable: %s · %s", cfg.Executable, cfg.ConfigRoot)).FontSize(10).TextColor(t.TextMuted)
 									})
-									ui.Text(c, "Installed").FontSize(10).TextColor(t.Accent)
+									ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+										TablerIcon(c, TablerCircleCheck, 12)
+										ui.Text(c, "Installed").FontSize(10).TextColor(t.Accent)
+									})
 								})
 								if row.Clicked() {
 									a.SelectedAgentID = cfg.ID
@@ -1020,7 +1240,14 @@ func (a *AppUI) renderModals(c *ui.Context) {
 			ui.Column(c).Width(280).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(12, 14).Gap(6).Children(func() {
 				ui.Text(c, "Task Actions").Bold().FontSize(13).Padding(0, 0, 4, 0)
 
-				if ui.Button(c, "✏ Rename Task").Clicked() {
+				renameBtn := ui.Button(c, "")
+				renameBtn.Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerPencil, 13)
+						ui.Text(c, "Rename Task").FontSize(11)
+					})
+				})
+				if renameBtn.Clicked() {
 					a.ShowTaskMenuModal = false
 					a.ShowRenameModal = true
 					if sess := a.Agent.ActiveSession(); sess != nil {
@@ -1028,25 +1255,53 @@ func (a *AppUI) renderModals(c *ui.Context) {
 					}
 				}
 
-				if ui.Button(c, "⎇ Fork Session").Clicked() {
+				forkBtn := ui.Button(c, "")
+				forkBtn.Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerGitFork, 13)
+						ui.Text(c, "Fork Session").FontSize(11)
+					})
+				})
+				if forkBtn.Clicked() {
 					a.ShowTaskMenuModal = false
 					if sess := a.Agent.ActiveSession(); sess != nil {
 						a.Agent.NewSession(fmt.Sprintf("%s (fork)", sess.Title))
 					}
 				}
 
-				if ui.Button(c, "⌨ Toggle Terminal").Clicked() {
+				termBtn := ui.Button(c, "")
+				termBtn.Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerTerminal, 13)
+						ui.Text(c, "Toggle Terminal").FontSize(11)
+					})
+				})
+				if termBtn.Clicked() {
 					a.ShowTaskMenuModal = false
 					a.ShowBottomTerminal = !a.ShowBottomTerminal
 				}
 
-				if ui.Button(c, "📋 Toggle Tasks Drawer").Clicked() {
+				tasksBtn := ui.Button(c, "")
+				tasksBtn.Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerChecklist, 13)
+						ui.Text(c, "Toggle Tasks Drawer").FontSize(11)
+					})
+				})
+				if tasksBtn.Clicked() {
 					a.ShowTaskMenuModal = false
 					a.ShowRightDrawer = true
 					a.RightDrawerTab = RightTabTasks
 				}
 
-				if ui.Button(c, "🗑 Delete Session").Clicked() {
+				delBtn := ui.Button(c, "")
+				delBtn.Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerTrash, 13)
+						ui.Text(c, "Delete Session").FontSize(11)
+					})
+				})
+				if delBtn.Clicked() {
 					a.ShowTaskMenuModal = false
 					if sess := a.Agent.ActiveSession(); sess != nil {
 						a.Agent.DeleteSession(sess.ID)

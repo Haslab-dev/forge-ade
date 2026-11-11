@@ -686,9 +686,9 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 				{ID: "3", Title: "Identify regression risks and test coverage gaps", Status: TaskPending},
 			})
 		}
-		reply = fmt.Sprintf("📋 **Plan Mode Activated**: `%s`\nStep-by-step architectural breakdown populated on the floating checklist.", desc)
+		reply = fmt.Sprintf("**Plan Mode Activated**: `%s`\nStep-by-step architectural breakdown populated on the floating checklist.", desc)
 	case "/vibe":
-		reply = "⚡ **Vibe Mode Activated**: Autonomous execution with automatic error diagnosis and fix cycles enabled."
+		reply = "**Vibe Mode Activated**: Autonomous execution with automatic error diagnosis and fix cycles enabled."
 	case "/tasks":
 		if as.TaskManager != nil {
 			c, total := as.TaskManager.Progress()
@@ -835,7 +835,7 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 			if err != nil {
 				errMsg = err.Error()
 			}
-			assistantMsg.Text = fmt.Sprintf("⚠️ **LLM Request Notice**: %s\n\n"+
+			assistantMsg.Text = fmt.Sprintf("**LLM Request Notice**: %s\n\n"+
 				"- Active Provider: `%s`\n"+
 				"- Active Model: `%s`\n\n"+
 				"Please open **Settings (⌘,)** to add your API key, or launch one of the installed ACP agents (**Google Antigravity**, **Claude Code**, or **Codex**).",
@@ -851,14 +851,8 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 	sess := as.ActiveSession()
 
 	sessionTitle := "Agent Assistant"
-	statusLabel := "• Idle"
 	if sess != nil {
 		sessionTitle = sess.Title
-		if sess.Status == "running" {
-			statusLabel = "● Running"
-		} else if sess.Status == "completed" {
-			statusLabel = "✔ Completed"
-		}
 	}
 
 	as.ListState.Key = func(i int) any {
@@ -871,24 +865,51 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 	as.ListState.FollowAnimation = &ui.Smooth
 
 	ui.Column(c).Fill().Children(func() {
-		// Session Header Bar
+		// Session Header Bar with Tabler Icons
 		ui.Row(c).Gap(10).Padding(10, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			ui.Text(c, "⚡").FontSize(13)
+			TablerIcon(c, TablerBolt, 15)
 			ui.Text(c, sessionTitle).Bold().FontSize(13).MaxWidth(380)
-			ui.Text(c, statusLabel).FontSize(11).TextColor(t.TextMuted)
+
+			// Live Status Indicator with Tabler Icons
+			if sess != nil && sess.Status == "running" {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerLoader, 13)
+					ui.Text(c, "Running").FontSize(11).TextColor(t.Accent)
+				})
+			} else if sess != nil && sess.Status == "completed" {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerCircleCheck, 13)
+					ui.Text(c, "Completed").FontSize(11).TextColor(t.TextMuted)
+				})
+			} else {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerCircle, 13)
+					ui.Text(c, "Idle").FontSize(11).TextColor(t.TextMuted)
+				})
+			}
+
 			ui.Box(c).Grow(1)
 			ui.Text(c, as.ActiveModel).FontSize(11).TextColor(t.TextMuted)
 			if as.IsStreaming {
 				ui.Text(c, "Streaming tokens…").FontSize(11).TextColor(t.Accent)
 			}
-			if ui.Button(c, "Fork").FontSize(11).Clicked() && sess != nil {
+
+			forkBtn := ui.Button(c, "")
+			forkBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, TablerGitFork, 12)
+					ui.Text(c, "Fork").FontSize(11)
+				})
+			})
+			if forkBtn.Clicked() && sess != nil {
 				as.NewSession(fmt.Sprintf("%s (fork)", sess.Title))
 			}
 		})
 
 		// Message List
 		if len(as.Messages) == 0 {
-			ui.Column(c).Grow(1).Center().Children(func() {
+			ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
+				TablerIcon(c, TablerSparkles, 32)
 				ui.Text(c, "No messages in this session").FontSize(15).Bold().TextColor(t.TextMuted)
 				ui.Text(c, "Type a prompt below or use slash commands like /goal or /help.").TextColor(t.TextMuted)
 			})
@@ -920,7 +941,7 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 			as.TaskManager.RenderChecklist(c)
 		}
 
-		// Input Composer Area
+		// Input Composer Area with Tabler Icons
 		ui.Column(c).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
 			// Slash commands shortcuts & context usage bar
 			ui.Row(c).Gap(6).Padding(6, 16, 2, 16).AlignItems(ui.Center).Children(func() {
@@ -946,7 +967,14 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 				}
 
 				if as.IsStreaming {
-					if ui.Button(c, "Stop").Clicked() {
+					stopBtn := ui.Button(c, "")
+					stopBtn.Children(func() {
+						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerSquare, 12)
+							ui.Text(c, "Stop").FontSize(11)
+						})
+					})
+					if stopBtn.Clicked() {
 						as.mu.Lock()
 						as.IsStreaming = false
 						if len(as.Messages) > 0 {
@@ -955,7 +983,13 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 						as.mu.Unlock()
 					}
 				} else {
-					sendBtn := ui.PrimaryButton(c, "Send")
+					sendBtn := ui.PrimaryButton(c, "")
+					sendBtn.Children(func() {
+						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerSend, 12)
+							ui.Text(c, "Send").FontSize(11).Bold()
+						})
+					})
 					if strings.TrimSpace(as.InputText) == "" {
 						sendBtn.Disabled(true)
 					}
