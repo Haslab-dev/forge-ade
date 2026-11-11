@@ -5,7 +5,28 @@ import (
 	"strings"
 )
 
-// UI Tab Constants
+// Workspace Surface Modes (ForgeADE Dual-Surface architecture)
+const (
+	ModeAgent  = 0 // ✨ Autonomous Agent Mode
+	ModeEditor = 1 // 💻 Code Editor Mode
+)
+
+// Right Side Drawer Tabs
+const (
+	RightTabGit      = 0
+	RightTabDatabase = 1
+	RightTabTasks    = 2
+	RightTabAgent    = 3
+)
+
+// Editor Activity Bar Tabs
+const (
+	ActivityExplorer = 0
+	ActivityGit      = 1
+	ActivityDatabase = 2
+)
+
+// UI Tab Constants (kept for backward compatibility)
 const (
 	TabEditor   = 0
 	TabDiff     = 1
@@ -16,7 +37,7 @@ const (
 	TabSplit    = 6
 )
 
-// TabNames defines user-facing labels for the main navigation bar.
+// TabNames defines user-facing labels for the navigation bar.
 var TabNames = []string{
 	"Editor",
 	"Diff",
