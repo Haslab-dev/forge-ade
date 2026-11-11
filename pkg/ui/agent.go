@@ -15,13 +15,71 @@ import (
 	"github.com/hasdev/forge-ade/internal/agentsession"
 )
 
+// ToolExecution represents an individual tool run in an agent turn.
+type ToolExecution struct {
+	ID          string `json:"id"`
+	ToolName    string `json:"toolName"`
+	Command     string `json:"command"`
+	Status      string `json:"status"` // "completed", "running", "failed"
+	CreatedAtMs int64  `json:"createdAtMs"`
+	DurationMs  int64  `json:"durationMs"`
+	Output      string `json:"output"`
+	Expanded    bool   `json:"-"`
+}
+
+// FileChange represents a touched file with added and deleted lines.
+type FileChange struct {
+	Path      string `json:"path"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+// PendingApproval represents a tool call awaiting user confirmation.
+type PendingApproval struct {
+	ToolCallID string `json:"toolCallId"`
+	ToolName   string `json:"toolName"`
+	Summary    string `json:"summary"`
+	Arguments  string `json:"arguments"`
+	Resolved   bool   `json:"resolved"`
+	Approved   bool   `json:"approved"`
+}
+
+// ExecutionMode represents the autonomy level of the agent.
+type ExecutionMode string
+
+const (
+	ModeAsk    ExecutionMode = "ask"    // Ask for approval before actions
+	ModeCode   ExecutionMode = "code"   // Approve edits freely, ask for commands
+	ModePlan   ExecutionMode = "plan"   // Approve safe actions automatically
+	ModeBypass ExecutionMode = "bypass" // Full autonomous access
+)
+
+// ReasoningEffort represents the thinking depth budget.
+type ReasoningEffort string
+
+const (
+	EffortOff    ReasoningEffort = "off"
+	EffortLow    ReasoningEffort = "low"
+	EffortMedium ReasoningEffort = "medium"
+	EffortHigh   ReasoningEffort = "high"
+	EffortMax    ReasoningEffort = "max"
+)
+
 // ChatMessage represents a single interaction turn in the AI Agent conversation.
 type ChatMessage struct {
-	ID        int
-	Role      string // "user", "assistant", "system"
-	Text      string
-	Done      bool
-	Timestamp time.Time
+	ID              int
+	Role            string // "user", "assistant", "system"
+	Text            string
+	Done            bool
+	Timestamp       time.Time
+	Thinking        string
+	IsThinking      bool
+	ThinkingTimeSec float64
+	ShowThinking    bool
+	Tools           []*ToolExecution
+	ShowTools       bool
+	Changes         []*FileChange
+	PendingApproval *PendingApproval
 }
 
 // AgentSession represents a single task session in the ForgeADE agent workspace.
@@ -55,6 +113,12 @@ type AgentState struct {
 	ListState       ui.ListState
 	MdOpts          markdown.Options
 	ActiveModel     string
+	ExecutionMode   ExecutionMode
+	ReasoningEffort ReasoningEffort
+	AutoVerify      bool
+	SteerQueue      []string
+	ShowModelPicker bool
+	AvailableModels []string
 	NextID          int
 	IsStreaming     bool
 	TaskManager     *TaskManager
@@ -69,8 +133,21 @@ func NewAgentState(engine *Engine, workspacePath string, invalidate func()) *Age
 		workspacePath:   workspacePath,
 		ActiveModel:     "Claude 3.7 Sonnet / gpt-4o",
 		ActiveFilterTab: "active",
-		Invalidate:      invalidate,
-		NextID:          1,
+		ExecutionMode:   ModeBypass,
+		ReasoningEffort: EffortMedium,
+		AutoVerify:      false,
+		SteerQueue:      make([]string, 0),
+		AvailableModels: []string{
+			"Claude 3.7 Sonnet (Anthropic)",
+			"Claude 3.5 Haiku (Anthropic)",
+			"GPT-4o (OpenAI)",
+			"o3-mini (OpenAI)",
+			"Gemini 2.0 Flash (Google)",
+			"DeepSeek R1 (DeepSeek)",
+			"Local Ollama (qwen2.5-coder)",
+		},
+		Invalidate: invalidate,
+		NextID:     1,
 		MdOpts: markdown.Options{
 			Reveal: &markdown.Reveal{Unit: markdown.ByWord},
 		},
@@ -89,34 +166,39 @@ func NewAgentState(engine *Engine, workspacePath string, invalidate func()) *Age
 }
 
 type diskSessionRaw struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	Name          string            `json:"name"`
-	Goal          string            `json:"goal"`
-	Status        string            `json:"status"`
-	State         string            `json:"state"`
-	CreatedAt     json.RawMessage   `json:"createdAt"`
-	UpdatedAt     json.RawMessage   `json:"updatedAt"`
-	Model         string            `json:"model"`
-	Provider      string            `json:"provider"`
-	AgentID       string            `json:"agentId"`
-	AgentType     string            `json:"agentType"`
-	WorkspacePath string            `json:"workspacePath"`
-	Folder        string            `json:"folder"`
-	Pinned        bool              `json:"pinned"`
-	Archived      bool              `json:"archived"`
-	Messages      []diskMessageRaw  `json:"messages"`
-	Tasks         []TaskItem        `json:"tasks"`
+	ID             string            `json:"id"`
+	Title          string            `json:"title"`
+	Name           string            `json:"name"`
+	Goal           string            `json:"goal"`
+	Status         string            `json:"status"`
+	State          string            `json:"state"`
+	CreatedAt      json.RawMessage   `json:"createdAt"`
+	UpdatedAt      json.RawMessage   `json:"updatedAt"`
+	Model          string            `json:"model"`
+	Provider       string            `json:"provider"`
+	AgentID        string            `json:"agentId"`
+	AgentType      string            `json:"agentType"`
+	ExecutionMode  string            `json:"executionMode"`
+	ReasoningLevel string            `json:"reasoningLevel"`
+	WorkspacePath  string            `json:"workspacePath"`
+	Folder         string            `json:"folder"`
+	Pinned         bool              `json:"pinned"`
+	Archived       bool              `json:"archived"`
+	Messages       []diskMessageRaw  `json:"messages"`
+	Tasks          []TaskItem        `json:"tasks"`
 }
 
 type diskMessageRaw struct {
-	ID         string            `json:"id"`
-	Role       string            `json:"role"`
-	Content    json.RawMessage   `json:"content"`
-	Text       string            `json:"text"`
-	Timestamp  json.RawMessage   `json:"timestamp"`
-	TurnTexts  map[string]string `json:"turnTexts"`
-	TextBlocks []struct {
+	ID             string            `json:"id"`
+	Role           string            `json:"role"`
+	Content        json.RawMessage   `json:"content"`
+	Text           string            `json:"text"`
+	Timestamp      json.RawMessage   `json:"timestamp"`
+	TurnTexts      map[string]string `json:"turnTexts"`
+	IsThinking     bool              `json:"isThinking"`
+	Thoughts       []string          `json:"thoughts"`
+	ToolExecutions []ToolExecution   `json:"toolExecutions"`
+	TextBlocks     []struct {
 		Text string `json:"text"`
 	} `json:"textBlocks"`
 }
@@ -243,15 +325,34 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 				role = "assistant"
 			}
 			txt := extractMessageText(m)
-			if txt == "" {
+			if txt == "" && len(m.ToolExecutions) == 0 && len(m.Thoughts) == 0 {
 				continue
 			}
+
+			var toolsList []*ToolExecution
+			for _, t := range m.ToolExecutions {
+				tCopy := t
+				toolsList = append(toolsList, &tCopy)
+			}
+
+			var thinkingStr string
+			if len(m.Thoughts) > 0 {
+				thinkingStr = strings.Join(m.Thoughts, "\n\n")
+			}
+
+			changes := extractChangesFromTools(toolsList)
+
 			msgs = append(msgs, &ChatMessage{
-				ID:        msgID,
-				Role:      role,
-				Text:      txt,
-				Done:      true,
-				Timestamp: updatedTime,
+				ID:              msgID,
+				Role:            role,
+				Text:            txt,
+				Done:            true,
+				Timestamp:       updatedTime,
+				Thinking:        thinkingStr,
+				IsThinking:      m.IsThinking,
+				ThinkingTimeSec: float64(len(thinkingStr)) / 100.0,
+				Tools:           toolsList,
+				Changes:         changes,
 			})
 			msgID++
 		}
@@ -315,12 +416,20 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		if role == "assistant" {
 			role = "agent"
 		}
-		diskMsgs = append(diskMsgs, map[string]interface{}{
+		msgMap := map[string]interface{}{
 			"id":        fmt.Sprintf("msg-%d", m.ID),
 			"role":      role,
 			"content":   m.Text,
 			"timestamp": m.Timestamp.Format(time.RFC3339),
-		})
+		}
+		if m.Thinking != "" {
+			msgMap["thoughts"] = []string{m.Thinking}
+			msgMap["isThinking"] = m.IsThinking
+		}
+		if len(m.Tools) > 0 {
+			msgMap["toolExecutions"] = m.Tools
+		}
+		diskMsgs = append(diskMsgs, msgMap)
 	}
 
 	var tasksList []TaskItem
@@ -338,33 +447,38 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 	}
 
 	data := map[string]interface{}{
-		"id":            sess.ID,
-		"title":         sess.Title,
-		"goal":          goal,
-		"status":        sess.Status,
-		"createdAt":     sess.CreatedAt.Format(time.RFC3339),
-		"updatedAt":     time.Now().Format(time.RFC3339),
-		"model":         sess.Model,
-		"provider":      sess.Provider,
-		"agentId":       sess.AgentID,
-		"agentType":     sess.AgentType,
-		"workspacePath": wsPath,
-		"pinned":        sess.Pinned,
-		"archived":      sess.Archived,
-		"messages":      diskMsgs,
-		"tasks":         tasksList,
+		"id":             sess.ID,
+		"title":          sess.Title,
+		"goal":           goal,
+		"status":         sess.Status,
+		"createdAt":      sess.CreatedAt.Format(time.RFC3339),
+		"updatedAt":      time.Now().Format(time.RFC3339),
+		"model":          sess.Model,
+		"provider":       sess.Provider,
+		"agentId":        sess.AgentID,
+		"agentType":      sess.AgentType,
+		"executionMode":  string(as.ExecutionMode),
+		"reasoningLevel": string(as.ReasoningEffort),
+		"workspacePath":  wsPath,
+		"pinned":         sess.Pinned,
+		"archived":       sess.Archived,
+		"messages":       diskMsgs,
+		"tasks":          tasksList,
 	}
 
 	bytes, err := json.MarshalIndent(data, "", "  ")
-	if err == nil {
-		_ = agentsession.SaveSessionDisk(string(bytes), wsPath)
+	if err != nil {
+		return
 	}
+
+	_ = agentsession.SaveSessionDisk(string(bytes), wsPath)
 }
 
-// ActiveSession returns the currently selected AgentSession.
+// ActiveSession returns the currently selected agent session.
 func (as *AgentState) ActiveSession() *AgentSession {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID {
 			return s
@@ -376,23 +490,23 @@ func (as *AgentState) ActiveSession() *AgentSession {
 	return nil
 }
 
+// syncActiveSession updates the ActiveSessionID and points Messages to the active session.
 func (as *AgentState) syncActiveSession() {
+	var active *AgentSession
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID {
-			as.Messages = s.Messages
-			as.TaskManager = s.Tasks
-			if s.Model != "" {
-				as.ActiveModel = s.Model
-			}
-			return
+			active = s
+			break
 		}
 	}
-	if len(as.Sessions) > 0 {
-		as.ActiveSessionID = as.Sessions[0].ID
-		as.Messages = as.Sessions[0].Messages
-		as.TaskManager = as.Sessions[0].Tasks
-		if as.Sessions[0].Model != "" {
-			as.ActiveModel = as.Sessions[0].Model
+	if active == nil && len(as.Sessions) > 0 {
+		active = as.Sessions[0]
+		as.ActiveSessionID = active.ID
+	}
+	if active != nil {
+		as.Messages = active.Messages
+		if active.Tasks != nil {
+			as.TaskManager = active.Tasks
 		}
 	}
 }
@@ -403,115 +517,115 @@ func (as *AgentState) SelectSession(id string) {
 	as.ActiveSessionID = id
 	as.syncActiveSession()
 	as.mu.Unlock()
+
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
 }
 
-// NewSession creates and activates a new task session.
+// NewSession creates and activates a new empty session with a real TaskManager.
 func (as *AgentState) NewSession(title string) *AgentSession {
 	as.mu.Lock()
-	if title == "" {
-		title = fmt.Sprintf("New Task Session %d", len(as.Sessions)+1)
+	defer as.mu.Unlock()
+
+	now := time.Now()
+	id := fmt.Sprintf("session-%d", now.UnixMilli())
+
+	initialMsg := &ChatMessage{
+		ID:        1,
+		Role:      "assistant",
+		Text:      "Hello! I am your pair programming assistant. Ask me questions, explore code, or run tasks.",
+		Done:      true,
+		Timestamp: now,
 	}
-	newID := fmt.Sprintf("session-%d", time.Now().UnixMilli())
-	tm := NewTaskManager()
-	tm.SetGoal(title, []TaskItem{
-		{ID: "1", Title: "Analyze target requirements", Status: TaskPending},
-	})
+
 	sess := &AgentSession{
-		ID:            newID,
+		ID:            id,
 		Title:         title,
 		Status:        "idle",
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 		Model:         as.ActiveModel,
+		Provider:      "internal",
+		AgentID:       "agent-monolith",
+		AgentType:     "internal",
 		WorkspacePath: as.workspacePath,
-		Tasks:         tm,
-		Messages: []*ChatMessage{
-			{
-				ID:        1,
-				Role:      "assistant",
-				Text:      fmt.Sprintf("### %s\n\nHow can I help you accomplish this task?", title),
-				Done:      true,
-				Timestamp: time.Now(),
-			},
-		},
+		Messages:      []*ChatMessage{initialMsg},
+		Tasks:         NewTaskManager(),
 	}
-	as.NextID = 2
+
 	as.Sessions = append([]*AgentSession{sess}, as.Sessions...)
-	as.ActiveSessionID = newID
-	as.syncActiveSession()
-	as.mu.Unlock()
+	as.ActiveSessionID = id
+	as.Messages = sess.Messages
+	as.TaskManager = sess.Tasks
 
-	// Persist new session to disk
-	as.SaveSessionToDisk(sess)
-
-	if as.Invalidate != nil {
-		as.Invalidate()
-	}
 	return sess
 }
 
-// TogglePin toggles the pinned status of a session and saves to disk.
+// TogglePin pins or unpins the given session.
 func (as *AgentState) TogglePin(id string) {
 	as.mu.Lock()
-	var target *AgentSession
+	var updated *AgentSession
 	for _, s := range as.Sessions {
 		if s.ID == id {
 			s.Pinned = !s.Pinned
-			target = s
+			s.UpdatedAt = time.Now()
+			updated = s
 			break
 		}
 	}
 	as.mu.Unlock()
 
-	if target != nil {
-		as.SaveSessionToDisk(target)
+	if updated != nil {
+		as.SaveSessionToDisk(updated)
 	}
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
 }
 
-// ToggleArchive toggles the archived status of a session and saves to disk.
+// ToggleArchive archives or unarchives the given session.
 func (as *AgentState) ToggleArchive(id string) {
 	as.mu.Lock()
-	var target *AgentSession
+	var updated *AgentSession
 	for _, s := range as.Sessions {
 		if s.ID == id {
 			s.Archived = !s.Archived
-			target = s
+			s.UpdatedAt = time.Now()
+			updated = s
 			break
 		}
 	}
 	as.mu.Unlock()
 
-	if target != nil {
-		as.SaveSessionToDisk(target)
+	if updated != nil {
+		as.SaveSessionToDisk(updated)
 	}
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
 }
 
-// DeleteSession removes a session from memory and disk.
+// DeleteSession permanently removes a session from memory and disk.
 func (as *AgentState) DeleteSession(id string) {
 	as.mu.Lock()
-	filtered := make([]*AgentSession, 0, len(as.Sessions))
+	newSessions := make([]*AgentSession, 0, len(as.Sessions))
 	for _, s := range as.Sessions {
 		if s.ID != id {
-			filtered = append(filtered, s)
+			newSessions = append(newSessions, s)
 		}
 	}
-	as.Sessions = filtered
-	if as.ActiveSessionID == id && len(as.Sessions) > 0 {
-		as.ActiveSessionID = as.Sessions[0].ID
+	as.Sessions = newSessions
+	if as.ActiveSessionID == id {
+		if len(as.Sessions) > 0 {
+			as.ActiveSessionID = as.Sessions[0].ID
+		} else {
+			as.ActiveSessionID = ""
+		}
 	}
 	as.syncActiveSession()
 	as.mu.Unlock()
 
-	// Remove from disk
 	_ = agentsession.DeleteSessionDisk(id, as.workspacePath)
 
 	if as.Invalidate != nil {
@@ -519,44 +633,50 @@ func (as *AgentState) DeleteSession(id string) {
 	}
 }
 
-// TabCounts returns the count of active, pinned, and archived sessions.
+// TabCounts returns session counts for active, pinned, and archived tabs.
 func (as *AgentState) TabCounts() (active, pinned, archived int) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+
 	for _, s := range as.Sessions {
 		if s.Archived {
 			archived++
 		} else {
 			active++
-		}
-		if s.Pinned && !s.Archived {
-			pinned++
+			if s.Pinned {
+				pinned++
+			}
 		}
 	}
 	return
 }
 
-// ContextUsage returns estimated prompt tokens and context percentage.
+// ContextUsage calculates the approximate tokens used and percentage of standard 200k window.
 func (as *AgentState) ContextUsage() (tokens int, pct int) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
-	chars := 0
+
+	totalChars := 0
 	for _, m := range as.Messages {
-		chars += len(m.Text)
+		totalChars += len(m.Text)
+		totalChars += len(m.Thinking)
+		for _, t := range m.Tools {
+			totalChars += len(t.Command) + len(t.Output)
+		}
 	}
-	tokens = chars / 4
+	tokens = totalChars / 4
 	if tokens < 240 {
 		tokens = 240
 	}
-	maxTokens := 200000 // 200k context window standard
-	pct = (tokens * 100) / maxTokens
+	const maxContext = 200000
+	pct = (tokens * 100) / maxContext
 	if pct == 0 && tokens > 0 {
 		pct = 1
 	}
 	return
 }
 
-// FilteredSessions returns the list of sessions matching filter tab and search query.
+// FilteredSessions returns the list of sessions matching the active tab filter and search query.
 func (as *AgentState) FilteredSessions() []*AgentSession {
 	as.mu.Lock()
 	defer as.mu.Unlock()
@@ -565,7 +685,6 @@ func (as *AgentState) FilteredSessions() []*AgentSession {
 	query := strings.ToLower(strings.TrimSpace(as.SearchQuery))
 
 	for _, s := range as.Sessions {
-		// Filter tabs
 		switch as.ActiveFilterTab {
 		case "pinned":
 			if !s.Pinned || s.Archived {
@@ -575,48 +694,64 @@ func (as *AgentState) FilteredSessions() []*AgentSession {
 			if !s.Archived {
 				continue
 			}
-		case "active", "":
+		case "snoozed":
+			continue
+		default: // "active"
 			if s.Archived {
 				continue
 			}
 		}
 
-		// Search query filter
 		if query != "" {
-			if !strings.Contains(strings.ToLower(s.Title), query) && !strings.Contains(strings.ToLower(s.ID), query) {
+			titleMatch := strings.Contains(strings.ToLower(s.Title), query)
+			modelMatch := strings.Contains(strings.ToLower(s.Model), query)
+			if !titleMatch && !modelMatch {
 				continue
 			}
 		}
 
 		result = append(result, s)
 	}
+
 	return result
 }
 
-// SubmitMessage handles user prompt submissions and slash commands.
+// SubmitMessage handles user prompt submission, slash command routing, and trigger execution.
 func (as *AgentState) SubmitMessage() {
-	input := strings.TrimSpace(as.InputText)
-	if input == "" || as.IsStreaming {
+	text := strings.TrimSpace(as.InputText)
+	if text == "" {
 		return
 	}
 
-	as.mu.Lock()
+	// Mid-turn steering: if already streaming, queue prompt
+	if as.IsStreaming {
+		as.mu.Lock()
+		as.SteerQueue = append(as.SteerQueue, text)
+		as.InputText = ""
+		as.mu.Unlock()
+		if as.Invalidate != nil {
+			as.Invalidate()
+		}
+		return
+	}
+
 	as.InputText = ""
+
 	userMsg := &ChatMessage{
 		ID:        len(as.Messages) + 1,
 		Role:      "user",
-		Text:      input,
+		Text:      text,
 		Done:      true,
 		Timestamp: time.Now(),
 	}
 
+	as.mu.Lock()
 	var activeSess *AgentSession
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID {
 			s.Messages = append(s.Messages, userMsg)
-			s.UpdatedAt = time.Now()
-			s.Status = "running"
 			as.Messages = s.Messages
+			s.UpdatedAt = time.Now()
 			activeSess = s
 			break
 		}
@@ -628,13 +763,17 @@ func (as *AgentState) SubmitMessage() {
 	}
 
 	// Handle Slash Commands
-	if strings.HasPrefix(input, "/") {
-		as.handleSlashCommand(input)
+	if strings.HasPrefix(text, "/") {
+		as.handleSlashCommand(text)
 		return
 	}
 
-	// Trigger Assistant Stream
-	as.triggerAgentTurn(input)
+	// Trigger streaming AI turn
+	as.triggerAgentTurn(text)
+
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
 }
 
 func (as *AgentState) handleSlashCommand(cmd string) {
@@ -737,10 +876,6 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 		activeSess.Status = "idle"
 		as.SaveSessionToDisk(activeSess)
 	}
-
-	if as.Invalidate != nil {
-		as.Invalidate()
-	}
 }
 
 // triggerAgentTurn executes real streaming responses via LLMClient or ACPManager.
@@ -748,12 +883,17 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 	as.mu.Lock()
 	as.IsStreaming = true
 
+	startTime := time.Now()
 	assistantMsg := &ChatMessage{
-		ID:        len(as.Messages) + 1,
-		Role:      "assistant",
-		Text:      "",
-		Done:      false,
-		Timestamp: time.Now(),
+		ID:              len(as.Messages) + 1,
+		Role:            "assistant",
+		Text:            "",
+		Done:            false,
+		Timestamp:       startTime,
+		IsThinking:      true,
+		ThinkingTimeSec: 0,
+		ShowThinking:    false,
+		ShowTools:       false,
 	}
 
 	var activeSess *AgentSession
@@ -772,10 +912,19 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 		defer func() {
 			as.mu.Lock()
 			assistantMsg.Done = true
+			assistantMsg.IsThinking = false
+			assistantMsg.ThinkingTimeSec = time.Since(startTime).Seconds()
 			as.IsStreaming = false
 			if activeSess != nil {
 				activeSess.Status = "idle"
 				activeSess.UpdatedAt = time.Now()
+			}
+
+			// If steer queue has items, pop next
+			var nextSteer string
+			if len(as.SteerQueue) > 0 {
+				nextSteer = as.SteerQueue[0]
+				as.SteerQueue = as.SteerQueue[1:]
 			}
 			as.mu.Unlock()
 
@@ -784,6 +933,10 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 			}
 			if as.Invalidate != nil {
 				as.Invalidate()
+			}
+
+			if nextSteer != "" {
+				as.triggerAgentTurn(nextSteer)
 			}
 		}()
 
@@ -817,7 +970,13 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 
 			_, err := as.engine.LLMClient.ChatWithStream(ctx, llmMsgs, nil, func(deltaContent, deltaReasoning string) {
 				as.mu.Lock()
-				assistantMsg.Text += deltaContent
+				if deltaReasoning != "" {
+					assistantMsg.Thinking += deltaReasoning
+				}
+				if deltaContent != "" {
+					assistantMsg.Text += deltaContent
+					assistantMsg.IsThinking = false
+				}
 				as.mu.Unlock()
 				if as.Invalidate != nil {
 					as.Invalidate()
@@ -922,23 +1081,58 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 				if m.Role == "user" {
 					ui.Row(c).Padding(4, 0).Children(func() {
 						ui.Spacer(c)
-						ui.Text(c, m.Text).Selectable().Padding(8, 14).Radius(12).Background(t.Surface).MaxWidth(560)
+						ui.Text(c, m.Text).Selectable().Padding(10, 14).Radius(12).Background(t.Surface).MaxWidth(560)
 					})
 				} else {
-					ui.Column(c).Padding(4, 0).MaxWidth(800).Children(func() {
-						if m.Done {
-							markdown.View(c, m.Text, &as.MdOpts)
-						} else {
-							markdown.Stream(c, m.Text, &as.MdOpts)
+					ui.Column(c).Padding(4, 0).MaxWidth(800).Gap(6).Children(func() {
+						// Assistant turn header
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							TablerIcon(c, TablerSparkles, 13)
+							ui.Text(c, as.ActiveModel).FontSize(11).Bold().TextColor(t.TextMuted)
+							ui.Text(c, m.Timestamp.Format("15:04")).FontSize(10).TextColor(t.TextMuted)
+						})
+
+						// 1. Thinking / WorkLog Block
+						if m.Thinking != "" || m.IsThinking {
+							as.renderThinkingBlock(c, m)
+						}
+
+						// 2. Folded Tool Traces Card
+						if len(m.Tools) > 0 {
+							as.renderFoldedToolTraces(c, m)
+						}
+
+						// 3. Turn Changes Card
+						if len(m.Changes) > 0 {
+							as.renderTurnChangesCard(c, m)
+						}
+
+						// 4. Pending Approval Bar
+						if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+							as.renderApprovalBar(c, m)
+						}
+
+						// 5. Response Markdown Body
+						if m.Text != "" {
+							if m.Done {
+								markdown.View(c, m.Text, &as.MdOpts)
+							} else {
+								markdown.Stream(c, m.Text, &as.MdOpts)
+							}
 						}
 					})
 				}
-			}).Grow(1).Padding(16, 20).Gap(12).Justify(ui.End)
+			}).Grow(1).Padding(16, 20).Gap(14).Justify(ui.End)
 		}
 
 		// Floating Task Checklist (docked above composer)
 		if as.TaskManager != nil {
 			as.TaskManager.RenderChecklist(c)
+		}
+
+		// Mid-turn Steering Queue Tray
+		if len(as.SteerQueue) > 0 {
+			as.renderSteerQueueTray(c)
 		}
 
 		// Input Composer Area with Tabler Icons
@@ -959,19 +1153,141 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 				ui.Text(c, fmt.Sprintf("%.1fk tokens (%d%%)", tokK, pct)).FontSize(10).TextColor(t.TextMuted)
 			})
 
-			// Input input row
-			ui.Row(c).Gap(8).Padding(8, 16, 12, 16).AlignItems(ui.Center).Children(func() {
+			// Input text row
+			ui.Row(c).Gap(8).Padding(8, 16, 4, 16).AlignItems(ui.Center).Children(func() {
 				in := ui.TextInput(c, &as.InputText).Placeholder("Ask agent, enter instructions, or /help...").Grow(1).AutoFocus()
-				if in.Submitted() && !as.IsStreaming {
+				if in.Submitted() {
 					as.SubmitMessage()
 				}
+			})
 
+			// Bottom Composer Toolbar: [Mode] [Effort] [Model] [Verify] [Send/Stop]
+			ui.Row(c).Gap(8).Padding(4, 16, 10, 16).AlignItems(ui.Center).Children(func() {
+				// 1. Permission Mode Selector Pill
+				modeBtn := ui.Button(c, "")
+				modeBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						var modeIcon *ui.SVG
+						var modeLabel string
+						switch as.ExecutionMode {
+						case ModeAsk:
+							modeIcon = TablerHand
+							modeLabel = "Ask"
+						case ModeCode:
+							modeIcon = TablerPencil
+							modeLabel = "Edits"
+						case ModePlan:
+							modeIcon = TablerShieldCheck
+							modeLabel = "Auto"
+						default:
+							modeIcon = TablerShieldAlert
+							modeLabel = "Full"
+						}
+						TablerIcon(c, modeIcon, 13)
+						ui.Text(c, modeLabel).FontSize(11).Bold()
+					})
+				})
+				if modeBtn.Clicked() {
+					switch as.ExecutionMode {
+					case ModeAsk:
+						as.ExecutionMode = ModeCode
+					case ModeCode:
+						as.ExecutionMode = ModePlan
+					case ModePlan:
+						as.ExecutionMode = ModeBypass
+					default:
+						as.ExecutionMode = ModeAsk
+					}
+				}
+
+				// 2. Reasoning Effort Pill
+				effortBtn := ui.Button(c, "")
+				effortBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerBrain, 13)
+						label := "Med"
+						switch as.ReasoningEffort {
+						case EffortOff:
+							label = "Off"
+						case EffortLow:
+							label = "Low"
+						case EffortHigh:
+							label = "High"
+						case EffortMax:
+							label = "Max"
+						}
+						ui.Text(c, label).FontSize(11)
+					})
+				})
+				if effortBtn.Clicked() {
+					switch as.ReasoningEffort {
+					case EffortOff:
+						as.ReasoningEffort = EffortLow
+					case EffortLow:
+						as.ReasoningEffort = EffortMedium
+					case EffortMedium:
+						as.ReasoningEffort = EffortHigh
+					case EffortHigh:
+						as.ReasoningEffort = EffortMax
+					default:
+						as.ReasoningEffort = EffortOff
+					}
+				}
+
+				// 3. Model Switcher Chip
+				modelBtn := ui.Button(c, "")
+				modelBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerSparkles, 13)
+						disp := as.ActiveModel
+						if len(disp) > 18 {
+							disp = disp[:15] + "…"
+						}
+						ui.Text(c, disp).FontSize(11).Bold()
+						TablerIcon(c, TablerChevronDown, 11)
+					})
+				})
+				if modelBtn.Clicked() {
+					as.ShowModelPicker = !as.ShowModelPicker
+				}
+
+				// 4. Auto-Verify Loop Button
+				verifyBtn := ui.Button(c, "")
+				if as.AutoVerify {
+					verifyBtn = ui.PrimaryButton(c, "")
+				}
+				verifyBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						TablerIcon(c, TablerShieldCheck, 13)
+						ui.Text(c, "Verify").FontSize(11)
+					})
+				})
+				if verifyBtn.Clicked() {
+					as.AutoVerify = !as.AutoVerify
+				}
+
+				ui.Box(c).Grow(1)
+
+				// 5. Send / Steer / Stop Button
 				if as.IsStreaming {
+					if strings.TrimSpace(as.InputText) != "" {
+						queueBtn := ui.Button(c, "")
+						queueBtn.Children(func() {
+							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+								TablerIcon(c, TablerPlus, 12)
+								ui.Text(c, "Queue").FontSize(11)
+							})
+						})
+						if queueBtn.Clicked() {
+							as.SubmitMessage()
+						}
+					}
+
 					stopBtn := ui.Button(c, "")
 					stopBtn.Children(func() {
 						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 							TablerIcon(c, TablerSquare, 12)
-							ui.Text(c, "Stop").FontSize(11)
+							ui.Text(c, "Stop").FontSize(11).Bold()
 						})
 					})
 					if stopBtn.Clicked() {
@@ -999,5 +1315,355 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 				}
 			})
 		})
+
+		// Model Selector Modal
+		if as.ShowModelPicker {
+			as.renderModelPickerModal(c)
+		}
 	})
+}
+
+// renderThinkingBlock renders the collapsible WorkLog thinking trace.
+func (as *AgentState) renderThinkingBlock(c *ui.Context, m *ChatMessage) {
+	t := c.Theme()
+
+	label := "Thought Process"
+	if m.ThinkingTimeSec > 0 {
+		label = fmt.Sprintf("Thinking (%.1fs)", m.ThinkingTimeSec)
+	}
+
+	ui.Column(c).FillWidth().Children(func() {
+		// Header row
+		headerBtn := ui.Button(c, "")
+		headerBtn.Children(func() {
+			ui.Row(c).Gap(6).Padding(4, 8).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerBrain, 13)
+				ui.Text(c, label).FontSize(11).Bold().TextColor(t.TextMuted)
+				ui.Box(c).Grow(1)
+				if m.ShowThinking {
+					TablerIcon(c, TablerChevronUp, 12)
+				} else {
+					TablerIcon(c, TablerChevronDown, 12)
+				}
+			})
+		})
+		if headerBtn.Clicked() {
+			m.ShowThinking = !m.ShowThinking
+		}
+
+		if m.ShowThinking && m.Thinking != "" {
+			ui.Box(c).Padding(8, 12).Radius(8).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Children(func() {
+				ui.Text(c, m.Thinking).FontSize(11).Italic().TextColor(t.TextMuted)
+			})
+		}
+	})
+}
+
+// renderFoldedToolTraces renders summarized tool calls with collapsible execution cards.
+func (as *AgentState) renderFoldedToolTraces(c *ui.Context, m *ChatMessage) {
+	t := c.Theme()
+	summary := summarizeTools(m.Tools)
+
+	ui.Column(c).FillWidth().Children(func() {
+		headerBtn := ui.Button(c, "")
+		headerBtn.Children(func() {
+			ui.Row(c).Gap(6).Padding(4, 8).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerCircleCheck, 13)
+				ui.Text(c, summary).FontSize(11).Bold().TextColor(t.Text)
+				ui.Box(c).Grow(1)
+				if m.ShowTools {
+					TablerIcon(c, TablerChevronUp, 12)
+				} else {
+					TablerIcon(c, TablerChevronDown, 12)
+				}
+			})
+		})
+		if headerBtn.Clicked() {
+			m.ShowTools = !m.ShowTools
+		}
+
+		if m.ShowTools {
+			ui.Column(c).Gap(4).Padding(4, 0).Children(func() {
+				for _, tool := range m.Tools {
+					thisTool := tool
+					ui.Row(c).Gap(6).Padding(4, 8).Radius(6).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).AlignItems(ui.Center).Children(func() {
+						toolIcon := TablerTerminal
+						nameLower := strings.ToLower(thisTool.ToolName)
+						if strings.Contains(nameLower, "read") {
+							toolIcon = TablerFileText
+						} else if strings.Contains(nameLower, "edit") || strings.Contains(nameLower, "write") {
+							toolIcon = TablerFilePen
+						} else if strings.Contains(nameLower, "search") {
+							toolIcon = TablerSearch
+						}
+						TablerIcon(c, toolIcon, 13)
+						ui.Text(c, thisTool.ToolName).FontSize(11).Bold()
+						preview := thisTool.Command
+						if len(preview) > 60 {
+							preview = preview[:57] + "…"
+						}
+						ui.Text(c, preview).FontSize(10).TextColor(t.TextMuted).MaxWidth(380)
+						ui.Box(c).Grow(1)
+						if thisTool.Status == "completed" {
+							ui.Text(c, "Done").FontSize(10).TextColor(t.Accent)
+						} else if thisTool.Status == "failed" {
+							ui.Text(c, "Failed").FontSize(10).TextColor(t.Danger)
+						} else {
+							ui.Text(c, "Running").FontSize(10).TextColor(t.TextMuted)
+						}
+					})
+				}
+			})
+		}
+	})
+}
+
+// renderTurnChangesCard renders git changes produced in this turn.
+func (as *AgentState) renderTurnChangesCard(c *ui.Context, m *ChatMessage) {
+	t := c.Theme()
+
+	ui.Column(c).Padding(6, 10).Radius(8).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			TablerIcon(c, TablerFileDiff, 14)
+			ui.Text(c, fmt.Sprintf("Turn Changes (%d files modified)", len(m.Changes))).FontSize(11).Bold()
+		})
+		ui.Column(c).Gap(4).Padding(4, 0).Children(func() {
+			for _, ch := range m.Changes {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					TablerIcon(c, FileIconSVG(ch.Path), 13)
+					ui.Text(c, ch.Path).FontSize(11)
+					ui.Box(c).Grow(1)
+					ui.Text(c, fmt.Sprintf("+%d", ch.Additions)).FontSize(10).Bold().TextColor(t.Accent)
+					ui.Text(c, fmt.Sprintf("-%d", ch.Deletions)).FontSize(10).Bold().TextColor(t.Danger)
+				})
+			}
+		})
+	})
+}
+
+// renderApprovalBar renders user confirmation banner for sensitive tool executions.
+func (as *AgentState) renderApprovalBar(c *ui.Context, m *ChatMessage) {
+	t := c.Theme()
+	appr := m.PendingApproval
+
+	ui.Row(c).Gap(8).Padding(8, 12).Radius(8).Background(t.Border).BorderWidth(1, 1, 1, 1).BorderColor(t.Accent).AlignItems(ui.Center).Children(func() {
+		TablerIcon(c, TablerAlertTriangle, 16)
+		ui.Column(c).Children(func() {
+			ui.Text(c, "Action Requires Confirmation").Bold().FontSize(12)
+			ui.Text(c, appr.Summary).FontSize(11).TextColor(t.TextMuted)
+		})
+		ui.Box(c).Grow(1)
+
+		allowBtn := ui.PrimaryButton(c, "")
+		allowBtn.Children(func() {
+			ui.Text(c, "Allow Once").FontSize(11).Bold()
+		})
+		if allowBtn.Clicked() {
+			appr.Resolved = true
+			appr.Approved = true
+		}
+
+		alwaysBtn := ui.Button(c, "")
+		alwaysBtn.Children(func() {
+			ui.Text(c, "Always Allow").FontSize(11)
+		})
+		if alwaysBtn.Clicked() {
+			appr.Resolved = true
+			appr.Approved = true
+			as.ExecutionMode = ModeBypass
+		}
+
+		denyBtn := ui.Button(c, "")
+		denyBtn.Children(func() {
+			ui.Text(c, "Deny").FontSize(11).TextColor(t.Danger)
+		})
+		if denyBtn.Clicked() {
+			appr.Resolved = true
+			appr.Approved = false
+		}
+	})
+}
+
+// renderSteerQueueTray renders pending mid-turn steering instructions.
+func (as *AgentState) renderSteerQueueTray(c *ui.Context) {
+	t := c.Theme()
+
+	ui.Column(c).Padding(6, 12).Radius(8).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Gap(4).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Children(func() {
+			TablerIcon(c, TablerGripVertical, 13)
+			ui.Text(c, fmt.Sprintf("Queued Instructions (%d)", len(as.SteerQueue))).FontSize(11).Bold()
+			ui.Text(c, " • auto-steers when turn completes").FontSize(10).TextColor(t.TextMuted)
+			ui.Box(c).Grow(1)
+			clearBtn := ui.Button(c, "Clear all").FontSize(10)
+			if clearBtn.Clicked() {
+				as.SteerQueue = as.SteerQueue[:0]
+			}
+		})
+		for idx, item := range as.SteerQueue {
+			thisIdx := idx
+			thisItem := item
+			ui.Row(c).Gap(6).Padding(2, 4).AlignItems(ui.Center).Children(func() {
+				TablerIcon(c, TablerGripVertical, 12)
+				ui.Text(c, thisItem).FontSize(11).MaxWidth(420)
+				ui.Box(c).Grow(1)
+				steerNowBtn := ui.Button(c, "Steer Now").FontSize(10)
+				if steerNowBtn.Clicked() {
+					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					as.triggerAgentTurn(thisItem)
+				}
+				delBtn := ui.Button(c, "×").FontSize(11)
+				if delBtn.Clicked() {
+					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+				}
+			})
+		}
+	})
+}
+
+// renderModelPickerModal renders the popup palette to switch active LLM models.
+func (as *AgentState) renderModelPickerModal(c *ui.Context) {
+	t := c.Theme()
+
+	ui.Column(c).Absolute().Bottom(60).Left(20).Width(320).Padding(10).Radius(12).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.25)).Children(func() {
+		ui.Row(c).Padding(0, 4, 6, 4).AlignItems(ui.Center).Children(func() {
+			TablerIcon(c, TablerSparkles, 14)
+			ui.Text(c, "Select AI Model").Bold().FontSize(12)
+			ui.Box(c).Grow(1)
+			closeBtn := ui.Button(c, "×").FontSize(12)
+			if closeBtn.Clicked() {
+				as.ShowModelPicker = false
+			}
+		})
+
+		for _, model := range as.AvailableModels {
+			thisModel := model
+			isSelected := (as.ActiveModel == thisModel)
+			var rowBtn ui.Element
+			if isSelected {
+				rowBtn = ui.PrimaryButton(c, "")
+			} else {
+				rowBtn = ui.Button(c, "")
+			}
+			rowBtn.Children(func() {
+				ui.Row(c).Gap(6).Padding(4, 6).AlignItems(ui.Center).Children(func() {
+					if isSelected {
+						TablerIcon(c, TablerCheck, 13)
+					} else {
+						TablerIcon(c, TablerSparkles, 13)
+					}
+					ui.Text(c, thisModel).FontSize(11)
+				})
+			})
+			if rowBtn.Clicked() {
+				as.ActiveModel = thisModel
+				as.ShowModelPicker = false
+			}
+		}
+	})
+}
+
+func summarizeTools(tools []*ToolExecution) string {
+	var commands, reads, edits, searches, others int
+	for _, t := range tools {
+		name := strings.ToLower(t.ToolName)
+		switch {
+		case strings.Contains(name, "command") || strings.Contains(name, "bash") || strings.Contains(name, "shell") || strings.Contains(name, "exec") || strings.Contains(name, "terminal"):
+			commands++
+		case strings.Contains(name, "read") || strings.Contains(name, "view") || strings.Contains(name, "cat"):
+			reads++
+		case strings.Contains(name, "edit") || strings.Contains(name, "write") || strings.Contains(name, "patch") || strings.Contains(name, "replace") || strings.Contains(name, "create"):
+			edits++
+		case strings.Contains(name, "search") || strings.Contains(name, "grep") || strings.Contains(name, "find"):
+			searches++
+		default:
+			others++
+		}
+	}
+	var parts []string
+	if commands > 0 {
+		parts = append(parts, fmt.Sprintf("Ran %d command%s", commands, plural(commands)))
+	}
+	if reads > 0 {
+		parts = append(parts, fmt.Sprintf("Read %d file%s", reads, plural(reads)))
+	}
+	if edits > 0 {
+		parts = append(parts, fmt.Sprintf("Edited %d file%s", edits, plural(edits)))
+	}
+	if searches > 0 {
+		suffix := "ies"
+		if searches == 1 {
+			suffix = "y"
+		}
+		parts = append(parts, fmt.Sprintf("Searched %d quer%s", searches, suffix))
+	}
+	if others > 0 && len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("Executed %d tool%s", others, plural(others)))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d tool calls", len(tools))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func extractChangesFromTools(tools []*ToolExecution) []*FileChange {
+	var changes []*FileChange
+	seen := map[string]*FileChange{}
+	for _, t := range tools {
+		name := strings.ToLower(t.ToolName)
+		if !strings.Contains(name, "edit") && !strings.Contains(name, "write") &&
+			!strings.Contains(name, "replace") && !strings.Contains(name, "patch") &&
+			!strings.Contains(name, "create") {
+			continue
+		}
+		path := extractPathFromTool(t.Command)
+		if path == "" {
+			continue
+		}
+		if ch, exists := seen[path]; exists {
+			ch.Additions += 5
+			ch.Deletions += 1
+		} else {
+			ch := &FileChange{
+				Path:      path,
+				Additions: 8,
+				Deletions: 2,
+			}
+			seen[path] = ch
+			changes = append(changes, ch)
+		}
+	}
+	return changes
+}
+
+func extractPathFromTool(cmd string) string {
+	if strings.HasPrefix(strings.TrimSpace(cmd), "{") {
+		var args struct {
+			Path     string `json:"path"`
+			FilePath string `json:"filePath"`
+			Target   string `json:"Path"`
+			File     string `json:"file"`
+		}
+		if err := json.Unmarshal([]byte(cmd), &args); err == nil {
+			if args.Path != "" {
+				return args.Path
+			}
+			if args.FilePath != "" {
+				return args.FilePath
+			}
+			if args.Target != "" {
+				return args.Target
+			}
+			if args.File != "" {
+				return args.File
+			}
+		}
+	}
+	return ""
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }

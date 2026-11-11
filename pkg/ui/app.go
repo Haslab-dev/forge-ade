@@ -269,7 +269,14 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		}
 	}
 
-	ui.Row(c).Gap(10).Padding(7, 14).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+	bar := c.TitleBar()
+	leftPad := float32(14)
+	if !a.ShowLeftSidebar && bar.Left > 0 {
+		leftPad = max(bar.Left, 78)
+	}
+
+	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Height(max(bar.Height, 38)).DragWindow()
+	ui.Row(c).Gap(10).Padding(7, 14, 7, leftPad).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 		// Left: Sidebar Toggle with Tabler Icon
 		sidebarBtn := ui.Button(c, "")
 		sidebarBtn.Children(func() {

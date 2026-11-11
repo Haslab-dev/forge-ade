@@ -36,15 +36,25 @@ func main() {
 
 	// Launch MyGo GPU Application
 	mygo.App.WhenReady(func() {
+		mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
+			{Role: mygo.RoleAppMenu},
+			{Role: mygo.RoleFileMenu},
+			{Role: mygo.RoleEditMenu},
+			{Role: mygo.RoleViewMenu},
+			{Role: mygo.RoleWindowMenu},
+		}))
+
 		appUI := nativeui.NewAppUI(engine, targetDir)
 
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:     "ForgeADE Native",
-			Width:     1280,
-			Height:    800,
-			MinWidth:  760,
-			MinHeight: 500,
-			Content:   ui.View(appUI.View),
+			Title:          "ForgeADE Native",
+			TitleBarStyle:  mygo.TitleBarHiddenInset,
+			TitleBarHeight: 40,
+			Width:          1280,
+			Height:         800,
+			MinWidth:       760,
+			MinHeight:      500,
+			Content:        ui.View(appUI.View),
 		})
 
 		appUI.SetWindow(win)

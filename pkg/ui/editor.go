@@ -176,7 +176,7 @@ func (em *EditorManager) SaveActiveFile() error {
 	return nil
 }
 
-// setupEditorCallbacks attaches autocompletion and diagnostics hooks.
+// setupEditorCallbacks attaches autocompletion, hover, and diagnostics hooks.
 func (em *EditorManager) setupEditorCallbacks(doc *OpenDocument) {
 	st := doc.Editor
 	st.OnCompletion = func(r editor.CompletionRequest) {
@@ -190,6 +190,31 @@ func (em *EditorManager) setupEditorCallbacks(doc *OpenDocument) {
 		count := strings.Count(st.Buffer.String(), word)
 		st.ShowHover(start, end, fmt.Sprintf("Symbol '%s' (%d occurrences)", word, count), nil)
 	}
+}
+
+// todosAndDiagnostics scans the buffer for TODO, FIXME, and BUG markers.
+func todosAndDiagnostics(b *editor.Buffer) []editor.Diagnostic {
+	var out []editor.Diagnostic
+	for i := range b.LineCount() {
+		line := b.Line(i)
+		for _, kw := range []string{"TODO", "FIXME", "BUG", "WARN"} {
+			if at := strings.Index(line, kw); at >= 0 {
+				start := b.Offset(editor.Pos{Line: i, Col: at})
+				sev := editor.SeverityWarning
+				if kw == "BUG" {
+					sev = editor.SeverityError
+				}
+				out = append(out, editor.Diagnostic{
+					Start:    start,
+					End:      start + len(line) - at,
+					Severity: sev,
+					Message:  strings.TrimSpace(line[at:]),
+					Source:   strings.ToLower(kw),
+				})
+			}
+		}
+	}
+	return out
 }
 
 // RenderTabBar renders the horizontal strip of open tabs matching Zed/ForgeADE.
@@ -346,7 +371,7 @@ func (em *EditorManager) RenderEditorView(c *ui.Context) {
 	})
 }
 
-// RenderEditor renders the active editor buffer and controls.
+// RenderEditor renders the active editor buffer, breadcrumbs, and status bar.
 func (em *EditorManager) RenderEditor(c *ui.Context) {
 	t := c.Theme()
 	doc := em.ActiveDoc()
@@ -359,9 +384,55 @@ func (em *EditorManager) RenderEditor(c *ui.Context) {
 	}
 
 	doc.Editor.SoftWrap = em.SoftWrap
+	doc.Editor.SetDiagnostics(doc.Editor.Buffer.Version(), todosAndDiagnostics(doc.Editor.Buffer))
 
-	// Virtualized Code Editor View
-	editor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+	ui.Column(c).Grow(1).FillWidth().Children(func() {
+		// Breadcrumbs Path Bar
+		ui.Row(c).Gap(6).Padding(4, 12).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+			TablerIcon(c, TablerFolder, 13)
+			parts := strings.Split(doc.RelativePath, "/")
+			for i, part := range parts {
+				if i > 0 {
+					TablerIcon(c, TablerChevronRight, 10)
+				}
+				isLast := (i == len(parts)-1)
+				if isLast {
+					TablerIcon(c, FileIconSVG(doc.RelativePath), 13)
+					ui.Text(c, part).FontSize(11).Bold()
+				} else {
+					ui.Text(c, part).FontSize(11).TextColor(t.TextMuted)
+				}
+			}
+			ui.Box(c).Grow(1)
+			langName := "Plain Text"
+			if l := doc.Editor.Buffer.Language(); l != nil {
+				langName = l.Name
+			}
+			ui.Text(c, langName).FontSize(10).TextColor(t.TextMuted).Bold()
+		})
+
+		// Virtualized Code Editor View
+		editor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+
+		// Bottom Editor Status Bar
+		pos := doc.Editor.CursorPos()
+		sels := len(doc.Editor.Selections())
+		statusPos := fmt.Sprintf("Ln %d, Col %d", pos.Line+1, pos.Col+1)
+		if sels > 1 {
+			statusPos += fmt.Sprintf(" · %d selections", sels)
+		}
+		added, deleted := doc.Diff.Stats()
+		ui.Row(c).Gap(14).Padding(3, 12).Background(t.Surface).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, statusPos).FontSize(11).TextColor(t.TextMuted)
+			if added > 0 || deleted > 0 {
+				ui.Text(c, fmt.Sprintf("+%d −%d", added, deleted)).FontSize(11).TextColor(t.TextMuted)
+			}
+			ui.Box(c).Grow(1)
+			ui.Text(c, fmt.Sprintf("%d lines", doc.Editor.Buffer.LineCount())).FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, "UTF-8").FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, "Spaces: 2").FontSize(11).TextColor(t.TextMuted)
+		})
+	})
 }
 
 // RenderDiff renders the git-style diff of changes in the active buffer.
