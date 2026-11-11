@@ -11,17 +11,21 @@ import (
 
 // AppUI is the top-level native UI application state.
 type AppUI struct {
-	Backend      *app.App
-	Window       *mygo.Window
-	Workspace    *WorkspaceState
-	Editor       *EditorManager
-	Terminal     *TerminalState
-	Agent        *AgentState
-	Git          *GitManager
-	Palette      *PaletteManager
-	ActiveTab    int
-	SelectedFile string
-	ShowSidebar  bool
+	Backend          *app.App
+	Window           *mygo.Window
+	Workspace        *WorkspaceState
+	Editor           *EditorManager
+	Terminal         *TerminalState
+	Agent            *AgentState
+	Git              *GitManager
+	Database         *DatabaseManager
+	Palette          *PaletteManager
+	Settings         *SettingsManager
+	ActiveTab        int
+	SelectedFile     string
+	ShowSidebar      bool
+	NewFileName      string
+	ShowNewFileModal bool
 }
 
 // NewAppUI constructs the AppUI state tree.
@@ -40,6 +44,12 @@ func NewAppUI(backend *app.App, rootDir string) *AppUI {
 			appUI.Window.Invalidate()
 		}
 	})
+
+	appUI.Settings = NewSettingsManager(backend, func(provider, model string) {
+		appUI.Agent.ActiveModel = model
+	})
+
+	appUI.Database = NewDatabaseManager(backend, appUI.Workspace)
 
 	appUI.Git = NewGitManager(backend, rootDir, func(path string, showDiff bool) {
 		fullPath := appUI.Workspace.ResolveFullPath(path)
@@ -102,6 +112,9 @@ func (a *AppUI) View(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyP) {
 		a.Palette.Toggle()
 	}
+	if c.Shortcut(ui.Cmd, ui.KeyComma) {
+		a.Settings.Toggle()
+	}
 	if c.Shortcut(ui.Cmd, ui.KeyB) {
 		a.ShowSidebar = !a.ShowSidebar
 	}
@@ -121,12 +134,15 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ActiveTab = TabGit
 	}
 	if c.Shortcut(ui.Cmd, ui.Key6) {
+		a.ActiveTab = TabDatabase
+	}
+	if c.Shortcut(ui.Cmd, ui.Key7) {
 		a.ActiveTab = TabSplit
 	}
 
 	ui.Column(c).Fill().Children(func() {
 		// 1. Top Global Navigation Bar
-		ui.Row(c).Gap(12).Padding(8, 16).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.Row(c).Gap(10).Padding(8, 16).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			// Sidebar toggle button
 			sidebarToggle := ui.Button(c, map[bool]string{true: "◨", false: "◻"}[a.ShowSidebar]).FontSize(12)
 			if sidebarToggle.Clicked() {
@@ -161,6 +177,12 @@ func (a *AppUI) View(c *ui.Context) {
 				}
 			}
 
+			// Settings Button
+			settingsBtn := ui.Button(c, "⚙ Settings (⌘,)").FontSize(12)
+			if settingsBtn.Clicked() {
+				a.Settings.Toggle()
+			}
+
 			ui.Text(c, "Pure Go · GPU").FontSize(11).TextColor(t.TextMuted)
 		})
 
@@ -169,14 +191,21 @@ func (a *AppUI) View(c *ui.Context) {
 			// Optional Workspace Sidebar
 			if a.ShowSidebar {
 				ui.Column(c).Width(240).Background(t.Surface).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
-					// Sidebar Header
+					// Sidebar Header & Actions
 					ui.Row(c).Padding(10, 14).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 						ui.Text(c, "FILES").FontSize(11).Bold().TextColor(t.TextMuted)
 						ui.Box(c).Grow(1)
-						if ui.Button(c, "↻").Clicked() {
+						if ui.Button(c, "+ File").FontSize(11).Clicked() {
+							a.ShowNewFileModal = true
+							a.NewFileName = ""
+						}
+						if ui.Button(c, "↻").FontSize(11).Clicked() {
 							a.Workspace.Refresh()
 							if a.Git != nil {
 								go a.Git.Refresh()
+							}
+							if a.Database != nil {
+								go a.Database.ScanDatabases()
 							}
 						}
 					})
@@ -199,6 +228,17 @@ func (a *AppUI) View(c *ui.Context) {
 							if item.Clicked() {
 								a.SelectedFile = f.RelativePath
 								fullPath := a.Workspace.ResolveFullPath(f.RelativePath)
+
+								// If database file clicked, jump to database tab!
+								lower := f.RelativePath
+								if filepath.Ext(lower) == ".sqlite" || filepath.Ext(lower) == ".db" || filepath.Ext(lower) == ".duckdb" {
+									if a.Database != nil {
+										a.Database.Inspect(fullPath)
+										a.ActiveTab = TabDatabase
+									}
+									return
+								}
+
 								_, _ = a.Editor.OpenFile(fullPath, f.RelativePath)
 								if a.ActiveTab != TabEditor && a.ActiveTab != TabSplit {
 									a.ActiveTab = TabEditor
@@ -224,6 +264,10 @@ func (a *AppUI) View(c *ui.Context) {
 					if a.Git != nil {
 						a.Git.RenderGit(c)
 					}
+				case TabDatabase:
+					if a.Database != nil {
+						a.Database.RenderDatabase(c)
+					}
 				case TabSplit:
 					// Split View: Editor on Left, Agent on Right
 					ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
@@ -246,12 +290,49 @@ func (a *AppUI) View(c *ui.Context) {
 			}
 			ui.Box(c).Grow(1)
 			ui.Text(c, a.Agent.ActiveModel).FontSize(12).TextColor(t.TextMuted)
-			ui.Text(c, "⌘S Save · ⌘P Open · ⌘B Sidebar · ⌘1-6 Tabs").FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, "⌘S Save · ⌘P Open · ⌘, Settings · ⌘B Sidebar · ⌘1-7 Tabs").FontSize(11).TextColor(t.TextMuted)
 		})
 
-		// 4. Floating Quick Open Palette Overlay
+		// 4. Floating Quick Open Palette Modal Overlay
 		if a.Palette != nil {
 			a.Palette.RenderPalette(c)
+		}
+
+		// 5. Settings Modal Overlay
+		if a.Settings != nil {
+			a.Settings.RenderSettings(c)
+		}
+
+		// 6. New File Modal Overlay
+		if a.ShowNewFileModal {
+			ui.Modal(c, &a.ShowNewFileModal, func() {
+				ui.Column(c).Width(400).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 18).Gap(10).Children(func() {
+					ui.Text(c, "Create New File").Bold().FontSize(14)
+					in := ui.TextInput(c, &a.NewFileName).Placeholder("filename.go (or path/to/file.ext)...").Grow(1).AutoFocus()
+					if in.Submitted() && a.NewFileName != "" {
+						_ = a.Workspace.CreateFile(a.NewFileName)
+						a.ShowNewFileModal = false
+						full := a.Workspace.ResolveFullPath(a.NewFileName)
+						_, _ = a.Editor.OpenFile(full, a.NewFileName)
+						a.SelectedFile = a.NewFileName
+						a.ActiveTab = TabEditor
+					}
+					ui.Row(c).AlignItems(ui.Center).Children(func() {
+						ui.Box(c).Grow(1)
+						if ui.Button(c, "Cancel").Clicked() {
+							a.ShowNewFileModal = false
+						}
+						if ui.PrimaryButton(c, "Create").Clicked() && a.NewFileName != "" {
+							_ = a.Workspace.CreateFile(a.NewFileName)
+							a.ShowNewFileModal = false
+							full := a.Workspace.ResolveFullPath(a.NewFileName)
+							_, _ = a.Editor.OpenFile(full, a.NewFileName)
+							a.SelectedFile = a.NewFileName
+							a.ActiveTab = TabEditor
+						}
+					})
+				})
+			})
 		}
 	})
 }

@@ -132,3 +132,38 @@ func (ws *WorkspaceState) ResolveFullPath(rel string) string {
 	defer ws.mu.RUnlock()
 	return filepath.Join(ws.RootDir, rel)
 }
+
+// CreateFile creates a new empty file at relPath and refreshes the workspace index.
+func (ws *WorkspaceState) CreateFile(relPath string) error {
+	fullPath := ws.ResolveFullPath(relPath)
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	ws.Refresh()
+	return nil
+}
+
+// CreateFolder creates a new directory at relPath and refreshes the workspace index.
+func (ws *WorkspaceState) CreateFolder(relPath string) error {
+	fullPath := ws.ResolveFullPath(relPath)
+	if err := os.MkdirAll(fullPath, 0755); err != nil {
+		return err
+	}
+	ws.Refresh()
+	return nil
+}
+
+// DeleteFile deletes a file at relPath and refreshes the workspace index.
+func (ws *WorkspaceState) DeleteFile(relPath string) error {
+	fullPath := ws.ResolveFullPath(relPath)
+	if err := os.Remove(fullPath); err != nil {
+		return err
+	}
+	ws.Refresh()
+	return nil
+}

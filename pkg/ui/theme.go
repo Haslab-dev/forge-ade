@@ -12,7 +12,8 @@ const (
 	TabTerminal = 2
 	TabAgent    = 3
 	TabGit      = 4
-	TabSplit    = 5
+	TabDatabase = 5
+	TabSplit    = 6
 )
 
 // TabNames defines user-facing labels for the main navigation bar.
@@ -22,6 +23,7 @@ var TabNames = []string{
 	"Terminal",
 	"Agent AI",
 	"Source Control",
+	"Database",
 	"Split View",
 }
 

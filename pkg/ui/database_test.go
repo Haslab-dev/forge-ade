@@ -1,0 +1,32 @@
+package ui
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestDatabaseManager(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "db-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	dbPath := filepath.Join(tempDir, "test.sqlite")
+	// Write dummy sqlite file
+	if err := os.WriteFile(dbPath, []byte("SQLite format 3\x00"), 0644); err != nil {
+		t.Fatalf("write sqlite file: %v", err)
+	}
+
+	ws := NewWorkspaceState(tempDir)
+	dm := NewDatabaseManager(nil, ws)
+
+	if len(dm.Databases) != 1 {
+		t.Fatalf("expected 1 detected database, got %d", len(dm.Databases))
+	}
+
+	if dm.Databases[0] != dbPath {
+		t.Fatalf("expected dbPath %s, got %s", dbPath, dm.Databases[0])
+	}
+}

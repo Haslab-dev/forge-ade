@@ -36,3 +36,29 @@ func TestWorkspaceState(t *testing.T) {
 		t.Fatalf("unexpected resolved path: %s", resolved)
 	}
 }
+
+func TestWorkspaceFileOperations(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "ws-ops-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	ws := NewWorkspaceState(tempDir)
+
+	// Create file
+	if err := ws.CreateFile("pkg/hello.go"); err != nil {
+		t.Fatalf("CreateFile failed: %v", err)
+	}
+	if len(ws.Files) != 1 || ws.Files[0].RelativePath != "pkg/hello.go" {
+		t.Fatalf("expected 1 file 'pkg/hello.go', got %d", len(ws.Files))
+	}
+
+	// Delete file
+	if err := ws.DeleteFile("pkg/hello.go"); err != nil {
+		t.Fatalf("DeleteFile failed: %v", err)
+	}
+	if len(ws.Files) != 0 {
+		t.Fatalf("expected 0 files after delete, got %d", len(ws.Files))
+	}
+}
