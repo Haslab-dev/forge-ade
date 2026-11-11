@@ -211,7 +211,7 @@ func (dm *DatabaseManager) RenderDatabase(c *ui.Context) {
 					in := ui.TextInput(c, &dm.SQLQuery).Placeholder("Write read-only SQL query (e.g. SELECT * FROM users LIMIT 25)...").Grow(1)
 					if in.Submitted() && !dm.IsExecuting {
 						go dm.ExecuteQuery()
-					}  
+					}
 
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 						runBtn := ui.PrimaryButton(c, "")

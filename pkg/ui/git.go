@@ -20,21 +20,21 @@ const (
 
 // GitManager manages repository status, staging, unstaging, AI commits, and branches.
 type GitManager struct {
-	mu                  sync.RWMutex
-	engine              *Engine
-	RootDir             string
-	Branch              string
-	ActiveTab           int
-	Staged              []git.FileStatus
-	Unstaged            []git.FileStatus
-	Untracked           []git.FileStatus
-	Commits             []git.CommitNode
-	Branches            []string
-	CommitMsg           string
-	StatusMsg           string
-	IsGeneratingAI      bool
-	OnFileSelect        func(path string, showDiff bool)
-	OnNeedRedraw        func()
+	mu             sync.RWMutex
+	engine         *Engine
+	RootDir        string
+	Branch         string
+	ActiveTab      int
+	Staged         []git.FileStatus
+	Unstaged       []git.FileStatus
+	Untracked      []git.FileStatus
+	Commits        []git.CommitNode
+	Branches       []string
+	CommitMsg      string
+	StatusMsg      string
+	IsGeneratingAI bool
+	OnFileSelect   func(path string, showDiff bool)
+	OnNeedRedraw   func()
 }
 
 // NewGitManager creates an initialized GitManager for the repository.

@@ -19,8 +19,8 @@ func TestResizeHandlesClampingAndDefaults(t *testing.T) {
 	if appUI.LeftSidebarWidth != 260 {
 		t.Errorf("Expected default LeftSidebarWidth 260, got %v", appUI.LeftSidebarWidth)
 	}
-	if appUI.RightDrawerWidth != 400 {
-		t.Errorf("Expected default RightDrawerWidth 400, got %v", appUI.RightDrawerWidth)
+	if appUI.RightDrawerWidth != 420 {
+		t.Errorf("Expected default RightDrawerWidth 420, got %v", appUI.RightDrawerWidth)
 	}
 	if appUI.BottomTerminalHeight != 240 {
 		t.Errorf("Expected default BottomTerminalHeight 240, got %v", appUI.BottomTerminalHeight)

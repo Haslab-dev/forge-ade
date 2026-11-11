@@ -130,17 +130,17 @@ func TestAgentStateTabCountsAndContextUsage(t *testing.T) {
 
 func TestFileIconSVG(t *testing.T) {
 	tests := map[string]*ui.SVG{
-		"main.go":       TablerBrandGolang,
-		"app.tsx":       TablerBrandTypescript,
-		"index.js":      TablerBrandJavascript,
-		"package.json":  TablerJson,
-		"README.md":     TablerMarkdown,
-		"index.html":    TablerBrandHtml5,
-		"styles.css":    TablerBrandCss3,
-		"data.sqlite":   TablerDatabase,
-		"script.sh":     TablerTerminal,
-		"config.yaml":   TablerSettings,
-		"unknown.xyz":   TablerFile,
+		"main.go":      TablerBrandGolang,
+		"app.tsx":      TablerBrandTypescript,
+		"index.js":     TablerBrandJavascript,
+		"package.json": TablerJson,
+		"README.md":    TablerMarkdown,
+		"index.html":   TablerBrandHtml5,
+		"styles.css":   TablerBrandCss3,
+		"data.sqlite":  TablerDatabase,
+		"script.sh":    TablerTerminal,
+		"config.yaml":  TablerSettings,
+		"unknown.xyz":  TablerFile,
 	}
 
 	for path, expectedIcon := range tests {

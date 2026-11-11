@@ -26,6 +26,7 @@ type OpenDocument struct {
 type EditorManager struct {
 	mu           sync.RWMutex
 	docs         map[string]*OpenDocument
+	patchDiffs   map[string]*editor.DiffState
 	OpenTabPaths []string
 	ActivePath   string
 	SoftWrap     bool
@@ -34,18 +35,49 @@ type EditorManager struct {
 	DiffLayout   int    // 0: Split, 1: Unified
 	DiffInline   string // "Words", "Characters", "Off"
 	StatusMsg    string
+	Theme        *ThemeManager
 }
 
 // NewEditorManager creates and initializes an EditorManager.
 func NewEditorManager() *EditorManager {
 	return &EditorManager{
 		docs:         make(map[string]*OpenDocument),
+		patchDiffs:   make(map[string]*editor.DiffState),
 		OpenTabPaths: make([]string, 0),
 		SoftWrap:     false,
 		IsSplit:      false,
 		IsDiffView:   false,
 		DiffLayout:   0,
 		DiffInline:   "Words",
+	}
+}
+
+// editorFont returns the code font at ForgeADE's cmSetup metrics: Geist Mono
+// at 13px (the default --font-size-code), line-height 1.65.
+func (em *EditorManager) editorFont() ui.Font {
+	size := EditorCodeFontSize
+	family := FontMono
+	if em.Theme != nil {
+		family = monoFor(em.Theme.FontFamily)
+	}
+	return ui.Font{Family: family, Size: float32(size)}
+}
+
+// applyTheme attaches the editor theme and fonts to an editor state.
+func (em *EditorManager) applyTheme(st *editor.State) {
+	st.Font = em.editorFont()
+	st.LineHeight = 1.65 // cmSetup: lineHeight 1.65
+	if em.Theme != nil {
+		st.Theme = em.Theme.EditorTheme()
+	}
+}
+
+// applyTheme attaches the editor theme and fonts to a diff state.
+func (em *EditorManager) applyDiffTheme(d *editor.DiffState) {
+	d.Font = em.editorFont()
+	d.LineHeight = 1.65
+	if em.Theme != nil {
+		d.Theme = em.Theme.EditorTheme()
 	}
 }
 
@@ -105,10 +137,38 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 		},
 	}
 
+	em.applyTheme(doc.Editor)
+	em.applyDiffTheme(doc.Diff)
 	em.setupEditorCallbacks(doc)
 	em.docs[fullPath] = doc
 	em.ActivePath = fullPath
 	return doc, nil
+}
+
+// OpenPatchDiff builds (or returns the cached) diff of a git patch for the
+// changes drawer, rendered with MyGo's internal diff viewer.
+func (em *EditorManager) OpenPatchDiff(relPath, patch string, tm *ThemeManager) *editor.DiffState {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if tm != nil {
+		em.Theme = tm
+	}
+	if d, ok := em.patchDiffs[relPath]; ok {
+		return d
+	}
+	files, err := editor.ParsePatch(patch)
+	if err != nil || len(files) == 0 {
+		return nil
+	}
+	d := &editor.DiffState{
+		Layout:        editor.DiffLayout(em.DiffLayout),
+		HunkActions:   true,
+		LineSelection: true,
+	}
+	d.SetPatch(files[0])
+	em.applyDiffTheme(d)
+	em.patchDiffs[relPath] = d
+	return d
 }
 
 // CloseTab closes an open tab and activates another if available.
@@ -131,6 +191,41 @@ func (em *EditorManager) CloseTab(fullPath string) {
 			em.ActivePath = ""
 		}
 	}
+}
+
+// CloseAll closes every open tab and patch diff (workspace switch).
+func (em *EditorManager) CloseAll() {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	em.docs = make(map[string]*OpenDocument)
+	em.patchDiffs = make(map[string]*editor.DiffState)
+	em.OpenTabPaths = em.OpenTabPaths[:0]
+	em.ActivePath = ""
+	em.IsDiffView = false
+}
+
+// CycleTab activates the next (dir 1) or previous (dir -1) open tab, as
+// Ctrl+Tab does in the original.
+func (em *EditorManager) CycleTab(dir int) {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	n := len(em.OpenTabPaths)
+	if n < 2 {
+		return
+	}
+	idx := -1
+	for i, p := range em.OpenTabPaths {
+		if p == em.ActivePath {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		em.ActivePath = em.OpenTabPaths[0]
+		return
+	}
+	idx = (idx + dir + n) % n
+	em.ActivePath = em.OpenTabPaths[idx]
 }
 
 // ActiveDoc returns the currently active document or nil.
@@ -195,7 +290,7 @@ func (em *EditorManager) setupEditorCallbacks(doc *OpenDocument) {
 // todosAndDiagnostics scans the buffer for TODO, FIXME, and BUG markers.
 func todosAndDiagnostics(b *editor.Buffer) []editor.Diagnostic {
 	var out []editor.Diagnostic
-	for i := range b.LineCount() {
+	for i := 0; i < b.LineCount(); i++ {
 		line := b.Line(i)
 		for _, kw := range []string{"TODO", "FIXME", "BUG", "WARN"} {
 			if at := strings.Index(line, kw); at >= 0 {
@@ -217,12 +312,17 @@ func todosAndDiagnostics(b *editor.Buffer) []editor.Diagnostic {
 	return out
 }
 
-// RenderTabBar renders the horizontal strip of open tabs matching Zed/ForgeADE.
+// RenderTabBar renders ForgeADE's 35px tab bar: h-full px-3 text-xs
+// font-medium tabs with dirty dots, close-on-hover, and the pane actions.
 func (em *EditorManager) RenderTabBar(c *ui.Context) {
-	t := c.Theme()
+	tc := ThemeColors{}
+	if em.Theme != nil {
+		tc = em.Theme.Colors()
+	}
 
-	ui.Row(c).Gap(4).Padding(4, 8).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		// Open tab items
+	ui.Row(c).Height(EditorTabBarHeight).Padding(0, 8).AlignItems(ui.Center).
+		Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		// Open tab items: h-full px-3 gap-2 text-xs font-medium border-r
 		for _, tabPath := range em.OpenTabPaths {
 			path := tabPath
 			doc := em.GetDoc(path)
@@ -234,91 +334,63 @@ func (em *EditorManager) RenderTabBar(c *ui.Context) {
 			isModified := doc.Editor.Buffer.Modified()
 			baseName := filepath.Base(doc.RelativePath)
 
-			tabLabel := baseName
-			if isModified {
-				tabLabel += " •"
-			}
-
-			var tabBtn ui.Element
+			tab := ui.Row(c.Key("tab-"+path)).Height(EditorTabBarHeight).Padding(0, 12).Gap(8).
+				AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
+			tab.Children(func() {
+				ui.Icon(c, FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+				label := ui.Text(c, baseName).FontSize(12)
+				if isActive {
+					label.FontWeight(500)
+				}
+				if isModified {
+					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
+				}
+			})
 			if isActive {
-				tabBtn = ui.PrimaryButton(c, "")
-			} else {
-				tabBtn = ui.Button(c, "")
+				tab.Background(tc.SurfaceOverlay)
+			} else if tab.Hovered() {
+				tab.Background(tc.Text.Alpha(0.04))
 			}
-			tabBtn.Children(func() {
-				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, FileIconSVG(doc.RelativePath), 13)
-					ui.Text(c, tabLabel).FontSize(12)
-				})
-			})
-			if tabBtn.Clicked() {
+			if tab.Clicked() {
 				em.ActivePath = path
-			}
-
-			// Tab close icon button
-			closeBtn := ui.Button(c, "")
-			closeBtn.Children(func() {
-				TablerIcon(c, TablerX, 11)
-			})
-			if closeBtn.Clicked() {
-				em.CloseTab(path)
 			}
 		}
 
 		if len(em.OpenTabPaths) == 0 {
-			ui.Text(c, "No open files").FontSize(11).TextColor(t.TextMuted)
+			ui.Text(c, "No open files").FontSize(12).TextColor(tc.TextMuted)
 		}
 
 		ui.Box(c).Grow(1)
 
-		// Split Editor button
-		splitBtn := ui.Button(c, "")
-		splitBtn.Children(func() {
-			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, TablerColumns, 13)
-				label := "Split"
-				if em.IsSplit {
-					label = "Single"
+		// Right actions: Split, Diff, Wrap, Save
+		actionBtn := func(icon *ui.SVG, label string, active bool, onPick func()) {
+			btn := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center)
+			btn.Children(func() {
+				ic := ui.Icon(c, icon).Width(13).Height(13).TextColor(tc.IconMuted)
+				if active {
+					ic.TextColor(tc.Accent)
 				}
-				ui.Text(c, label).FontSize(11)
+				if label != "" {
+					ui.Text(c, label).FontSize(12).TextColor(tc.TextMuted)
+				}
 			})
-		})
-		if splitBtn.Clicked() {
-			em.IsSplit = !em.IsSplit
+			if active {
+				btn.Background(tc.Accent.Alpha(0.1))
+			} else if btn.Hovered() {
+				btn.Background(tc.Text.Alpha(0.05))
+			}
+			if btn.Clicked() {
+				onPick()
+			}
 		}
-
-		// Diff View toggle button
-		var diffBtn ui.Element
-		if em.IsDiffView {
-			diffBtn = ui.PrimaryButton(c, "")
-		} else {
-			diffBtn = ui.Button(c, "")
+		splitLabel := "Split"
+		if em.IsSplit {
+			splitLabel = "Single"
 		}
-		diffBtn.Children(func() {
-			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, TablerGitCompare, 13)
-				ui.Text(c, "Diff").FontSize(11)
-			})
-		})
-		if diffBtn.Clicked() {
-			em.IsDiffView = !em.IsDiffView
-		}
-
-		// Soft wrap switch
-		ui.Text(c, "Wrap").FontSize(11).TextColor(t.TextMuted)
-		ui.Switch(c, &em.SoftWrap)
-
-		// Save File button
-		saveBtn := ui.Button(c, "")
-		saveBtn.Children(func() {
-			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, TablerDeviceFloppy, 13)
-				ui.Text(c, "Save").FontSize(11)
-			})
-		})
-		if saveBtn.Clicked() {
-			_ = em.SaveActiveFile()
-		}
+		actionBtn(TablerColumns, splitLabel, false, func() { em.IsSplit = !em.IsSplit })
+		actionBtn(TablerGitCompare, "Diff", em.IsDiffView, func() { em.IsDiffView = !em.IsDiffView })
+		actionBtn(TablerRefresh, "Wrap", em.SoftWrap, func() { em.SoftWrap = !em.SoftWrap })
+		actionBtn(TablerDeviceFloppy, "Save", false, func() { _ = em.SaveActiveFile() })
 	})
 }
 
@@ -337,12 +409,15 @@ func (em *EditorManager) RenderEditorView(c *ui.Context) {
 		}
 
 		if em.IsSplit && len(em.OpenTabPaths) >= 2 {
-			// Multi-Pane Split View
+			// Multi-Pane Split View with a 3px divider
 			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 				// Left Pane
-				ui.Column(c).Grow(1).FillHeight().BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+				ui.Column(c).Grow(1).FillHeight().Children(func() {
 					em.RenderEditor(c)
 				})
+
+				// Divider (w-[3px] bg-border hover:bg-primary/60)
+				ui.Box(c).Width(3).FillHeight().Background(t.Border)
 
 				// Right Pane: second tab in list
 				var secondaryPath string
@@ -356,8 +431,10 @@ func (em *EditorManager) RenderEditorView(c *ui.Context) {
 				ui.Column(c).Grow(1).FillHeight().Children(func() {
 					if secondaryDoc != nil {
 						secondaryDoc.Editor.SoftWrap = em.SoftWrap
-						ui.Row(c).Padding(6, 12).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-							ui.Text(c, secondaryDoc.RelativePath).Bold().FontSize(12)
+						em.applyTheme(secondaryDoc.Editor)
+						ui.Row(c).Height(28).Padding(0, 12).AlignItems(ui.Center).
+							BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+							ui.Text(c, secondaryDoc.RelativePath).FontSize(12).FontWeight(500)
 						})
 						editor.View(c, secondaryDoc.Editor).Grow(1).FillWidth()
 					}
@@ -374,33 +451,39 @@ func (em *EditorManager) RenderEditorView(c *ui.Context) {
 // RenderEditor renders the active editor buffer, breadcrumbs, and status bar.
 func (em *EditorManager) RenderEditor(c *ui.Context) {
 	t := c.Theme()
+	tc := ThemeColors{}
+	if em.Theme != nil {
+		tc = em.Theme.Colors()
+	}
 	doc := em.ActiveDoc()
 	if doc == nil {
-		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Text(c, "No file open").FontSize(18).Bold().TextColor(t.TextMuted)
-			ui.Text(c, "Select a file from the workspace sidebar or press ⌘P to open.").TextColor(t.TextMuted)
+		ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+			ui.Text(c, "No file open").FontSize(17).FontWeight(600).TextColor(t.TextMuted)
+			ui.Text(c, "Select a file from the workspace sidebar or press ⌘P to open.").FontSize(13).TextColor(t.TextMuted)
 		})
 		return
 	}
 
 	doc.Editor.SoftWrap = em.SoftWrap
 	doc.Editor.SetDiagnostics(doc.Editor.Buffer.Version(), todosAndDiagnostics(doc.Editor.Buffer))
+	em.applyTheme(doc.Editor)
 
 	ui.Column(c).Grow(1).FillWidth().Children(func() {
 		// Breadcrumbs Path Bar
-		ui.Row(c).Gap(6).Padding(4, 12).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			TablerIcon(c, TablerFolder, 13)
+		ui.Row(c).Height(28).Gap(6).Padding(0, 12).AlignItems(ui.Center).
+			Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+			ui.Icon(c, TablerFolder).Width(13).Height(13).TextColor(tc.IconMuted)
 			parts := strings.Split(doc.RelativePath, "/")
 			for i, part := range parts {
 				if i > 0 {
-					TablerIcon(c, TablerChevronRight, 10)
+					ui.Icon(c, TablerChevronRight).Width(10).Height(10).TextColor(tc.IconMuted)
 				}
 				isLast := (i == len(parts)-1)
 				if isLast {
-					TablerIcon(c, FileIconSVG(doc.RelativePath), 13)
-					ui.Text(c, part).FontSize(11).Bold()
+					ui.Icon(c, FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+					ui.Text(c, part).FontSize(12).FontWeight(500)
 				} else {
-					ui.Text(c, part).FontSize(11).TextColor(t.TextMuted)
+					ui.Text(c, part).FontSize(12).TextColor(t.TextMuted)
 				}
 			}
 			ui.Box(c).Grow(1)
@@ -408,40 +491,23 @@ func (em *EditorManager) RenderEditor(c *ui.Context) {
 			if l := doc.Editor.Buffer.Language(); l != nil {
 				langName = l.Name
 			}
-			ui.Text(c, langName).FontSize(10).TextColor(t.TextMuted).Bold()
+			ui.Text(c, langName).FontSize(10).FontWeight(500).TextColor(t.TextMuted)
 		})
 
-		// Virtualized Code Editor View
+		// Virtualized Code Editor View (MyGo internal editor)
 		editor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
 
-		// Bottom Editor Status Bar
-		pos := doc.Editor.CursorPos()
-		sels := len(doc.Editor.Selections())
-		statusPos := fmt.Sprintf("Ln %d, Col %d", pos.Line+1, pos.Col+1)
-		if sels > 1 {
-			statusPos += fmt.Sprintf(" · %d selections", sels)
-		}
-		added, deleted := doc.Diff.Stats()
-		ui.Row(c).Gap(14).Padding(3, 12).Background(t.Surface).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, statusPos).FontSize(11).TextColor(t.TextMuted)
-			if added > 0 || deleted > 0 {
-				ui.Text(c, fmt.Sprintf("+%d −%d", added, deleted)).FontSize(11).TextColor(t.TextMuted)
-			}
-			ui.Box(c).Grow(1)
-			ui.Text(c, fmt.Sprintf("%d lines", doc.Editor.Buffer.LineCount())).FontSize(11).TextColor(t.TextMuted)
-			ui.Text(c, "UTF-8").FontSize(11).TextColor(t.TextMuted)
-			ui.Text(c, "Spaces: 2").FontSize(11).TextColor(t.TextMuted)
-		})
 	})
 }
 
-// RenderDiff renders the git-style diff of changes in the active buffer.
+// RenderDiff renders the git-style diff of changes in the active buffer
+// through MyGo's internal diff viewer.
 func (em *EditorManager) RenderDiff(c *ui.Context) {
 	t := c.Theme()
 	doc := em.ActiveDoc()
 	if doc == nil {
 		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Text(c, "No file open").FontSize(18).Bold().TextColor(t.TextMuted)
+			ui.Text(c, "No file open").FontSize(17).FontWeight(600).TextColor(t.TextMuted)
 		})
 		return
 	}
@@ -458,21 +524,26 @@ func (em *EditorManager) RenderDiff(c *ui.Context) {
 	default:
 		d.Inline = editor.DiffInlineWordAlt
 	}
+	em.applyDiffTheme(d)
 
 	// Diff Controls Subheader
-	ui.Row(c).Gap(12).Padding(8, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.Text(c, fmt.Sprintf("Diff: %s", doc.RelativePath)).Bold()
+	ui.Row(c).Gap(12).Padding(6, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.Text(c, fmt.Sprintf("Diff: %s", doc.RelativePath)).FontSize(13).FontWeight(500)
 		ui.Segmented(c, &em.DiffLayout, "Split", "Unified")
 		ui.Select(c, &em.DiffInline, []string{"Words", "Characters", "Off"})
 		ui.Box(c).Grow(1)
-		ui.Text(c, "Wrap").TextColor(t.TextMuted)
+		added, deleted := d.Stats()
+		if added > 0 || deleted > 0 {
+			ui.Text(c, fmt.Sprintf("+%d −%d", added, deleted)).FontSize(11).TextColor(t.TextMuted)
+		}
+		ui.Text(c, "Wrap").FontSize(12).TextColor(t.TextMuted)
 		ui.Switch(c, &em.SoftWrap).Label("Soft wrap")
 	})
 
 	if len(d.Hunks()) == 0 {
-		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Text(c, "No uncommitted changes").FontSize(16).Bold().TextColor(t.TextMuted)
-			ui.Text(c, "Buffer matches the saved disk baseline.").TextColor(t.TextMuted)
+		ui.Column(c).Grow(1).Center().Gap(4).Children(func() {
+			ui.Text(c, "No uncommitted changes").FontSize(16).FontWeight(600).TextColor(t.TextMuted)
+			ui.Text(c, "Buffer matches the saved disk baseline.").FontSize(13).TextColor(t.TextMuted)
 		})
 		return
 	}

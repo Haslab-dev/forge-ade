@@ -39,15 +39,15 @@ type PermissionRequest struct {
 
 // ACPManager integrates ForgeADE's internal ACP JSON-RPC manager with the native UI.
 type ACPManager struct {
-	mu            sync.RWMutex
-	manager       *acp.Manager
-	bus           *events.Bus
-	Agents        []ACPAgentDefinition
-	ActiveReq     *PermissionRequest
-	OnTokenChunk  func(sessionID, text string)
-	OnToolStep    func(sessionID, toolName, status string)
-	OnTurnDone    func(sessionID string)
-	OnNeedRedraw  func()
+	mu           sync.RWMutex
+	manager      *acp.Manager
+	bus          *events.Bus
+	Agents       []ACPAgentDefinition
+	ActiveReq    *PermissionRequest
+	OnTokenChunk func(sessionID, text string)
+	OnToolStep   func(sessionID, toolName, status string)
+	OnTurnDone   func(sessionID string)
+	OnNeedRedraw func()
 }
 
 // NewACPManager creates and initializes the native ACP integration.

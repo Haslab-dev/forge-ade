@@ -30,12 +30,12 @@ type AgentCLISession struct {
 
 // AgentCLIManager manages interactive Agent CLI sessions and on-disk CLI configuration discovery.
 type AgentCLIManager struct {
-	mu             sync.RWMutex
-	Sessions       map[string]*AgentCLISession
-	ActiveID       string
-	Configs        []agentclirc.RuntimeConfig
-	RootDir        string
-	OnNeedRedraw   func()
+	mu           sync.RWMutex
+	Sessions     map[string]*AgentCLISession
+	ActiveID     string
+	Configs      []agentclirc.RuntimeConfig
+	RootDir      string
+	OnNeedRedraw func()
 }
 
 // NewAgentCLIManager constructs the CLI manager and scans for installed agent CLI configs.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -123,6 +122,9 @@ type AgentState struct {
 	NextID          int
 	IsStreaming     bool
 	TaskManager     *TaskManager
+	Theme           *ThemeManager
+	ACPMgr          *ACPManager
+	statsPending    map[string]bool
 	Messages        []*ChatMessage // alias for active session messages
 	Invalidate      func()
 }
@@ -241,26 +243,26 @@ func (as *AgentState) CycleReasoningEffort() {
 }
 
 type diskSessionRaw struct {
-	ID             string            `json:"id"`
-	Title          string            `json:"title"`
-	Name           string            `json:"name"`
-	Goal           string            `json:"goal"`
-	Status         string            `json:"status"`
-	State          string            `json:"state"`
-	CreatedAt      json.RawMessage   `json:"createdAt"`
-	UpdatedAt      json.RawMessage   `json:"updatedAt"`
-	Model          string            `json:"model"`
-	Provider       string            `json:"provider"`
-	AgentID        string            `json:"agentId"`
-	AgentType      string            `json:"agentType"`
-	ExecutionMode  string            `json:"executionMode"`
-	ReasoningLevel string            `json:"reasoningLevel"`
-	WorkspacePath  string            `json:"workspacePath"`
-	Folder         string            `json:"folder"`
-	Pinned         bool              `json:"pinned"`
-	Archived       bool              `json:"archived"`
-	Messages       []diskMessageRaw  `json:"messages"`
-	Tasks          []TaskItem        `json:"tasks"`
+	ID             string           `json:"id"`
+	Title          string           `json:"title"`
+	Name           string           `json:"name"`
+	Goal           string           `json:"goal"`
+	Status         string           `json:"status"`
+	State          string           `json:"state"`
+	CreatedAt      json.RawMessage  `json:"createdAt"`
+	UpdatedAt      json.RawMessage  `json:"updatedAt"`
+	Model          string           `json:"model"`
+	Provider       string           `json:"provider"`
+	AgentID        string           `json:"agentId"`
+	AgentType      string           `json:"agentType"`
+	ExecutionMode  string           `json:"executionMode"`
+	ReasoningLevel string           `json:"reasoningLevel"`
+	WorkspacePath  string           `json:"workspacePath"`
+	Folder         string           `json:"folder"`
+	Pinned         bool             `json:"pinned"`
+	Archived       bool             `json:"archived"`
+	Messages       []diskMessageRaw `json:"messages"`
+	Tasks          []TaskItem       `json:"tasks"`
 }
 
 type diskMessageRaw struct {
@@ -953,10 +955,65 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 	}
 }
 
+// gitStatusPaths returns the set of files git reports as changed, for the
+// turn-change diff (files modified during one turn).
+func (as *AgentState) gitStatusPaths() map[string]bool {
+	out := map[string]bool{}
+	if as.engine == nil || as.workspacePath == "" {
+		return out
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := as.engine.GitEngine.GetStatus(ctx, as.workspacePath)
+	if err != nil {
+		return out
+	}
+	for _, f := range res.Staged {
+		out[f.Path] = true
+	}
+	for _, f := range res.Unstaged {
+		out[f.Path] = true
+	}
+	for _, f := range res.Untracked {
+		out[f.Path] = true
+	}
+	return out
+}
+
+// computeChangeStats fills real +N/−N counts from the file's git diff.
+func (as *AgentState) computeChangeStats(changes []*FileChange) {
+	if as.engine == nil || as.workspacePath == "" {
+		return
+	}
+	for _, ch := range changes {
+		if ch.Additions >= 0 {
+			continue
+		}
+		patch := as.engine.GetGitDiff(as.workspacePath, ch.Path)
+		ch.Additions, ch.Deletions = countPatchLines(patch)
+	}
+}
+
+// countPatchLines counts added and deleted lines of a unified diff.
+func countPatchLines(patch string) (add, del int) {
+	for _, line := range strings.Split(patch, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			// file headers
+		case strings.HasPrefix(line, "+"):
+			add++
+		case strings.HasPrefix(line, "-"):
+			del++
+		}
+	}
+	return
+}
+
 // triggerAgentTurn executes real streaming responses via LLMClient or ACPManager.
 func (as *AgentState) triggerAgentTurn(prompt string) {
 	as.mu.Lock()
 	as.IsStreaming = true
+	turnStartFiles := as.gitStatusPaths()
 
 	startTime := time.Now()
 	assistantMsg := &ChatMessage{
@@ -994,6 +1051,18 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 				activeSess.Status = "idle"
 				activeSess.UpdatedAt = time.Now()
 			}
+
+			// Turn changes: files git newly reports as changed, with real
+			// +/- counts from their diffs.
+			turnEndFiles := as.gitStatusPaths()
+			var turnChanges []*FileChange
+			for path := range turnEndFiles {
+				if !turnStartFiles[path] {
+					turnChanges = append(turnChanges, &FileChange{Path: path, Additions: -1, Deletions: -1})
+				}
+			}
+			as.computeChangeStats(turnChanges)
+			assistantMsg.Changes = turnChanges
 
 			// If steer queue has items, pop next
 			var nextSteer string
@@ -1079,698 +1148,6 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 	}()
 }
 
-// RenderChat renders the conversation view, message bubbles, task checklist, and prompt composer.
-func (as *AgentState) RenderChat(c *ui.Context) {
-	t := c.Theme()
-	sess := as.ActiveSession()
-
-	if sess == nil || len(as.Messages) == 0 {
-		as.renderAgentHome(c)
-		if as.ShowModelPicker {
-			as.renderModelPickerModal(c)
-		}
-		return
-	}
-
-	sessionTitle := "Agent Assistant"
-	if sess != nil {
-		sessionTitle = sess.Title
-	}
-
-	as.ListState.Key = func(i int) any {
-		if i < len(as.Messages) {
-			return as.Messages[i].ID
-		}
-		return i
-	}
-	as.ListState.FollowEnd = true
-	as.ListState.FollowAnimation = &ui.Smooth
-
-	ui.Column(c).Fill().Children(func() {
-		// Session Header Bar with Tabler Icons
-		ui.Row(c).Gap(10).Padding(10, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			TablerIcon(c, TablerBolt, 15)
-			ui.Text(c, sessionTitle).Bold().FontSize(13).MaxWidth(380)
-
-			// Live Status Indicator with Tabler Icons
-			if sess != nil && sess.Status == "running" {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, TablerLoader, 13)
-					ui.Text(c, "Running").FontSize(11).TextColor(t.Accent)
-				})
-			} else if sess != nil && sess.Status == "completed" {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, TablerCircleCheck, 13)
-					ui.Text(c, "Completed").FontSize(11).TextColor(t.TextMuted)
-				})
-			} else {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, TablerCircle, 13)
-					ui.Text(c, "Idle").FontSize(11).TextColor(t.TextMuted)
-				})
-			}
-
-			ui.Box(c).Grow(1)
-			ui.Text(c, as.ActiveModel).FontSize(11).TextColor(t.TextMuted)
-			if as.IsStreaming {
-				ui.Text(c, "Streaming tokens…").FontSize(11).TextColor(t.Accent)
-			}
-
-			forkBtn := ui.Button(c, "")
-			forkBtn.Children(func() {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, TablerGitFork, 12)
-					ui.Text(c, "Fork").FontSize(11)
-				})
-			})
-			if forkBtn.Clicked() && sess != nil {
-				as.NewSession(fmt.Sprintf("%s (fork)", sess.Title))
-			}
-		})
-
-		// Message List
-		ui.List(c, &as.ListState, len(as.Messages), func(i int) {
-			if i >= len(as.Messages) {
-				return
-			}
-			m := as.Messages[i]
-			if m.Role == "user" {
-				ui.Row(c).Padding(4, 0).Children(func() {
-					ui.Spacer(c)
-					ui.Text(c, m.Text).Selectable().Padding(10, 14).Radius(12).Background(t.Surface).MaxWidth(560)
-				})
-			} else {
-				ui.Column(c).Padding(4, 0).MaxWidth(800).Gap(6).Children(func() {
-					// Assistant turn header
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerSparkles, 13)
-						ui.Text(c, as.ActiveModel).FontSize(11).Bold().TextColor(t.TextMuted)
-						ui.Text(c, m.Timestamp.Format("15:04")).FontSize(10).TextColor(t.TextMuted)
-					})
-
-					// 1. Thinking / WorkLog Block
-					if m.Thinking != "" || m.IsThinking {
-						as.renderThinkingBlock(c, m)
-					}
-
-					// 2. Folded Tool Traces Card
-					if len(m.Tools) > 0 {
-						as.renderFoldedToolTraces(c, m)
-					}
-
-					// 3. Turn Changes Card
-					if len(m.Changes) > 0 {
-						as.renderTurnChangesCard(c, m)
-					}
-
-					// 4. Pending Approval Bar
-					if m.PendingApproval != nil && !m.PendingApproval.Resolved {
-						as.renderApprovalBar(c, m)
-					}
-
-					// 5. Response Markdown Body
-					if m.Text != "" {
-						if m.Done {
-							markdown.View(c, m.Text, &as.MdOpts)
-						} else {
-							markdown.Stream(c, m.Text, &as.MdOpts)
-						}
-					}
-				})
-			}
-		}).Grow(1).Padding(16, 20).Gap(14).Justify(ui.End)
-
-		// Floating Task Checklist (docked above composer)
-		if as.TaskManager != nil {
-			as.TaskManager.RenderChecklist(c)
-		}
-
-		// Mid-turn Steering Queue Tray
-		if len(as.SteerQueue) > 0 {
-			as.renderSteerQueueTray(c)
-		}
-
-		// Input Composer Area with Tabler Icons
-		ui.Column(c).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			// Slash commands shortcuts & context usage bar
-			ui.Row(c).Gap(6).Padding(6, 16, 2, 16).AlignItems(ui.Center).Children(func() {
-				cmdPills := []string{"/goal", "/plan", "/tasks", "/vibe", "/model", "/clear", "/status", "/help"}
-				for _, cmd := range cmdPills {
-					thisCmd := cmd
-					btn := ui.Button(c, thisCmd).FontSize(11)
-					if btn.Clicked() {
-						as.InputText = thisCmd + " "
-					}
-				}
-				ui.Box(c).Grow(1)
-				tokens, pct := as.ContextUsage()
-				tokK := float32(tokens) / 1000.0
-				ui.Text(c, fmt.Sprintf("%.1fk tokens (%d%%)", tokK, pct)).FontSize(10).TextColor(t.TextMuted)
-			})
-
-			// Input text row
-			ui.Row(c).Gap(8).Padding(8, 16, 4, 16).AlignItems(ui.Center).Children(func() {
-				in := ui.TextInput(c, &as.InputText).Placeholder("Ask agent, enter instructions, or /help...").Grow(1).AutoFocus()
-				if in.Submitted() {
-					as.SubmitMessage()
-				}
-			})
-
-			// Bottom Composer Toolbar: [Mode] [Effort] [Model] [Verify] [Send/Stop]
-			ui.Row(c).Gap(8).Padding(4, 16, 10, 16).AlignItems(ui.Center).Children(func() {
-				// 1. Permission Mode Selector Pill
-				modeBtn := ui.Button(c, "")
-				modeBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						var modeIcon *ui.SVG
-						var modeLabel string
-						switch as.ExecutionMode {
-						case ModeAsk:
-							modeIcon = TablerHand
-							modeLabel = "Ask"
-						case ModeCode:
-							modeIcon = TablerPencil
-							modeLabel = "Edits"
-						case ModePlan:
-							modeIcon = TablerShieldCheck
-							modeLabel = "Auto"
-						default:
-							modeIcon = TablerShieldAlert
-							modeLabel = "Full"
-						}
-						TablerIcon(c, modeIcon, 13)
-						ui.Text(c, modeLabel).FontSize(11).Bold()
-					})
-				})
-				if modeBtn.Clicked() {
-					switch as.ExecutionMode {
-					case ModeAsk:
-						as.ExecutionMode = ModeCode
-					case ModeCode:
-						as.ExecutionMode = ModePlan
-					case ModePlan:
-						as.ExecutionMode = ModeBypass
-					default:
-						as.ExecutionMode = ModeAsk
-					}
-				}
-
-				// 2. Reasoning Effort Pill
-				effortBtn := ui.Button(c, "")
-				effortBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerBrain, 13)
-						label := "Med"
-						switch as.ReasoningEffort {
-						case EffortOff:
-							label = "Off"
-						case EffortLow:
-							label = "Low"
-						case EffortHigh:
-							label = "High"
-						case EffortMax:
-							label = "Max"
-						}
-						ui.Text(c, label).FontSize(11)
-					})
-				})
-				if effortBtn.Clicked() {
-					switch as.ReasoningEffort {
-					case EffortOff:
-						as.ReasoningEffort = EffortLow
-					case EffortLow:
-						as.ReasoningEffort = EffortMedium
-					case EffortMedium:
-						as.ReasoningEffort = EffortHigh
-					case EffortHigh:
-						as.ReasoningEffort = EffortMax
-					default:
-						as.ReasoningEffort = EffortOff
-					}
-				}
-
-				// 3. Model Switcher Chip
-				modelBtn := ui.Button(c, "")
-				modelBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerSparkles, 13)
-						disp := as.ActiveModel
-						if len(disp) > 18 {
-							disp = disp[:15] + "…"
-						}
-						ui.Text(c, disp).FontSize(11).Bold()
-						TablerIcon(c, TablerChevronDown, 11)
-					})
-				})
-				if modelBtn.Clicked() {
-					as.ShowModelPicker = !as.ShowModelPicker
-				}
-
-				// 4. Auto-Verify Loop Button
-				verifyBtn := ui.Button(c, "")
-				if as.AutoVerify {
-					verifyBtn = ui.PrimaryButton(c, "")
-				}
-				verifyBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerShieldCheck, 13)
-						ui.Text(c, "Verify").FontSize(11)
-					})
-				})
-				if verifyBtn.Clicked() {
-					as.AutoVerify = !as.AutoVerify
-				}
-
-				ui.Box(c).Grow(1)
-
-				// 5. Send / Steer / Stop Button
-				if as.IsStreaming {
-					if strings.TrimSpace(as.InputText) != "" {
-						queueBtn := ui.Button(c, "")
-						queueBtn.Children(func() {
-							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-								TablerIcon(c, TablerPlus, 12)
-								ui.Text(c, "Queue").FontSize(11)
-							})
-						})
-						if queueBtn.Clicked() {
-							as.SubmitMessage()
-						}
-					}
-
-					stopBtn := ui.Button(c, "")
-					stopBtn.Children(func() {
-						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-							TablerIcon(c, TablerSquare, 12)
-							ui.Text(c, "Stop").FontSize(11).Bold()
-						})
-					})
-					if stopBtn.Clicked() {
-						as.mu.Lock()
-						as.IsStreaming = false
-						if len(as.Messages) > 0 {
-							as.Messages[len(as.Messages)-1].Done = true
-						}
-						as.mu.Unlock()
-					}
-				} else {
-					sendBtn := ui.PrimaryButton(c, "")
-					sendBtn.Children(func() {
-						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-							TablerIcon(c, TablerSend, 12)
-							ui.Text(c, "Send").FontSize(11).Bold()
-						})
-					})
-					if strings.TrimSpace(as.InputText) == "" {
-						sendBtn.Disabled(true)
-					}
-					if sendBtn.Clicked() {
-						as.SubmitMessage()
-					}
-				}
-			})
-		})
-
-		// Model Selector Modal
-		if as.ShowModelPicker {
-			as.renderModelPickerModal(c)
-		}
-	})
-}
-
-// renderAgentHome renders ForgeADE's landing view when a session has no messages or when starting a new task draft.
-func (as *AgentState) renderAgentHome(c *ui.Context) {
-	t := c.Theme()
-	projectName := filepath.Base(as.workspacePath)
-	if projectName == "" || projectName == "." {
-		projectName = "General"
-	}
-
-	ui.Column(c).Grow(1).Fill().Center().Gap(20).Padding(24, 32).Children(func() {
-		// Brand Glyph + Heading
-		ui.Column(c).AlignItems(ui.Center).Gap(14).Children(func() {
-			ui.Icon(c, ForgeSparkSVG).Width(52).Height(52)
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "What should we do in").FontSize(24).Bold()
-				ui.Text(c, projectName).FontSize(24).Bold().TextColor(t.Accent)
-				ui.Text(c, "?").FontSize(24).Bold()
-			})
-		})
-
-		// Kybern Centered Composer Box
-		ui.Column(c).Width(680).Radius(12).BorderWidth(1).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			// Landing Context Strip: Project chip & Git Branch chip
-			ui.Row(c).Gap(8).Padding(8, 12, 4, 12).AlignItems(ui.Center).Children(func() {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, TablerFolder, 13)
-					ui.Text(c, projectName).FontSize(11).Bold()
-				})
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, TablerGitBranch, 12)
-					ui.Text(c, "main").FontSize(11).TextColor(t.TextMuted)
-				})
-			})
-
-			// Input field
-			ui.TextInput(c, &as.InputText).Placeholder("Ask anything, @ threads or files, $ skills, or / commands").Grow(1).Padding(8, 12)
-
-			// Bottom Composer Toolbar
-			ui.Row(c).Gap(8).Padding(8, 12).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-				// Execution mode pill
-				execPill := ui.Button(c, "")
-				execPill.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, as.ExecutionModeIcon(), 12)
-						ui.Text(c, as.ExecutionModeLabel()).FontSize(10).Bold()
-					})
-				})
-				if execPill.Clicked() {
-					as.CycleExecutionMode()
-				}
-
-				// Reasoning effort pill
-				reasonPill := ui.Button(c, "")
-				reasonPill.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerBrain, 12)
-						ui.Text(c, as.ReasoningEffortLabel()).FontSize(10)
-					})
-				})
-				if reasonPill.Clicked() {
-					as.CycleReasoningEffort()
-				}
-
-				// Model Switcher Chip
-				modelChip := ui.Button(c, "")
-				modelChip.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerSparkles, 12)
-						ui.Text(c, as.ActiveModel).FontSize(10).Bold().MaxWidth(140)
-					})
-				})
-				if modelChip.Clicked() {
-					as.ShowModelPicker = true
-				}
-
-				// Auto-Verify toggle
-				var verifyBtn ui.Element
-				if as.AutoVerify {
-					verifyBtn = ui.PrimaryButton(c, "")
-				} else {
-					verifyBtn = ui.Button(c, "")
-				}
-				verifyBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, TablerShieldCheck, 12)
-						ui.Text(c, "Verify").FontSize(10)
-					})
-				})
-				if verifyBtn.Clicked() {
-					as.AutoVerify = !as.AutoVerify
-				}
-
-				ui.Box(c).Grow(1)
-
-				// Send button
-				sendBtn := ui.PrimaryButton(c, "")
-				sendBtn.Children(func() {
-					TablerIcon(c, TablerSend, 13)
-				})
-				if sendBtn.Clicked() {
-					as.SubmitMessage()
-				}
-			})
-		})
-
-		// Quick-Start Prompt Suggestions
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			suggestions := []struct {
-				icon   *ui.SVG
-				label  string
-				prompt string
-			}{
-				{TablerCompass, "Explore architecture", "Summarize the architecture of this repository, key packages, and entry points."},
-				{TablerBug, "Find & fix a bug", "Help me diagnose and fix an issue in the codebase: "},
-				{TablerFlask, "Run & improve tests", "Run the test suite, identify any failing or missing unit tests, and propose improvements."},
-				{TablerGitPullRequest, "Review working tree", "Review uncommitted git changes in this workspace for bugs, edge cases, and style."},
-			}
-
-			for _, s := range suggestions {
-				thisS := s
-				btn := ui.Button(c, "")
-				btn.Children(func() {
-					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, thisS.icon, 13)
-						ui.Text(c, thisS.label).FontSize(11)
-					})
-				})
-				if btn.Clicked() {
-					as.InputText = thisS.prompt
-				}
-			}
-		})
-	})
-}
-
-// renderThinkingBlock renders the collapsible WorkLog thinking trace.
-func (as *AgentState) renderThinkingBlock(c *ui.Context, m *ChatMessage) {
-	t := c.Theme()
-
-	label := "Thought Process"
-	if m.ThinkingTimeSec > 0 {
-		label = fmt.Sprintf("Thinking (%.1fs)", m.ThinkingTimeSec)
-	}
-
-	ui.Column(c).FillWidth().Children(func() {
-		// Header row
-		headerBtn := ui.Button(c, "")
-		headerBtn.Children(func() {
-			ui.Row(c).Gap(6).Padding(4, 8).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, TablerBrain, 13)
-				ui.Text(c, label).FontSize(11).Bold().TextColor(t.TextMuted)
-				ui.Box(c).Grow(1)
-				if m.ShowThinking {
-					TablerIcon(c, TablerChevronUp, 12)
-				} else {
-					TablerIcon(c, TablerChevronDown, 12)
-				}
-			})
-		})
-		if headerBtn.Clicked() {
-			m.ShowThinking = !m.ShowThinking
-		}
-
-		if m.ShowThinking && m.Thinking != "" {
-			ui.Box(c).Padding(8, 12).Radius(8).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Children(func() {
-				ui.Text(c, m.Thinking).FontSize(11).Italic().TextColor(t.TextMuted)
-			})
-		}
-	})
-}
-
-// renderFoldedToolTraces renders summarized tool calls with collapsible execution cards.
-func (as *AgentState) renderFoldedToolTraces(c *ui.Context, m *ChatMessage) {
-	t := c.Theme()
-	summary := summarizeTools(m.Tools)
-
-	ui.Column(c).FillWidth().Children(func() {
-		headerBtn := ui.Button(c, "")
-		headerBtn.Children(func() {
-			ui.Row(c).Gap(6).Padding(4, 8).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, TablerCircleCheck, 13)
-				ui.Text(c, summary).FontSize(11).Bold().TextColor(t.Text)
-				ui.Box(c).Grow(1)
-				if m.ShowTools {
-					TablerIcon(c, TablerChevronUp, 12)
-				} else {
-					TablerIcon(c, TablerChevronDown, 12)
-				}
-			})
-		})
-		if headerBtn.Clicked() {
-			m.ShowTools = !m.ShowTools
-		}
-
-		if m.ShowTools {
-			ui.Column(c).Gap(4).Padding(4, 0).Children(func() {
-				for _, tool := range m.Tools {
-					thisTool := tool
-					ui.Row(c).Gap(6).Padding(4, 8).Radius(6).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).AlignItems(ui.Center).Children(func() {
-						toolIcon := TablerTerminal
-						nameLower := strings.ToLower(thisTool.ToolName)
-						if strings.Contains(nameLower, "read") {
-							toolIcon = TablerFileText
-						} else if strings.Contains(nameLower, "edit") || strings.Contains(nameLower, "write") {
-							toolIcon = TablerFilePen
-						} else if strings.Contains(nameLower, "search") {
-							toolIcon = TablerSearch
-						}
-						TablerIcon(c, toolIcon, 13)
-						ui.Text(c, thisTool.ToolName).FontSize(11).Bold()
-						preview := thisTool.Command
-						if len(preview) > 60 {
-							preview = preview[:57] + "…"
-						}
-						ui.Text(c, preview).FontSize(10).TextColor(t.TextMuted).MaxWidth(380)
-						ui.Box(c).Grow(1)
-						if thisTool.Status == "completed" {
-							ui.Text(c, "Done").FontSize(10).TextColor(t.Accent)
-						} else if thisTool.Status == "failed" {
-							ui.Text(c, "Failed").FontSize(10).TextColor(t.Danger)
-						} else {
-							ui.Text(c, "Running").FontSize(10).TextColor(t.TextMuted)
-						}
-					})
-				}
-			})
-		}
-	})
-}
-
-// renderTurnChangesCard renders git changes produced in this turn.
-func (as *AgentState) renderTurnChangesCard(c *ui.Context, m *ChatMessage) {
-	t := c.Theme()
-
-	ui.Column(c).Padding(6, 10).Radius(8).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Children(func() {
-		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			TablerIcon(c, TablerFileDiff, 14)
-			ui.Text(c, fmt.Sprintf("Turn Changes (%d files modified)", len(m.Changes))).FontSize(11).Bold()
-		})
-		ui.Column(c).Gap(4).Padding(4, 0).Children(func() {
-			for _, ch := range m.Changes {
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, FileIconSVG(ch.Path), 13)
-					ui.Text(c, ch.Path).FontSize(11)
-					ui.Box(c).Grow(1)
-					ui.Text(c, fmt.Sprintf("+%d", ch.Additions)).FontSize(10).Bold().TextColor(t.Accent)
-					ui.Text(c, fmt.Sprintf("-%d", ch.Deletions)).FontSize(10).Bold().TextColor(t.Danger)
-				})
-			}
-		})
-	})
-}
-
-// renderApprovalBar renders user confirmation banner for sensitive tool executions.
-func (as *AgentState) renderApprovalBar(c *ui.Context, m *ChatMessage) {
-	t := c.Theme()
-	appr := m.PendingApproval
-
-	ui.Row(c).Gap(8).Padding(8, 12).Radius(8).Background(t.Border).BorderWidth(1, 1, 1, 1).BorderColor(t.Accent).AlignItems(ui.Center).Children(func() {
-		TablerIcon(c, TablerAlertTriangle, 16)
-		ui.Column(c).Children(func() {
-			ui.Text(c, "Action Requires Confirmation").Bold().FontSize(12)
-			ui.Text(c, appr.Summary).FontSize(11).TextColor(t.TextMuted)
-		})
-		ui.Box(c).Grow(1)
-
-		allowBtn := ui.PrimaryButton(c, "")
-		allowBtn.Children(func() {
-			ui.Text(c, "Allow Once").FontSize(11).Bold()
-		})
-		if allowBtn.Clicked() {
-			appr.Resolved = true
-			appr.Approved = true
-		}
-
-		alwaysBtn := ui.Button(c, "")
-		alwaysBtn.Children(func() {
-			ui.Text(c, "Always Allow").FontSize(11)
-		})
-		if alwaysBtn.Clicked() {
-			appr.Resolved = true
-			appr.Approved = true
-			as.ExecutionMode = ModeBypass
-		}
-
-		denyBtn := ui.Button(c, "")
-		denyBtn.Children(func() {
-			ui.Text(c, "Deny").FontSize(11).TextColor(t.Danger)
-		})
-		if denyBtn.Clicked() {
-			appr.Resolved = true
-			appr.Approved = false
-		}
-	})
-}
-
-// renderSteerQueueTray renders pending mid-turn steering instructions.
-func (as *AgentState) renderSteerQueueTray(c *ui.Context) {
-	t := c.Theme()
-
-	ui.Column(c).Padding(6, 12).Radius(8).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Gap(4).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			TablerIcon(c, TablerGripVertical, 13)
-			ui.Text(c, fmt.Sprintf("Queued Instructions (%d)", len(as.SteerQueue))).FontSize(11).Bold()
-			ui.Text(c, " • auto-steers when turn completes").FontSize(10).TextColor(t.TextMuted)
-			ui.Box(c).Grow(1)
-			clearBtn := ui.Button(c, "Clear all").FontSize(10)
-			if clearBtn.Clicked() {
-				as.SteerQueue = as.SteerQueue[:0]
-			}
-		})
-		for idx, item := range as.SteerQueue {
-			thisIdx := idx
-			thisItem := item
-			ui.Row(c).Gap(6).Padding(2, 4).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, TablerGripVertical, 12)
-				ui.Text(c, thisItem).FontSize(11).MaxWidth(420)
-				ui.Box(c).Grow(1)
-				steerNowBtn := ui.Button(c, "Steer Now").FontSize(10)
-				if steerNowBtn.Clicked() {
-					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
-					as.triggerAgentTurn(thisItem)
-				}
-				delBtn := ui.Button(c, "×").FontSize(11)
-				if delBtn.Clicked() {
-					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
-				}
-			})
-		}
-	})
-}
-
-// renderModelPickerModal renders the popup palette to switch active LLM models.
-func (as *AgentState) renderModelPickerModal(c *ui.Context) {
-	t := c.Theme()
-
-	ui.Column(c).Absolute().Bottom(60).Left(20).Width(320).Padding(10).Radius(12).Background(t.Surface).BorderWidth(1, 1, 1, 1).BorderColor(t.Border).Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.25)).Children(func() {
-		ui.Row(c).Padding(0, 4, 6, 4).AlignItems(ui.Center).Children(func() {
-			TablerIcon(c, TablerSparkles, 14)
-			ui.Text(c, "Select AI Model").Bold().FontSize(12)
-			ui.Box(c).Grow(1)
-			closeBtn := ui.Button(c, "×").FontSize(12)
-			if closeBtn.Clicked() {
-				as.ShowModelPicker = false
-			}
-		})
-
-		for _, model := range as.AvailableModels {
-			thisModel := model
-			isSelected := (as.ActiveModel == thisModel)
-			var rowBtn ui.Element
-			if isSelected {
-				rowBtn = ui.PrimaryButton(c, "")
-			} else {
-				rowBtn = ui.Button(c, "")
-			}
-			rowBtn.Children(func() {
-				ui.Row(c).Gap(6).Padding(4, 6).AlignItems(ui.Center).Children(func() {
-					if isSelected {
-						TablerIcon(c, TablerCheck, 13)
-					} else {
-						TablerIcon(c, TablerSparkles, 13)
-					}
-					ui.Text(c, thisModel).FontSize(11)
-				})
-			})
-			if rowBtn.Clicked() {
-				as.ActiveModel = thisModel
-				as.ShowModelPicker = false
-			}
-		}
-	})
-}
-
 func summarizeTools(tools []*ToolExecution) string {
 	var commands, reads, edits, searches, others int
 	for _, t := range tools {
@@ -1828,14 +1205,11 @@ func extractChangesFromTools(tools []*ToolExecution) []*FileChange {
 		if path == "" {
 			continue
 		}
-		if ch, exists := seen[path]; exists {
-			ch.Additions += 5
-			ch.Deletions += 1
-		} else {
+		if _, exists := seen[path]; !exists {
 			ch := &FileChange{
 				Path:      path,
-				Additions: 8,
-				Deletions: 2,
+				Additions: -1, // computed from the git diff on demand
+				Deletions: -1,
 			}
 			seen[path] = ch
 			changes = append(changes, ch)

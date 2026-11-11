@@ -128,7 +128,7 @@ func (tm *TaskManager) RenderChecklist(c *ui.Context) {
 					isDone := task.Status == TaskCompleted
 					isCurrent := task.Status == TaskInProgress
 
-					ui.Row(c.Key("task-"+tid)).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Row(c.Key("task-" + tid)).Gap(8).AlignItems(ui.Center).Children(func() {
 						checkBtn := ui.Button(c, "")
 						checkBtn.Children(func() {
 							if isDone {

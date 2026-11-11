@@ -36,8 +36,10 @@ func TestRichAgentTimelineFeatures(t *testing.T) {
 	if changes[0].Path != "pkg/ui/agent.go" {
 		t.Fatalf("expected path 'pkg/ui/agent.go', got '%s'", changes[0].Path)
 	}
-	if changes[0].Additions <= 0 {
-		t.Fatalf("expected positive additions, got %d", changes[0].Additions)
+	// Counts are computed from the real git diff on demand; extraction
+	// marks them pending with -1.
+	if changes[0].Additions != -1 || changes[0].Deletions != -1 {
+		t.Fatalf("expected pending diff counts (-1), got +%d/-%d", changes[0].Additions, changes[0].Deletions)
 	}
 
 	// 3. Pending approval resolution
@@ -129,5 +131,22 @@ func main() {
 		if d.Source == "todo" && d.Severity != editor.SeverityWarning {
 			t.Fatalf("expected TODO diagnostic to have SeverityWarning, got %v", d.Severity)
 		}
+	}
+}
+
+// TestCountPatchLines verifies the unified diff line counter used for real
+// turn-change stats.
+func TestCountPatchLines(t *testing.T) {
+	patch := "diff --git a/a.go b/a.go\n" +
+		"--- a/a.go\n" +
+		"+++ b/a.go\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" context\n" +
+		"-old line\n" +
+		"-another old\n" +
+		"+new line\n"
+	add, del := countPatchLines(patch)
+	if add != 1 || del != 2 {
+		t.Fatalf("expected +1/-2, got +%d/-%d", add, del)
 	}
 }
