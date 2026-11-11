@@ -70,6 +70,15 @@ func (ts *TerminalState) Close() {
 	}
 }
 
+// SendInput writes raw characters or commands to the running shell process.
+func (ts *TerminalState) SendInput(data string) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if ts.term != nil {
+		ts.term.Send([]byte(data))
+	}
+}
+
 // RenderTerminal draws the Ghostty terminal emulator viewport and toolbar.
 func (ts *TerminalState) RenderTerminal(c *ui.Context) {
 	t := c.Theme()

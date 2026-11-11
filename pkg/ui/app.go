@@ -21,17 +21,24 @@ type AppUI struct {
 	Database            *DatabaseManager
 	Palette             *PaletteManager
 	Settings            *SettingsManager
-	Mode                int  // ModeAgent (0) or ModeEditor (1)
-	ShowLeftSidebar     bool // Left sidebar visibility
-	ShowBottomTerminal  bool // Collapsible bottom terminal drawer
-	ShowRightDrawer     bool // Collapsible right side pane
-	RightDrawerTab      int  // RightTabGit, RightTabDatabase, RightTabTasks, RightTabAgent
-	EditorActivity      int  // ActivityExplorer, ActivityGit, ActivityDatabase
+	ThemeMgr            *ThemeManager
+	ACPMgr              *ACPManager
+	CLIMgr              *AgentCLIManager
+	Mode                int    // ModeAgent (0) or ModeEditor (1)
+	ActiveTaskKind      string // "agent" or "cli"
+	ShowLeftSidebar     bool   // Left sidebar visibility
+	ShowBottomTerminal  bool   // Collapsible bottom terminal drawer
+	ShowRightDrawer     bool   // Collapsible right side pane
+	RightDrawerTab      int    // RightTabGit, RightTabDatabase, RightTabTasks, RightTabAgent
+	EditorActivity      int    // ActivityExplorer, ActivityGit, ActivityDatabase
 	SelectedFile        string
 	ShowNewFileModal    bool
 	NewFileName         string
 	ShowNewTaskModal    bool
 	NewTaskTitle        string
+	NewTaskAgentType    string // "acp" or "cli"
+	SelectedAgentID     string
+	SelectedAgentModel  string
 	ShowTaskMenuModal   bool
 	ShowRenameModal     bool
 	RenameSessionTitle  string
@@ -40,19 +47,36 @@ type AppUI struct {
 // NewAppUI constructs the complete AppUI state tree.
 func NewAppUI(engine *Engine, rootDir string) *AppUI {
 	appUI := &AppUI{
-		Engine:             engine,
-		Workspace:          NewWorkspaceState(rootDir),
-		Editor:             NewEditorManager(),
-		Terminal:           NewTerminalState(rootDir),
-		Mode:               ModeAgent,
-		ShowLeftSidebar:    true,
-		ShowBottomTerminal: false,
-		ShowRightDrawer:    false,
-		RightDrawerTab:     RightTabGit,
-		EditorActivity:     ActivityExplorer,
+		Engine:              engine,
+		Workspace:           NewWorkspaceState(rootDir),
+		Editor:              NewEditorManager(),
+		Terminal:            NewTerminalState(rootDir),
+		ThemeMgr:            NewThemeManager(),
+		Mode:                ModeAgent,
+		ActiveTaskKind:      "agent",
+		ShowLeftSidebar:     true,
+		ShowBottomTerminal:  false,
+		ShowRightDrawer:     false,
+		RightDrawerTab:      RightTabGit,
+		EditorActivity:      ActivityExplorer,
+		NewTaskAgentType:    "acp",
+		SelectedAgentID:     "agent-internal",
+		SelectedAgentModel:  "Claude 3.7 Sonnet",
 	}
 
 	appUI.Agent = NewAgentState(engine, func() {
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	})
+
+	appUI.ACPMgr = NewACPManager(engine, func() {
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	})
+
+	appUI.CLIMgr = NewAgentCLIManager(rootDir, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
 		}
@@ -106,6 +130,11 @@ func (a *AppUI) SetWindow(w *mygo.Window) {
 
 // View builds the entire native GPU frame matching ForgeADE layout.
 func (a *AppUI) View(c *ui.Context) {
+	// Apply dynamic theme palette and appearance
+	if a.ThemeMgr != nil {
+		c.SetTheme(a.ThemeMgr.ActiveTheme())
+	}
+
 	// Global Keyboard Shortcuts
 	if c.Shortcut(ui.Cmd, ui.KeyS) {
 		if err := a.Editor.SaveActiveFile(); err == nil {
@@ -150,7 +179,6 @@ func (a *AppUI) View(c *ui.Context) {
 
 		// 2. Middle Main Viewport (Agent or Editor + Sidebars + Drawers)
 		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-			// Surface Mode Switcher
 			if a.Mode == ModeAgent {
 				a.renderAgentSurface(c)
 			} else {
@@ -158,7 +186,7 @@ func (a *AppUI) View(c *ui.Context) {
 			}
 		})
 
-		// 3. Status Bar (Always present in Editor mode, or bottom info strip in Agent mode)
+		// 3. Status Bar (Always present in Editor mode)
 		if a.Mode == ModeEditor {
 			a.renderStatusBar(c)
 		}
@@ -176,7 +204,9 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 	// Derive display title
 	title := projectName
 	if a.Mode == ModeAgent {
-		if sess := a.Agent.ActiveSession(); sess != nil {
+		if a.ActiveTaskKind == "cli" && a.CLIMgr != nil && a.CLIMgr.ActiveSession() != nil {
+			title = a.CLIMgr.ActiveSession().Title
+		} else if sess := a.Agent.ActiveSession(); sess != nil {
 			title = sess.Title
 		}
 	} else {
@@ -227,10 +257,16 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 
 		ui.Box(c).Grow(1)
 
-		// Right controls: Search, Bottom Terminal Toggle, Side Pane Toggle, Settings
+		// Right controls: Search, Theme Picker, Bottom Terminal Toggle, Side Pane Toggle, Settings
 		searchBtn := ui.Button(c, "🔍").FontSize(12)
 		if searchBtn.Clicked() {
 			a.Palette.Toggle()
+		}
+
+		// Theme & Palette Picker button
+		themeBtn := ui.Button(c, "🎨 Theme").FontSize(11)
+		if themeBtn.Clicked() {
+			a.ThemeMgr.Toggle()
 		}
 
 		var termToggleBtn ui.Element
@@ -267,11 +303,15 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 		a.renderAgentSidebar(c)
 	}
 
-	// 2. Center Column: Main Chat Container + Collapsible Bottom Terminal
+	// 2. Center Column: Main Chat Container (or CLI surface) + Collapsible Bottom Terminal
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		// Agent Main Chat Container
+		// Agent Main Container
 		ui.Column(c).Grow(1).FillHeight().Children(func() {
-			a.Agent.RenderChat(c)
+			if a.ActiveTaskKind == "cli" && a.CLIMgr != nil && a.CLIMgr.ActiveSession() != nil {
+				a.CLIMgr.RenderTerminalSessionSurface(c, a.CLIMgr.ActiveID)
+			} else {
+				a.Agent.RenderChat(c)
+			}
 		})
 
 		// Collapsible Bottom Terminal
@@ -318,6 +358,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			ui.Box(c).Grow(1)
 			if ui.Button(c, "+").FontSize(11).Clicked() {
 				a.Agent.NewSession("")
+				a.ActiveTaskKind = "agent"
 			}
 		})
 
@@ -346,12 +387,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		sessions := a.Agent.FilteredSessions()
 		ui.Scroll(c).Grow(1).Children(func() {
 			ui.Column(c).Padding(4, 8).Gap(4).Children(func() {
-				if len(sessions) == 0 {
-					ui.Text(c, "No sessions found").FontSize(11).TextColor(t.TextMuted).Padding(12, 10)
-				}
+				// 1. Agent ACP Sessions
 				for _, sess := range sessions {
 					s := sess
-					isActive := (s.ID == a.Agent.ActiveSessionID)
+					isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
 					statusIcon := "⚪"
 					if s.Status == "running" {
 						statusIcon = "🟢"
@@ -382,7 +421,31 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						}
 					})
 					if card.Clicked() {
+						a.ActiveTaskKind = "agent"
 						a.Agent.SelectSession(s.ID)
+					}
+				}
+
+				// 2. Active CLI Sessions
+				if a.CLIMgr != nil {
+					for _, cliSess := range a.CLIMgr.Sessions {
+						cs := cliSess
+						isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
+						cliCard := ui.Row(c.Key("cli-sess-"+cs.ID)).Padding(8, 10).Radius(6).Gap(8).AlignItems(ui.Center)
+						if isActive {
+							cliCard.Background(t.Border)
+						}
+						cliCard.Children(func() {
+							ui.Text(c, "🤖").FontSize(11)
+							ui.Column(c).Grow(1).Children(func() {
+								ui.Text(c, cs.Title).Bold().FontSize(12).MaxWidth(160)
+								ui.Text(c, fmt.Sprintf("%s · CLI Task", cs.AgentName)).FontSize(10).TextColor(t.TextMuted)
+							})
+						})
+						if cliCard.Clicked() {
+							a.ActiveTaskKind = "cli"
+							a.CLIMgr.ActiveID = cs.ID
+						}
 					}
 				}
 			})
@@ -661,7 +724,7 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 	})
 }
 
-// renderModals renders dialog overlays: Palette, Settings, New File, New Task, Task Menu.
+// renderModals renders dialog overlays: Palette, Settings, ThemePicker, New File, New Task, Task Menu.
 func (a *AppUI) renderModals(c *ui.Context) {
 	t := c.Theme()
 
@@ -675,7 +738,17 @@ func (a *AppUI) renderModals(c *ui.Context) {
 		a.Settings.RenderSettings(c)
 	}
 
-	// 3. New File Modal
+	// 3. Theme & Appearance Picker Modal
+	if a.ThemeMgr != nil {
+		a.ThemeMgr.RenderThemePicker(c)
+	}
+
+	// 4. ACP Permission Approval Modal
+	if a.ACPMgr != nil {
+		a.ACPMgr.RenderPermissionModal(c)
+	}
+
+	// 5. New File Modal
 	if a.ShowNewFileModal {
 		ui.Modal(c, &a.ShowNewFileModal, func() {
 			ui.Column(c).Width(400).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 18).Gap(10).Children(func() {
@@ -707,24 +780,124 @@ func (a *AppUI) renderModals(c *ui.Context) {
 		})
 	}
 
-	// 4. New Task Modal
+	// 6. Unified New Task Modal (ACP Agents + Agent CLIs)
 	if a.ShowNewTaskModal {
 		ui.Modal(c, &a.ShowNewTaskModal, func() {
-			ui.Column(c).Width(420).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 18).Gap(10).Children(func() {
-				ui.Text(c, "New Task Session").Bold().FontSize(14)
-				in := ui.TextInput(c, &a.NewTaskTitle).Placeholder("Describe task objective (e.g. Implement auth flow)...").Grow(1).AutoFocus()
-				if in.Submitted() && a.NewTaskTitle != "" {
-					a.Agent.NewSession(a.NewTaskTitle)
-					a.ShowNewTaskModal = false
-					a.Mode = ModeAgent
-				}
+			ui.Column(c).Width(520).Radius(12).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 20).Gap(12).Children(func() {
+				// Modal Header
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "✨ New Task Session").Bold().FontSize(15)
+					ui.Box(c).Grow(1)
+					if ui.Button(c, "✕").FontSize(12).Clicked() {
+						a.ShowNewTaskModal = false
+					}
+				})
+
+				// Task Objective Input
+				ui.Text(c, "TASK OBJECTIVE").FontSize(10).Bold().TextColor(t.TextMuted)
+				ui.TextInput(c, &a.NewTaskTitle).Placeholder("Describe task objective (e.g. Implement auth flow or fix bug)...").Grow(1).AutoFocus()
+
+				// Agent Protocol Selector: ACP Agents vs Agent CLIs
+				ui.Row(c).Gap(6).Children(func() {
+					var acpTab ui.Element
+					if a.NewTaskAgentType == "acp" {
+						acpTab = ui.PrimaryButton(c, "✨ ACP Agents").FontSize(11)
+					} else {
+						acpTab = ui.Button(c, "✨ ACP Agents").FontSize(11)
+					}
+					if acpTab.Clicked() {
+						a.NewTaskAgentType = "acp"
+					}
+
+					var cliTab ui.Element
+					if a.NewTaskAgentType == "cli" {
+						cliTab = ui.PrimaryButton(c, "💻 Interactive Agent CLIs").FontSize(11)
+					} else {
+						cliTab = ui.Button(c, "💻 Interactive Agent CLIs").FontSize(11)
+					}
+					if cliTab.Clicked() {
+						a.NewTaskAgentType = "cli"
+					}
+				})
+
+				// Agent List Selection
+				ui.Scroll(c).Height(180).Children(func() {
+					ui.Column(c).Gap(4).Children(func() {
+						if a.NewTaskAgentType == "acp" && a.ACPMgr != nil {
+							for _, agent := range a.ACPMgr.Agents {
+								ag := agent
+								isSelected := (a.SelectedAgentID == ag.ID)
+								row := ui.Row(c.Key("newtask-agent-"+ag.ID)).Padding(6, 10).Radius(6).Gap(8).AlignItems(ui.Center)
+								if isSelected {
+									row.Background(t.Border)
+								}
+								row.Children(func() {
+									ui.Column(c).Grow(1).Children(func() {
+										ui.Text(c, ag.Name).Bold().FontSize(12)
+										ui.Text(c, ag.Description).FontSize(10).TextColor(t.TextMuted).MaxWidth(360)
+									})
+									if ag.Available {
+										ui.Text(c, "✔ Ready").FontSize(10).TextColor(t.Accent)
+									} else {
+										ui.Text(c, "Not on PATH").FontSize(10).TextColor(t.TextMuted)
+									}
+								})
+								if row.Clicked() {
+									a.SelectedAgentID = ag.ID
+									if len(ag.SupportedModels) > 0 {
+										a.SelectedAgentModel = ag.SupportedModels[0]
+									}
+								}
+							}
+						} else if a.NewTaskAgentType == "cli" && a.CLIMgr != nil {
+							installed := a.CLIMgr.InstalledConfigs()
+							if len(installed) == 0 {
+								ui.Text(c, "No installed agent CLIs detected on system.").FontSize(11).TextColor(t.TextMuted).Padding(12, 10)
+							}
+							for _, cli := range installed {
+								cfg := cli
+								isSelected := (a.SelectedAgentID == cfg.ID)
+								row := ui.Row(c.Key("newtask-cli-"+cfg.ID)).Padding(6, 10).Radius(6).Gap(8).AlignItems(ui.Center)
+								if isSelected {
+									row.Background(t.Border)
+								}
+								row.Children(func() {
+									ui.Column(c).Grow(1).Children(func() {
+										ui.Text(c, cfg.Name).Bold().FontSize(12)
+										ui.Text(c, fmt.Sprintf("Executable: %s · %s", cfg.Executable, cfg.ConfigRoot)).FontSize(10).TextColor(t.TextMuted)
+									})
+									ui.Text(c, "Installed").FontSize(10).TextColor(t.Accent)
+								})
+								if row.Clicked() {
+									a.SelectedAgentID = cfg.ID
+								}
+							}
+						}
+					})
+				})
+
+				// Action buttons
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
 					ui.Box(c).Grow(1)
 					if ui.Button(c, "Cancel").Clicked() {
 						a.ShowNewTaskModal = false
 					}
-					if ui.PrimaryButton(c, "Start Task").Clicked() && a.NewTaskTitle != "" {
-						a.Agent.NewSession(a.NewTaskTitle)
+					if ui.PrimaryButton(c, "Start Session").Clicked() {
+						title := a.NewTaskTitle
+						if title == "" {
+							title = "New Task"
+						}
+
+						if a.NewTaskAgentType == "cli" && a.CLIMgr != nil {
+							// Start interactive CLI task
+							a.CLIMgr.CreateSession(a.SelectedAgentID, a.SelectedAgentID, a.SelectedAgentID, []string{}, a.Workspace.RootDir)
+							a.ActiveTaskKind = "cli"
+						} else {
+							// Start ACP Agent session
+							a.Agent.NewSession(title)
+							a.ActiveTaskKind = "agent"
+						}
+
 						a.ShowNewTaskModal = false
 						a.Mode = ModeAgent
 					}
@@ -733,7 +906,7 @@ func (a *AppUI) renderModals(c *ui.Context) {
 		})
 	}
 
-	// 5. Task Menu Modal
+	// 7. Task Menu Modal
 	if a.ShowTaskMenuModal {
 		ui.Modal(c, &a.ShowTaskMenuModal, func() {
 			ui.Column(c).Width(280).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(12, 14).Gap(6).Children(func() {
@@ -780,7 +953,7 @@ func (a *AppUI) renderModals(c *ui.Context) {
 		})
 	}
 
-	// 6. Rename Task Modal
+	// 8. Rename Task Modal
 	if a.ShowRenameModal {
 		ui.Modal(c, &a.ShowRenameModal, func() {
 			ui.Column(c).Width(360).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 18).Gap(10).Children(func() {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/git"
 )
 
@@ -15,6 +16,7 @@ import (
 type Engine struct {
 	GitEngine *git.Engine
 	LLMClient *llm.LLMClient
+	ACPMgr    *acp.Manager
 	Bus       *events.Bus
 	DataDir   string
 }
@@ -27,10 +29,15 @@ func NewEngine(dataDir string) *Engine {
 	}
 	_ = os.MkdirAll(dataDir, 0755)
 
+	bus := events.NewBus()
+	acpMgr := acp.NewManager(bus)
+	acpMgr.SetDataDir(dataDir)
+
 	return &Engine{
 		GitEngine: git.NewEngine(),
 		LLMClient: llm.NewLLMClient(dataDir),
-		Bus:       events.NewBus(),
+		ACPMgr:    acpMgr,
+		Bus:       bus,
 		DataDir:   dataDir,
 	}
 }
