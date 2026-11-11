@@ -31,6 +31,7 @@ type AgentState struct {
 	ActiveModel string
 	NextID      int
 	IsStreaming bool
+	TaskManager *TaskManager
 	Invalidate  func()
 }
 
@@ -40,6 +41,7 @@ func NewAgentState(backend *app.App, invalidate func()) *AgentState {
 		backend:     backend,
 		ActiveModel: "gpt-4o / Claude 3.5 Sonnet",
 		Invalidate:  invalidate,
+		TaskManager: NewTaskManager(),
 		MdOpts: markdown.Options{
 			Reveal: &markdown.Reveal{Unit: markdown.ByWord},
 		},
@@ -99,6 +101,27 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 	case "/clear":
 		as.Messages = as.Messages[:0]
 		reply = "Chat history cleared."
+	case "/goal":
+		desc := strings.TrimSpace(strings.TrimPrefix(cmd, "/goal"))
+		if desc == "" {
+			desc = "Decompose and execute objective"
+		}
+		if as.TaskManager != nil {
+			as.TaskManager.SetGoal(desc, []TaskItem{
+				{ID: "1", Title: "Analyze target files and symbol definitions", Status: TaskInProgress, ActiveForm: "Scanning symbols..."},
+				{ID: "2", Title: "Formulate code changes and dependency updates", Status: TaskPending},
+				{ID: "3", Title: "Execute regression tests and static validation", Status: TaskPending},
+				{ID: "4", Title: "Review diff hunks and commit changes", Status: TaskPending},
+			})
+		}
+		reply = fmt.Sprintf("Declared Goal: **%s**\nDecomposed into 4 atomic tasks on the floating checklist.", desc)
+	case "/tasks":
+		if as.TaskManager != nil {
+			c, total := as.TaskManager.Progress()
+			reply = fmt.Sprintf("### Current Task Checklist (%d/%d completed)\nActive Goal: `%s`", c, total, as.TaskManager.Goal)
+		} else {
+			reply = "No active tasks."
+		}
 	case "/model":
 		if as.backend != nil {
 			cfg := as.backend.GetLLMConfig()
@@ -108,9 +131,11 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 		}
 	case "/help":
 		reply = "### Available Slash Commands:\n" +
-			"- `/clear` — Clear the current conversation history\n" +
+			"- `/goal <description>` — Set an active goal and decompose into tasks\n" +
+			"- `/tasks` — Show current task checklist status\n" +
+			"- `/clear` — Clear the conversation history\n" +
 			"- `/model` — Inspect active LLM provider and model profile\n" +
-			"- `/status` — View workspace indexing and Git status\n" +
+			"- `/status` — View workspace indexing and engine health\n" +
 			"- `/vibe` — Activate high-velocity autonomous execution\n" +
 			"- `/help` — Display this command reference"
 	case "/status":
@@ -224,6 +249,11 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 				})
 			}
 		}).Grow(1).Padding(16, 20).Gap(12).Justify(ui.End)
+
+		// Floating Task Checklist
+		if as.TaskManager != nil {
+			as.TaskManager.RenderChecklist(c)
+		}
 
 		// Input Composer Bar
 		ui.Row(c).Gap(8).Padding(12, 16).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).AlignItems(ui.Center).Children(func() {
