@@ -6,12 +6,11 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/internal/app"
 )
 
 // AppUI is the top-level native UI application state.
 type AppUI struct {
-	Backend          *app.App
+	Engine           *Engine
 	Window           *mygo.Window
 	Workspace        *WorkspaceState
 	Editor           *EditorManager
@@ -29,9 +28,9 @@ type AppUI struct {
 }
 
 // NewAppUI constructs the AppUI state tree.
-func NewAppUI(backend *app.App, rootDir string) *AppUI {
+func NewAppUI(engine *Engine, rootDir string) *AppUI {
 	appUI := &AppUI{
-		Backend:     backend,
+		Engine:      engine,
 		Workspace:   NewWorkspaceState(rootDir),
 		Editor:      NewEditorManager(),
 		Terminal:    NewTerminalState(rootDir),
@@ -39,19 +38,19 @@ func NewAppUI(backend *app.App, rootDir string) *AppUI {
 		ShowSidebar: true,
 	}
 
-	appUI.Agent = NewAgentState(backend, func() {
+	appUI.Agent = NewAgentState(engine, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
 		}
 	})
 
-	appUI.Settings = NewSettingsManager(backend, func(provider, model string) {
+	appUI.Settings = NewSettingsManager(engine, func(provider, model string) {
 		appUI.Agent.ActiveModel = model
 	})
 
-	appUI.Database = NewDatabaseManager(backend, appUI.Workspace)
+	appUI.Database = NewDatabaseManager(engine, appUI.Workspace)
 
-	appUI.Git = NewGitManager(backend, rootDir, func(path string, showDiff bool) {
+	appUI.Git = NewGitManager(engine, rootDir, func(path string, showDiff bool) {
 		fullPath := appUI.Workspace.ResolveFullPath(path)
 		_, _ = appUI.Editor.OpenFile(fullPath, path)
 		appUI.SelectedFile = path

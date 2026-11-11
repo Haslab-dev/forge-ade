@@ -12,6 +12,9 @@ forge-ade-native
 *.test
 *.out
 /tmp/
+*.png
+.forge/
+.workspace/
 
 # OS metadata
 .DS_Store

@@ -6,14 +6,13 @@ import (
 	"sync"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/internal/app"
 	"github.com/hasdev/forge-ade/internal/git"
 )
 
 // GitManager manages repository status, staging, unstaging, and commit actions.
 type GitManager struct {
 	mu           sync.RWMutex
-	backend      *app.App
+	engine       *Engine
 	RootDir      string
 	Branch       string
 	Staged       []git.FileStatus
@@ -25,9 +24,9 @@ type GitManager struct {
 }
 
 // NewGitManager creates an initialized GitManager for the repository.
-func NewGitManager(backend *app.App, rootDir string, onFileSelect func(path string, showDiff bool)) *GitManager {
+func NewGitManager(engine *Engine, rootDir string, onFileSelect func(path string, showDiff bool)) *GitManager {
 	gm := &GitManager{
-		backend:      backend,
+		engine:       engine,
 		RootDir:      rootDir,
 		OnFileSelect: onFileSelect,
 	}
@@ -40,11 +39,11 @@ func (gm *GitManager) Refresh() {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
 
-	if gm.backend == nil {
+	if gm.engine == nil {
 		return
 	}
 
-	st, err := gm.backend.GetGitStatus(gm.RootDir)
+	st, err := gm.engine.GetGitStatus(gm.RootDir)
 	if err != nil {
 		gm.StatusMsg = fmt.Sprintf("Git error: %v", err)
 		return
@@ -59,25 +58,25 @@ func (gm *GitManager) Refresh() {
 
 // Stage stages a single file.
 func (gm *GitManager) Stage(path string) {
-	if gm.backend == nil {
+	if gm.engine == nil {
 		return
 	}
-	_ = gm.backend.GitStage(gm.RootDir, []string{path})
+	_ = gm.engine.GitStage(gm.RootDir, []string{path})
 	gm.Refresh()
 }
 
 // Unstage unstages a single file.
 func (gm *GitManager) Unstage(path string) {
-	if gm.backend == nil {
+	if gm.engine == nil {
 		return
 	}
-	_ = gm.backend.GitUnstage(gm.RootDir, []string{path})
+	_ = gm.engine.GitUnstage(gm.RootDir, []string{path})
 	gm.Refresh()
 }
 
 // StageAll stages all unstaged and untracked modifications.
 func (gm *GitManager) StageAll() {
-	if gm.backend == nil {
+	if gm.engine == nil {
 		return
 	}
 	var paths []string
@@ -91,7 +90,7 @@ func (gm *GitManager) StageAll() {
 	gm.mu.RUnlock()
 
 	if len(paths) > 0 {
-		_ = gm.backend.GitStage(gm.RootDir, paths)
+		_ = gm.engine.GitStage(gm.RootDir, paths)
 		gm.Refresh()
 	}
 }
@@ -99,11 +98,11 @@ func (gm *GitManager) StageAll() {
 // Commit creates a new commit from the staged files.
 func (gm *GitManager) Commit() {
 	msg := strings.TrimSpace(gm.CommitMsg)
-	if msg == "" || gm.backend == nil {
+	if msg == "" || gm.engine == nil {
 		return
 	}
 
-	if err := gm.backend.GitCommit(gm.RootDir, msg); err != nil {
+	if err := gm.engine.GitCommit(gm.RootDir, msg); err != nil {
 		gm.mu.Lock()
 		gm.StatusMsg = fmt.Sprintf("Commit error: %v", err)
 		gm.mu.Unlock()

@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/internal/app"
 	"github.com/hasdev/forge-ade/internal/dbviewer"
 )
 
 // DatabaseManager coordinates database schema inspection, data browsing, and query execution.
 type DatabaseManager struct {
 	mu           sync.RWMutex
-	backend      *app.App
+	engine       *Engine
 	Workspace    *WorkspaceState
 	ActiveDBPath string
 	Databases    []string
@@ -27,9 +26,9 @@ type DatabaseManager struct {
 }
 
 // NewDatabaseManager creates and initializes the DatabaseManager.
-func NewDatabaseManager(backend *app.App, ws *WorkspaceState) *DatabaseManager {
+func NewDatabaseManager(engine *Engine, ws *WorkspaceState) *DatabaseManager {
 	dm := &DatabaseManager{
-		backend:   backend,
+		engine:    engine,
 		Workspace: ws,
 		SQLQuery:  "SELECT * FROM sqlite_master LIMIT 25;",
 	}
@@ -69,14 +68,7 @@ func (dm *DatabaseManager) Inspect(path string) {
 	dm.StatusMsg = "Inspecting schema..."
 	dm.mu.Unlock()
 
-	var info *dbviewer.DatabaseInfo
-	var err error
-
-	if dm.backend != nil {
-		info, err = dm.backend.InspectDatabase(path)
-	} else {
-		info, err = dbviewer.InspectDatabase(path)
-	}
+	info, err := dbviewer.InspectDatabase(path)
 
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -125,15 +117,7 @@ func (dm *DatabaseManager) ExecuteQuery() {
 	}
 
 	start := time.Now()
-	var res *dbviewer.QueryResult
-	var err error
-
-	if dm.backend != nil {
-		res, err = dm.backend.ExecuteDatabaseQuery(path, query, 50)
-	} else {
-		res, err = dbviewer.ExecuteDatabaseQuery(path, query, 50)
-	}
-
+	res, err := dbviewer.ExecuteDatabaseQuery(path, query, 50)
 	elapsed := time.Since(start).Milliseconds()
 
 	dm.mu.Lock()

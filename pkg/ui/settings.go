@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/internal/app"
 )
 
 // SupportedLLMProviders lists the primary LLM provider options.
@@ -33,7 +32,7 @@ var ProviderDefaultModels = map[string]string{
 type SettingsManager struct {
 	mu           sync.RWMutex
 	IsOpen       bool
-	backend      *app.App
+	engine       *Engine
 	Provider     string
 	APIKey       string
 	BaseURL      string
@@ -44,9 +43,9 @@ type SettingsManager struct {
 }
 
 // NewSettingsManager creates a SettingsManager initialized from backend configurations.
-func NewSettingsManager(backend *app.App, onSaved func(provider, model string)) *SettingsManager {
+func NewSettingsManager(engine *Engine, onSaved func(provider, model string)) *SettingsManager {
 	sm := &SettingsManager{
-		backend:      backend,
+		engine:       engine,
 		Provider:     "anthropic",
 		Model:        "claude-3-5-sonnet-20241022",
 		OnModelSaved: onSaved,
@@ -55,16 +54,16 @@ func NewSettingsManager(backend *app.App, onSaved func(provider, model string)) 
 	return sm
 }
 
-// Load reads current settings from the ForgeADE backend.
+// Load reads current settings from the native engine.
 func (sm *SettingsManager) Load() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if sm.backend == nil {
+	if sm.engine == nil {
 		return
 	}
 
-	cfg := sm.backend.GetLLMConfig()
+	cfg := sm.engine.GetLLMConfig()
 	if cfg.ProviderID != "" {
 		sm.Provider = cfg.ProviderID
 		sm.APIKey = cfg.APIKey
@@ -89,8 +88,8 @@ func (sm *SettingsManager) Save() error {
 		sm.Provider = SupportedLLMProviders[sm.providerIdx]
 	}
 
-	if sm.backend != nil {
-		if err := sm.backend.SaveLLMProfile(sm.Provider, sm.APIKey, sm.BaseURL, sm.Model); err != nil {
+	if sm.engine != nil {
+		if err := sm.engine.SaveLLMProfile(sm.Provider, sm.APIKey, sm.BaseURL, sm.Model); err != nil {
 			sm.StatusMsg = fmt.Sprintf("Save error: %v", err)
 			return err
 		}

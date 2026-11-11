@@ -8,7 +8,6 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
-	"github.com/hasdev/forge-ade/internal/app"
 )
 
 // ChatMessage represents a single interaction turn in the AI Agent conversation.
@@ -23,7 +22,7 @@ type ChatMessage struct {
 // AgentState tracks the conversation, streaming responses, and prompt composer.
 type AgentState struct {
 	mu          sync.Mutex
-	backend     *app.App
+	engine      *Engine
 	Messages    []*ChatMessage
 	InputText   string
 	ListState   ui.ListState
@@ -36,9 +35,9 @@ type AgentState struct {
 }
 
 // NewAgentState initializes the native agent chat state.
-func NewAgentState(backend *app.App, invalidate func()) *AgentState {
+func NewAgentState(engine *Engine, invalidate func()) *AgentState {
 	as := &AgentState{
-		backend:     backend,
+		engine:      engine,
 		ActiveModel: "gpt-4o / Claude 3.5 Sonnet",
 		Invalidate:  invalidate,
 		TaskManager: NewTaskManager(),
@@ -123,8 +122,8 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 			reply = "No active tasks."
 		}
 	case "/model":
-		if as.backend != nil {
-			cfg := as.backend.GetLLMConfig()
+		if as.engine != nil {
+			cfg := as.engine.GetLLMConfig()
 			reply = fmt.Sprintf("Active Provider: `%s`\nActive Model: `%s`", cfg.ProviderID, cfg.Model)
 		} else {
 			reply = fmt.Sprintf("Active Model: `%s`", as.ActiveModel)

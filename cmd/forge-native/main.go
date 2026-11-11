@@ -8,7 +8,6 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/internal/bootstrap"
 	nativeui "github.com/hasdev/forge-ade/forge-ade-native/pkg/ui"
 )
 
@@ -32,18 +31,12 @@ func main() {
 
 	log.Printf("Starting ForgeADE Native for workspace: %s", targetDir)
 
-	// Initialize ForgeADE core domain engine (RakitKode + subsystems)
-	backendApp, err := bootstrap.Boot(bootstrap.BootOptions{})
-	if err != nil {
-		log.Printf("Warning: failed to boot ForgeADE backend engine: %v. Running in standalone native mode.", err)
-	} else {
-		// Open the workspace folder in backend
-		_, _ = backendApp.OpenFolder(targetDir)
-	}
+	// Initialize native CGO-free domain engine (RakitKode + Git + DBViewer)
+	engine := nativeui.NewEngine("")
 
 	// Launch MyGo GPU Application
 	mygo.App.WhenReady(func() {
-		appUI := nativeui.NewAppUI(backendApp, targetDir)
+		appUI := nativeui.NewAppUI(engine, targetDir)
 
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:     "ForgeADE Native",
