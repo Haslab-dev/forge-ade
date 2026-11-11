@@ -8,22 +8,33 @@ func TestTaskManager(t *testing.T) {
 	tm := NewTaskManager()
 
 	completed, total := tm.Progress()
-	if total != 6 || completed != 4 {
-		t.Fatalf("expected 4/6 completed initially, got %d/%d", completed, total)
+	if total != 0 || completed != 0 {
+		t.Fatalf("expected 0/0 completed initially, got %d/%d", completed, total)
+	}
+
+	tm.SetGoal("Initial Goal", []TaskItem{
+		{ID: "1", Title: "Task 1", Status: TaskCompleted},
+		{ID: "2", Title: "Task 2", Status: TaskCompleted},
+		{ID: "3", Title: "Task 3", Status: TaskPending},
+	})
+
+	completed, total = tm.Progress()
+	if total != 3 || completed != 2 {
+		t.Fatalf("expected 2/3 completed, got %d/%d", completed, total)
 	}
 
 	// Toggle task 1 (was completed -> pending)
 	tm.ToggleTask("1")
 	completed, _ = tm.Progress()
-	if completed != 3 {
-		t.Fatalf("expected 3 completed after toggle, got %d", completed)
+	if completed != 1 {
+		t.Fatalf("expected 1 completed after toggle, got %d", completed)
 	}
 
 	// Toggle back
 	tm.ToggleTask("1")
 	completed, _ = tm.Progress()
-	if completed != 4 {
-		t.Fatalf("expected 4 completed, got %d", completed)
+	if completed != 2 {
+		t.Fatalf("expected 2 completed, got %d", completed)
 	}
 
 	// SetGoal

@@ -25,7 +25,12 @@ type Engine struct {
 func NewEngine(dataDir string) *Engine {
 	if dataDir == "" {
 		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".forge-native")
+		// Prefer existing ForgeADE data directory so all real sessions,
+		// profiles, providers, and settings are seamlessly shared!
+		dataDir = filepath.Join(home, ".forge-ade")
+		if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+			dataDir = filepath.Join(home, ".forge-native")
+		}
 	}
 	_ = os.MkdirAll(dataDir, 0755)
 

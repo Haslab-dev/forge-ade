@@ -30,19 +30,10 @@ type TaskManager struct {
 	IsExpanded bool
 }
 
-// NewTaskManager creates a TaskManager with initial sample tasks.
+// NewTaskManager creates an empty TaskManager.
 func NewTaskManager() *TaskManager {
 	return &TaskManager{
 		IsExpanded: true,
-		Goal:       "Port ForgeADE to Pure Go Native GPU Architecture",
-		Tasks: []TaskItem{
-			{ID: "1", Title: "Initialize native project structure & CGO-free build", Status: TaskCompleted},
-			{ID: "2", Title: "Integrate Zed-like GPU virtualized editor and diff view", Status: TaskCompleted},
-			{ID: "3", Title: "Embed Ghostty libghostty-vt hardware-accelerated terminal", Status: TaskCompleted},
-			{ID: "4", Title: "Stream LLM tokens natively using mygo/ui/markdown", Status: TaskCompleted},
-			{ID: "5", Title: "Implement Visual Git suite with porcelain v2 status", Status: TaskInProgress, ActiveForm: "Wiring Git stage/unstage/commit..."},
-			{ID: "6", Title: "Wire dynamic task checklist & quick-open command palette", Status: TaskPending},
-		},
 	}
 }
 

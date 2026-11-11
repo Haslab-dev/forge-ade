@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -44,7 +47,72 @@ func NewAgentCLIManager(rootDir string, onRedraw func()) *AgentCLIManager {
 	}
 
 	mgr.RefreshConfigs()
+	mgr.LoadSessionsFromDisk()
 	return mgr
+}
+
+// LoadSessionsFromDisk reads persistent terminal CLI sessions from ~/.forge-ade/agentsessions/index.json.
+func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	indexPath := filepath.Join(home, ".forge-ade", "agentsessions", "index.json")
+	bytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		return
+	}
+
+	var records []struct {
+		ID               string `json:"id"`
+		AgentID          string `json:"agentId"`
+		AgentName        string `json:"agentName"`
+		Title            string `json:"title"`
+		Executable       string `json:"executable"`
+		WorkingDirectory string `json:"workingDirectory"`
+		Status           string `json:"status"`
+		CreatedAt        int64  `json:"createdAt"`
+		StartedAt        int64  `json:"startedAt"`
+		EndedAt          int64  `json:"endedAt"`
+	}
+	if err := json.Unmarshal(bytes, &records); err != nil {
+		return
+	}
+
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
+	for _, r := range records {
+		started := time.UnixMilli(r.CreatedAt)
+		if r.StartedAt > 0 {
+			started = time.UnixMilli(r.StartedAt)
+		}
+		term := NewTerminalState(r.WorkingDirectory)
+		logPath := filepath.Join(home, ".forge-ade", "agentsessions", "output", r.ID+".log")
+		if logBytes, err := os.ReadFile(logPath); err == nil && len(logBytes) > 0 {
+			term.SendInput(string(logBytes))
+		}
+
+		status := r.Status
+		if status == "terminated" || status == "exited" {
+			status = "completed"
+		}
+
+		mgr.Sessions[r.ID] = &AgentCLISession{
+			ID:        r.ID,
+			AgentID:   r.AgentID,
+			AgentName: r.AgentName,
+			Title:     r.Title,
+			Command:   r.Executable,
+			Cwd:       r.WorkingDirectory,
+			Status:    status,
+			StartedAt: started,
+			Terminal:  term,
+		}
+		if mgr.ActiveID == "" {
+			mgr.ActiveID = r.ID
+		}
+	}
 }
 
 // RefreshConfigs reads on-disk configuration of all known agent CLIs (claude, agy, gemini, pi, codex, etc.).

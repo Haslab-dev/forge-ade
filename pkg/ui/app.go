@@ -64,7 +64,7 @@ func NewAppUI(engine *Engine, rootDir string) *AppUI {
 		SelectedAgentModel:  "Claude 3.7 Sonnet",
 	}
 
-	appUI.Agent = NewAgentState(engine, func() {
+	appUI.Agent = NewAgentState(engine, rootDir, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
 		}
@@ -75,6 +75,25 @@ func NewAppUI(engine *Engine, rootDir string) *AppUI {
 			appUI.Window.Invalidate()
 		}
 	})
+
+	appUI.ACPMgr.OnTokenChunk = func(sessionID, text string) {
+		appUI.Agent.mu.Lock()
+		for _, s := range appUI.Agent.Sessions {
+			if s.ID == sessionID {
+				if len(s.Messages) > 0 {
+					last := s.Messages[len(s.Messages)-1]
+					if last.Role == "assistant" && !last.Done {
+						last.Text += text
+					}
+				}
+				break
+			}
+		}
+		appUI.Agent.mu.Unlock()
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	}
 
 	appUI.CLIMgr = NewAgentCLIManager(rootDir, func() {
 		if appUI.Window != nil {
@@ -226,7 +245,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		ui.Text(c, title).Bold().FontSize(13).MaxWidth(280)
 
 		// Project folder chip
-		projectChip := ui.Button(c, fmt.Sprintf("📁 %s", projectName)).FontSize(11)
+		projectChip := ui.Button(c, projectName).FontSize(11)
 		if projectChip.Clicked() {
 			a.Palette.Toggle()
 		}
@@ -237,7 +256,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			if len(a.Git.Staged)+len(a.Git.Unstaged)+len(a.Git.Untracked) > 0 {
 				dirtyMarker = " *"
 			}
-			branchChip := ui.Button(c, fmt.Sprintf("⎇ %s%s", a.Git.Branch, dirtyMarker)).FontSize(11)
+			branchChip := ui.Button(c, fmt.Sprintf("%s%s", a.Git.Branch, dirtyMarker)).FontSize(11)
 			if branchChip.Clicked() {
 				a.ShowRightDrawer = true
 				a.RightDrawerTab = RightTabGit
@@ -253,27 +272,27 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		ui.Box(c).Grow(1)
 
 		// Mode Switcher: [✨ Agent] | [💻 Editor]
-		ui.Segmented(c, &a.Mode, "✨ Agent", "💻 Editor").Label("Surface")
+		ui.Segmented(c, &a.Mode, "Agent", "Editor").Label("Surface")
 
 		ui.Box(c).Grow(1)
 
 		// Right controls: Search, Theme Picker, Bottom Terminal Toggle, Side Pane Toggle, Settings
-		searchBtn := ui.Button(c, "🔍").FontSize(12)
+		searchBtn := ui.Button(c, "Find (⌘P)").FontSize(11)
 		if searchBtn.Clicked() {
 			a.Palette.Toggle()
 		}
 
 		// Theme & Palette Picker button
-		themeBtn := ui.Button(c, "🎨 Theme").FontSize(11)
+		themeBtn := ui.Button(c, "Theme").FontSize(11)
 		if themeBtn.Clicked() {
 			a.ThemeMgr.Toggle()
 		}
 
 		var termToggleBtn ui.Element
 		if a.ShowBottomTerminal {
-			termToggleBtn = ui.PrimaryButton(c, "⌨ Terminal").FontSize(11)
+			termToggleBtn = ui.PrimaryButton(c, "Terminal").FontSize(11)
 		} else {
-			termToggleBtn = ui.Button(c, "⌨ Terminal").FontSize(11)
+			termToggleBtn = ui.Button(c, "Terminal").FontSize(11)
 		}
 		if termToggleBtn.Clicked() {
 			a.ShowBottomTerminal = !a.ShowBottomTerminal
@@ -281,15 +300,15 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 
 		var sideDrawerBtn ui.Element
 		if a.ShowRightDrawer {
-			sideDrawerBtn = ui.PrimaryButton(c, "◨ Side Pane").FontSize(11)
+			sideDrawerBtn = ui.PrimaryButton(c, "Side Pane").FontSize(11)
 		} else {
-			sideDrawerBtn = ui.Button(c, "◨ Side Pane").FontSize(11)
+			sideDrawerBtn = ui.Button(c, "Side Pane").FontSize(11)
 		}
 		if sideDrawerBtn.Clicked() {
 			a.ShowRightDrawer = !a.ShowRightDrawer
 		}
 
-		settingsBtn := ui.Button(c, "⚙").FontSize(12)
+		settingsBtn := ui.Button(c, "Settings").FontSize(11)
 		if settingsBtn.Clicked() {
 			a.Settings.Toggle()
 		}
@@ -391,9 +410,9 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				for _, sess := range sessions {
 					s := sess
 					isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
-					statusIcon := "⚪"
+					statusIcon := "•"
 					if s.Status == "running" {
-						statusIcon = "🟢"
+						statusIcon = "●"
 					} else if s.Status == "completed" {
 						statusIcon = "✔"
 					}
@@ -412,11 +431,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						})
 
 						// Pin button
-						pinIcon := "📌"
+						pinLabel := "☆"
 						if s.Pinned {
-							pinIcon = "📍"
+							pinLabel = "★"
 						}
-						if ui.Button(c, pinIcon).FontSize(10).Clicked() {
+						if ui.Button(c, pinLabel).FontSize(11).Clicked() {
 							a.Agent.TogglePin(s.ID)
 						}
 					})
@@ -436,7 +455,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 							cliCard.Background(t.Border)
 						}
 						cliCard.Children(func() {
-							ui.Text(c, "🤖").FontSize(11)
+							ui.Text(c, "CLI").FontSize(10).Bold().TextColor(t.Accent)
 							ui.Column(c).Grow(1).Children(func() {
 								ui.Text(c, cs.Title).Bold().FontSize(12).MaxWidth(160)
 								ui.Text(c, fmt.Sprintf("%s · CLI Task", cs.AgentName)).FontSize(10).TextColor(t.TextMuted)
@@ -458,16 +477,16 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				ui.Text(c, a.Agent.ActiveModel).FontSize(11).Bold()
 			})
 
-			// Utility buttons: Kanban board, Git client, Settings
-			if ui.Button(c, "📋").FontSize(11).Clicked() {
+			// Utility buttons: Tasks, Git, Settings
+			if ui.Button(c, "Tasks").FontSize(11).Clicked() {
 				a.ShowRightDrawer = true
 				a.RightDrawerTab = RightTabTasks
 			}
-			if ui.Button(c, "⎇").FontSize(11).Clicked() {
+			if ui.Button(c, "Git").FontSize(11).Clicked() {
 				a.ShowRightDrawer = true
 				a.RightDrawerTab = RightTabGit
 			}
-			if ui.Button(c, "⚙").FontSize(11).Clicked() {
+			if ui.Button(c, "Settings").FontSize(11).Clicked() {
 				a.Settings.Toggle()
 			}
 		})
@@ -894,7 +913,10 @@ func (a *AppUI) renderModals(c *ui.Context) {
 							a.ActiveTaskKind = "cli"
 						} else {
 							// Start ACP Agent session
-							a.Agent.NewSession(title)
+							sess := a.Agent.NewSession(title)
+							sess.AgentID = a.SelectedAgentID
+							sess.Model = a.SelectedAgentModel
+							a.Agent.SaveSessionToDisk(sess)
 							a.ActiveTaskKind = "agent"
 						}
 
@@ -962,6 +984,7 @@ func (a *AppUI) renderModals(c *ui.Context) {
 				if in.Submitted() && a.RenameSessionTitle != "" {
 					if sess := a.Agent.ActiveSession(); sess != nil {
 						sess.Title = a.RenameSessionTitle
+						a.Agent.SaveSessionToDisk(sess)
 					}
 					a.ShowRenameModal = false
 				}
@@ -973,6 +996,7 @@ func (a *AppUI) renderModals(c *ui.Context) {
 					if ui.PrimaryButton(c, "Save").Clicked() && a.RenameSessionTitle != "" {
 						if sess := a.Agent.ActiveSession(); sess != nil {
 							sess.Title = a.RenameSessionTitle
+							a.Agent.SaveSessionToDisk(sess)
 						}
 						a.ShowRenameModal = false
 					}

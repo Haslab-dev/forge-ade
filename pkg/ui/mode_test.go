@@ -14,7 +14,7 @@ func TestAgentSessions(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	engine := NewEngine(tempDir)
-	as := NewAgentState(engine, nil)
+	as := NewAgentState(engine, tempDir, nil)
 
 	if len(as.Sessions) == 0 {
 		t.Fatalf("expected initial sessions, got 0")
