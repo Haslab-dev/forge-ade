@@ -106,6 +106,11 @@ func (a *App) SetMainWindow(win *application.WebviewWindow) {
 	a.mainWinMu.Unlock()
 }
 
+// GetEventBus returns the internal events bus for native or embedded bridges.
+func (a *App) GetEventBus() *events.Bus {
+	return a.bus
+}
+
 // mainWindowHandle returns the NSWindow handle of the main window, or nil
 // before it exists.
 func (a *App) mainWindowHandle() unsafe.Pointer {
