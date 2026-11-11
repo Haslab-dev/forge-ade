@@ -1,0 +1,18 @@
+# Binaries
+bin/
+build/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+forge-ade-native
+
+# Test artifacts & temp files
+*.test
+*.out
+/tmp/
+
+# OS metadata
+.DS_Store
+Thumbs.db
