@@ -12,6 +12,9 @@ build:
 	go build -o $(BINARY) ./cmd/forge-native
 	@ls -lh $(BINARY)
 
+test:
+	go test -v ./...
+
 vet:
 	go vet ./...
 
