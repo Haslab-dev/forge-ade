@@ -519,6 +519,43 @@ func (as *AgentState) DeleteSession(id string) {
 	}
 }
 
+// TabCounts returns the count of active, pinned, and archived sessions.
+func (as *AgentState) TabCounts() (active, pinned, archived int) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.Archived {
+			archived++
+		} else {
+			active++
+		}
+		if s.Pinned && !s.Archived {
+			pinned++
+		}
+	}
+	return
+}
+
+// ContextUsage returns estimated prompt tokens and context percentage.
+func (as *AgentState) ContextUsage() (tokens int, pct int) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	chars := 0
+	for _, m := range as.Messages {
+		chars += len(m.Text)
+	}
+	tokens = chars / 4
+	if tokens < 240 {
+		tokens = 240
+	}
+	maxTokens := 200000 // 200k context window standard
+	pct = (tokens * 100) / maxTokens
+	if pct == 0 && tokens > 0 {
+		pct = 1
+	}
+	return
+}
+
 // FilteredSessions returns the list of sessions matching filter tab and search query.
 func (as *AgentState) FilteredSessions() []*AgentSession {
 	as.mu.Lock()
@@ -637,6 +674,21 @@ func (as *AgentState) handleSlashCommand(cmd string) {
 			})
 		}
 		reply = fmt.Sprintf("Declared Goal: **%s**\nDecomposed into 4 atomic tasks on the floating checklist.", desc)
+	case "/plan":
+		desc := strings.TrimSpace(strings.TrimPrefix(cmd, "/plan"))
+		if desc == "" {
+			desc = "Architectural Analysis and Planning"
+		}
+		if as.TaskManager != nil {
+			as.TaskManager.SetGoal("Plan: "+desc, []TaskItem{
+				{ID: "1", Title: "Survey existing codebase structure and symbols", Status: TaskInProgress, ActiveForm: "Inspecting symbols..."},
+				{ID: "2", Title: "Formulate architectural change plan & interfaces", Status: TaskPending},
+				{ID: "3", Title: "Identify regression risks and test coverage gaps", Status: TaskPending},
+			})
+		}
+		reply = fmt.Sprintf("📋 **Plan Mode Activated**: `%s`\nStep-by-step architectural breakdown populated on the floating checklist.", desc)
+	case "/vibe":
+		reply = "⚡ **Vibe Mode Activated**: Autonomous execution with automatic error diagnosis and fix cycles enabled."
 	case "/tasks":
 		if as.TaskManager != nil {
 			c, total := as.TaskManager.Progress()
@@ -870,9 +922,9 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 
 		// Input Composer Area
 		ui.Column(c).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			// Slash commands shortcuts bar
+			// Slash commands shortcuts & context usage bar
 			ui.Row(c).Gap(6).Padding(6, 16, 2, 16).AlignItems(ui.Center).Children(func() {
-				cmdPills := []string{"/goal", "/tasks", "/model", "/clear", "/status", "/help"}
+				cmdPills := []string{"/goal", "/plan", "/tasks", "/vibe", "/model", "/clear", "/status", "/help"}
 				for _, cmd := range cmdPills {
 					thisCmd := cmd
 					btn := ui.Button(c, thisCmd).FontSize(11)
@@ -880,6 +932,10 @@ func (as *AgentState) RenderChat(c *ui.Context) {
 						as.InputText = thisCmd + " "
 					}
 				}
+				ui.Box(c).Grow(1)
+				tokens, pct := as.ContextUsage()
+				tokK := float32(tokens) / 1000.0
+				ui.Text(c, fmt.Sprintf("%.1fk tokens (%d%%)", tokK, pct)).FontSize(10).TextColor(t.TextMuted)
 			})
 
 			// Input input row

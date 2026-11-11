@@ -9,16 +9,20 @@ import (
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/hasdev/forge-ade/internal/acp"
+	"github.com/hasdev/forge-ade/internal/commitmsg"
 	"github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/internal/watcher"
 )
 
 // Engine is the lightweight, CGO-free composition root for ForgeADE Native.
 type Engine struct {
-	GitEngine *git.Engine
-	LLMClient *llm.LLMClient
-	ACPMgr    *acp.Manager
-	Bus       *events.Bus
-	DataDir   string
+	GitEngine       *git.Engine
+	LLMClient       *llm.LLMClient
+	CommitGenerator *commitmsg.Generator
+	Watcher         *watcher.Watcher
+	ACPMgr          *acp.Manager
+	Bus             *events.Bus
+	DataDir         string
 }
 
 // NewEngine creates and initializes the native backend subsystems.
@@ -38,12 +42,23 @@ func NewEngine(dataDir string) *Engine {
 	acpMgr := acp.NewManager(bus)
 	acpMgr.SetDataDir(dataDir)
 
+	gitEngine := git.NewEngine()
+	llmClient := llm.NewLLMClient(dataDir)
+	commitGen := &commitmsg.Generator{
+		Git: gitEngine,
+		LLM: llmClient,
+	}
+
+	w, _ := watcher.New(bus)
+
 	return &Engine{
-		GitEngine: git.NewEngine(),
-		LLMClient: llm.NewLLMClient(dataDir),
-		ACPMgr:    acpMgr,
-		Bus:       bus,
-		DataDir:   dataDir,
+		GitEngine:       gitEngine,
+		LLMClient:       llmClient,
+		CommitGenerator: commitGen,
+		Watcher:         w,
+		ACPMgr:          acpMgr,
+		Bus:             bus,
+		DataDir:         dataDir,
 	}
 }
 
@@ -73,6 +88,44 @@ func (e *Engine) GitCommit(repoPath string, message string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return e.GitEngine.Commit(ctx, repoPath, message)
+}
+
+// GetGitBranches retrieves repository branches.
+func (e *Engine) GetGitBranches(repoPath string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return e.GitEngine.GetBranches(ctx, repoPath)
+}
+
+// GetGitCommitGraph returns commit history log.
+func (e *Engine) GetGitCommitGraph(repoPath string, limit int) (*git.CommitGraphResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return e.GitEngine.GetCommitGraph(ctx, repoPath, 0, limit, "")
+}
+
+// GenerateAICommit generates an AI commit message using the staged diff and LLMClient.
+func (e *Engine) GenerateAICommit(ctx context.Context, repoPath, instruction string) (string, error) {
+	if e.CommitGenerator == nil {
+		return "", nil
+	}
+	cfg := e.GetLLMConfig()
+	return e.CommitGenerator.Generate(ctx, repoPath, cfg.ProviderID, cfg.Model, instruction)
+}
+
+// StartWatcher attaches file system monitoring to the root directory and calls onChange when changes occur.
+func (e *Engine) StartWatcher(rootDir string, onChange func()) {
+	if e.Watcher == nil || e.Bus == nil {
+		return
+	}
+	e.Watcher.Start()
+	_ = e.Watcher.WatchDir(rootDir)
+
+	e.Bus.Subscribe(events.FileChanged, func(ev events.Event) {
+		if onChange != nil {
+			onChange()
+		}
+	})
 }
 
 // GetLLMConfig returns the persisted LLM profile.

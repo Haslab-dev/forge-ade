@@ -34,6 +34,8 @@ type AppUI struct {
 	SelectedFile        string
 	ShowNewFileModal    bool
 	NewFileName         string
+	ShowNewFolderModal  bool
+	NewFolderName       string
 	ShowNewTaskModal    bool
 	NewTaskTitle        string
 	NewTaskAgentType    string // "acp" or "cli"
@@ -104,6 +106,8 @@ func NewAppUI(engine *Engine, rootDir string) *AppUI {
 	appUI.Settings = NewSettingsManager(engine, func(provider, model string) {
 		appUI.Agent.ActiveModel = model
 	})
+	appUI.Settings.ThemeMgr = appUI.ThemeMgr
+	appUI.Settings.ACPMgr = appUI.ACPMgr
 
 	appUI.Database = NewDatabaseManager(engine, appUI.Workspace)
 
@@ -118,6 +122,24 @@ func NewAppUI(engine *Engine, rootDir string) *AppUI {
 		}
 		appUI.Mode = ModeEditor
 	})
+	appUI.Git.OnNeedRedraw = func() {
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	}
+
+	// Attach live file system watcher to auto-refresh file tree and git on disk mutations
+	if engine != nil {
+		engine.StartWatcher(rootDir, func() {
+			appUI.Workspace.Refresh()
+			if appUI.Git != nil {
+				appUI.Git.Refresh()
+			}
+			if appUI.Window != nil {
+				appUI.Window.Invalidate()
+			}
+		})
+	}
 
 	appUI.Palette = NewPaletteManager(appUI.Workspace, func(path string) {
 		fullPath := appUI.Workspace.ResolveFullPath(path)
@@ -386,15 +408,22 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
 		})
 
-		// Filter Tabs: Active, Pinned, Archived
+		// Filter Tabs: Active, Pinned, Archived with counts
+		activeCount, pinnedCount, archivedCount := a.Agent.TabCounts()
+		tabCounts := map[string]int{
+			"active":   activeCount,
+			"pinned":   pinnedCount,
+			"archived": archivedCount,
+		}
 		ui.Row(c).Gap(4).Padding(6, 12).AlignItems(ui.Center).Children(func() {
 			for _, tab := range []string{"active", "pinned", "archived"} {
 				thisTab := tab
+				label := fmt.Sprintf("%s (%d)", strings.Title(thisTab), tabCounts[thisTab])
 				var btn ui.Element
 				if a.Agent.ActiveFilterTab == thisTab {
-					btn = ui.PrimaryButton(c, strings.Title(thisTab)).FontSize(11)
+					btn = ui.PrimaryButton(c, label).FontSize(10)
 				} else {
-					btn = ui.Button(c, strings.Title(thisTab)).FontSize(11)
+					btn = ui.Button(c, label).FontSize(10)
 				}
 				if btn.Clicked() {
 					a.Agent.ActiveFilterTab = thisTab
@@ -574,6 +603,34 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 	}
 }
 
+func fileIconBadge(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go":
+		return "🔵"
+	case ".ts", ".tsx":
+		return "🟦"
+	case ".js", ".jsx":
+		return "🟨"
+	case ".json":
+		return "🟧"
+	case ".md":
+		return "📝"
+	case ".html":
+		return "🌐"
+	case ".css":
+		return "🎨"
+	case ".sql", ".db", ".sqlite", ".duckdb":
+		return "🗄"
+	case ".sh", ".bash", ".zsh":
+		return "⚡"
+	case ".yml", ".yaml", ".toml":
+		return "⚙"
+	default:
+		return "📄"
+	}
+}
+
 // renderFileTree renders the workspace file explorer tree.
 func (a *AppUI) renderFileTree(c *ui.Context) {
 	t := c.Theme()
@@ -584,6 +641,10 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 		if ui.Button(c, "+ File").FontSize(11).Clicked() {
 			a.ShowNewFileModal = true
 			a.NewFileName = ""
+		}
+		if ui.Button(c, "+ Folder").FontSize(11).Clicked() {
+			a.ShowNewFolderModal = true
+			a.NewFolderName = ""
 		}
 		if ui.Button(c, "↻").FontSize(11).Clicked() {
 			a.Workspace.Refresh()
@@ -605,7 +666,8 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 	filtered := a.Workspace.FilteredFiles()
 	ui.Sidebar(c, &a.SelectedFile, func() {
 		for _, f := range filtered {
-			label := f.RelativePath
+			icon := fileIconBadge(f.RelativePath)
+			label := fmt.Sprintf("%s %s", icon, f.RelativePath)
 			doc := a.Editor.GetDoc(f.FullPath)
 			if doc != nil && doc.Editor.Buffer.Modified() {
 				label += " •"
@@ -793,6 +855,30 @@ func (a *AppUI) renderModals(c *ui.Context) {
 						_, _ = a.Editor.OpenFile(full, a.NewFileName)
 						a.SelectedFile = a.NewFileName
 						a.Mode = ModeEditor
+					}
+				})
+			})
+		})
+	}
+
+	// 5b. New Folder Modal
+	if a.ShowNewFolderModal {
+		ui.Modal(c, &a.ShowNewFolderModal, func() {
+			ui.Column(c).Width(400).Radius(10).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 18).Gap(10).Children(func() {
+				ui.Text(c, "Create New Folder").Bold().FontSize(14)
+				in := ui.TextInput(c, &a.NewFolderName).Placeholder("folder_name (or path/to/folder)...").Grow(1).AutoFocus()
+				if in.Submitted() && a.NewFolderName != "" {
+					_ = a.Workspace.CreateFolder(a.NewFolderName)
+					a.ShowNewFolderModal = false
+				}
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Box(c).Grow(1)
+					if ui.Button(c, "Cancel").Clicked() {
+						a.ShowNewFolderModal = false
+					}
+					if ui.PrimaryButton(c, "Create").Clicked() && a.NewFolderName != "" {
+						_ = a.Workspace.CreateFolder(a.NewFolderName)
+						a.ShowNewFolderModal = false
 					}
 				})
 			})

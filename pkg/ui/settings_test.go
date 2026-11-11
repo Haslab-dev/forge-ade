@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -34,5 +36,115 @@ func TestSettingsManager(t *testing.T) {
 	sm.Toggle()
 	if !sm.IsOpen {
 		t.Fatalf("expected IsOpen true after Toggle")
+	}
+
+	// Test multi-tab navigation
+	for _, tab := range []int{SettingsTabModels, SettingsTabAppearance, SettingsTabAgents, SettingsTabShortcuts} {
+		sm.ActiveTab = tab
+		if sm.ActiveTab != tab {
+			t.Fatalf("expected active tab %d, got %d", tab, sm.ActiveTab)
+		}
+	}
+}
+
+func TestGitManagerEnhancedParity(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "git-parity-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	engine := NewEngine(tempDir)
+	gm := NewGitManager(engine, tempDir, nil)
+
+	if gm.ActiveTab != GitTabChanges {
+		t.Fatalf("expected default active tab GitTabChanges, got %d", gm.ActiveTab)
+	}
+
+	gm.ActiveTab = GitTabHistory
+	if gm.ActiveTab != GitTabHistory {
+		t.Fatalf("expected GitTabHistory")
+	}
+
+	gm.ActiveTab = GitTabBranches
+	if gm.ActiveTab != GitTabBranches {
+		t.Fatalf("expected GitTabBranches")
+	}
+
+	// Test AI Commit invocation trigger
+	gm.GenerateAICommit("test instruction")
+	if !gm.IsGeneratingAI && gm.CommitMsg == "" && gm.StatusMsg == "" {
+		t.Fatalf("expected AI commit generation to be triggered or status updated")
+	}
+}
+
+func TestAgentStateTabCountsAndContextUsage(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "agent-counts-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	engine := NewEngine(tempDir)
+	as := NewAgentState(engine, tempDir, nil)
+
+	// Ensure there is at least 1 session
+	if len(as.Sessions) == 0 {
+		as.NewSession("Initial Task")
+	}
+
+	active, pinned, archived := as.TabCounts()
+	if active == 0 {
+		t.Fatalf("expected at least 1 active session, got %d", active)
+	}
+	if pinned != 0 && pinned != 1 {
+		t.Fatalf("unexpected pinned count: %d", pinned)
+	}
+	if archived != 0 {
+		t.Fatalf("expected 0 archived initially, got %d", archived)
+	}
+
+	// Test context usage estimation
+	tokens, pct := as.ContextUsage()
+	if tokens < 240 {
+		t.Fatalf("expected min tokens >= 240, got %d", tokens)
+	}
+	if pct < 0 || pct > 100 {
+		t.Fatalf("expected pct between 0 and 100, got %d", pct)
+	}
+
+	// Test slash command /plan and /vibe
+	as.handleSlashCommand("/plan Port Architecture")
+	if as.TaskManager == nil || as.TaskManager.Goal != "Plan: Port Architecture" {
+		t.Fatalf("expected goal to be 'Plan: Port Architecture', got %v", as.TaskManager.Goal)
+	}
+
+	as.handleSlashCommand("/vibe")
+	lastMsg := as.Messages[len(as.Messages)-1]
+	if lastMsg.Role != "assistant" || len(lastMsg.Text) == 0 {
+		t.Fatalf("expected assistant response to /vibe")
+	}
+}
+
+func TestFileIconBadge(t *testing.T) {
+	tests := map[string]string{
+		"main.go":       "🔵",
+		"app.tsx":       "🟦",
+		"index.js":      "🟨",
+		"package.json":  "🟧",
+		"README.md":     "📝",
+		"index.html":    "🌐",
+		"styles.css":    "🎨",
+		"data.sqlite":   "🗄",
+		"script.sh":     "⚡",
+		"config.yaml":   "⚙",
+		"unknown.xyz":   "📄",
+	}
+
+	for path, expectedIcon := range tests {
+		got := fileIconBadge(filepath.Join("some/dir", path))
+		if got != expectedIcon {
+			t.Errorf("fileIconBadge(%s) = %s, expected %s", path, got, expectedIcon)
+		}
 	}
 }
