@@ -102,6 +102,8 @@ var (
 	TablerArrowLeft       = tablerSVG(`<path d="M5 12l14 0"/><path d="M5 12l6 6"/><path d="M5 12l6 -6"/>`)
 	TablerArrowRight      = tablerSVG(`<path d="M5 12l14 0"/><path d="M13 18l6 -6"/><path d="M13 6l6 6"/>`)
 	TablerArrowUp         = tablerSVG(`<path d="M12 5l0 14"/><path d="M12 5l-6 6"/><path d="M12 5l6 6"/>`)
+	TablerArrowDown       = tablerSVG(`<path d="M12 5l0 14"/><path d="M18 13l-6 6"/><path d="M6 13l6 6"/>`)
+	TablerDownload        = tablerSVG(`<path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 11l5 5l5 -5"/><path d="M12 4l0 12"/>`)
 	TablerLock            = tablerSVG(`<path d="M5 13a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-6z"/><path d="M11 16a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/><path d="M8 11v-4a4 4 0 0 1 8 0v4"/>`)
 	TablerUnplug          = tablerSVG(`<path d="M16 12l2 -2a3 3 0 0 0 -4.242 -4.242l-2 2"/><path d="M10 16l-2 2a3 3 0 0 1 -4.242 -4.242l2 -2"/><path d="M7 17l-4 4"/><path d="M17 7l4 -4"/><path d="M3 3l18 18"/>`)
 	TablerZap             = tablerSVG(`<path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0z"/>`)
@@ -121,6 +123,8 @@ var (
 	TablerBot             = tablerSVG(`<path d="M7 7h10a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-8a2 2 0 0 1 2 -2z"/><path d="M9 11v.01"/><path d="M15 11v.01"/><path d="M9.5 15a3.5 3.5 0 0 0 5 0"/><path d="M12 7v-4"/><path d="M10 3h4"/>`)
 	TablerMessage         = tablerSVG(`<path d="M4 21v-13a3 3 0 0 1 3 -3h10a3 3 0 0 1 3 3v6a3 3 0 0 1 -3 3h-9l-4 4z"/>`)
 	TablerArchive         = tablerSVG(`<path d="M3 4m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-10"/><path d="M10 12l4 0"/>`)
+	TablerArrowsExchange = tablerSVG(`<path d="M7 10h14l-4 -4"/><path d="M17 14h-14l4 4"/>`)
+	TablerArrowsMinimize = tablerSVG(`<path d="M5 9h4v-4"/><path d="M3 3l6 6"/><path d="M5 15h4v4"/><path d="M3 21l6 -6"/><path d="M19 9h-4v-4"/><path d="M15 9l6 -6"/><path d="M19 15h-4v4"/><path d="M15 15l6 6"/>`)
 	ForgeSparkSVG         = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="currentColor"><path d="M24 3c1.6 10.6 6.4 16.7 20 21-13.6 4.3-18.4 10.4-20 21-1.6-10.6-6.4-16.7-20-21 13.6-4.3 18.4-10.4 20-21Z"/><circle cx="39.5" cy="8.5" r="3.2"/></svg>`))
 )
 

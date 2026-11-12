@@ -12,8 +12,10 @@ import (
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
+	"github.com/hasdev/forge-ade/forge-ade-native/pkg/board"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/git"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	internalboard "github.com/hasdev/forge-ade/internal/board"
 	internalgit "github.com/hasdev/forge-ade/internal/git"
 )
 
@@ -117,104 +119,224 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 // renderChangesPane renders working tree changes and unified diff viewer.
 func (a *AppUI) renderChangesPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
+	gm := a.Git
 
-	var files []internalgit.FileStatus
-	if a.Git != nil {
-		files = append(files, a.Git.Staged...)
-		files = append(files, a.Git.Unstaged...)
-		files = append(files, a.Git.Untracked...)
+	var staged []internalgit.FileStatus
+	var unstaged []internalgit.FileStatus
+	if gm != nil {
+		staged = gm.Staged
+		unstaged = append(unstaged, gm.Unstaged...)
+		unstaged = append(unstaged, gm.Untracked...)
 	}
 
-	ui.Row(c).Height(40).Padding(0, 12).AlignItems(ui.Center).
+	totalFiles := len(staged) + len(unstaged)
+
+	ui.Row(c).Height(36).Padding(0, 12).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-		ui.Text(c, "Changes").FontSize(13).FontWeight(600)
+		ui.Text(c, "Working Tree").FontSize(12).FontWeight(600)
 		ui.Box(c).Grow(1)
-		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() && a.Git != nil {
-			a.Git.Refresh()
+		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() && gm != nil {
+			gm.Refresh()
 		}
-		ui.Text(c, fmt.Sprintf("%d files", len(files))).FontSize(11).TextColor(tc.TextMuted)
+		ui.Text(c, fmt.Sprintf("%d changes", totalFiles)).FontSize(11).TextColor(tc.TextMuted)
 	})
 
-	if len(files) == 0 {
+	if totalFiles == 0 {
 		ui.Column(c).Grow(1).Center().Gap(8).Padding(20).Children(func() {
 			ui.Icon(c, icons.TablerFileDiff).Width(32).Height(32).TextColor(tc.IconMuted)
-			ui.Text(c, "No changes yet").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
-			ui.Text(c, "Files modified in the workspace show up here with their diffs.").FontSize(12).TextColor(tc.TextMuted).MaxWidth(240)
-			if ContrastCTA(c, tc, "Refresh changes").Clicked() && a.Git != nil {
-				a.Git.Refresh()
+			ui.Text(c, "No changes detected").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Text(c, "Working tree is clean. Modified files will appear here.").FontSize(12).TextColor(tc.TextMuted).MaxWidth(240)
+			if ContrastCTA(c, tc, "Refresh changes").Clicked() && gm != nil {
+				gm.Refresh()
 			}
 		})
 		return
 	}
 
 	if a.SelectedDiffPath == "" {
-		a.SelectedDiffPath = files[0].Path
-	}
-	found := false
-	for _, f := range files {
-		if f.Path == a.SelectedDiffPath {
-			found = true
-			break
+		if len(staged) > 0 {
+			a.SelectedDiffPath = staged[0].Path
+		} else if len(unstaged) > 0 {
+			a.SelectedDiffPath = unstaged[0].Path
 		}
-	}
-	if !found {
-		a.SelectedDiffPath = files[0].Path
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		ui.Scroll(c).Height(minF(160, float32(len(files))*28+8)).Children(func() {
-			ui.Column(c).Padding(3, 6).Gap(1).Children(func() {
-				for _, f := range files {
-					f := f
-					isSel := a.SelectedDiffPath == f.Path
-					row := ui.Row(c.Key("chg-"+f.Path)).Height(28).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
-					row.Children(func() {
-						ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
-						ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
-						DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
-						badgeLabel := string(f.Status)
-						badgeColor := tc.Accent
-						if f.Staging == "staged" {
-							badgeLabel = "S"
-							badgeColor = tc.Success
-						}
-						Badge(c, tc, badgeLabel, badgeColor)
-
-						stageBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-						stageBtn.Children(func() {
-							if f.Staging == "staged" {
-								ui.Icon(c, icons.TablerMinus).Width(12).Height(12).TextColor(tc.IconMuted)
-							} else {
-								ui.Icon(c, icons.TablerPlus).Width(12).Height(12).TextColor(tc.IconMuted)
-							}
+		// File lists (Staged & Unstaged)
+		ui.Scroll(c).Height(minF(180, float32(totalFiles)*28+40)).Children(func() {
+			ui.Column(c).Padding(4, 6).Gap(4).Children(func() {
+				// 1. Staged section
+				if len(staged) > 0 {
+					ui.Row(c).Padding(2, 4).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, fmt.Sprintf("STAGED CHANGES (%d)", len(staged))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						ui.Box(c).Grow(1)
+						unstageAllBtn := ui.Row(c).Radius(4).Padding(1, 6).AlignItems(ui.Center)
+						unstageAllBtn.Children(func() {
+							ui.Text(c, "Unstage All").FontSize(10).TextColor(tc.TextMuted)
 						})
-						if stageBtn.Hovered() {
-							stageBtn.Background(tc.Text.Alpha(0.06))
+						if unstageAllBtn.Hovered() {
+							unstageAllBtn.Background(tc.Text.Alpha(0.06))
 						}
-						if stageBtn.Clicked() && a.Git != nil {
-							if f.Staging == "staged" {
-								go a.Git.Unstage(f.Path)
-							} else {
-								go a.Git.Stage(f.Path)
-							}
+						if unstageAllBtn.Clicked() && gm != nil {
+							gm.UnstageAll()
 						}
 					})
-					if isSel {
-						row.Background(tc.Accent.Alpha(0.14))
-					} else if row.Hovered() {
-						row.Background(tc.Text.Alpha(0.04))
+					for _, f := range staged {
+						f := f
+						isSel := a.SelectedDiffPath == f.Path
+						row := ui.Row(c.Key("staged-"+f.Path)).Height(26).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+						row.Children(func() {
+							ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+							ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
+							DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
+							Badge(c, tc, "S", tc.Success)
+
+							unstageBtn := ui.Row(c).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+							unstageBtn.Children(func() {
+								ui.Icon(c, icons.TablerMinus).Width(10).Height(10).TextColor(tc.IconMuted)
+							})
+							if unstageBtn.Hovered() {
+								unstageBtn.Background(tc.Text.Alpha(0.06))
+							}
+							if unstageBtn.Clicked() && gm != nil {
+								go gm.Unstage(f.Path)
+							}
+						})
+						if isSel {
+							row.Background(tc.Accent.Alpha(0.14))
+						} else if row.Hovered() {
+							row.Background(tc.Text.Alpha(0.04))
+						}
+						if row.Clicked() {
+							a.SelectedDiffPath = f.Path
+						}
 					}
-					if row.Clicked() {
-						a.SelectedDiffPath = f.Path
+				}
+
+				// 2. Unstaged / Untracked section
+				if len(unstaged) > 0 {
+					ui.Row(c).Padding(4, 4, 2, 4).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, fmt.Sprintf("CHANGES (%d)", len(unstaged))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						ui.Box(c).Grow(1)
+						stageAllBtn := ui.Row(c).Radius(4).Padding(1, 6).AlignItems(ui.Center)
+						stageAllBtn.Children(func() {
+							ui.Text(c, "Stage All").FontSize(10).TextColor(tc.TextMuted)
+						})
+						if stageAllBtn.Hovered() {
+							stageAllBtn.Background(tc.Text.Alpha(0.06))
+						}
+						if stageAllBtn.Clicked() && gm != nil {
+							gm.StageAll()
+						}
+					})
+					for _, f := range unstaged {
+						f := f
+						isSel := a.SelectedDiffPath == f.Path
+						row := ui.Row(c.Key("unstaged-"+f.Path)).Height(26).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+						row.Children(func() {
+							ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+							ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
+							DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
+							statusLabel := string(f.Status)
+							if statusLabel == "" {
+								statusLabel = "M"
+							}
+							Badge(c, tc, statusLabel, tc.Accent)
+
+							stageBtn := ui.Row(c).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+							stageBtn.Children(func() {
+								ui.Icon(c, icons.TablerPlus).Width(10).Height(10).TextColor(tc.IconMuted)
+							})
+							if stageBtn.Hovered() {
+								stageBtn.Background(tc.Text.Alpha(0.06))
+							}
+							if stageBtn.Clicked() && gm != nil {
+								go gm.Stage(f.Path)
+							}
+						})
+						if isSel {
+							row.Background(tc.Accent.Alpha(0.14))
+						} else if row.Hovered() {
+							row.Background(tc.Text.Alpha(0.04))
+						}
+						if row.Clicked() {
+							a.SelectedDiffPath = f.Path
+						}
 					}
 				}
 			})
 		})
 
+		// Commit Form Card
+		if gm != nil {
+			ui.Column(c).Padding(8, 10).Gap(6).
+				BorderWidth(1, 0, 1, 0).BorderColor(tc.Border.Alpha(0.6)).
+				Background(tc.SurfaceRaised.Alpha(0.4)).Children(func() {
+				ui.TextInput(c, &gm.CommitSummary).Placeholder("Summary (required)").Grow(1)
+				ui.TextInput(c, &gm.CommitDesc).Placeholder("Description (optional)").Grow(1)
+
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					// AI commit button
+					aiBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					aiBtn.Children(func() {
+						ui.Icon(c, icons.TablerSparkles).Width(12).Height(12).TextColor(tc.Accent)
+						ui.Text(c, "AI Message").FontSize(10).FontWeight(500).TextColor(tc.Text)
+					})
+					if aiBtn.Hovered() {
+						aiBtn.Background(tc.Text.Alpha(0.06))
+					}
+					if aiBtn.Clicked() {
+						go gm.GenerateAICommit("")
+					}
+
+					ui.Box(c).Grow(1)
+
+					// Commit button
+					canCommit := strings.TrimSpace(gm.CommitSummary) != "" && totalFiles > 0
+					branchName := gm.Branch
+					if branchName == "" {
+						branchName = "main"
+					}
+					btnText := fmt.Sprintf("Commit to %s", branchName)
+					commitBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).Justify(ui.Center)
+					if canCommit {
+						commitBtn.Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
+						commitBtn.Children(func() {
+							ui.Icon(c, icons.TablerCheck).Width(11).Height(11).TextColor(ui.RGBA(255, 255, 255, 1.0))
+							ui.Text(c, btnText).FontSize(11).FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1.0))
+						})
+						if commitBtn.Clicked() {
+							if len(staged) == 0 && len(unstaged) > 0 {
+								gm.StageAll()
+							}
+							fullMsg := gm.CommitSummary
+							if strings.TrimSpace(gm.CommitDesc) != "" {
+								fullMsg += "\n\n" + gm.CommitDesc
+							}
+							err := gm.Commit(fullMsg)
+							if err != nil {
+								c.AddToast(ui.Toast{Title: "Commit Error", Description: err.Error(), Type: "error"})
+							} else {
+								c.AddToast(ui.Toast{Title: "Committed", Description: gm.CommitSummary, Type: "success"})
+								gm.CommitSummary = ""
+								gm.CommitDesc = ""
+							}
+						}
+					} else {
+						commitBtn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+						commitBtn.Children(func() {
+							ui.Text(c, btnText).FontSize(11).TextColor(tc.TextMuted)
+						})
+					}
+				})
+			})
+		}
+
 		// Diff viewer for selected file
 		ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
 			diffTitle := a.SelectedDiffPath
-			header := ui.Row(c).Height(32).Padding(0, 8).Gap(6).AlignItems(ui.Center).
+			header := ui.Row(c).Height(30).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Background(tc.Surface)
 			header.Children(func() {
 				ui.Icon(c, icons.TablerGitCompare).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -363,44 +485,223 @@ func (a *AppUI) sendSideChat(text string) {
 // renderBoardPane renders the kanban workflow board.
 func (a *AppUI) renderBoardPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Row(c).Height(40).Padding(0, 12).AlignItems(ui.Center).
-		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-		ui.Text(c, "Workflow Board").FontSize(13).FontWeight(600)
-		ui.Box(c).Grow(1)
-		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() {
-			a.RefreshBoard()
-		}
-	})
 	if a.Board == nil {
 		a.RefreshBoard()
 	}
+
+	ui.Row(c).Height(42).Padding(0, 10).Gap(8).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		ui.Icon(c, icons.TablerLayoutKanban).Width(16).Height(16).TextColor(tc.Accent)
+		ui.Text(c, "Workflow Board").FontSize(13).FontWeight(600)
+		ui.Box(c).Grow(1)
+
+		// New Task (+) button
+		addTaskBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+			Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
+		addTaskBtn.Children(func() {
+			ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(ui.RGBA(255, 255, 255, 1.0))
+			ui.Text(c, "New Task").FontSize(11).FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1.0))
+		})
+		if addTaskBtn.Hovered() {
+			addTaskBtn.Background(tc.Accent.Alpha(0.85))
+		}
+		if addTaskBtn.Clicked() {
+			a.NewBoardTaskTitle = ""
+			a.NewBoardTaskDesc = ""
+			a.NewBoardTaskPriority = "medium"
+			a.NewBoardTaskStatus = "todo"
+			a.ShowNewBoardTaskModal = true
+		}
+
+		refreshBtn := ui.Row(c).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+		refreshBtn.Children(func() {
+			ui.Icon(c, icons.TablerRefresh).Width(12).Height(12).TextColor(tc.IconMuted)
+		})
+		if refreshBtn.Hovered() {
+			refreshBtn.Background(tc.Text.Alpha(0.06))
+		}
+		if refreshBtn.Clicked() {
+			a.RefreshBoard()
+		}
+	})
+
+	// Search bar for board tasks
+	ui.Row(c).Padding(6, 10).Children(func() {
+		ui.TextInput(c, &a.BoardSearchQuery).Placeholder("Search tasks...").Grow(1)
+	})
+
 	if a.Board == nil || a.Board.Data == nil || len(a.Board.Data.Columns) == 0 {
 		ui.Column(c).Grow(1).Center().Gap(8).Padding(20).Children(func() {
 			ui.Icon(c, icons.TablerLayoutKanban).Width(32).Height(32).TextColor(tc.IconMuted)
 			ui.Text(c, "No board tasks").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
 			ui.Text(c, "Tasks in .forge/board_tasks.json appear here.").FontSize(12).TextColor(tc.TextMuted).MaxWidth(240)
+			createFirstBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 14).Gap(6).AlignItems(ui.Center).
+				Background(tc.Accent)
+			createFirstBtn.Children(func() {
+				ui.Icon(c, icons.TablerPlus).Width(12).Height(12).TextColor(ui.RGBA(255, 255, 255, 1.0))
+				ui.Text(c, "Create Task").FontSize(12).FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1.0))
+			})
+			if createFirstBtn.Clicked() {
+				a.NewBoardTaskTitle = ""
+				a.NewBoardTaskDesc = ""
+				a.NewBoardTaskPriority = "medium"
+				a.NewBoardTaskStatus = "todo"
+				a.ShowNewBoardTaskModal = true
+			}
 		})
 		return
 	}
+
+	searchLower := strings.ToLower(strings.TrimSpace(a.BoardSearchQuery))
+
 	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).Padding(8, 10).Gap(10).Children(func() {
-			for _, col := range a.Board.Data.Columns {
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Gap(6).Padding(0, 2).Children(func() {
-						ui.Text(c, col.Name).FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
-						ui.Box(c).Size(18, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-							Background(tc.Text.Alpha(0.08)).Children(func() {
-							ui.Text(c, fmt.Sprintf("%d", len(col.Tasks))).FontSize(10).TextColor(tc.TextMuted)
+		ui.Column(c).Padding(6, 10).Gap(10).Children(func() {
+			for colIdx, col := range a.Board.Data.Columns {
+				thisCol := col
+				thisColIdx := colIdx
+
+				// Filter tasks in this column
+				var matchingTasks []*internalboard.Task
+				for _, t := range thisCol.Tasks {
+					if searchLower == "" ||
+						strings.Contains(strings.ToLower(t.Title), searchLower) ||
+						strings.Contains(strings.ToLower(t.Description), searchLower) ||
+						strings.Contains(strings.ToLower(t.Key), searchLower) {
+						matchingTasks = append(matchingTasks, t)
+					}
+				}
+
+				colColor := tc.TextMuted
+				var colIcon *ui.SVG = icons.TablerCircleDot
+				switch thisColIdx {
+				case 0: // To Do
+					colColor = tc.TextMuted
+					colIcon = icons.TablerCircleDot
+				case 1: // In Progress
+					colColor = tc.Accent
+					colIcon = icons.TablerClock
+				case 2: // In Review
+					colColor = tc.Warning
+					colIcon = icons.TablerEye
+				case 3: // In Testing / Done
+					colColor = tc.Success
+					colIcon = icons.TablerCircleCheck
+				default:
+					colColor = tc.Success
+					colIcon = icons.TablerCircleCheck
+				}
+
+				ui.Column(c.Key("col-"+thisCol.Name)).Gap(6).Children(func() {
+					// Column Header
+					ui.Row(c).AlignItems(ui.Center).Gap(6).Padding(4, 2).Children(func() {
+						ui.Icon(c, colIcon).Width(13).Height(13).TextColor(colColor)
+						ui.Text(c, thisCol.Name).FontSize(12).FontWeight(600).TextColor(tc.Text)
+						ui.Box(c).Size(20, 18).Radius(9).AlignItems(ui.Center).Justify(ui.Center).
+							Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
+							ui.Text(c, fmt.Sprintf("%d", len(matchingTasks))).FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
 						})
 					})
-					for _, task := range col.Tasks {
-						card := ui.Column(c.Key("board-"+task.ID)).Radius(8).Padding(8, 10).Gap(4).
-							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+
+					// Task Cards
+					for _, task := range matchingTasks {
+						thisTask := task
+						card := ui.Column(c.Key("board-card-"+thisTask.ID)).Radius(8).Padding(8, 10).Gap(6).
+							Background(tc.SurfaceRaised.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7)).
+							Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.04))
+
 						card.Children(func() {
-							ui.Text(c, task.Title).FontSize(12)
-							if task.Status != "" {
-								Badge(c, tc, task.Status, tc.Accent)
+							// Top row: Key + Priority badge
+							ui.Row(c).AlignItems(ui.Center).Children(func() {
+								if thisTask.Key != "" {
+									ui.Text(c, thisTask.Key).FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+								}
+								ui.Box(c).Grow(1)
+								prioColor := tc.Accent
+								switch strings.ToLower(thisTask.Priority) {
+								case "urgent":
+									prioColor = tc.Error
+								case "high":
+									prioColor = tc.Warning
+								case "low":
+									prioColor = tc.TextMuted
+								}
+								ui.Row(c).Radius(4).Padding(1, 6).Gap(4).AlignItems(ui.Center).
+									Background(prioColor.Alpha(0.12)).BorderWidth(1).BorderColor(prioColor.Alpha(0.3)).Children(func() {
+									ui.Box(c).Size(5, 5).Radius(3).Background(prioColor)
+									ui.Text(c, strings.ToUpper(thisTask.Priority)).FontSize(9).FontWeight(700).TextColor(prioColor)
+								})
+							})
+
+							// Title
+							ui.Text(c, thisTask.Title).FontSize(12).FontWeight(500).TextColor(tc.Text)
+
+							// Description preview if available
+							if thisTask.Description != "" {
+								descPreview := thisTask.Description
+								if len(descPreview) > 80 {
+									descPreview = descPreview[:77] + "…"
+								}
+								ui.Text(c, descPreview).FontSize(11).TextColor(tc.TextMuted)
 							}
+
+							// Bottom Action Bar: Move Left, Move Right, Delete
+							ui.Row(c).Padding(4, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.3)).
+								AlignItems(ui.Center).Children(func() {
+								// Move Left
+								if thisColIdx > 0 {
+									prevCol := a.Board.Data.Columns[thisColIdx-1]
+									prevStatus := board.BoardColumnDefs[thisColIdx-1].Status
+									leftBtn := ui.Row(c.Key("mv-l-"+thisTask.ID)).Size(22, 22).Radius(4).
+										AlignItems(ui.Center).Justify(ui.Center).
+										Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+									leftBtn.Children(func() {
+										ui.Icon(c, icons.TablerArrowLeft).Width(11).Height(11).TextColor(tc.IconMuted)
+									})
+									if leftBtn.Hovered() {
+										leftBtn.Background(tc.Text.Alpha(0.06))
+									}
+									if leftBtn.Clicked() {
+										_ = a.Board.MoveTaskStatus(thisTask.ID, prevStatus)
+										c.AddToast(ui.Toast{Title: "Task Moved", Description: fmt.Sprintf("Moved to %s", prevCol.Name), Type: "info"})
+									}
+								}
+
+								// Move Right
+								if thisColIdx < len(a.Board.Data.Columns)-1 {
+									nextCol := a.Board.Data.Columns[thisColIdx+1]
+									nextStatus := board.BoardColumnDefs[thisColIdx+1].Status
+									rightBtn := ui.Row(c.Key("mv-r-"+thisTask.ID)).Size(22, 22).Radius(4).
+										AlignItems(ui.Center).Justify(ui.Center).
+										Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+									rightBtn.Children(func() {
+										ui.Icon(c, icons.TablerArrowRight).Width(11).Height(11).TextColor(tc.IconMuted)
+									})
+									if rightBtn.Hovered() {
+										rightBtn.Background(tc.Text.Alpha(0.06))
+									}
+									if rightBtn.Clicked() {
+										_ = a.Board.MoveTaskStatus(thisTask.ID, nextStatus)
+										c.AddToast(ui.Toast{Title: "Task Moved", Description: fmt.Sprintf("Moved to %s", nextCol.Name), Type: "info"})
+									}
+								}
+
+								ui.Box(c).Grow(1)
+
+								// Delete Task button
+								delBtn := ui.Row(c.Key("del-"+thisTask.ID)).Size(22, 22).Radius(4).
+									AlignItems(ui.Center).Justify(ui.Center)
+								delBtn.Children(func() {
+									ui.Icon(c, icons.TablerTrash).Width(11).Height(11).TextColor(tc.IconMuted)
+								})
+								if delBtn.Hovered() {
+									delBtn.Background(tc.Error.Alpha(0.1))
+								}
+								if delBtn.Clicked() {
+									_ = a.Board.DeleteTask(thisTask.ID)
+									c.AddToast(ui.Toast{Title: "Task Deleted", Type: "info"})
+								}
+							})
 						})
 					}
 				})
@@ -415,29 +716,104 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 	if gm == nil {
 		return
 	}
-	t := c.Theme()
+	tc := a.ThemeMgr.Colors()
 
 	ui.Column(c).Fill().Children(func() {
-		ui.Row(c).Gap(10).Padding(8, 14).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			ui.Text(c, "Source Control").Bold().FontSize(13)
+		// Header row with Branch pill + Remotes (Fetch, Pull, Push) + Refresh
+		ui.Row(c).Height(40).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+			ui.Text(c, "Source Control").FontSize(12).FontWeight(600)
+
 			if gm.Branch != "" {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, icons.TablerGitBranch, 13)
-					ui.Text(c, gm.Branch).FontSize(11).Bold().TextColor(t.Accent)
+				branchPill := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+					Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+				branchPill.Children(func() {
+					ui.Icon(c, icons.TablerGitBranch).Width(11).Height(11).TextColor(tc.Accent)
+					ui.Text(c, gm.Branch).FontSize(11).FontWeight(600).TextColor(tc.Accent)
 				})
+				if branchPill.Clicked() {
+					a.ShowBranchModal = true
+				}
 			}
+
 			ui.Box(c).Grow(1)
-			refreshBtn := ui.Button(c, "")
-			refreshBtn.Children(func() {
-				TablerIcon(c, icons.TablerRefresh, 13)
+
+			// Fetch button
+			fetchBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
+				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			fetchBtn.Children(func() {
+				ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(tc.IconMuted)
+				ui.Text(c, "Fetch").FontSize(10).TextColor(tc.Text)
 			})
+			if fetchBtn.Hovered() {
+				fetchBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if fetchBtn.Clicked() {
+				go func() {
+					_ = gm.Fetch()
+					c.AddToast(ui.Toast{Title: "Fetched Remotes", Type: "info"})
+				}()
+			}
+
+			// Pull button
+			pullBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
+				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			pullBtn.Children(func() {
+				ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(tc.IconMuted)
+				ui.Text(c, "Pull").FontSize(10).TextColor(tc.Text)
+			})
+			if pullBtn.Hovered() {
+				pullBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if pullBtn.Clicked() {
+				go func() {
+					err := gm.Pull()
+					if err != nil {
+						c.AddToast(ui.Toast{Title: "Pull Error", Description: err.Error(), Type: "error"})
+					} else {
+						c.AddToast(ui.Toast{Title: "Pull Completed", Type: "success"})
+					}
+				}()
+			}
+
+			// Push button
+			pushBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
+				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			pushBtn.Children(func() {
+				ui.Icon(c, icons.TablerArrowUp).Width(10).Height(10).TextColor(tc.IconMuted)
+				ui.Text(c, "Push").FontSize(10).TextColor(tc.Text)
+			})
+			if pushBtn.Hovered() {
+				pushBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if pushBtn.Clicked() {
+				go func() {
+					err := gm.Push()
+					if err != nil {
+						c.AddToast(ui.Toast{Title: "Push Error", Description: err.Error(), Type: "error"})
+					} else {
+						c.AddToast(ui.Toast{Title: "Pushed to Remote", Type: "success"})
+					}
+				}()
+			}
+
+			// Refresh button
+			refreshBtn := ui.Row(c).Size(24, 24).Radius(4).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			refreshBtn.Children(func() {
+				ui.Icon(c, icons.TablerRefresh).Width(11).Height(11).TextColor(tc.IconMuted)
+			})
+			if refreshBtn.Hovered() {
+				refreshBtn.Background(tc.Text.Alpha(0.06))
+			}
 			if refreshBtn.Clicked() {
 				go gm.Refresh()
 			}
 		})
 
 		// Subtabs: Changes, History, Branches
-		ui.ScrollHorizontal(c).Grow(1).Gap(4).Padding(6, 10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.Row(c).Height(34).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
 			subtabs := []struct {
 				Tab   int
 				Label string
@@ -449,19 +825,16 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 			}
 			for _, st := range subtabs {
 				thisTab := st
-				var btn ui.Element
-				if gm.ActiveTab == thisTab.Tab {
-					btn = ui.PrimaryButton(c, "")
-				} else {
-					btn = ui.Button(c, "")
-				}
-				btn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						TablerIcon(c, thisTab.Icon, 12)
-						ui.Text(c, thisTab.Label).FontSize(11).Bold()
-					})
+				isSel := gm.ActiveTab == thisTab.Tab
+				tabBtn := ui.Row(c.Key("subtab-"+thisTab.Label)).Height(24).Radius(4).Padding(0, 8).Gap(4).AlignItems(ui.Center)
+				tabBtn.Children(func() {
+					ui.Icon(c, thisTab.Icon).Width(11).Height(11).TextColor(tc.IconMuted)
+					ui.Text(c, thisTab.Label).FontSize(11).FontWeight(500)
 				})
-				if btn.Clicked() {
+				if isSel {
+					tabBtn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+				}
+				if tabBtn.Clicked() {
 					gm.ActiveTab = thisTab.Tab
 				}
 			}
@@ -471,34 +844,84 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 		case git.GitTabChanges:
 			a.renderChangesPane(c)
 		case git.GitTabHistory:
-			ui.Scroll(c).Grow(1).Padding(8).Children(func() {
-				for _, commit := range gm.Commits {
-					cm := commit
-					ui.Column(c.Key("commit-"+cm.Hash)).Padding(6, 8).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-						ui.Text(c, cm.Message).FontSize(12).Bold().SingleLine()
-						ui.Row(c).Gap(8).Children(func() {
-							ui.Text(c, cm.AuthorName).FontSize(10).TextColor(t.TextMuted)
-							ui.Text(c, cm.ShortHash).FontSize(10).TextColor(t.Accent)
+			ui.Column(c).Grow(1).FillHeight().Children(func() {
+				// Commit List
+				ui.Scroll(c).Height(minF(220, float32(len(gm.Commits))*38+10)).Children(func() {
+					ui.Column(c).Padding(4, 6).Gap(2).Children(func() {
+						for _, commit := range gm.Commits {
+							cm := commit
+							isSel := gm.SelectedCommitHash == cm.Hash
+							row := ui.Column(c.Key("commit-"+cm.Hash)).Radius(6).Padding(6, 8).Gap(2)
+							row.Children(func() {
+								ui.Text(c, cm.Message).FontSize(11).FontWeight(600).SingleLine().TextColor(tc.Text)
+								ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+									ui.Text(c, cm.AuthorName).FontSize(10).TextColor(tc.TextMuted)
+									ui.Box(c).Grow(1)
+									ui.Text(c, cm.ShortHash).FontSize(10).FontWeight(600).TextColor(tc.Accent)
+								})
+							})
+							if isSel {
+								row.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+							} else if row.Hovered() {
+								row.Background(tc.Text.Alpha(0.04))
+							}
+							if row.Clicked() {
+								gm.SelectCommit(cm.Hash)
+							}
+						}
+					})
+				})
+
+				// Commit Diff Viewer (when a commit is selected)
+				if gm.SelectedCommitHash != "" {
+					ui.Column(c).Grow(1).FillHeight().Children(func() {
+						ui.Row(c).Height(28).Padding(0, 8).Gap(6).AlignItems(ui.Center).
+							Background(tc.SurfaceRaised).BorderWidth(1, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+							ui.Icon(c, icons.TablerGitCommit).Width(11).Height(11).TextColor(tc.Accent)
+							shortH := gm.SelectedCommitHash
+							if len(shortH) > 8 {
+								shortH = shortH[:8]
+							}
+							ui.Text(c, fmt.Sprintf("Commit Diff (%s)", shortH)).FontSize(11).FontWeight(600).TextColor(tc.Text)
 						})
+
+						if gm.SelectedCommitDiff != "" {
+							d := a.Editor.OpenPatchDiff("commit.diff", gm.SelectedCommitDiff, a.ThemeMgr)
+							if d != nil {
+								mygoeditor.DiffView(c, d).Grow(1).FillWidth()
+							}
+						} else {
+							ui.Column(c).Grow(1).Center().Children(func() {
+								ui.Text(c, "Loading commit diff...").FontSize(11).TextColor(tc.TextMuted)
+							})
+						}
 					})
 				}
 			})
 		case git.GitTabBranches:
 			ui.Scroll(c).Grow(1).Padding(8).Children(func() {
-				for _, b := range gm.Branches {
-					branch := b
-					row := ui.Row(c.Key("branch-"+branch)).Padding(6, 8).Radius(6).Gap(6).AlignItems(ui.Center)
-					row.Children(func() {
-						TablerIcon(c, icons.TablerGitBranch, 13)
-						ui.Text(c, branch).FontSize(12).Grow(1)
-					})
-					if branch == gm.Branch {
-						row.Background(t.Accent)
+				ui.Column(c).Gap(2).Children(func() {
+					for _, b := range gm.Branches {
+						branch := b
+						isCurrent := branch == gm.Branch
+						row := ui.Row(c.Key("branch-"+branch)).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
+						row.Children(func() {
+							ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.IconMuted)
+							ui.Text(c, branch).FontSize(11).FontWeight(500).Grow(1).SingleLine()
+							if isCurrent {
+								Badge(c, tc, "HEAD", tc.Accent)
+							}
+						})
+						if isCurrent {
+							row.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+						} else if row.Hovered() {
+							row.Background(tc.Text.Alpha(0.04))
+						}
+						if row.Clicked() && !isCurrent {
+							a.checkoutBranch(branch)
+						}
 					}
-					if row.Clicked() {
-						a.checkoutBranch(branch)
-					}
-				}
+				})
 			})
 		}
 	})

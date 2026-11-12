@@ -65,3 +65,48 @@ func (b *BoardManager) Refresh() {
 	}
 	b.Data = data
 }
+
+// AddTask creates a new task on the board.
+func (b *BoardManager) AddTask(title, description, status, priority string) (*internalboard.Task, error) {
+	if b == nil || b.manager == nil {
+		return nil, nil
+	}
+	task := internalboard.Task{
+		Title:       title,
+		Description: description,
+		Status:      status,
+		Priority:    priority,
+	}
+	saved, err := b.manager.SaveTask(b.RootDir, task)
+	if err != nil {
+		return nil, err
+	}
+	b.Refresh()
+	return &saved, nil
+}
+
+// MoveTaskStatus transitions a task to a new kanban column.
+func (b *BoardManager) MoveTaskStatus(taskID, newStatus string) error {
+	if b == nil || b.manager == nil {
+		return nil
+	}
+	_, err := b.manager.MoveTaskStatus(b.RootDir, taskID, newStatus)
+	if err != nil {
+		return err
+	}
+	b.Refresh()
+	return nil
+}
+
+// DeleteTask removes a task from the board.
+func (b *BoardManager) DeleteTask(taskID string) error {
+	if b == nil || b.manager == nil {
+		return nil
+	}
+	err := b.manager.DeleteTask(b.RootDir, taskID)
+	if err != nil {
+		return err
+	}
+	b.Refresh()
+	return nil
+}

@@ -55,6 +55,15 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowSSHQuickMenu {
 		a.renderSSHQuickMenuModal(c)
 	}
+	if a.ShowUsageModal {
+		a.renderUsageQuotaModal(c)
+	}
+	if a.ShowRulesModal {
+		a.renderUnifiedRulesModal(c)
+	}
+	if a.ShowNewBoardTaskModal {
+		a.renderNewBoardTaskModal(c)
+	}
 }
 
 func (a *AppUI) renderPaletteModal(c *ui.Context) {
@@ -1354,5 +1363,170 @@ func (a *AppUI) renderBranchModal(c *ui.Context) {
 					})
 				})
 			})
+	})
+}
+
+// renderNewBoardTaskModal renders the task creation dialog for the Workflow Board.
+func (a *AppUI) renderNewBoardTaskModal(c *ui.Context) {
+	if !a.ShowNewBoardTaskModal {
+		return
+	}
+	tc := a.ThemeMgr.Colors()
+
+	ui.Modal(c, &a.ShowNewBoardTaskModal, func() {
+		modal := ui.Column(c).Width(460).Radius(16).Background(tc.Surface).
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip()
+
+		modal.Children(func() {
+			// Header
+			ui.Row(c).Height(48).Padding(0, 18).Gap(10).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.6)).
+				Background(tc.SurfaceRaised.Alpha(0.5)).Children(func() {
+				ui.Box(c).Size(28, 28).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+					Background(tc.Accent.Alpha(0.12)).Children(func() {
+					ui.Icon(c, icons.TablerLayoutKanban).Width(14).Height(14).TextColor(tc.Accent)
+				})
+				ui.Text(c, "New Workflow Task").FontSize(13).FontWeight(600).TextColor(tc.Text)
+				ui.Box(c).Grow(1)
+				closeBtn := ui.Row(c).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+				closeBtn.Children(func() {
+					ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
+				})
+				if closeBtn.Hovered() {
+					closeBtn.Background(tc.Text.Alpha(0.06))
+				}
+				if closeBtn.Clicked() {
+					a.ShowNewBoardTaskModal = false
+				}
+			})
+
+			// Form body
+			ui.Column(c).Padding(16, 18).Gap(12).Children(func() {
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "TITLE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+					ui.TextInput(c, &a.NewBoardTaskTitle).Placeholder("e.g. Implement user authentication").Grow(1)
+				})
+
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "DESCRIPTION").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+					ui.TextInput(c, &a.NewBoardTaskDesc).Placeholder("Details, context, or acceptance criteria...").Grow(1)
+				})
+
+				// Priority selector
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "PRIORITY").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(6).Children(func() {
+						priorities := []struct {
+							id    string
+							label string
+							color ui.Color
+						}{
+							{"low", "Low", tc.TextMuted},
+							{"medium", "Medium", tc.Accent},
+							{"high", "High", tc.Warning},
+							{"urgent", "Urgent", tc.Error},
+						}
+						if a.NewBoardTaskPriority == "" {
+							a.NewBoardTaskPriority = "medium"
+						}
+						for _, p := range priorities {
+							thisP := p
+							isSel := a.NewBoardTaskPriority == thisP.id
+							pill := ui.Row(c.Key("prio-"+thisP.id)).Height(28).Radius(6).Padding(0, 10).AlignItems(ui.Center)
+							pill.Children(func() {
+								ui.Box(c).Size(6, 6).Radius(3).Background(thisP.color)
+								ui.Text(c, thisP.label).FontSize(11).FontWeight(500)
+							})
+							if isSel {
+								pill.Background(thisP.color.Alpha(0.18)).BorderWidth(1).BorderColor(thisP.color.Alpha(0.5))
+							} else {
+								pill.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+							}
+							if pill.Clicked() {
+								a.NewBoardTaskPriority = thisP.id
+							}
+						}
+					})
+				})
+
+				// Status column selector
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "COLUMN").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(6).Children(func() {
+						statuses := []struct {
+							id    string
+							label string
+						}{
+							{"todo", "To Do"},
+							{"in_progress", "In Progress"},
+							{"in_review", "In Review"},
+							{"done", "Done"},
+						}
+						if a.NewBoardTaskStatus == "" {
+							a.NewBoardTaskStatus = "todo"
+						}
+						for _, s := range statuses {
+							thisS := s
+							isSel := a.NewBoardTaskStatus == thisS.id
+							pill := ui.Row(c.Key("col-"+thisS.id)).Height(28).Radius(6).Padding(0, 10).AlignItems(ui.Center)
+							pill.Children(func() {
+								ui.Text(c, thisS.label).FontSize(11).FontWeight(500)
+							})
+							if isSel {
+								pill.Background(tc.Accent.Alpha(0.18)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.5))
+							} else {
+								pill.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+							}
+							if pill.Clicked() {
+								a.NewBoardTaskStatus = thisS.id
+							}
+						}
+					})
+				})
+			})
+
+			// Footer actions
+			ui.Row(c).Padding(12, 18).AlignItems(ui.Center).
+				BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.6)).
+				Background(tc.SurfaceRaised.Alpha(0.3)).Children(func() {
+				ui.Box(c).Grow(1)
+				cancelBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).AlignItems(ui.Center).Justify(ui.Center).
+					Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+				cancelBtn.Children(func() {
+					ui.Text(c, "Cancel").FontSize(11).TextColor(tc.TextMuted)
+				})
+				if cancelBtn.Clicked() {
+					a.ShowNewBoardTaskModal = false
+				}
+
+				createBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 14).Gap(5).AlignItems(ui.Center).Justify(ui.Center).
+					Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
+				createBtn.Children(func() {
+					ui.Icon(c, icons.TablerPlus).Width(12).Height(12).TextColor(ui.RGBA(255, 255, 255, 1.0))
+					ui.Text(c, "Create Task").FontSize(11).FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1.0))
+				})
+				if createBtn.Hovered() {
+					createBtn.Background(tc.Accent.Alpha(0.85))
+				}
+				if createBtn.Clicked() {
+					if strings.TrimSpace(a.NewBoardTaskTitle) != "" {
+						if a.Board == nil {
+							a.RefreshBoard()
+						}
+						if a.Board != nil {
+							_, err := a.Board.AddTask(a.NewBoardTaskTitle, a.NewBoardTaskDesc, a.NewBoardTaskStatus, a.NewBoardTaskPriority)
+							if err != nil {
+								c.AddToast(ui.Toast{Title: "Error", Description: err.Error(), Type: "error"})
+							} else {
+								c.AddToast(ui.Toast{Title: "Task Created", Description: a.NewBoardTaskTitle, Type: "success"})
+								a.NewBoardTaskTitle = ""
+								a.NewBoardTaskDesc = ""
+								a.ShowNewBoardTaskModal = false
+							}
+						}
+					}
+				}
+			})
+		})
 	})
 }

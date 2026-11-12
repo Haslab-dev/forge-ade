@@ -158,6 +158,41 @@ func (e *Engine) GetGitDiff(repoPath, path string) string {
 	return diff
 }
 
+// GitPush pushes committed changes to the upstream branch.
+func (e *Engine) GitPush(repoPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return e.GitEngine.Push(ctx, repoPath)
+}
+
+// GitFetch fetches latest references from remotes.
+func (e *Engine) GitFetch(repoPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_, err := e.GitEngine.Fetch(ctx, repoPath)
+	return err
+}
+
+// GitPull fetches and merges from the tracking branch.
+func (e *Engine) GitPull(repoPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "pull")
+	cmd.Dir = repoPath
+	return cmd.Run()
+}
+
+// GetCommitDiff returns the diff of a specific commit hash.
+func (e *Engine) GetCommitDiff(repoPath, hash string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	diff, err := e.GitEngine.GetCommitDiff(ctx, repoPath, hash)
+	if err != nil {
+		return ""
+	}
+	return diff
+}
+
 // GetGitCommitGraph returns commit history log.
 func (e *Engine) GetGitCommitGraph(repoPath string, limit int) (*git.CommitGraphResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

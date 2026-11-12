@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
@@ -207,67 +209,122 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 }
 
 func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
-	label := "Worked"
 	running := !m.Done
-	if running {
-		label = "Working"
-	} else if m.ThinkingTimeSec > 0 {
-		label = fmt.Sprintf("Worked for %.0fs", m.ThinkingTimeSec)
+	totalSteps := len(m.Tools)
+	if m.Thinking != "" || m.IsThinking {
+		totalSteps++
 	}
-	summary := ""
-	if len(m.Tools) > 0 {
-		summary = summarizeTools(m.Tools)
+
+	label := "Worked"
+	if running {
+		label = "Working…"
+		if m.ThinkingTimeSec > 0 {
+			label = fmt.Sprintf("Working (%.0fs)…", m.ThinkingTimeSec)
+		}
+	} else {
+		durationSec := m.ThinkingTimeSec
+		if durationSec <= 0 {
+			dur := len(m.Tools) * 2
+			if dur < 1 {
+				dur = 1
+			}
+			durationSec = float64(dur)
+		}
+		if totalSteps > 0 {
+			stepWord := "steps"
+			if totalSteps == 1 {
+				stepWord = "step"
+			}
+			label = fmt.Sprintf("Worked for %.0fs · Done in %d %s", durationSec, totalSteps, stepWord)
+		} else {
+			label = fmt.Sprintf("Worked for %.0fs", durationSec)
+		}
 	}
 
 	open := m.ShowTools || running
 	pill := ui.Row(c).Radius(8).Padding(4, 10).Gap(6).AlignItems(ui.Center).
-		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).
+		Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.04))
 	pill.Children(func() {
 		if running {
-			ui.Icon(c, icons.TablerLoader).Width(14).Height(14).TextColor(tc.Accent)
-			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(tc.Accent)
+			ui.Icon(c, icons.TablerLoader).Width(13).Height(13).TextColor(tc.Accent)
+			ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(tc.Accent)
 		} else {
-			done := ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Success.Alpha(0.15))
-			done.Children(func() {
+			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Success.Alpha(0.15)).Children(func() {
 				ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
 			})
-			ui.Text(c, label).FontSize(12).FontWeight(500)
-		}
-		if summary != "" {
-			ui.Text(c, "· "+summary).FontSize(12).TextColor(tc.TextMuted)
+			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(tc.Text)
 		}
 		ui.Box(c).Grow(1)
-		chev := icons.TablerChevronDown
-		if open && !running {
-			chev = icons.TablerChevronUp
+		chev := icons.TablerChevronRight
+		if open {
+			chev = icons.TablerChevronDown
 		}
 		ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
 	})
+	if pill.Hovered() {
+		pill.Background(tc.SurfaceRaised)
+	}
 	if pill.Clicked() {
 		m.ShowTools = !m.ShowTools
 	}
 }
 
 func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
-	label := "Thought Process"
-	if m.ThinkingTimeSec > 0 {
-		label = fmt.Sprintf("Thinking (%.1fs)", m.ThinkingTimeSec)
+	isThinking := m.IsThinking && !m.Done
+	tokens := len(m.Thinking) / 4
+	if tokens < 1 && m.Thinking != "" {
+		tokens = 1
 	}
 
-	ui.Column(c).FillWidth().Children(func() {
-		header := ui.Row(c).Radius(6).Padding(2, 4).Gap(6).AlignItems(ui.Center).MinHeight(24)
+	label := "Thought"
+	if isThinking {
+		label = "Thinking…"
+		if m.ThinkingTimeSec > 0 {
+			label = fmt.Sprintf("Thinking for %.0fs…", m.ThinkingTimeSec)
+		}
+	} else {
+		durationText := "a few seconds"
+		if m.ThinkingTimeSec > 0 {
+			durationText = fmt.Sprintf("%.1fs", m.ThinkingTimeSec)
+		}
+		if tokens > 0 {
+			label = fmt.Sprintf("Thought · %s · %d tokens", durationText, tokens)
+		} else {
+			label = fmt.Sprintf("Thought · %s", durationText)
+		}
+	}
+
+	ui.Column(c).FillWidth().Gap(3).Children(func() {
+		header := ui.Row(c).Radius(6).Padding(3, 6).Gap(6).AlignItems(ui.Center).MinHeight(26)
 		header.Children(func() {
-			ic := ui.Icon(c, icons.TablerBrain).Width(14).Height(14).TextColor(tc.IconMuted)
-			lbl := ui.Text(c, label).FontSize(11).TextColor(tc.SecondaryLabel)
-			if m.IsThinking {
-				ic.TextColor(tc.Accent)
-				lbl.TextColor(tc.Accent)
+			brainIcon := ui.Icon(c, icons.TablerBrain).Width(14).Height(14).TextColor(tc.IconMuted)
+			labelColor := tc.SecondaryLabel
+			if isThinking {
+				brainIcon.TextColor(tc.Accent)
+				labelColor = tc.Accent
 			}
+			ui.Text(c, label).FontSize(11).TextColor(labelColor).FontWeight(500)
 			ui.Box(c).Grow(1)
-			chev := icons.TablerChevronDown
+
+			if m.Thinking != "" {
+				copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				copyBtn.Children(func() {
+					ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
+				})
+				if copyBtn.Hovered() {
+					copyBtn.Background(tc.Text.Alpha(0.06))
+				}
+				if copyBtn.Clicked() {
+					mygo.Clipboard.WriteText(m.Thinking)
+					c.AddToast(ui.Toast{Title: "Copied Reasoning", Description: "Chain of thought copied to clipboard", Type: "success"})
+				}
+			}
+
+			chev := icons.TablerChevronRight
 			if m.ShowThinking {
-				chev = icons.TablerChevronUp
+				chev = icons.TablerChevronDown
 			}
 			ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
 		})
@@ -279,68 +336,212 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 		}
 
 		if m.ShowThinking && m.Thinking != "" {
-			ui.Box(c).Padding(10).Radius(8).Background(tc.Surface.Alpha(0.3)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
-				ui.Text(c, m.Thinking).FontSize(11).TextColor(tc.TextMuted)
+			card := ui.Column(c).Padding(10, 12).Radius(8).
+				Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Gap(8)
+			card.Children(func() {
+				ui.Text(c, m.Thinking).FontSize(11).TextColor(tc.TextMuted).Selectable()
+				ui.Row(c).Padding(6, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.3)).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Chain of Thought (CoT)").FontSize(10).TextColor(tc.TextMuted)
+					ui.Box(c).Grow(1)
+					ui.Text(c, fmt.Sprintf("%d tokens", tokens)).FontSize(10).TextColor(tc.TextMuted)
+				})
 			})
 		}
 	})
 }
 
 func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
-	ui.Column(c).FillWidth().Gap(2).Children(func() {
-		for _, tool := range m.Tools {
-			thisTool := tool
-			open := m.ShowTools
-			row := ui.Row(c.Key("tool-"+fmt.Sprint(thisTool.ID))).Radius(6).Padding(2, 4).Gap(6).AlignItems(ui.Center).MinHeight(24)
-			row.Children(func() {
-				chev := icons.TablerChevronRight
-				if open {
-					chev = icons.TablerChevronDown
+	if len(m.Tools) == 0 {
+		return
+	}
+
+	summary, hasRunning, hasFailed := summarizeTools(m.Tools)
+
+	ui.Column(c).FillWidth().Gap(3).Children(func() {
+		// Group summary row for multi-tool execution
+		if len(m.Tools) > 1 {
+			groupBar := ui.Row(c).Height(30).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
+				Background(tc.SurfaceRaised.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			groupBar.Children(func() {
+				if hasRunning {
+					ui.Icon(c, icons.TablerLoader).Width(13).Height(13).TextColor(tc.Accent)
+				} else if hasFailed {
+					ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Error)
+				} else {
+					ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
+						Background(tc.Success.Alpha(0.15)).Children(func() {
+						ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
+					})
 				}
-				ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
-				toolIcon := icons.TablerTerminal
-				nameLower := strings.ToLower(thisTool.ToolName)
-				if strings.Contains(nameLower, "read") {
-					toolIcon = icons.TablerFileText
-				} else if strings.Contains(nameLower, "edit") || strings.Contains(nameLower, "write") {
-					toolIcon = icons.TablerFilePen
-				} else if strings.Contains(nameLower, "search") {
-					toolIcon = icons.TablerSearch
+
+				summaryColor := tc.Text
+				if hasRunning {
+					summaryColor = tc.Accent
 				}
-				ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
-				ui.Text(c, thisTool.ToolName).FontSize(13)
-				preview := thisTool.Command
-				if len(preview) > 60 {
-					preview = preview[:57] + "…"
-				}
-				if preview != "" {
-					ui.Text(c, preview).FontSize(11).TextColor(tc.TextMuted).MaxWidth(380)
-				}
+				ui.Text(c, summary).FontSize(11).FontWeight(500).TextColor(summaryColor)
+
 				ui.Box(c).Grow(1)
-				switch thisTool.Status {
-				case "completed":
-					ui.Text(c, "done").FontSize(10).TextColor(tc.Success)
-				case "failed":
-					ui.Text(c, "failed").FontSize(10).TextColor(tc.Error)
-				default:
-					ui.Text(c, "running").FontSize(10).TextColor(tc.Accent)
-				}
+
+				// Step toggle pill
+				stepToggle := ui.Row(c).Radius(4).Padding(2, 6).Gap(4).AlignItems(ui.Center).
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+				stepToggle.Children(func() {
+					stepLabel := fmt.Sprintf("Show %d steps", len(m.Tools))
+					if m.ShowTools {
+						stepLabel = fmt.Sprintf("Hide %d steps", len(m.Tools))
+					}
+					ui.Text(c, stepLabel).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					chev := icons.TablerChevronRight
+					if m.ShowTools {
+						chev = icons.TablerChevronDown
+					}
+					ui.Icon(c, chev).Width(11).Height(11).TextColor(tc.IconMuted)
+				})
 			})
-			if row.Hovered() {
-				row.Background(tc.Text.Alpha(0.04))
+			if groupBar.Hovered() {
+				groupBar.Background(tc.SurfaceRaised)
 			}
-			if row.Clicked() {
+			if groupBar.Clicked() {
 				m.ShowTools = !m.ShowTools
 			}
+		}
 
-			if open && thisTool.Output != "" {
-				ui.Box(c).Padding(6, 0, 6, 30).
-					BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
-					out := thisTool.Output
-					if len(out) > 600 {
-						out = out[:600] + "…"
+		// Individual tool rows
+		if m.ShowTools || len(m.Tools) == 1 {
+			for _, tool := range m.Tools {
+				thisTool := tool
+				args := parseToolArgs(thisTool.Command, thisTool.ToolName)
+				nl := strings.ToLower(thisTool.ToolName)
+				isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "command") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
+				isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
+				isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
+				isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find")
+
+				toolIcon := icons.TablerTerminal
+				if isRead {
+					toolIcon = icons.TablerFileText
+				} else if isEdit {
+					toolIcon = icons.TablerFilePen
+				} else if isSearch {
+					toolIcon = icons.TablerSearch
+				}
+
+				displayLabel := thisTool.ToolName
+				detailText := ""
+				if isBash {
+					cmdText := extractShellCommand(thisTool.Command, args.Cmd)
+					if cmdText != "" {
+						detailText = "$ " + cmdText
 					}
-					ui.Text(c, out).FontSize(11).TextColor(tc.TextMuted)
+				} else if (isRead || isEdit) && args.Path != "" {
+					detailText = args.Path
+				} else if args.Cmd != "" {
+					detailText = args.Cmd
+				} else if args.Path != "" {
+					detailText = args.Path
+				}
+
+				if len(detailText) > 65 {
+					detailText = detailText[:62] + "…"
+				}
+
+				toolCard := ui.Column(c.Key("tool-"+thisTool.ID)).Radius(8).
+					Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+
+				toolCard.Children(func() {
+					// Row header
+					row := ui.Row(c).Height(30).Padding(0, 8).Gap(7).AlignItems(ui.Center)
+					row.Children(func() {
+						ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
+						ui.Text(c, displayLabel).FontSize(12).FontWeight(500).TextColor(tc.Text)
+						if detailText != "" {
+							ui.Text(c, detailText).FontSize(11).TextColor(tc.TextMuted).MaxWidth(420)
+						}
+						ui.Box(c).Grow(1)
+
+						// Status indicator
+						switch thisTool.Status {
+						case "completed":
+							ui.Row(c).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+								Background(tc.Success.Alpha(0.15)).Children(func() {
+								ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
+							})
+						case "failed":
+							ui.Row(c).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+								Background(tc.Error.Alpha(0.15)).Children(func() {
+								ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.Error)
+							})
+						default:
+							ui.Icon(c, icons.TablerLoader).Width(12).Height(12).TextColor(tc.Accent)
+						}
+
+						chev := icons.TablerChevronRight
+						if thisTool.Expanded {
+							chev = icons.TablerChevronDown
+						}
+						ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+					})
+					if row.Hovered() {
+						row.Background(tc.Text.Alpha(0.04))
+					}
+					if row.Clicked() {
+						thisTool.Expanded = !thisTool.Expanded
+					}
+
+					// Expanded detail view
+					if thisTool.Expanded {
+						ui.Column(c).Padding(8, 10).Gap(6).
+							BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
+							Background(tc.Canvas.Alpha(0.6)).Children(func() {
+							// For bash tools, render terminal console style
+							if isBash {
+								cmdStr := args.Cmd
+								if cmdStr == "" {
+									cmdStr = thisTool.Command
+								}
+								ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+									ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
+									ui.Text(c, cmdStr).FontSize(11).TextColor(tc.Text).Grow(1).Selectable()
+									if thisTool.Output != "" {
+										copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+										copyBtn.Children(func() {
+											ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
+										})
+										if copyBtn.Hovered() {
+											copyBtn.Background(tc.Text.Alpha(0.06))
+										}
+										if copyBtn.Clicked() {
+											mygo.Clipboard.WriteText(thisTool.Output)
+											c.AddToast(ui.Toast{Title: "Copied Output", Type: "success"})
+										}
+									}
+								})
+							}
+
+							if thisTool.Output != "" {
+								outText := thisTool.Output
+								isErr := strings.Contains(outText, "<tool_use_error>") || thisTool.Status == "failed"
+								boxBg := tc.Surface
+								boxBorder := tc.Border.Alpha(0.5)
+								textColor := tc.TextMuted
+								if isErr {
+									boxBg = tc.Error.Alpha(0.08)
+									boxBorder = tc.Error.Alpha(0.3)
+									textColor = tc.Error
+									outText = strings.ReplaceAll(outText, "<tool_use_error>", "")
+									outText = strings.ReplaceAll(outText, "</tool_use_error>", "")
+									outText = strings.TrimSpace(outText)
+								}
+								if len(outText) > 1200 {
+									outText = outText[:1200] + "\n… [truncated]"
+								}
+								ui.Box(c).Padding(8).Radius(6).Background(boxBg).
+									BorderWidth(1).BorderColor(boxBorder).Children(func() {
+									ui.Text(c, outText).FontSize(11).TextColor(textColor).Selectable()
+								})
+							}
+						})
+					}
 				})
 			}
 		}
@@ -486,27 +687,6 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 	inset, rightInset := a.chatLaneInset(c)
 
 	ui.Column(c).Padding(0, inset, 12, rightInset).Gap(6).Children(func() {
-		// Slash commands row
-		ui.Row(c).Gap(4).Wrap().Children(func() {
-			for _, cmd := range []string{"/goal", "/plan", "/tasks", "/model", "/clear", "/status", "/help"} {
-				thisCmd := cmd
-				chip := ui.Row(c.Key("slash-"+thisCmd)).Radius(999).Padding(3, 10).AlignItems(ui.Center).
-					BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-				chip.Children(func() {
-					ui.Text(c, thisCmd).FontSize(11).TextColor(tc.TextMuted)
-				})
-				if chip.Hovered() {
-					chip.Background(tc.Text.Alpha(0.04))
-				}
-				if chip.Clicked() {
-					as.InputText = thisCmd + " "
-				}
-			}
-			ui.Box(c).Grow(1)
-			tokens, pct := as.ContextUsage()
-			ui.Text(c, fmt.Sprintf("%.1fk tokens (%d%%)", float32(tokens)/1000.0, pct)).FontSize(10).TextColor(tc.TextMuted)
-		})
-
 		// Glass composer card
 		a.renderComposerCard(c, tc, false)
 
@@ -703,7 +883,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			ui.Box(c).Grow(1)
 
 			// Context Window Usage Gauge (Right side)
-			tokens, pct := as.ContextUsage()
+			_, pct := as.ContextUsage()
 			gaugeBtn := ui.Row(c).Height(24).Radius(999).Padding(0, 8).Gap(4).AlignItems(ui.Center)
 			gaugeBtn.Children(func() {
 				dotColor := tc.Success
@@ -719,11 +899,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				gaugeBtn.Background(tc.Text.Alpha(0.04))
 			}
 			if gaugeBtn.Clicked() {
-				c.AddToast(ui.Toast{
-					Title:       "Context Window Usage",
-					Description: fmt.Sprintf("%.1fk tokens used of limit (%d%%)", float32(tokens)/1000.0, pct),
-					Type:        "info",
-				})
+				a.ShowUsageModal = true
 			}
 
 			// Send / Steer / Queue / Stop controls
@@ -1070,19 +1246,179 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 	})
 }
 
-func summarizeTools(tools []*agent.ToolExecution) string {
-	counts := map[string]int{}
-	order := []string{}
+func summarizeTools(tools []*agent.ToolExecution) (string, bool, bool) {
+	commands, reads, edits, searches, skills, others := 0, 0, 0, 0, 0, 0
+	hasRunning := false
+	hasFailed := false
+
 	for _, t := range tools {
-		name := t.ToolName
-		if counts[name] == 0 {
-			order = append(order, name)
+		if t.Status == "running" {
+			hasRunning = true
 		}
-		counts[name]++
+		if t.Status == "failed" || strings.Contains(t.Output, "<tool_use_error>") {
+			hasFailed = true
+		}
+
+		n := strings.ToLower(t.ToolName)
+		switch {
+		case strings.Contains(n, "bash") || strings.Contains(n, "shell") || strings.Contains(n, "command") || strings.Contains(n, "exec") || strings.Contains(n, "terminal") || strings.Contains(n, "run_command"):
+			commands++
+		case strings.Contains(n, "read") || strings.Contains(n, "view") || strings.Contains(n, "cat"):
+			reads++
+		case strings.Contains(n, "edit") || strings.Contains(n, "write") || strings.Contains(n, "patch") || strings.Contains(n, "create"):
+			edits++
+		case strings.Contains(n, "search") || strings.Contains(n, "grep") || strings.Contains(n, "find") || strings.Contains(n, "glob"):
+			searches++
+		case strings.Contains(n, "skill"):
+			skills++
+		default:
+			others++
+		}
 	}
-	parts := make([]string, 0, len(order))
-	for _, name := range order {
-		parts = append(parts, fmt.Sprintf("%s (%d)", name, counts[name]))
+
+	var parts []string
+	if commands > 0 {
+		if commands == 1 {
+			parts = append(parts, "Ran 1 command")
+		} else {
+			parts = append(parts, fmt.Sprintf("Ran %d commands", commands))
+		}
 	}
-	return strings.Join(parts, ", ")
+	if reads > 0 {
+		if reads == 1 {
+			parts = append(parts, "Read 1 file")
+		} else {
+			parts = append(parts, fmt.Sprintf("Read %d files", reads))
+		}
+	}
+	if edits > 0 {
+		if edits == 1 {
+			parts = append(parts, "Edited 1 file")
+		} else {
+			parts = append(parts, fmt.Sprintf("Edited %d files", edits))
+		}
+	}
+	if searches > 0 {
+		if searches == 1 {
+			parts = append(parts, "Ran 1 search")
+		} else {
+			parts = append(parts, fmt.Sprintf("Ran %d searches", searches))
+		}
+	}
+	if skills > 0 {
+		if skills == 1 {
+			parts = append(parts, "Used 1 skill")
+		} else {
+			parts = append(parts, fmt.Sprintf("Used %d skills", skills))
+		}
+	}
+	if others > 0 && len(parts) == 0 {
+		if others == 1 {
+			parts = append(parts, "Executed 1 tool")
+		} else {
+			parts = append(parts, fmt.Sprintf("Executed %d tools", others))
+		}
+	}
+
+	summary := strings.Join(parts, " · ")
+	if summary == "" {
+		summary = fmt.Sprintf("%d tool calls", len(tools))
+	}
+	return summary, hasRunning, hasFailed
+}
+
+type ParsedToolArgs struct {
+	Path      string
+	Cmd       string
+	Content   string
+	OldString string
+	NewString string
+}
+
+func parseToolArgs(raw string, toolName string) ParsedToolArgs {
+	var res ParsedToolArgs
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "{") {
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			for k, v := range m {
+				strVal, ok := v.(string)
+				if !ok {
+					continue
+				}
+				kl := strings.ToLower(k)
+				switch kl {
+				case "path", "filepath", "file_path", "file", "filename", "target_file", "targetfile", "target_path", "targetpath":
+					if res.Path == "" {
+						res.Path = cleanArgPath(strVal)
+					}
+				case "command", "cmd", "script", "commandline", "command_line":
+					if res.Cmd == "" {
+						res.Cmd = strVal
+					}
+				case "content", "text", "code", "body", "file_content":
+					if res.Content == "" {
+						res.Content = strVal
+					}
+				case "old_string", "oldstring", "old", "old_text", "target", "search":
+					if res.OldString == "" {
+						res.OldString = strVal
+					}
+				case "new_string", "newstring", "new", "new_text", "replacement", "replace":
+					if res.NewString == "" {
+						res.NewString = strVal
+					}
+				}
+			}
+		}
+	}
+
+	if res.Cmd == "" && res.Path == "" {
+		if raw != "{}" && !strings.HasPrefix(raw, "{\"") {
+			res.Cmd = raw
+		}
+	}
+
+	if res.Path == "" {
+		nl := strings.ToLower(toolName)
+		if strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "edit") || strings.Contains(nl, "write") {
+			cand := cleanArgPath(raw)
+			if !strings.HasPrefix(cand, "{") && len(cand) < 260 {
+				res.Path = cand
+			}
+		}
+	}
+
+	return res
+}
+
+func cleanArgPath(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, " \"'`{}[]\n\r\t")
+	for _, p := range []string{"path:", "filepath:", "file:", "command:", "content:", "\"path\":", "\"command\":"} {
+		if strings.HasPrefix(strings.ToLower(s), p) {
+			s = strings.TrimSpace(s[len(p):])
+			s = strings.Trim(s, " \"'`{}[]\n\r\t")
+		}
+	}
+	return s
+}
+
+func extractShellCommand(raw, fallback string) string {
+	candidate := strings.TrimSpace(fallback)
+	if candidate == "" {
+		candidate = strings.TrimSpace(raw)
+	}
+	if strings.HasPrefix(candidate, "{") {
+		p := parseToolArgs(candidate, "bash")
+		if p.Cmd != "" {
+			candidate = p.Cmd
+		}
+	}
+	lines := strings.Split(candidate, "\n")
+	first := strings.TrimSpace(lines[0])
+	if first != "" {
+		return first
+	}
+	return candidate
 }

@@ -146,6 +146,16 @@ type AppUI struct {
 	SSHSelectedConfigID     string
 	SSHIsChangingDir        bool
 	SSHNewDirPath           string
+	ShowUsageModal          bool
+	ShowRulesModal          bool
+	SelectedRulePath        string
+	RuleEditorContent       string
+	BoardSearchQuery        string
+	ShowNewBoardTaskModal   bool
+	NewBoardTaskTitle       string
+	NewBoardTaskDesc        string
+	NewBoardTaskPriority    string
+	NewBoardTaskStatus      string
 }
 
 // NewAppUI constructs the complete AppUI state tree.
@@ -407,6 +417,19 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			a.ShowRightDrawer = true
 			a.RightDrawerTab = RightTabBoard
 			a.RefreshBoard()
+		}},
+		{ID: "new-board-task", Label: "Board: Create New Task", Detail: "Add task to workflow kanban board", Run: func() {
+			a.NewBoardTaskTitle = ""
+			a.NewBoardTaskDesc = ""
+			a.NewBoardTaskPriority = "medium"
+			a.NewBoardTaskStatus = "todo"
+			a.ShowNewBoardTaskModal = true
+		}},
+		{ID: "usage-quota", Label: "Agent: Usage & Quota Limits", Detail: "Inspect context window tokens, weekly & 5-hour quotas", Run: func() {
+			a.ShowUsageModal = true
+		}},
+		{ID: "unified-rules", Label: "Rules: Unified Project Rules Manager", Detail: "Manage and sync AGENTS.md, .cursorrules, CLAUDE.md", Run: func() {
+			a.OpenRulesModal()
 		}},
 		{ID: "changes", Label: "Show Git Changes", Run: func() {
 			a.ShowRightDrawer = true
