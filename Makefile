@@ -25,22 +25,8 @@ build-dev:
 app: build
 	@mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
 	cp $(BINARY) "$(APP)/Contents/MacOS/forge-native"
-	cp pkg/ui/assets/icons/icons.icns "$(APP)/Contents/Resources/icons.icns"
-	@printf '%s\n' \
-		'<?xml version="1.0" encoding="UTF-8"?>' \
-		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-		'<plist version="1.0">' \
-		'<dict>' \
-		'	<key>CFBundleIdentifier</key><string>com.haslab.forge-native</string>' \
-		'	<key>CFBundleName</key><string>forge-native</string>' \
-		'	<key>CFBundleDisplayName</key><string>ForgeADE Native</string>' \
-		'	<key>CFBundleExecutable</key><string>forge-native</string>' \
-		'	<key>CFBundleIconFile</key><string>icons</string>' \
-		'	<key>CFBundlePackageType</key><string>APPL</string>' \
-		'	<key>CFBundleShortVersionString</key><string>0.1.0</string>' \
-		'	<key>CFBundleVersion</key><string>1</string>' \
-		'	<key>NSHighResolutionCapable</key><true/>' \
-		'</dict>' > "$(APP)/Contents/Info.plist"
+	cp packaging/Info.plist "$(APP)/Contents/Info.plist"
+	@codesign --force -s - "$(APP)" >/dev/null 2>&1 || true
 	@echo "Built $(APP)"
 
 test:
