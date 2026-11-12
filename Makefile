@@ -23,8 +23,9 @@ build-dev:
 
 # macOS .app bundle (stable bundle identity for the dock, dialogs and automation)
 app: build
-	@mkdir -p "$(APP)/Contents/MacOS"
+	@mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources"
 	cp $(BINARY) "$(APP)/Contents/MacOS/forge-native"
+	cp pkg/ui/assets/icons/icons.icns "$(APP)/Contents/Resources/icons.icns"
 	@printf '%s\n' \
 		'<?xml version="1.0" encoding="UTF-8"?>' \
 		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
@@ -34,6 +35,7 @@ app: build
 		'	<key>CFBundleName</key><string>forge-native</string>' \
 		'	<key>CFBundleDisplayName</key><string>ForgeADE Native</string>' \
 		'	<key>CFBundleExecutable</key><string>forge-native</string>' \
+		'	<key>CFBundleIconFile</key><string>icons</string>' \
 		'	<key>CFBundlePackageType</key><string>APPL</string>' \
 		'	<key>CFBundleShortVersionString</key><string>0.1.0</string>' \
 		'	<key>CFBundleVersion</key><string>1</string>' \

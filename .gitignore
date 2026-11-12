@@ -13,6 +13,7 @@ forge-ade-native
 *.out
 /tmp/
 *.png
+!pkg/ui/assets/**
 .forge/
 .workspace/
 

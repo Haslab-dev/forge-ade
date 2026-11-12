@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
 	nativeui "github.com/hasdev/forge-ade/forge-ade-native/pkg/ui"
 )
 
@@ -32,7 +33,7 @@ func main() {
 	log.Printf("Starting ForgeADE Native for workspace: %s", targetDir)
 
 	// Initialize native CGO-free domain engine (RakitKode + Git + DBViewer)
-	engine := nativeui.NewEngine("")
+	eng := engine.NewEngine("")
 
 	// Launch MyGo GPU Application
 	mygo.App.WhenReady(func() {
@@ -44,7 +45,7 @@ func main() {
 			{Role: mygo.RoleWindowMenu},
 		}))
 
-		appUI := nativeui.NewAppUI(engine, targetDir)
+		appUI := nativeui.NewAppUI(eng, targetDir)
 
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:          "ForgeADE Native",
