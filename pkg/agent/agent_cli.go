@@ -6,12 +6,35 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/agentclirc"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/terminal"
 )
+
+// AgentCLIDefinition describes an agent CLI known to ForgeADE.
+type AgentCLIDefinition struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Executable  string   `json:"executable"`
+	Args        []string `json:"args"`
+	Description string   `json:"description"`
+	Available   bool     `json:"available"`
+}
+
+// DefaultAgentCLIs registers the official fallback agent CLIs from ForgeADE.
+var DefaultAgentCLIs = []AgentCLIDefinition{
+	{ID: "antigravity", Name: "Antigravity CLI", Executable: "agy", Args: []string{}, Description: "Official Google Antigravity CLI agent"},
+	{ID: "claude-code", Name: "Claude Code", Executable: "claude", Args: []string{}, Description: "Anthropic Claude Code terminal agent"},
+	{ID: "codex", Name: "Codex", Executable: "codex", Args: []string{}, Description: "OpenAI Codex CLI coding assistant"},
+	{ID: "opencode", Name: "OpenCode", Executable: "opencode", Args: []string{}, Description: "OpenCode terminal coding assistant"},
+	{ID: "commandcode", Name: "Command Code", Executable: "cmd", Args: []string{}, Description: "Command Code terminal agent with taste learning"},
+	{ID: "ohmypi", Name: "OhMyPi", Executable: "omp", Args: []string{}, Description: "OhMyPi terminal agent framework"},
+	{ID: "pi", Name: "Pi", Executable: "pi", Args: []string{}, Description: "Minimalist autonomous terminal agent"},
+	{ID: "gemini", Name: "Gemini CLI", Executable: "gemini", Args: []string{}, Description: "Google Gemini terminal AI assistant"},
+}
 
 // AgentCLISession represents an interactive agent terminal task session.
 type AgentCLISession struct {
@@ -139,6 +162,57 @@ func (mgr *AgentCLIManager) InstalledConfigs() []agentclirc.RuntimeConfig {
 		}
 	}
 	return installed
+}
+
+// GetAgentCLIs returns all known Agent CLI definitions with updated availability.
+func (mgr *AgentCLIManager) GetAgentCLIs() []AgentCLIDefinition {
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+
+	var result []AgentCLIDefinition
+	seen := make(map[string]bool)
+
+	// Check standard defaults
+	for _, def := range DefaultAgentCLIs {
+		d := def
+		if _, err := exec.LookPath(d.Executable); err == nil {
+			d.Available = true
+		}
+		result = append(result, d)
+		seen[d.ID] = true
+	}
+
+	// Add any runtime configs discovered by agentclirc
+	for _, c := range mgr.Configs {
+		if seen[c.ID] {
+			continue
+		}
+		avail := c.Installed
+		if !avail {
+			if _, err := exec.LookPath(c.Executable); err == nil {
+				avail = true
+			}
+		}
+		result = append(result, AgentCLIDefinition{
+			ID:          c.ID,
+			Name:        c.Name,
+			Executable:  c.Executable,
+			Description: fmt.Sprintf("%s runtime CLI", c.Name),
+			Available:   avail,
+		})
+		seen[c.ID] = true
+	}
+
+	return result
+}
+
+// CreateSessionWithTitle launches an agent CLI task session with a custom title.
+func (mgr *AgentCLIManager) CreateSessionWithTitle(agentID, agentName, command string, args []string, cwd string, customTitle string) *AgentCLISession {
+	sess := mgr.CreateSession(agentID, agentName, command, args, cwd)
+	if sess != nil && strings.TrimSpace(customTitle) != "" {
+		sess.Title = strings.TrimSpace(customTitle)
+	}
+	return sess
 }
 
 // CreateSession launches an interactive agent CLI task session in the terminal.

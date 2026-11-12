@@ -121,6 +121,8 @@ type AgentState struct {
 	ReasoningEffort ReasoningEffort
 	AutoVerify      bool
 	SteerQueue      []string
+	AttachedFiles   []string
+	StashedPrompts  []string
 	ShowModelPicker bool
 	AvailableModels []string
 	NextID          int
@@ -138,21 +140,13 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 	as := &AgentState{
 		engine:          engine,
 		workspacePath:   workspacePath,
-		ActiveModel:     "Claude 3.7 Sonnet / gpt-4o",
+		ActiveModel:     "",
 		ActiveFilterTab: "active",
 		ExecutionMode:   ModeBypass,
 		ReasoningEffort: EffortMedium,
 		AutoVerify:      false,
 		SteerQueue:      make([]string, 0),
-		AvailableModels: []string{
-			"Claude 3.7 Sonnet (Anthropic)",
-			"Claude 3.5 Haiku (Anthropic)",
-			"GPT-4o (OpenAI)",
-			"o3-mini (OpenAI)",
-			"Gemini 2.0 Flash (Google)",
-			"DeepSeek R1 (DeepSeek)",
-			"Local Ollama (qwen2.5-coder)",
-		},
+		AvailableModels: []string{},
 		Invalidate: invalidate,
 		NextID:     1,
 		MdOpts: markdown.Options{
@@ -243,6 +237,45 @@ func (as *AgentState) CycleReasoningEffort() {
 		as.ReasoningEffort = EffortMax
 	default:
 		as.ReasoningEffort = EffortOff
+	}
+}
+
+// AttachFile adds a file path to the pending composer attachments.
+func (as *AgentState) AttachFile(path string) {
+	for _, p := range as.AttachedFiles {
+		if p == path {
+			return
+		}
+	}
+	as.AttachedFiles = append(as.AttachedFiles, path)
+}
+
+// RemoveAttachedFile deletes an attachment by index.
+func (as *AgentState) RemoveAttachedFile(idx int) {
+	if idx >= 0 && idx < len(as.AttachedFiles) {
+		as.AttachedFiles = append(as.AttachedFiles[:idx], as.AttachedFiles[idx+1:]...)
+	}
+}
+
+// ClearAttachedFiles clears all pending composer attachments.
+func (as *AgentState) ClearAttachedFiles() {
+	as.AttachedFiles = nil
+}
+
+// StashPrompt stashes the current composer draft text into memory.
+func (as *AgentState) StashPrompt() {
+	txt := strings.TrimSpace(as.InputText)
+	if txt != "" {
+		as.StashedPrompts = append(as.StashedPrompts, txt)
+		as.InputText = ""
+	}
+}
+
+// RestoreStash restores a stashed prompt back into the composer.
+func (as *AgentState) RestoreStash(idx int) {
+	if idx >= 0 && idx < len(as.StashedPrompts) {
+		as.InputText = as.StashedPrompts[idx]
+		as.StashedPrompts = append(as.StashedPrompts[:idx], as.StashedPrompts[idx+1:]...)
 	}
 }
 
@@ -555,24 +588,28 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 	_ = agentsession.SaveSessionDisk(string(bytes), wsPath)
 }
 
-// ActiveSession returns the currently selected agent session.
+// ActiveSession returns the currently selected agent session, or nil if on the New Agent UI / landing screen.
 func (as *AgentState) ActiveSession() *AgentSession {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
+	if as.ActiveSessionID == "" {
+		return nil
+	}
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID {
 			return s
 		}
-	}
-	if len(as.Sessions) > 0 {
-		return as.Sessions[0]
 	}
 	return nil
 }
 
 // syncActiveSession updates the ActiveSessionID and points Messages to the active session.
 func (as *AgentState) syncActiveSession() {
+	if as.ActiveSessionID == "" {
+		as.Messages = nil
+		return
+	}
 	var active *AgentSession
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID {
@@ -580,16 +617,128 @@ func (as *AgentState) syncActiveSession() {
 			break
 		}
 	}
-	if active == nil && len(as.Sessions) > 0 {
-		active = as.Sessions[0]
-		as.ActiveSessionID = active.ID
-	}
 	if active != nil {
 		as.Messages = active.Messages
 		if active.Tasks != nil {
 			as.TaskManager = active.Tasks
 		}
+	} else {
+		as.Messages = nil
 	}
+}
+
+// ClearActiveSession resets active session to empty (displaying the New Agent UI).
+func (as *AgentState) ClearActiveSession() {
+	as.mu.Lock()
+	as.ActiveSessionID = ""
+	as.Messages = nil
+	as.InputText = ""
+	as.SteerQueue = nil
+	if as.TaskManager != nil {
+		as.TaskManager.Clear()
+	}
+	as.mu.Unlock()
+
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// ForkSession duplicates the given session into a new active session.
+func (as *AgentState) ForkSession(sess *AgentSession) *AgentSession {
+	if sess == nil {
+		return nil
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	now := time.Now()
+	id := fmt.Sprintf("session-%d", now.UnixMilli())
+	forkTitle := fmt.Sprintf("%s (fork)", sess.Title)
+
+	var msgsCopy []*ChatMessage
+	for _, m := range sess.Messages {
+		cp := *m
+		msgsCopy = append(msgsCopy, &cp)
+	}
+
+	forked := &AgentSession{
+		ID:            id,
+		Title:         forkTitle,
+		Status:        "idle",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Model:         sess.Model,
+		Provider:      sess.Provider,
+		AgentID:       sess.AgentID,
+		AgentType:     sess.AgentType,
+		WorkspacePath: sess.WorkspacePath,
+		Messages:      msgsCopy,
+		Tasks:         NewTaskManager(),
+	}
+
+	as.Sessions = append([]*AgentSession{forked}, as.Sessions...)
+	as.ActiveSessionID = id
+	as.Messages = forked.Messages
+	as.TaskManager = forked.Tasks
+	return forked
+}
+
+// CreateSessionWithInitialPrompt creates a new session with an initial user prompt and starts the turn.
+func (as *AgentState) CreateSessionWithInitialPrompt(prompt, agentID string) *AgentSession {
+	now := time.Now()
+	id := fmt.Sprintf("session-%d", now.UnixMilli())
+	title := prompt
+	if len(title) > 42 {
+		title = strings.TrimSpace(title[:42]) + "…"
+	}
+	if title == "" {
+		title = "New Task"
+	}
+	userMsg := &ChatMessage{
+		ID:        1,
+		Role:      "user",
+		Text:      prompt,
+		Done:      true,
+		Timestamp: now,
+	}
+	if agentID == "" {
+		agentID = "agent-monolith"
+	}
+	sess := &AgentSession{
+		ID:            id,
+		Title:         title,
+		Status:        "idle",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Model:         as.ActiveModel,
+		Provider:      "",
+		AgentID:       agentID,
+		AgentType:     "internal",
+		WorkspacePath: as.workspacePath,
+		Messages:      []*ChatMessage{userMsg},
+		Tasks:         NewTaskManager(),
+	}
+
+	as.mu.Lock()
+	as.Sessions = append([]*AgentSession{sess}, as.Sessions...)
+	as.ActiveSessionID = id
+	as.Messages = sess.Messages
+	as.TaskManager = sess.Tasks
+	as.mu.Unlock()
+
+	as.SaveSessionToDisk(sess)
+	as.triggerAgentTurn(prompt)
+
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+	return sess
+}
+
+// TriggerTurn begins an AI agent turn with the given prompt for the active session.
+func (as *AgentState) TriggerTurn(prompt string) {
+	as.triggerAgentTurn(prompt)
 }
 
 // SelectSession activates the given session by ID.
@@ -627,7 +776,7 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Model:         as.ActiveModel,
-		Provider:      "internal",
+		Provider:      "",
 		AgentID:       "agent-monolith",
 		AgentType:     "internal",
 		WorkspacePath: as.workspacePath,
@@ -800,8 +949,25 @@ func (as *AgentState) FilteredSessions() []*AgentSession {
 // SubmitMessage handles user prompt submission, slash command routing, and trigger execution.
 func (as *AgentState) SubmitMessage() {
 	text := strings.TrimSpace(as.InputText)
-	if text == "" {
+	if text == "" && len(as.AttachedFiles) == 0 {
 		return
+	}
+
+	// Format attached files if present
+	if len(as.AttachedFiles) > 0 {
+		var b strings.Builder
+		b.WriteString("Attached files:\n")
+		for _, f := range as.AttachedFiles {
+			b.WriteString(fmt.Sprintf("@%s\n", f))
+		}
+		b.WriteString("\n")
+		if text != "" {
+			b.WriteString(text)
+		} else {
+			b.WriteString("Please review the attached files.")
+		}
+		text = b.String()
+		as.AttachedFiles = nil
 	}
 
 	// Mid-turn steering: if already streaming, queue prompt
@@ -818,25 +984,53 @@ func (as *AgentState) SubmitMessage() {
 
 	as.InputText = ""
 
+	as.mu.Lock()
+	var activeSess *AgentSession
+	for _, s := range as.Sessions {
+		if s.ID == as.ActiveSessionID {
+			activeSess = s
+			break
+		}
+	}
+	if activeSess == nil {
+		now := time.Now()
+		id := fmt.Sprintf("session-%d", now.UnixMilli())
+		title := text
+		if len(title) > 42 {
+			title = strings.TrimSpace(title[:42]) + "…"
+		}
+		if title == "" {
+			title = "New Task"
+		}
+		activeSess = &AgentSession{
+			ID:            id,
+			Title:         title,
+			Status:        "idle",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			Model:         as.ActiveModel,
+			Provider:      "",
+			AgentID:       "agent-monolith",
+			AgentType:     "internal",
+			WorkspacePath: as.workspacePath,
+			Messages:      nil,
+			Tasks:         NewTaskManager(),
+		}
+		as.Sessions = append([]*AgentSession{activeSess}, as.Sessions...)
+		as.ActiveSessionID = id
+		as.TaskManager = activeSess.Tasks
+	}
+
 	userMsg := &ChatMessage{
-		ID:        len(as.Messages) + 1,
+		ID:        len(activeSess.Messages) + 1,
 		Role:      "user",
 		Text:      text,
 		Done:      true,
 		Timestamp: time.Now(),
 	}
-
-	as.mu.Lock()
-	var activeSess *AgentSession
-	for _, s := range as.Sessions {
-		if s.ID == as.ActiveSessionID {
-			s.Messages = append(s.Messages, userMsg)
-			as.Messages = s.Messages
-			s.UpdatedAt = time.Now()
-			activeSess = s
-			break
-		}
-	}
+	activeSess.Messages = append(activeSess.Messages, userMsg)
+	as.Messages = activeSess.Messages
+	activeSess.UpdatedAt = time.Now()
 	as.mu.Unlock()
 
 	if activeSess != nil {

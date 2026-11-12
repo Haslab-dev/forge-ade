@@ -57,3 +57,63 @@ func TestAppUIModeSwitchAndPanels(t *testing.T) {
 		t.Fatalf("expected AgentSidebarFiles, got %d", app.AgentSidebarView)
 	}
 }
+
+func TestNewAgentTaskLandingScreen(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "appui-newtask-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	eng := engine.NewEngine(tempDir)
+	app := NewAppUI(eng, tempDir)
+
+	// Ensure there is an initial session
+	sess := app.Agent.NewSession("Initial Existing Session")
+	if app.Agent.ActiveSessionID != sess.ID {
+		t.Fatalf("expected ActiveSessionID == %s, got %s", sess.ID, app.Agent.ActiveSessionID)
+	}
+
+	// Switch to Editor mode and open NewTaskModal
+	app.Mode = ModeEditor
+	app.OpenNewTaskModal()
+	if !app.ShowNewTaskModal {
+		t.Fatalf("expected ShowNewTaskModal == true")
+	}
+
+	// Trigger NewAgentTask ("+ New Task" / ⌘N)
+	app.NewAgentTask("")
+
+	if app.Mode != ModeAgent {
+		t.Fatalf("expected Mode == ModeAgent (%d), got %d", ModeAgent, app.Mode)
+	}
+	if app.ActiveTaskKind != "agent" {
+		t.Fatalf("expected ActiveTaskKind == 'agent', got '%s'", app.ActiveTaskKind)
+	}
+	if app.ShowNewTaskModal {
+		t.Fatalf("expected ShowNewTaskModal == false")
+	}
+	if app.Agent.ActiveSessionID != "" {
+		t.Fatalf("expected Agent.ActiveSessionID == '', got '%s'", app.Agent.ActiveSessionID)
+	}
+	if app.Agent.ActiveSession() != nil {
+		t.Fatalf("expected ActiveSession() == nil on New Agent UI landing screen")
+	}
+
+	// Now simulate user typing a prompt in the New Agent UI composer
+	prompt := "Explain repository layout"
+	app.Agent.InputText = prompt
+	app.Agent.SubmitMessage()
+
+	// Verify a fresh session was created
+	newSess := app.Agent.ActiveSession()
+	if newSess == nil {
+		t.Fatalf("expected ActiveSession() != nil after submitting prompt from New Agent UI")
+	}
+	if len(newSess.Messages) == 0 {
+		t.Fatalf("expected messages to contain user prompt")
+	}
+	if newSess.Messages[0].Text != prompt {
+		t.Fatalf("expected first message '%s', got '%s'", prompt, newSess.Messages[0].Text)
+	}
+}

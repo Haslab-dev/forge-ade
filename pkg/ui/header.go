@@ -2,6 +2,7 @@ package ui
 
 import (
 	"path/filepath"
+	"runtime"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -39,11 +40,21 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		showToggleInHeader = false
 		leftPad = 12
 	} else if bar.Left > 0 {
-		// Sidebar is collapsed or in editor mode; clear traffic lights
-		leftPad = max(bar.Left, 78)
+		// Sidebar is collapsed or in editor mode; clear traffic lights / window controls
+		leftPad = max(bar.Left+12, 78)
+	} else if runtime.GOOS == "darwin" {
+		leftPad = 78
 	}
 
-	ui.Row(c).Height(WorkspaceTopBarHeight).Gap(10).Padding(0, 12, 0, leftPad).
+	rightPad := float32(12)
+	if bar.Right > 0 {
+		rightPad = max(bar.Right+12, 135)
+	} else if bar.Left == 0 && (runtime.GOOS == "linux" || runtime.GOOS == "windows") {
+		// On Linux/Windows window buttons are on the right (minimize, maximize, close)
+		rightPad = 135
+	}
+
+	ui.Row(c).Height(WorkspaceTopBarHeight).Gap(10).Padding(0, rightPad, 0, leftPad).
 		AlignItems(ui.Center).
 		Background(tc.Chrome).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).

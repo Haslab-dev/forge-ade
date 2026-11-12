@@ -50,7 +50,7 @@ func main() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:          "ForgeADE Native",
 			TitleBarStyle:  mygo.TitleBarHiddenInset,
-			TitleBarHeight: 40,
+			TitleBarHeight: int(nativeui.WorkspaceTopBarHeight),
 			Width:          1280,
 			Height:         800,
 			MinWidth:       760,

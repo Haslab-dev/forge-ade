@@ -21,9 +21,21 @@ import (
 func (a *AppUI) renderRightDrawer(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	ui.Column(c).Width(a.RightDrawerWidth).Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
-		// Drawer Header Tabs
-		ui.Row(c).Height(WorkspaceTopBarHeight).Gap(4).Padding(0, 10).AlignItems(ui.Center).
+	// Responsive clamping for small displays
+	drawerWidth := a.RightDrawerWidth
+	if winW, _ := c.Size(); winW > 0 {
+		maxAllowed := winW * 0.55
+		if drawerWidth > maxAllowed {
+			drawerWidth = maxAllowed
+		}
+		if drawerWidth < 280 {
+			drawerWidth = 280
+		}
+	}
+
+	ui.Column(c).Width(drawerWidth).Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
+		// Drawer Header Tabs with ScrollHorizontal so it never overflows or cuts off
+		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			tabs := []struct {
 				Tab  int
@@ -39,26 +51,37 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				{RightTabDatabase, "DB", icons.TablerDatabase},
 			}
 
-			for _, tab := range tabs {
-				tTab := tab
-				active := a.RightDrawerTab == tTab.Tab
-				pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d", tTab.Tab))).Height(24).Radius(6).
-					Padding(0, 6).Gap(3).AlignItems(ui.Center)
-				pill.Children(func() {
-					ui.Icon(c, tTab.Icon).Width(11).Height(11).TextColor(tc.IconMuted)
-					ui.Text(c, tTab.Name).FontSize(11)
-				})
-				if active {
-					pill.Background(tc.Text.Alpha(0.1))
-				} else if pill.Hovered() {
-					pill.Background(tc.Text.Alpha(0.05))
+			ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
+				for _, tab := range tabs {
+					tTab := tab
+					active := a.RightDrawerTab == tTab.Tab
+					pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d", tTab.Tab))).Height(26).Radius(6).
+						Padding(0, 8).Gap(4).AlignItems(ui.Center)
+					pill.Children(func() {
+						icColor := tc.IconMuted
+						if active {
+							icColor = tc.Accent
+						}
+						ui.Icon(c, tTab.Icon).Width(12).Height(12).TextColor(icColor)
+						txt := ui.Text(c, tTab.Name).FontSize(11)
+						if active {
+							txt.FontWeight(600).TextColor(tc.Text)
+						} else {
+							txt.TextColor(tc.TextMuted)
+						}
+					})
+					if active {
+						pill.Background(tc.Text.Alpha(0.1))
+					} else if pill.Hovered() {
+						pill.Background(tc.Text.Alpha(0.05))
+					}
+					if pill.Clicked() {
+						a.RightDrawerTab = tTab.Tab
+					}
 				}
-				if pill.Clicked() {
-					a.RightDrawerTab = tTab.Tab
-				}
-			}
+			})
 
-			ui.Box(c).Grow(1)
+			ui.Box(c).Width(4)
 
 			if IconButton(c, tc, icons.TablerX, 13).Clicked() {
 				a.ShowRightDrawer = false
@@ -139,15 +162,15 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		ui.Scroll(c).Height(minF(220, float32(len(files))*28+8)).Children(func() {
-			ui.Column(c).Padding(4, 8).Gap(1).Children(func() {
+		ui.Scroll(c).Height(minF(160, float32(len(files))*28+8)).Children(func() {
+			ui.Column(c).Padding(3, 6).Gap(1).Children(func() {
 				for _, f := range files {
 					f := f
 					isSel := a.SelectedDiffPath == f.Path
-					row := ui.Row(c.Key("chg-"+f.Path)).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
+					row := ui.Row(c.Key("chg-"+f.Path)).Height(28).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
 					row.Children(func() {
-						ui.Icon(c, icons.FileIconSVG(f.Path)).Width(13).Height(13).TextColor(tc.IconMuted)
-						ui.Text(c, filepath.Base(f.Path)).FontSize(12).Grow(1).SingleLine()
+						ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+						ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
 						DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
 						badgeLabel := string(f.Status)
 						badgeColor := tc.Accent
@@ -189,17 +212,17 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 		})
 
 		// Diff viewer for selected file
-		ui.Column(c).Grow(1).FillHeight().Children(func() {
+		ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
 			diffTitle := a.SelectedDiffPath
-			header := ui.Row(c).Height(36).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+			header := ui.Row(c).Height(32).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Background(tc.Surface)
 			header.Children(func() {
-				ui.Icon(c, icons.TablerGitCompare).Width(13).Height(13).TextColor(tc.IconMuted)
-				ui.Text(c, filepath.Base(diffTitle)).FontSize(12).FontWeight(500)
-				ui.Box(c).Grow(1)
-				openBtn := ui.Row(c).Radius(4).Padding(2, 8).AlignItems(ui.Center)
+				ui.Icon(c, icons.TablerGitCompare).Width(12).Height(12).TextColor(tc.IconMuted)
+				ui.Text(c, filepath.Base(diffTitle)).FontSize(11).FontWeight(500).Grow(1).SingleLine()
+				openBtn := ui.Row(c).Radius(4).Padding(2, 6).Gap(3).AlignItems(ui.Center)
 				openBtn.Children(func() {
-					ui.Text(c, "Open in Editor").FontSize(11).TextColor(tc.TextMuted)
+					ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.TextMuted)
+					ui.Text(c, "Open").FontSize(11).TextColor(tc.TextMuted)
 				})
 				if openBtn.Hovered() {
 					openBtn.Background(tc.Text.Alpha(0.05))
@@ -257,7 +280,7 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 				ui.Row(c.Key("side-user-"+fmt.Sprint(i))).Padding(3, 8).Justify(ui.End).Children(func() {
 					bubble := ui.Column(c).Padding(8, 12).Radius(14).
 						Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
-						MaxWidth(300)
+						MaxWidth(maxF(180, a.RightDrawerWidth-48))
 					bubble.Children(func() {
 						ui.Text(c, m.Text).FontSize(13).TextColor(tc.MessageForeground)
 					})
@@ -414,7 +437,7 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 		})
 
 		// Subtabs: Changes, History, Branches
-		ui.Row(c).Gap(4).Padding(6, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.ScrollHorizontal(c).Grow(1).Gap(4).Padding(6, 10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 			subtabs := []struct {
 				Tab   int
 				Label string
@@ -520,50 +543,20 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 			return
 		}
 
-		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-			// Left: Table list
-			ui.Column(c).Width(200).Background(t.Surface).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
-				ui.Row(c).Padding(10, 12).Children(func() {
-					ui.Text(c, "TABLES & VIEWS").FontSize(11).Bold().TextColor(t.TextMuted)
-				})
-
-				if dm.Info != nil {
-					ui.Scroll(c).Grow(1).Padding(4, 8).Children(func() {
-						for _, tb := range dm.Info.Tables {
-							tName := tb.Name
-							row := ui.Row(c.Key("db-table-"+tName)).Padding(6, 8).Radius(6).Gap(6).AlignItems(ui.Center)
-							row.Children(func() {
-								TablerIcon(c, icons.TablerTable, 13)
-								ui.Text(c, tName).FontSize(12).Grow(1)
-								ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(11).TextColor(t.TextMuted)
-							})
-							if tName == dm.ActiveTable {
-								row.Background(t.Accent)
-							} else if row.Hovered() {
-								row.Background(t.Border)
-							}
-							if row.Clicked() {
-								go dm.SelectTable(tName)
-							}
-						}
-					})
-				}
-			})
-
-			// Right: SQL console
+		renderSQLConsole := func() {
 			ui.Column(c).Grow(1).FillHeight().Children(func() {
-				ui.Column(c).Padding(10, 16).Gap(8).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+				ui.Column(c).Padding(8, 12).Gap(6).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 					in := ui.TextInput(c, &dm.SQLQuery).Placeholder("SELECT * FROM table LIMIT 25;").Grow(1)
 					if in.Submitted() && !dm.IsExecuting {
 						go dm.ExecuteQuery()
 					}
 
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 						runBtn := ui.PrimaryButton(c, "")
 						runBtn.Children(func() {
-							ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-								TablerIcon(c, icons.TablerPlayerPlay, 13)
-								ui.Text(c, "Execute SQL").FontSize(11).Bold()
+							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+								TablerIcon(c, icons.TablerPlayerPlay, 12)
+								ui.Text(c, "Execute").FontSize(11).Bold()
 							})
 						})
 						if runBtn.Clicked() {
@@ -571,34 +564,97 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 						}
 						ui.Box(c).Grow(1)
 						if dm.StatusMsg != "" {
-							ui.Text(c, dm.StatusMsg).FontSize(12).TextColor(t.TextMuted)
+							ui.Text(c, dm.StatusMsg).FontSize(11).TextColor(t.TextMuted)
 						}
 					})
 				})
 
 				if dm.QueryResult != nil && len(dm.QueryResult.Columns) > 0 {
-					ui.Scroll(c).Grow(1).Padding(8, 16).Children(func() {
-						ui.Row(c).Padding(6, 8).Background(t.Surface).Radius(6).Children(func() {
+					ui.ScrollBoth(c).Grow(1).Padding(6, 10).Children(func() {
+						ui.Row(c).Padding(4, 6).Background(t.Surface).Radius(4).Children(func() {
 							for _, col := range dm.QueryResult.Columns {
-								ui.Text(c, col).Bold().FontSize(12).Width(120)
+								ui.Text(c, col).Bold().FontSize(11).Width(100)
 							}
 						})
 
 						for i, r := range dm.QueryResult.Rows {
-							ui.Row(c.Key(fmt.Sprintf("dbrow-%d", i))).Padding(4, 8).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+							ui.Row(c.Key(fmt.Sprintf("dbrow-%d", i))).Padding(3, 6).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
 								for _, col := range dm.QueryResult.Columns {
 									valStr := fmt.Sprintf("%v", r[col])
 									if len(valStr) > 40 {
 										valStr = valStr[:37] + "…"
 									}
-									ui.Text(c, valStr).FontSize(12).Width(120)
+									ui.Text(c, valStr).FontSize(11).Width(100)
 								}
 							})
 						}
 					})
 				}
 			})
-		})
+		}
+
+		if a.RightDrawerWidth < 460 {
+			// Stacked: table pills at top + SQL console below
+			if dm.Info != nil && len(dm.Info.Tables) > 0 {
+				ui.Row(c).Height(32).Padding(0, 8).AlignItems(ui.Center).Gap(6).
+					BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
+					ui.Text(c, "TABLE:").FontSize(9).Bold().TextColor(t.TextMuted)
+					ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
+						for _, tb := range dm.Info.Tables {
+							tName := tb.Name
+							isSel := (tName == dm.ActiveTable)
+							pill := ui.Row(c.Key("db-pill-"+tName)).Height(22).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center)
+							pill.Children(func() {
+								ui.Text(c, tName).FontSize(11)
+								ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(9).TextColor(t.TextMuted)
+							})
+							if isSel {
+								pill.Background(t.Accent)
+							} else if pill.Hovered() {
+								pill.Background(t.Border)
+							}
+							if pill.Clicked() {
+								go dm.SelectTable(tName)
+							}
+						}
+					})
+				})
+			}
+			renderSQLConsole()
+		} else {
+			// Side by side with compact tables column (130px)
+			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+				ui.Column(c).Width(130).Background(t.Surface).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+					ui.Row(c).Padding(8, 10).Children(func() {
+						ui.Text(c, "TABLES").FontSize(10).Bold().TextColor(t.TextMuted)
+					})
+
+					if dm.Info != nil {
+						ui.Scroll(c).Grow(1).Padding(2, 6).Children(func() {
+							for _, tb := range dm.Info.Tables {
+								tName := tb.Name
+								row := ui.Row(c.Key("db-table-"+tName)).Padding(4, 6).Radius(4).Gap(4).AlignItems(ui.Center)
+								row.Children(func() {
+									TablerIcon(c, icons.TablerTable, 12)
+									ui.Text(c, tName).FontSize(11).Grow(1).SingleLine()
+									ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(10).TextColor(t.TextMuted)
+								})
+								if tName == dm.ActiveTable {
+									row.Background(t.Accent)
+								} else if row.Hovered() {
+									row.Background(t.Border)
+								}
+								if row.Clicked() {
+									go dm.SelectTable(tName)
+								}
+							}
+						})
+					}
+				})
+
+				renderSQLConsole()
+			})
+		}
 	})
 }
 
@@ -636,6 +692,13 @@ func (a *AppUI) createBranch(branch string) {
 
 func minF(a, b float32) float32 {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxF(a, b float32) float32 {
+	if a > b {
 		return a
 	}
 	return b

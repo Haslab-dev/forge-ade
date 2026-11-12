@@ -52,26 +52,39 @@ func ToggleIconButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, iconSiz
 // SidebarActionButton is AgentSidebar's action row: h-7.5 (30px),
 // rounded-[6px], px-2.5, text-ui-sm medium, hover bg-foreground/5, with an
 // optional kbd hint at the trailing edge.
-func SidebarActionButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, label, kbd string, danger bool) ui.Element {
-	row := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center)
-	if danger {
-		labelColor := tc.Error
-		row.Children(func() {
-			ui.Icon(c, icon).Width(15).Height(15).TextColor(labelColor)
-			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(labelColor)
-		})
-	} else {
-		row.Children(func() {
-			ui.Icon(c, icon).Width(15).Height(15).TextColor(tc.IconMuted)
-			ui.Text(c, label).FontSize(13).FontWeight(500)
-			ui.Box(c).Grow(1)
-			if kbd != "" {
-				ui.Text(c, kbd).FontSize(12).TextColor(tc.SecondaryLabel)
-			}
-		})
-	}
-	if row.Hovered() {
+func SidebarActionButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, label, kbd string, active bool) ui.Element {
+	row := ui.Row(c.Key("sb-btn-" + label)).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	row.Children(func() {
+		ic := ui.Icon(c, icon).Width(15).Height(15)
+		if active {
+			ic.TextColor(tc.Text)
+		} else {
+			ic.TextColor(tc.IconMuted)
+		}
+		ui.Text(c, label).FontSize(13).FontWeight(500)
+		ui.Box(c).Grow(1)
+		if kbd != "" {
+			ui.Text(c, kbd).FontSize(12).TextColor(tc.SecondaryLabel)
+		}
+	})
+	if active {
+		row.Background(tc.Text.Alpha(0.08))
+	} else if row.Hovered() {
 		row.Background(tc.Text.Alpha(0.05))
+	}
+	return row
+}
+
+// SidebarDangerActionButton renders a danger/delete action row with red accents.
+func SidebarDangerActionButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, label string) ui.Element {
+	row := ui.Row(c.Key("sb-danger-" + label)).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	labelColor := tc.Error
+	row.Children(func() {
+		ui.Icon(c, icon).Width(15).Height(15).TextColor(labelColor)
+		ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(labelColor)
+	})
+	if row.Hovered() {
+		row.Background(tc.Error.Alpha(0.1))
 	}
 	return row
 }

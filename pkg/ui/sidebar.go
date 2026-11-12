@@ -3,11 +3,15 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
 )
 
 // renderAgentSidebar renders the full-height task sessions sidebar with filter tabs and profile row.
@@ -17,7 +21,9 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 	bar := c.TitleBar()
 	topPadLeft := float32(14)
 	if bar.Left > 0 {
-		topPadLeft = max(bar.Left, 76)
+		topPadLeft = max(bar.Left+8, 76)
+	} else if runtime.GOOS == "darwin" {
+		topPadLeft = 76
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
@@ -27,7 +33,8 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			if IconButton(c, tc, icons.TablerPanelLeft, 15).Clicked() {
 				a.ShowLeftSidebar = false
 			}
-			ui.Row(c).Padding(0, 6).Gap(4).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Padding(0, 6).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.ForgeSparkSVG).Width(15).Height(15).TextColor(tc.Accent)
 				ui.Text(c, "ForgeADE").FontSize(13).FontWeight(600).LetterSpacing(-0.2)
 			})
 			ui.Box(c).Grow(1)
@@ -35,10 +42,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 
 		// Primary Action Buttons: + New Task (⌘N), Search (⌘P)
 		ui.Column(c).Padding(6, 10).Gap(2).Children(func() {
-			newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New Task", "⌘N", false)
+			isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
+			newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New Task", "⌘N", isNewTaskActive)
 			if newTask.Clicked() {
-				a.ShowNewTaskModal = true
-				a.NewTaskTitle = ""
+				a.NewAgentTask("")
 			}
 			search := SidebarActionButton(c, tc, icons.TablerSearch, "Search", "⌘P", false)
 			if search.Clicked() {
@@ -78,8 +85,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				SectionLabel(c, tc, "PROJECTS")
 				ui.Box(c).Grow(1)
 				if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-					a.Agent.NewSession("")
-					a.ActiveTaskKind = "agent"
+					a.NewAgentTask("")
 				}
 			})
 
@@ -123,40 +129,169 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				}
 			})
 
-			// Scrollable Task Sessions List
-			sessions := a.Agent.FilteredSessions()
-			ui.Scroll(c).Grow(1).Children(func() {
-				ui.Column(c).Padding(2, 8).Gap(2).Children(func() {
-					// 1. Agent ACP Sessions
-					for _, sess := range sessions {
-						s := sess
-						isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
-						renderTaskRow(c, tc, taskRowData{
-							Key:      "sess-" + s.ID,
-							Title:    s.Title,
-							Subtitle: s.Model,
-							Status:   s.Status,
-							Active:   isActive,
-							Pinned:   s.Pinned,
-							Archived: s.Archived,
-							OnPin:    func() { a.Agent.TogglePin(s.ID) },
-							OnDelete: func() { a.Agent.DeleteSession(s.ID) },
-							OnOpen:   func() { a.ActiveTaskKind = "agent"; a.Agent.SelectSession(s.ID) },
-						})
-					}
+			// Scrollable Task Sessions List grouped by Project/Folder
+			type projectTaskGroup struct {
+				ProjectName string
+				FolderPath  string
+				Sessions    []*agent.AgentSession
+				CLISessions []*agent.AgentCLISession
+			}
 
-					// 2. Active CLI Sessions
-					if a.CLIMgr != nil {
-						for _, cliSess := range a.CLIMgr.Sessions {
-							cs := cliSess
-							isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
-							renderTaskRow(c, tc, taskRowData{
-								Key:      "cli-sess-" + cs.ID,
-								Title:    cs.Title,
-								Subtitle: cs.AgentName + " · CLI Task",
-								Status:   "running",
-								Active:   isActive,
-								OnOpen:   func() { a.ActiveTaskKind = "cli"; a.CLIMgr.ActiveID = cs.ID },
+			activeWsPath := ""
+			if a.Workspace != nil {
+				activeWsPath = a.Workspace.RootDir
+			}
+			activeProjectName := resolveProjectName(activeWsPath)
+
+			groupMap := make(map[string]*projectTaskGroup)
+			var groupOrder []string
+
+			getOrCreateGroup := func(name, path string) *projectTaskGroup {
+				if g, exists := groupMap[name]; exists {
+					if g.FolderPath == "" && path != "" {
+						g.FolderPath = path
+					}
+					return g
+				}
+				g := &projectTaskGroup{
+					ProjectName: name,
+					FolderPath:  path,
+				}
+				groupMap[name] = g
+				groupOrder = append(groupOrder, name)
+				return g
+			}
+
+			// Always seed active workspace first, then General
+			getOrCreateGroup(activeProjectName, activeWsPath)
+			if activeProjectName != "General" {
+				getOrCreateGroup("General", "")
+			}
+
+			// 1. Group ACP Sessions
+			sessions := a.Agent.FilteredSessions()
+			for _, sess := range sessions {
+				s := sess
+				pName := resolveProjectName(s.WorkspacePath)
+				if s.WorkspacePath == activeWsPath || (activeWsPath != "" && strings.HasPrefix(s.WorkspacePath, activeWsPath)) {
+					pName = activeProjectName
+				}
+				g := getOrCreateGroup(pName, s.WorkspacePath)
+				g.Sessions = append(g.Sessions, s)
+			}
+
+			// 2. Group CLI Sessions
+			if a.CLIMgr != nil {
+				for _, cliSess := range a.CLIMgr.Sessions {
+					cs := cliSess
+					if a.Agent.SearchQuery != "" {
+						sq := strings.ToLower(a.Agent.SearchQuery)
+						if !strings.Contains(strings.ToLower(cs.Title), sq) && !strings.Contains(strings.ToLower(cs.AgentName), sq) {
+							continue
+						}
+					}
+					if a.Agent.ActiveFilterTab == "archived" {
+						continue
+					}
+					pName := resolveProjectName(cs.Cwd)
+					if cs.Cwd == activeWsPath || (activeWsPath != "" && strings.HasPrefix(cs.Cwd, activeWsPath)) {
+						pName = activeProjectName
+					}
+					g := getOrCreateGroup(pName, cs.Cwd)
+					g.CLISessions = append(g.CLISessions, cs)
+				}
+			}
+
+			ui.Scroll(c).Grow(1).Children(func() {
+				ui.Column(c).Padding(2, 6).Gap(4).Children(func() {
+					for _, name := range groupOrder {
+						group := groupMap[name]
+						totalCount := len(group.Sessions) + len(group.CLISessions)
+
+						if a.Agent.SearchQuery != "" && totalCount == 0 {
+							continue
+						}
+
+						isCollapsed := a.CollapsedProjectGroups[group.ProjectName]
+
+						// Project Group Header
+						pHeader := ui.Row(c.Key("pheader-" + group.ProjectName)).Height(28).Radius(6).
+							Padding(0, 6).Gap(5).AlignItems(ui.Center)
+						pHeader.Children(func() {
+							if isCollapsed {
+								ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
+							} else {
+								ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Icon(c, icons.TablerFolderOpen).Width(14).Height(14).TextColor(tc.Accent)
+							}
+
+							ui.Text(c, group.ProjectName).FontSize(12).FontWeight(600).Grow(1).SingleLine()
+
+							if totalCount > 0 {
+								ui.Text(c, fmt.Sprintf("%d", totalCount)).FontSize(10).TextColor(tc.SidebarMutedForeground)
+							}
+
+							newBtn := ui.Row(c.Key("pnew-" + group.ProjectName)).Size(18, 18).Radius(4).
+								AlignItems(ui.Center).Justify(ui.Center)
+							newBtn.Children(func() {
+								ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(tc.IconMuted)
+							})
+							if newBtn.Hovered() {
+								newBtn.Background(tc.Text.Alpha(0.08))
+							}
+							if newBtn.Clicked() {
+								a.NewAgentTask(group.FolderPath)
+							}
+						})
+
+						if pHeader.Hovered() {
+							pHeader.Background(tc.SidebarRowHover)
+						}
+						if pHeader.Clicked() {
+							a.CollapsedProjectGroups[group.ProjectName] = !isCollapsed
+						}
+
+						// Expanded Project Tasks
+						if !isCollapsed {
+							ui.Column(c.Key("pbody-" + group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
+								if totalCount == 0 {
+									ui.Row(c).Height(24).Padding(0, 8).AlignItems(ui.Center).Children(func() {
+										ui.Text(c, "No tasks in this project").FontSize(11).TextColor(tc.SidebarMutedForeground)
+									})
+								}
+
+								// 1. Agent ACP Sessions
+								for _, sess := range group.Sessions {
+									s := sess
+									isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
+									renderTaskRow(c, tc, taskRowData{
+										Key:      "sess-" + s.ID,
+										Title:    s.Title,
+										Subtitle: s.Model,
+										Status:   s.Status,
+										Active:   isActive,
+										Pinned:   s.Pinned,
+										Archived: s.Archived,
+										OnPin:    func() { a.Agent.TogglePin(s.ID) },
+										OnDelete: func() { a.Agent.DeleteSession(s.ID) },
+										OnOpen:   func() { a.ActiveTaskKind = "agent"; a.Agent.SelectSession(s.ID) },
+									})
+								}
+
+								// 2. Active CLI Sessions
+								for _, cliSess := range group.CLISessions {
+									cs := cliSess
+									isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
+									renderTaskRow(c, tc, taskRowData{
+										Key:      "cli-sess-" + cs.ID,
+										Title:    cs.Title,
+										Subtitle: cs.AgentName + " · CLI Task",
+										Status:   "running",
+										Active:   isActive,
+										OnOpen:   func() { a.ActiveTaskKind = "cli"; a.CLIMgr.ActiveID = cs.ID },
+									})
+								}
 							})
 						}
 					}
@@ -170,12 +305,12 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				SectionLabel(c, tc, "BOTS")
 				ui.Box(c).Grow(1)
 				if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-					a.ShowNewTaskModal = true
+					a.OpenNewTaskModal()
 				}
 			})
 			botRow := SidebarActionButton(c, tc, icons.TablerBot, "Add a bot or schedule", "", false)
 			if botRow.Clicked() {
-				a.ShowNewTaskModal = true
+				a.OpenNewTaskModal()
 			}
 		})
 
@@ -220,7 +355,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 					a.ShowNewFileModal = true
 					a.NewFileName = "AGENTS.md"
 				})
-				dockBtn(icons.TablerSettings, false, func() { a.Settings.Toggle() })
+				dockBtn(icons.TablerSettings, a.Settings != nil && a.Settings.IsOpen, func() {
+					if a.Settings != nil {
+						a.Settings.Toggle()
+					}
+				})
 				ui.Box(c).Grow(1)
 				if a.ThemeMgr.Appearance == "dark" {
 					dockBtn(icons.TablerMoon, false, a.toggleAppearance)
@@ -232,8 +371,135 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 	})
 }
 
+// resolveProjectName extracts a clean human-readable workspace project name.
+func resolveProjectName(folderPath string) string {
+	clean := strings.TrimSpace(folderPath)
+	if clean == "" || clean == "general" || strings.HasSuffix(clean, "/.forge-ade/general") || strings.HasSuffix(clean, "/.forge-ade/general/") {
+		return "General"
+	}
+	base := filepath.Base(filepath.Clean(clean))
+	if base == "." || base == "/" || base == "" {
+		return "General"
+	}
+	return base
+}
+
+// FileTreeNode represents a node in the hierarchical file tree.
+type FileTreeNode struct {
+	Name         string
+	RelativePath string
+	FullPath     string
+	IsDir        bool
+	Children     []*FileTreeNode
+}
+
+// buildFileTree converts a flat list of workspace files into a hierarchical tree with sorted folders and files.
+func buildFileTree(files []workspace.WorkspaceFile, rootDir string) []*FileTreeNode {
+	rootMap := make(map[string]*FileTreeNode)
+	var rootNodes []*FileTreeNode
+
+	for _, f := range files {
+		cleanRel := filepath.Clean(f.RelativePath)
+		parts := strings.Split(cleanRel, string(filepath.Separator))
+		if len(parts) == 0 {
+			continue
+		}
+
+		if len(parts) == 1 {
+			node := &FileTreeNode{
+				Name:         parts[0],
+				RelativePath: f.RelativePath,
+				FullPath:     f.FullPath,
+				IsDir:        f.IsDir,
+			}
+			rootMap[parts[0]] = node
+			rootNodes = append(rootNodes, node)
+			continue
+		}
+
+		// Navigate or create intermediate directories
+		var curNode *FileTreeNode
+		currentRel := parts[0]
+		if existing, ok := rootMap[parts[0]]; ok {
+			curNode = existing
+		} else {
+			curNode = &FileTreeNode{
+				Name:         parts[0],
+				RelativePath: currentRel,
+				FullPath:     filepath.Join(rootDir, currentRel),
+				IsDir:        true,
+				Children:     make([]*FileTreeNode, 0),
+			}
+			rootMap[parts[0]] = curNode
+			rootNodes = append(rootNodes, curNode)
+		}
+
+		for i := 1; i < len(parts)-1; i++ {
+			part := parts[i]
+			currentRel = filepath.Join(currentRel, part)
+			var nextNode *FileTreeNode
+			for _, child := range curNode.Children {
+				if child.IsDir && child.Name == part {
+					nextNode = child
+					break
+				}
+			}
+			if nextNode == nil {
+				nextNode = &FileTreeNode{
+					Name:         part,
+					RelativePath: currentRel,
+					FullPath:     filepath.Join(rootDir, currentRel),
+					IsDir:        true,
+					Children:     make([]*FileTreeNode, 0),
+				}
+				curNode.Children = append(curNode.Children, nextNode)
+			}
+			curNode = nextNode
+		}
+
+		// Leaf file node
+		fileName := parts[len(parts)-1]
+		fileNode := &FileTreeNode{
+			Name:         fileName,
+			RelativePath: f.RelativePath,
+			FullPath:     f.FullPath,
+			IsDir:        f.IsDir,
+		}
+		curNode.Children = append(curNode.Children, fileNode)
+	}
+
+	// Sort nodes: folders first (alphabetical), then files (alphabetical)
+	var sortTree func(nodes []*FileTreeNode)
+	sortTree = func(nodes []*FileTreeNode) {
+		sort.Slice(nodes, func(i, j int) bool {
+			if nodes[i].IsDir != nodes[j].IsDir {
+				return nodes[i].IsDir
+			}
+			return strings.ToLower(nodes[i].Name) < strings.ToLower(nodes[j].Name)
+		})
+		for _, n := range nodes {
+			if n.IsDir && len(n.Children) > 0 {
+				sortTree(n.Children)
+			}
+		}
+	}
+	sortTree(rootNodes)
+
+	return rootNodes
+}
+
+func (a *AppUI) isFolderExpanded(relPath string, depth int) bool {
+	if a.Workspace.FilterQuery != "" {
+		return true // Auto-expand all matching folders during search
+	}
+	if expanded, exists := a.ExpandedFileTreeFolders[relPath]; exists {
+		return expanded
+	}
+	return depth == 0 // Top-level folders default to expanded
+}
+
 // renderFileTree renders the workspace file explorer: 35px header, filter
-// input, 22px rows with file icons and dirty badges.
+// input, collapsible folders and file tree with Tabler vector icons and dirty badges.
 func (a *AppUI) renderFileTree(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
@@ -277,46 +543,90 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 		ui.TextInput(c, &a.Workspace.FilterQuery).Placeholder("Filter files...").Grow(1)
 	})
 
-	// File List with Tabler vector icons and dirty badges
+	// Hierarchical File Tree with Collapsible Folder Grouping
 	filtered := a.Workspace.FilteredFiles()
+	treeNodes := buildFileTree(filtered, a.Workspace.RootDir)
+
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Padding(2, 6).Gap(0).Children(func() {
-			for _, f := range filtered {
-				f := f
-				selected := a.SelectedFile == f.RelativePath
-				dirty := false
-				if doc := a.Editor.GetDoc(f.FullPath); doc != nil && doc.Editor.Buffer.Modified() {
-					dirty = true
-				}
-				row := ui.Row(c.Key("ftree-"+f.RelativePath)).Height(FileTreeRowHeight).Radius(4).
-					Padding(0, 8).Gap(6).AlignItems(ui.Center)
-				row.Children(func() {
-					ui.Icon(c, icons.FileIconSVG(f.RelativePath)).Width(14).Height(14).TextColor(tc.IconMuted)
-					ui.Text(c, f.RelativePath).FontSize(12).Grow(1).SingleLine()
-					if dirty {
-						ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
-					}
-				})
-				if selected {
-					row.Background(tc.Accent.Alpha(0.12))
-				} else if row.Hovered() {
-					row.Background(tc.Text.Alpha(0.04))
-				}
-				if row.Clicked() {
-					a.SelectedFile = f.RelativePath
-					fullPath := a.Workspace.ResolveFullPath(f.RelativePath)
+			var renderNode func(node *FileTreeNode, depth int)
+			renderNode = func(node *FileTreeNode, depth int) {
+				indent := float32(4 + depth*14)
 
-					// Jump to database tab if database clicked
-					ext := filepath.Ext(f.RelativePath)
-					if ext == ".sqlite" || ext == ".db" || ext == ".duckdb" {
-						if a.Database != nil {
-							a.Database.Inspect(fullPath)
-							a.EditorActivity = ActivityDatabase
+				if node.IsDir {
+					isOpen := a.isFolderExpanded(node.RelativePath, depth)
+					row := ui.Row(c.Key("fdir-" + node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
+						Padding(0, 6, 0, indent).Gap(4).AlignItems(ui.Center)
+					row.Children(func() {
+						if isOpen {
+							ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
+							ui.Icon(c, icons.TablerFolderOpen).Width(14).Height(14).TextColor(tc.Accent)
+						} else {
+							ui.Icon(c, icons.TablerChevronRight).Width(11).Height(11).TextColor(tc.IconMuted)
+							ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
 						}
-						return
+						ui.Text(c, node.Name).FontSize(12).FontWeight(500).Grow(1).SingleLine()
+					})
+					if row.Hovered() {
+						row.Background(tc.Text.Alpha(0.04))
+					}
+					if row.Clicked() {
+						a.ExpandedFileTreeFolders[node.RelativePath] = !isOpen
 					}
 
-					_, _ = a.Editor.OpenFile(fullPath, f.RelativePath)
+					if isOpen {
+						for _, child := range node.Children {
+							renderNode(child, depth+1)
+						}
+					}
+				} else {
+					// File node
+					selected := (a.SelectedFile == node.RelativePath)
+					dirty := false
+					if doc := a.Editor.GetDoc(node.FullPath); doc != nil && doc.Editor.Buffer.Modified() {
+						dirty = true
+					}
+
+					row := ui.Row(c.Key("ffile-" + node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
+						Padding(0, 6, 0, indent+15).Gap(6).AlignItems(ui.Center)
+					row.Children(func() {
+						ui.Icon(c, icons.FileIconSVG(node.RelativePath)).Width(14).Height(14).TextColor(tc.IconMuted)
+						ui.Text(c, node.Name).FontSize(12).Grow(1).SingleLine()
+						if dirty {
+							ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
+						}
+					})
+					if selected {
+						row.Background(tc.Accent.Alpha(0.12))
+					} else if row.Hovered() {
+						row.Background(tc.Text.Alpha(0.04))
+					}
+					if row.Clicked() {
+						a.SelectedFile = node.RelativePath
+						fullPath := node.FullPath
+
+						// Jump to database tab if database clicked
+						ext := filepath.Ext(node.RelativePath)
+						if ext == ".sqlite" || ext == ".db" || ext == ".duckdb" {
+							if a.Database != nil {
+								a.Database.Inspect(fullPath)
+								a.EditorActivity = ActivityDatabase
+							}
+							return
+						}
+
+						_, _ = a.Editor.OpenFile(fullPath, node.RelativePath)
+					}
+				}
+			}
+
+			if len(treeNodes) == 0 {
+				ui.Row(c).Height(32).Padding(0, 10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "No files matching filter").FontSize(11).TextColor(tc.TextMuted)
+				})
+			} else {
+				for _, rootNode := range treeNodes {
+					renderNode(rootNode, 0)
 				}
 			}
 		})

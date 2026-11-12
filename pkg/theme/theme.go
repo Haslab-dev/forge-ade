@@ -16,6 +16,29 @@ const (
 	ModeEditor = 1 // Code Editor Mode
 )
 
+// ForgeADE Type Scale Tokens (text-ui-* scale in index.css)
+const (
+	Text5xs    = float32(7)  // 0.4375rem
+	Text4xs    = float32(8)  // 0.5rem
+	Text3xs    = float32(10) // 0.625rem
+	Text2xs    = float32(11) // 0.6875rem
+	TextUIXs   = float32(12) // 0.75rem
+	TextUISm   = float32(13) // 0.8125rem
+	TextUIBase = float32(14) // 0.875rem
+	TextUILg   = float32(17) // 1.0625rem
+	TextUIXl   = float32(22) // 1.375rem
+	TextUI2xl  = float32(26) // 1.625rem
+)
+
+// ForgeADE Spacing & Radius Tokens
+const (
+	RadiusSm  = float32(6)  // calc(var(--radius) - 4px)
+	RadiusMd  = float32(8)  // calc(var(--radius) - 2px)
+	RadiusLg  = float32(10) // var(--radius)
+	RadiusXl  = float32(14) // calc(var(--radius) + 4px)
+	Radius2xl = float32(18) // calc(var(--radius) + 8px)
+)
+
 // Right Side Drawer Tabs (matching ForgeADE AgentRightSidebar)
 const (
 	RightTabChanges  = 0

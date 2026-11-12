@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/editor"
@@ -17,8 +18,11 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 
 	// 1. Left Activity Bar + Sidebar
 	if a.ShowLeftSidebar {
-		activityButton := func(icon *ui.SVG, tab int) {
-			active := a.EditorActivity == tab
+		activityButton := func(icon *ui.SVG, tab int, badgeCount int, onPick func()) {
+			active := (tab >= 0 && a.EditorActivity == tab)
+			if tab == -1 && a.Settings != nil && a.Settings.IsOpen {
+				active = true
+			}
 			btn := ui.Row(c).Size(ActivityBarWidth-8, 40).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
 			btn.Children(func() {
 				ic := ui.Icon(c, icon).Width(20).Height(20)
@@ -27,6 +31,16 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 				} else {
 					ic.TextColor(tc.IconMuted)
 				}
+				if badgeCount > 0 {
+					badgeText := fmt.Sprintf("%d", badgeCount)
+					if badgeCount > 99 {
+						badgeText = "99+"
+					}
+					ui.Row(c).Absolute().Top(3).Right(3).Height(14).Radius(7).
+						Padding(0, 4).Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+						ui.Text(c, badgeText).FontSize(9).FontWeight(700).TextColor(tc.Canvas)
+					})
+				}
 			})
 			if active {
 				btn.Background(tc.Text.Alpha(0.06))
@@ -34,20 +48,33 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 				btn.Background(tc.Text.Alpha(0.04))
 			}
 			if btn.Clicked() {
-				a.EditorActivity = tab
+				if onPick != nil {
+					onPick()
+				} else {
+					a.EditorActivity = tab
+				}
 			}
 			if active {
 				ui.Box(c).Absolute().Left(0).Width(2).Top(8).Bottom(8).Background(tc.Text).Radius(0, 1, 1, 0)
 			}
 		}
 
+		gitChanges := 0
+		if a.Git != nil {
+			gitChanges = len(a.Git.Staged) + len(a.Git.Unstaged) + len(a.Git.Untracked)
+		}
+
 		ui.Column(c).Width(ActivityBarWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).
 			Padding(8, 0).AlignItems(ui.Center).Gap(4).Children(func() {
-			activityButton(icons.TablerFiles, ActivityExplorer)
-			activityButton(icons.TablerGitBranch, ActivityGit)
-			activityButton(icons.TablerDatabase, ActivityDatabase)
+			activityButton(icons.TablerFiles, ActivityExplorer, 0, nil)
+			activityButton(icons.TablerGitBranch, ActivityGit, gitChanges, nil)
+			activityButton(icons.TablerDatabase, ActivityDatabase, 0, nil)
 			ui.Box(c).Grow(1)
-			activityButton(icons.TablerSettings, -1)
+			activityButton(icons.TablerSettings, -1, 0, func() {
+				if a.Settings != nil {
+					a.Settings.Toggle()
+				}
+			})
 		})
 
 		ui.Column(c).Width(FileTreeDefaultWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
@@ -76,7 +103,11 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 
 	// 3. Collapsible Right Drawer with interactive drag resize handle
 	if a.ShowRightDrawer {
-		LeftResizeHandle(c, &a.RightDrawerWidth, 320, 750, RightDrawerDefault)
+		maxRight := float32(750)
+		if winW, _ := c.Size(); winW > 0 && winW*0.6 < maxRight {
+			maxRight = winW * 0.6
+		}
+		LeftResizeHandle(c, &a.RightDrawerWidth, 280, maxRight, RightDrawerDefault)
 		a.renderRightDrawer(c)
 	}
 }
@@ -288,6 +319,7 @@ func (a *AppUI) renderEditorDiff(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
+	tc := a.ThemeMgr.Colors()
 	doc := em.ActiveDoc()
 	if doc == nil {
 		ui.Column(c).Grow(1).Center().Children(func() {
@@ -318,7 +350,14 @@ func (a *AppUI) renderEditorDiff(c *ui.Context) {
 		ui.Box(c).Grow(1)
 		added, deleted := d.Stats()
 		if added > 0 || deleted > 0 {
-			ui.Text(c, fmt.Sprintf("+%d −%d", added, deleted)).FontSize(11).TextColor(t.TextMuted)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				if added > 0 {
+					ui.Text(c, fmt.Sprintf("+%d", added)).FontSize(11).FontWeight(600).TextColor(tc.Success)
+				}
+				if deleted > 0 {
+					ui.Text(c, fmt.Sprintf("−%d", deleted)).FontSize(11).FontWeight(600).TextColor(tc.Error)
+				}
+			})
 		}
 		ui.Text(c, "Wrap").FontSize(12).TextColor(t.TextMuted)
 		ui.Switch(c, &em.SoftWrap).Label("Soft wrap")
@@ -358,14 +397,26 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 	statusText := func(s string) {
 		ui.Text(c, s).FontSize(11).TextColor(tc.TextMuted)
 	}
-	ui.Row(c).Height(StatusBarHeight).Gap(16).Padding(0, 12).AlignItems(ui.Center).
+	ui.Row(c).Height(StatusBarHeight).Gap(12).Padding(0, 12).AlignItems(ui.Center).
 		Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
-		ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+		folderChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
+		folderChip.Children(func() {
 			ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
 			statusText(projectName)
 		})
+		if folderChip.Hovered() {
+			folderChip.Background(tc.Text.Alpha(0.06))
+		}
+		if folderChip.Clicked() {
+			a.ShowLeftSidebar = true
+			a.EditorActivity = ActivityExplorer
+			if a.Workspace != nil && a.Workspace.RootDir != "" {
+				_ = mygo.Shell.OpenExternal("file://" + a.Workspace.RootDir)
+			}
+		}
+
 		if curPath != "" {
-			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.FileIconSVG(curPath)).Width(12).Height(12).TextColor(tc.IconMuted)
 				statusText(curPath)
 			})
@@ -377,17 +428,40 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 		statusText("UTF-8")
 
 		if a.Git != nil && a.Git.Branch != "" {
-			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			branchChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+			branchChip.Children(func() {
 				ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
-				ui.Text(c, a.Git.Branch).FontSize(11).TextColor(tc.Accent)
+				ui.Text(c, a.Git.Branch).FontSize(11).FontWeight(500).TextColor(tc.Accent)
 			})
+			if branchChip.Hovered() {
+				branchChip.Background(tc.Accent.Alpha(0.12))
+			}
+			if branchChip.Clicked() {
+				a.ShowBranchModal = true
+				a.BranchSearchQuery = ""
+				if a.Git != nil {
+					a.Git.Refresh()
+				}
+			}
 		}
 
 		if a.Agent != nil {
-			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			modelLabel := a.Agent.ActiveModel
+			if modelLabel == "" {
+				modelLabel = "No model"
+			}
+			modelChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+			modelChip.Children(func() {
 				ui.Icon(c, icons.TablerCpu).Width(12).Height(12).TextColor(tc.IconMuted)
-				statusText(a.Agent.ActiveModel)
+				statusText(modelLabel)
 			})
+			if modelChip.Hovered() {
+				modelChip.Background(tc.Text.Alpha(0.06))
+			}
+			if modelChip.Clicked() {
+				a.ShowModelPalette = true
+				a.ModelSearchQuery = ""
+			}
 		}
 		statusText("⌘S Save · ⌘P Open · ⌘B Sidebar · ⌘1 Agent · ⌘2 Editor")
 	})

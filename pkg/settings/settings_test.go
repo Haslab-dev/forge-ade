@@ -11,8 +11,8 @@ func TestSettingsManager(t *testing.T) {
 		savedModel = model
 	})
 
-	if sm.Provider != "anthropic" {
-		t.Fatalf("expected initial provider 'anthropic', got '%s'", sm.Provider)
+	if sm.Provider != "" {
+		t.Fatalf("expected initial provider to be empty, got '%s'", sm.Provider)
 	}
 
 	sm.ProviderIdx = 0 // "openai"

@@ -37,7 +37,11 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 
 	// Collapsible Right Drawer with interactive drag resize handle
 	if a.ShowRightDrawer {
-		LeftResizeHandle(c, &a.RightDrawerWidth, 320, 750, RightDrawerDefault)
+		maxRight := float32(750)
+		if winW, _ := c.Size(); winW > 0 && winW*0.6 < maxRight {
+			maxRight = winW * 0.6
+		}
+		LeftResizeHandle(c, &a.RightDrawerWidth, 280, maxRight, RightDrawerDefault)
 		a.renderRightDrawer(c)
 	}
 }
@@ -124,7 +128,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			}
 			fork := composerControlChip(c, tc, icons.TablerGitFork, "Fork", "", false)
 			if fork.Clicked() && sess != nil {
-				as.NewSession(fmt.Sprintf("%s (fork)", sess.Title))
+				forked := as.ForkSession(sess)
+				if forked != nil {
+					as.SaveSessionToDisk(forked)
+				}
 			}
 		})
 
@@ -478,10 +485,10 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 	}
 	inset, rightInset := a.chatLaneInset(c)
 
-	ui.Column(c).Padding(0, inset, 10, rightInset).Gap(6).Children(func() {
+	ui.Column(c).Padding(0, inset, 12, rightInset).Gap(6).Children(func() {
 		// Slash commands row
 		ui.Row(c).Gap(4).Wrap().Children(func() {
-			for _, cmd := range []string{"/goal", "/plan", "/tasks", "/vibe", "/model", "/clear", "/status", "/help"} {
+			for _, cmd := range []string{"/goal", "/plan", "/tasks", "/model", "/clear", "/status", "/help"} {
 				thisCmd := cmd
 				chip := ui.Row(c.Key("slash-"+thisCmd)).Radius(999).Padding(3, 10).AlignItems(ui.Center).
 					BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
@@ -501,130 +508,278 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 		})
 
 		// Glass composer card
-		card := ui.Column(c).Radius(22).Background(tc.Surface).
-			BorderWidth(1).BorderColor(tc.Border).
-			Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
-			InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.06))
-		card.Children(func() {
-			ui.Row(c).Padding(10, 16, 6, 16).Children(func() {
-				in := ui.TextInput(c, &as.InputText).Placeholder("Ask agent, enter instructions, or /help...").Grow(1)
-				if in.Submitted() {
-					as.SubmitMessage()
+		a.renderComposerCard(c, tc, false)
+
+		// Context Strip below composer (workspace folder + git branch chips)
+		ui.Row(c).Gap(8).Padding(2, 4, 0, 4).AlignItems(ui.Center).Children(func() {
+			projectName := filepath.Base(a.Workspace.RootDir)
+			wsChip := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+				Background(tc.Surface.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+			wsChip.Children(func() {
+				ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
+				ui.Text(c, projectName).FontSize(11).FontWeight(500)
+				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+			})
+			if wsChip.Clicked() {
+				a.openWorkspaceFolder()
+			}
+
+			branchName := "main"
+			if a.Git != nil && a.Git.Branch != "" {
+				branchName = a.Git.Branch
+			}
+			branchChip := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+				Background(tc.Surface.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+			branchChip.Children(func() {
+				ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
+				ui.Text(c, branchName).FontSize(11).FontWeight(500).TextColor(tc.Accent)
+				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+			})
+			if branchChip.Clicked() {
+				a.ShowBranchModal = true
+				a.BranchSearchQuery = ""
+				if a.Git != nil {
+					a.Git.Refresh()
+				}
+			}
+		})
+	})
+	_ = sess
+}
+
+func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome bool) {
+	as := a.Agent
+	if as == nil {
+		return
+	}
+
+	card := ui.Column(c).Radius(20).Background(tc.Surface).
+		BorderWidth(1).BorderColor(tc.Border).
+		Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
+		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
+	if isHome {
+		card.Width(680)
+	}
+
+	card.Children(func() {
+		// 1. Attached Files Strip (if any files attached)
+		if len(as.AttachedFiles) > 0 {
+			ui.Row(c).Padding(10, 14, 2, 14).Gap(6).Wrap().Children(func() {
+				for i, file := range as.AttachedFiles {
+					idx := i
+					filePath := file
+					fileName := filepath.Base(filePath)
+					chip := ui.Row(c.Key("att-"+filePath)).Height(26).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).
+						Background(tc.Accent.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+					chip.Children(func() {
+						ui.Icon(c, icons.FileIconSVG(filePath)).Width(12).Height(12).TextColor(tc.Accent)
+						ui.Text(c, fileName).FontSize(11).FontWeight(500)
+						delBtn := ui.Row(c.Key("att-del-"+filePath)).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center)
+						delBtn.Children(func() {
+							ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.IconMuted)
+						})
+						if delBtn.Clicked() {
+							as.RemoveAttachedFile(idx)
+						}
+					})
 				}
 			})
+		}
 
-			ui.Row(c).Gap(6).Padding(6, 12, 12, 12).AlignItems(ui.Center).Children(func() {
-				// Permission mode
-				var modeIcon *ui.SVG
-				modeLabel := ""
-				modeColor := tc.Text
-				switch as.ExecutionMode {
-				case agent.ModeAsk:
-					modeIcon, modeLabel = icons.TablerHand, "Ask"
-				case agent.ModeCode:
-					modeIcon, modeLabel = icons.TablerPencil, "Edits"
-				case agent.ModePlan:
-					modeIcon, modeLabel = icons.TablerShieldCheck, "Auto"
-				default:
-					modeIcon, modeLabel = icons.TablerShieldAlert, "Full Access"
-					modeColor = tc.FullAccess
-				}
-				modeBtn := chipRow(c, tc)
-				modeBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, modeIcon).Width(13).Height(13).TextColor(modeColor)
-						ui.Text(c, modeLabel).FontSize(12).FontWeight(500).TextColor(modeColor)
-					})
-				})
-				if modeBtn.Clicked() {
-					as.CycleExecutionMode()
-				}
+		// 2. Multiline TextInput Area
+		ui.Row(c).Padding(12, 16, 6, 16).Children(func() {
+			placeholder := "Ask anything, @ threads or files, $ skills, or / commands"
+			if as.IsStreaming {
+				placeholder = "Keep typing to queue follow-up changes..."
+			}
+			in := ui.TextInput(c, &as.InputText).Placeholder(placeholder).Grow(1)
+			if in.Submitted() {
+				as.SubmitMessage()
+			}
+		})
 
-				// Reasoning effort
-				effortLabel := "Med"
-				switch as.ReasoningEffort {
-				case agent.EffortOff:
-					effortLabel = "Off"
-				case agent.EffortLow:
-					effortLabel = "Low"
-				case agent.EffortHigh:
-					effortLabel = "High"
-				case agent.EffortMax:
-					effortLabel = "Max"
-				}
-				effortBtn := composerControlChip(c, tc, icons.TablerBrain, effortLabel, "", false)
-				if effortBtn.Clicked() {
-					as.CycleReasoningEffort()
-				}
-
-				// Model selector
-				disp := as.ActiveModel
-				if len(disp) > 18 {
-					disp = disp[:15] + "…"
-				}
-				modelBtn := chipRow(c, tc)
-				modelBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(tc.Accent)
-						ui.Text(c, disp).FontSize(12).FontWeight(500).SingleLine()
-						ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
-					})
-				})
-				if modelBtn.Clicked() {
-					as.ShowModelPicker = !as.ShowModelPicker
-				}
-
-				// Auto-Verify
-				verifyBtn := chipRow(c, tc)
-				if as.AutoVerify {
-					verifyBtn.Background(tc.Success.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
-					verifyBtn.Children(func() {
-						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-							ui.Icon(c, icons.TablerShieldCheck).Width(13).Height(13).TextColor(tc.Success)
-							ui.Text(c, "Verify").FontSize(12).FontWeight(500).TextColor(tc.Success)
-						})
-					})
+		// 3. Bottom Controls Tray
+		ui.Row(c).Gap(6).Padding(4, 12, 12, 12).AlignItems(ui.Center).Children(func() {
+			// [+] Add Context Button
+			addBtn := ui.Row(c).Size(28, 28).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			addBtn.Children(func() {
+				ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.TextMuted)
+			})
+			if addBtn.Hovered() {
+				addBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if addBtn.Clicked() {
+				if a.Editor.ActivePath != "" {
+					as.AttachFile(a.Editor.ActiveDoc().RelativePath)
+					c.AddToast(ui.Toast{Title: "Attached Active Buffer", Description: a.Editor.ActiveDoc().RelativePath, Type: "info"})
 				} else {
-					verifyBtn.Children(func() {
-						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-							ui.Icon(c, icons.TablerShieldCheck).Width(13).Height(13).TextColor(tc.TextMuted)
-							ui.Text(c, "Verify").FontSize(12).FontWeight(500).TextColor(tc.Text)
-						})
-					})
+					a.Palette.Toggle()
 				}
-				if verifyBtn.Clicked() {
-					as.AutoVerify = !as.AutoVerify
-				}
+			}
 
-				ui.Box(c).Grow(1)
-
-				// Send / Stop button
-				send := ui.Row(c).Size(32, 32).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
-					Background(tc.MessageAction).
-					Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.2)).
-					InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.16))
-				send.Children(func() {
-					if as.IsStreaming {
-						send.Background(tc.Error.Alpha(0.9))
-						ui.Icon(c, icons.TablerSquare).Width(13).Height(13).TextColor(tc.ErrorForeground)
-					} else {
-						ui.Icon(c, icons.TablerChevronUp).Width(16).Height(16).TextColor(tc.MessageActionForeground)
-					}
+			// Permission Mode selector chip
+			var modeIcon *ui.SVG
+			modeLabel := ""
+			modeColor := tc.Text
+			switch as.ExecutionMode {
+			case agent.ModeAsk:
+				modeIcon, modeLabel = icons.TablerHand, "Ask"
+			case agent.ModeCode:
+				modeIcon, modeLabel = icons.TablerPencil, "Edits"
+			case agent.ModePlan:
+				modeIcon, modeLabel = icons.TablerShieldCheck, "Auto"
+			default:
+				modeIcon, modeLabel = icons.TablerShieldAlert, "Full"
+				modeColor = tc.FullAccess
+			}
+			modeBtn := chipRow(c, tc)
+			modeBtn.Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, modeIcon).Width(13).Height(13).TextColor(modeColor)
+					ui.Text(c, modeLabel).FontSize(12).FontWeight(500).TextColor(modeColor)
+					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(modeColor.Alpha(0.7))
 				})
-				if send.Clicked() {
-					if as.IsStreaming {
-						as.CancelStreaming()
-					} else {
+			})
+			if modeBtn.Clicked() {
+				as.CycleExecutionMode()
+			}
+
+			// Model Selector Button (Triggers full ModelProviderPaletteModal)
+			disp := as.ActiveModel
+			if disp == "" {
+				disp = "Select Model"
+			} else {
+				if idx := strings.Index(disp, " ("); idx != -1 {
+					disp = disp[:idx]
+				}
+				if len(disp) > 22 {
+					disp = disp[:20] + "…"
+				}
+			}
+			modelBtn := chipRow(c, tc)
+			modelBtn.Children(func() {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					icons.RenderProviderIcon(c, as.ActiveModel, 13)
+					ui.Text(c, disp).FontSize(12).FontWeight(500).SingleLine()
+					if as.ReasoningEffort != agent.EffortOff {
+						ui.Row(c).Radius(4).Padding(1, 4).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
+							ui.Text(c, as.ReasoningEffortLabel()).FontSize(9).FontWeight(600).TextColor(tc.TextMuted)
+						})
+					}
+					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+				})
+			})
+			if modelBtn.Clicked() {
+				a.ShowModelPalette = true
+				a.ModelSearchQuery = ""
+			}
+
+			// Auto-Verify Button
+			verifyBtn := chipRow(c, tc)
+			if as.AutoVerify {
+				verifyBtn.Background(tc.Success.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
+				verifyBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerShieldCheck).Width(13).Height(13).TextColor(tc.Success)
+						ui.Text(c, "Verify").FontSize(12).FontWeight(500).TextColor(tc.Success)
+					})
+				})
+			} else {
+				verifyBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerShieldCheck).Width(13).Height(13).TextColor(tc.TextMuted)
+						ui.Text(c, "Verify").FontSize(12).FontWeight(500).TextColor(tc.Text)
+					})
+				})
+			}
+			if verifyBtn.Clicked() {
+				as.AutoVerify = !as.AutoVerify
+			}
+
+			ui.Box(c).Grow(1)
+
+			// Context Window Usage Gauge (Right side)
+			tokens, pct := as.ContextUsage()
+			gaugeBtn := ui.Row(c).Height(24).Radius(999).Padding(0, 8).Gap(4).AlignItems(ui.Center)
+			gaugeBtn.Children(func() {
+				dotColor := tc.Success
+				if pct >= 80 {
+					dotColor = tc.Error
+				} else if pct >= 60 {
+					dotColor = tc.Warning
+				}
+				ui.Box(c).Size(6, 6).Radius(3).Background(dotColor)
+				ui.Text(c, fmt.Sprintf("%d%%", pct)).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+			})
+			if gaugeBtn.Hovered() {
+				gaugeBtn.Background(tc.Text.Alpha(0.04))
+			}
+			if gaugeBtn.Clicked() {
+				c.AddToast(ui.Toast{
+					Title:       "Context Window Usage",
+					Description: fmt.Sprintf("%.1fk tokens used of limit (%d%%)", float32(tokens)/1000.0, pct),
+					Type:        "info",
+				})
+			}
+
+			// Send / Steer / Queue / Stop controls
+			if as.IsStreaming {
+				if strings.TrimSpace(as.InputText) != "" {
+					queueBtn := ui.Row(c).Height(28).Radius(999).Padding(0, 10).Gap(4).AlignItems(ui.Center).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					queueBtn.Children(func() {
+						ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(tc.TextMuted)
+						ui.Text(c, "Queue").FontSize(11).FontWeight(500)
+					})
+					if queueBtn.Clicked() {
+						as.SteerQueue = append(as.SteerQueue, as.InputText)
+						as.InputText = ""
+						c.AddToast(ui.Toast{Title: "Queued", Description: "Prompt queued for next turn", Type: "info"})
+					}
+
+					steerBtn := ui.Row(c).Height(28).Radius(999).Padding(0, 10).Gap(4).AlignItems(ui.Center).
+						Background(tc.MessageAction)
+					steerBtn.Children(func() {
+						ui.Icon(c, icons.TablerCompass).Width(12).Height(12).TextColor(tc.MessageActionForeground)
+						ui.Text(c, "Steer").FontSize(11).FontWeight(600).TextColor(tc.MessageActionForeground)
+					})
+					if steerBtn.Clicked() {
 						as.SubmitMessage()
 					}
 				}
-				_ = sess
-			})
-		})
 
-		if as.ShowModelPicker {
-			a.renderModelPickerModal(c)
-		}
+				// Stop Button (Destructive Red)
+				stopBtn := ui.Row(c).Size(32, 32).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
+					Background(tc.Error.Alpha(0.9)).
+					Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.2))
+				stopBtn.Children(func() {
+					ui.Icon(c, icons.TablerSquare).Width(13).Height(13).TextColor(tc.ErrorForeground)
+				})
+				if stopBtn.Clicked() {
+					as.CancelStreaming()
+				}
+			} else {
+				hasInput := strings.TrimSpace(as.InputText) != "" || len(as.AttachedFiles) > 0
+				sendBtn := ui.Row(c).Size(32, 32).Radius(999).AlignItems(ui.Center).Justify(ui.Center)
+				if hasInput {
+					sendBtn.Background(tc.MessageAction).
+						Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.25)).
+						InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.2))
+					sendBtn.Children(func() {
+						ui.Icon(c, icons.TablerArrowUp).Width(16).Height(16).TextColor(tc.MessageActionForeground)
+					})
+					if sendBtn.Clicked() {
+						as.SubmitMessage()
+					}
+				} else {
+					sendBtn.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+					sendBtn.Children(func() {
+						ui.Icon(c, icons.TablerArrowUp).Width(15).Height(15).TextColor(tc.IconMuted)
+					})
+				}
+			}
+		})
 	})
 }
 
@@ -686,65 +841,7 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 		})
 
 		// Landing composer
-		card := ui.Column(c).Width(680).Radius(22).BorderWidth(1).BorderColor(tc.Border).
-			Background(tc.Surface).
-			Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
-			InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.06))
-		card.Children(func() {
-			ui.Row(c).Gap(8).Padding(12, 16, 0, 16).AlignItems(ui.Center).Children(func() {
-				wsChip := ui.Row(c).Radius(8).Padding(4, 10).Gap(5).AlignItems(ui.Center).
-					Background(tc.Text.Alpha(0.05))
-				wsChip.Children(func() {
-					ui.Icon(c, icons.TablerFolder).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, projectName).FontSize(12).FontWeight(500)
-				})
-				branchChip := ui.Row(c).Radius(8).Padding(4, 10).Gap(5).AlignItems(ui.Center).
-					Background(tc.Text.Alpha(0.05))
-				branchChip.Children(func() {
-					ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.IconMuted)
-					ui.Text(c, "main").FontSize(12).TextColor(tc.TextMuted)
-				})
-				ui.Box(c).Grow(1)
-			})
-
-			ui.Row(c).Padding(12, 16).Children(func() {
-				in := ui.TextInput(c, &as.InputText).Placeholder("Ask agent, enter instructions, or /help...").Grow(1)
-				if in.Submitted() {
-					as.SubmitMessage()
-				}
-			})
-
-			ui.Row(c).Gap(6).Padding(4, 12, 12, 12).AlignItems(ui.Center).Children(func() {
-				effortBtn := composerControlChip(c, tc, icons.TablerBrain, as.ReasoningEffortLabel(), "", false)
-				if effortBtn.Clicked() {
-					as.CycleReasoningEffort()
-				}
-
-				modelBtn := chipRow(c, tc)
-				modelBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(tc.Accent)
-						ui.Text(c, as.ActiveModel).FontSize(12).FontWeight(500)
-						ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
-					})
-				})
-				if modelBtn.Clicked() {
-					as.ShowModelPicker = !as.ShowModelPicker
-				}
-
-				ui.Box(c).Grow(1)
-
-				send := ui.Row(c).Size(32, 32).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
-					Background(tc.MessageAction).
-					Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.2))
-				send.Children(func() {
-					ui.Icon(c, icons.TablerChevronUp).Width(16).Height(16).TextColor(tc.MessageActionForeground)
-				})
-				if send.Clicked() {
-					as.SubmitMessage()
-				}
-			})
-		})
+		a.renderComposerCard(c, tc, true)
 
 		// Suggestions
 		ui.Row(c).Gap(8).Wrap().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
@@ -795,6 +892,11 @@ func (a *AppUI) renderModelPickerModal(c *ui.Context) {
 			ui.Text(c, "Select AI Model").FontSize(12).FontWeight(600)
 			ui.Box(c).Grow(1)
 		})
+		if len(as.AvailableModels) == 0 {
+			ui.Row(c).Padding(12, 8).Justify(ui.Center).Children(func() {
+				ui.Text(c, "No models configured").FontSize(11).TextColor(tc.TextMuted)
+			})
+		}
 		for _, model := range as.AvailableModels {
 			thisModel := model
 			isSelected := (as.ActiveModel == thisModel)

@@ -101,39 +101,60 @@ type AppUI struct {
 	NewFileName          string
 	ShowNewFolderModal   bool
 	NewFolderName        string
-	ShowNewTaskModal     bool
-	NewTaskTitle         string
-	NewTaskAgentType     string // "acp" or "cli"
-	SelectedAgentID      string
+	ShowNewTaskModal        bool
+	NewTaskTitle            string
+	NewTaskAgentType        string // "acp" or "cli"
+	NewTaskSearchQuery      string
+	NewTaskFilterTab        string // "all", "acp", "cli"
+	NewTaskSelectedKind     string // "acp", "cli"
+	NewTaskSelectedAgentID  string
+	NewTaskSelectedName     string
+	NewTaskSelectedExec     string
+	NewTaskSelectedArgs     []string
+	NewTaskUninstalledOpen  bool
+	NewTaskStep             string // "agent" or "workspace"
+	SelectedAgentID         string
 	SelectedAgentModel   string
 	ShowTaskMenuModal    bool
 	ShowRenameModal      bool
 	RenameSessionTitle   string
 	ShowBranchModal      bool
 	BranchSearchQuery    string
+	ShowModelPalette     bool
+	ModelSearchQuery     string
+	SelectedHarnessID       string
+	SelectedProviderTab     string
+	CollapsedProjectGroups  map[string]bool
+	ExpandedFileTreeFolders map[string]bool
 }
 
 // NewAppUI constructs the complete AppUI state tree.
 func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI := &AppUI{
-		Engine:               engine,
-		Workspace:            workspace.NewWorkspaceState(rootDir),
-		Editor:               editor.NewEditorManager(),
-		Terminal:             terminal.NewTerminalState(rootDir),
-		ThemeMgr:             theme.NewThemeManager(),
-		Mode:                 ModeAgent,
-		ActiveTaskKind:       "agent",
-		ShowLeftSidebar:      true,
-		LeftSidebarWidth:     LeftSidebarDefault,
-		RightDrawerWidth:     RightDrawerDefault,
-		BottomTerminalHeight: 240,
-		ShowBottomTerminal:   false,
-		ShowRightDrawer:      false,
-		RightDrawerTab:       RightTabChanges,
-		EditorActivity:       ActivityExplorer,
-		NewTaskAgentType:     "acp",
-		SelectedAgentID:      "agent-internal",
-		SelectedAgentModel:   "Claude 3.7 Sonnet",
+		Engine:                  engine,
+		Workspace:               workspace.NewWorkspaceState(rootDir),
+		Editor:                  editor.NewEditorManager(),
+		Terminal:                terminal.NewTerminalState(rootDir),
+		ThemeMgr:                theme.NewThemeManager(),
+		Mode:                    ModeAgent,
+		ActiveTaskKind:          "agent",
+		ShowLeftSidebar:         true,
+		LeftSidebarWidth:        LeftSidebarDefault,
+		RightDrawerWidth:        RightDrawerDefault,
+		BottomTerminalHeight:    240,
+		ShowBottomTerminal:      false,
+		ShowRightDrawer:         false,
+		RightDrawerTab:          RightTabChanges,
+		EditorActivity:          ActivityExplorer,
+		NewTaskAgentType:        "acp",
+		NewTaskFilterTab:        "all",
+		NewTaskStep:             "agent",
+		SelectedAgentID:         "agent-internal",
+		SelectedAgentModel:      "Claude 3.7 Sonnet",
+		SelectedHarnessID:       "agent-internal",
+		SelectedProviderTab:     "all",
+		CollapsedProjectGroups:  make(map[string]bool),
+		ExpandedFileTreeFolders: make(map[string]bool),
 		SideChatModel:        "Claude 3.7 Sonnet",
 		SideChatMode:         "full",
 		SideChatMessages:     make([]*agent.ChatMessage, 0),
@@ -183,6 +204,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI.Settings = settings.NewSettingsManager(engine, func(provider, model string) {
 		appUI.Agent.ActiveModel = model
 	})
+	if appUI.Settings.Model != "" {
+		appUI.Agent.ActiveModel = appUI.Settings.Model
+	}
 	appUI.Settings.ThemeMgr = appUI.ThemeMgr
 
 	appUI.Database = database.NewDatabaseManager(appUI.Workspace)
@@ -241,9 +265,15 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 
 func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 	return []palette.PaletteCommand{
-		{ID: "new-task", Label: "New Task", Detail: "Start a task session", Shortcut: "⌘N", Run: func() {
-			a.ShowNewTaskModal = true
-			a.NewTaskTitle = ""
+		{ID: "new-task", Label: "New Task", Detail: "Start a new agent task (open New Agent UI)", Shortcut: "⌘N", Run: func() {
+			a.NewAgentTask("")
+		}},
+		{ID: "new-task-agent", Label: "New Task with Agent / CLI...", Detail: "Select ACP Agent or CLI harness", Shortcut: "⇧⌘N", Run: func() {
+			a.OpenNewTaskModal()
+		}},
+		{ID: "select-model", Label: "Select Model / Harness", Detail: "Choose AI model or ACP harness", Shortcut: "⌘M", Run: func() {
+			a.ShowModelPalette = true
+			a.ModelSearchQuery = ""
 		}},
 		{ID: "agent-mode", Label: "Switch to Agent Mode", Shortcut: "⌘1", Run: func() { a.Mode = ModeAgent }},
 		{ID: "editor-mode", Label: "Switch to Editor Mode", Shortcut: "⌘2", Run: func() { a.Mode = ModeEditor }},
@@ -340,8 +370,14 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowLeftSidebar = !a.ShowLeftSidebar
 	}
 	if c.Shortcut(ui.Cmd, ui.KeyN) {
-		a.ShowNewTaskModal = true
-		a.NewTaskTitle = ""
+		a.NewAgentTask("")
+	}
+	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyN) {
+		a.OpenNewTaskModal()
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyM) {
+		a.ShowModelPalette = !a.ShowModelPalette
+		a.ModelSearchQuery = ""
 	}
 	if c.Shortcut(ui.Cmd, ui.KeyO) {
 		a.openWorkspaceFolder()
@@ -393,6 +429,46 @@ func (a *AppUI) toggleAppearance() {
 		a.ThemeMgr.Appearance = "light"
 	} else {
 		a.ThemeMgr.Appearance = "dark"
+	}
+}
+
+// NewAgentTask switches to Agent Mode and opens the New Agent UI ("What should we do in <project>?")
+// in the specified workspace (or active workspace if workspacePath is empty).
+func (a *AppUI) NewAgentTask(workspacePath string) {
+	a.Mode = ModeAgent
+	a.ActiveTaskKind = "agent"
+	a.ShowNewTaskModal = false
+
+	if workspacePath != "" && workspacePath != a.Workspace.RootDir {
+		a.switchWorkspace(workspacePath)
+	}
+
+	if a.Agent != nil {
+		a.Agent.ClearActiveSession()
+	}
+
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+func (a *AppUI) OpenNewTaskModal() {
+	a.ShowNewTaskModal = true
+	a.NewTaskTitle = ""
+	a.NewTaskSearchQuery = ""
+	a.NewTaskFilterTab = "all"
+	a.NewTaskStep = "agent"
+	a.NewTaskSelectedKind = ""
+	a.NewTaskSelectedAgentID = ""
+	a.NewTaskSelectedName = ""
+	a.NewTaskSelectedExec = ""
+	a.NewTaskSelectedArgs = nil
+	a.NewTaskUninstalledOpen = false
+	if a.ACPMgr != nil {
+		a.ACPMgr.RefreshAvailability()
+	}
+	if a.CLIMgr != nil {
+		a.CLIMgr.RefreshConfigs()
 	}
 }
 
