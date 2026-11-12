@@ -536,6 +536,19 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 				go a.Database.ScanDatabases()
 			}
 		})
+
+		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+			unplugBtn := ui.Row(c).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			unplugBtn.Children(func() {
+				ui.Icon(c, icons.TablerUnplug).Width(14).Height(14).TextColor(tc.Error)
+			})
+			if unplugBtn.Hovered() {
+				unplugBtn.Background(tc.Error.Alpha(0.15))
+			}
+			if unplugBtn.Clicked() {
+				a.DisconnectSSH()
+			}
+		}
 	})
 
 	// Search filter
@@ -621,9 +634,35 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 			}
 
 			if len(treeNodes) == 0 {
-				ui.Row(c).Height(32).Padding(0, 10).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "No files matching filter").FontSize(11).TextColor(tc.TextMuted)
-				})
+				if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+					ui.Column(c).Padding(16, 12).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "No remote files found").FontSize(11).TextColor(tc.TextMuted)
+						refreshBtn := ui.Row(c).Height(26).Radius(5).Padding(0, 10).
+							Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+							AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+						refreshBtn.Children(func() {
+							ui.Icon(c, icons.TablerRefresh).Width(12).Height(12).TextColor(tc.Accent)
+							ui.Text(c, "Refresh Remote Explorer").FontSize(10).FontWeight(500).TextColor(tc.Text)
+						})
+						if refreshBtn.Clicked() {
+							a.Workspace.Refresh()
+						}
+					})
+				} else {
+					ui.Column(c).Padding(16, 12).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "No files matching filter").FontSize(11).TextColor(tc.TextMuted)
+						connectSSHBtn := ui.Row(c).Height(26).Radius(5).Padding(0, 10).
+							Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+							AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+						connectSSHBtn.Children(func() {
+							ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.Accent)
+							ui.Text(c, "Connect via SSH Remote").FontSize(10).FontWeight(500).TextColor(tc.Text)
+						})
+						if connectSSHBtn.Clicked() {
+							a.OpenSSHModal()
+						}
+					})
+				}
 			} else {
 				for _, rootNode := range treeNodes {
 					renderNode(rootNode, 0)

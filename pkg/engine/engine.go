@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/commitmsg"
 	"github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/internal/remotefs"
 	"github.com/hasdev/forge-ade/internal/watcher"
 )
 
@@ -22,6 +24,7 @@ type Engine struct {
 	CommitGenerator *commitmsg.Generator
 	Watcher         *watcher.Watcher
 	ACPMgr          *acp.Manager
+	RemoteFS        *remotefs.Manager
 	Bus             *events.Bus
 	DataDir         string
 }
@@ -43,6 +46,9 @@ func NewEngine(dataDir string) *Engine {
 	acpMgr := acp.NewManager(bus)
 	acpMgr.SetDataDir(dataDir)
 
+	remoteMgr := remotefs.NewManager()
+	remoteMgr.SetEventBus(bus)
+
 	gitEngine := git.NewEngine()
 	llmClient := llm.NewLLMClient(dataDir)
 	commitGen := &commitmsg.Generator{
@@ -58,9 +64,34 @@ func NewEngine(dataDir string) *Engine {
 		CommitGenerator: commitGen,
 		Watcher:         w,
 		ACPMgr:          acpMgr,
+		RemoteFS:        remoteMgr,
 		Bus:             bus,
 		DataDir:         dataDir,
 	}
+}
+
+// ConnectSSH establishes a connection to a remote SSH/SFTP server.
+func (e *Engine) ConnectSSH(cfg remotefs.SSHConfig) (*remotefs.ConnectionStatus, error) {
+	if e.RemoteFS == nil {
+		return nil, fmt.Errorf("remote fs manager not initialized")
+	}
+	return e.RemoteFS.Connect(cfg)
+}
+
+// DisconnectSSH closes an active remote SSH/SFTP connection.
+func (e *Engine) DisconnectSSH(connID string) error {
+	if e.RemoteFS == nil {
+		return nil
+	}
+	return e.RemoteFS.Disconnect(connID)
+}
+
+// ListSSHConnections lists all registered remote SSH sessions.
+func (e *Engine) ListSSHConnections() []remotefs.ConnectionStatus {
+	if e.RemoteFS == nil {
+		return nil
+	}
+	return e.RemoteFS.ListConnections()
 }
 
 // GetGitStatus queries porcelain v2 status through the native Git engine.

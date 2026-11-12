@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/hasdev/forge-ade/internal/remotefs"
 )
 
 // IgnoredDirectoryNames holds names of directories to skip during workspace scans.
@@ -39,6 +41,7 @@ type WorkspaceState struct {
 	GitBranch    string
 	GitDirty     bool
 	FilterQuery  string
+	RemoteFS     *remotefs.Manager
 }
 
 // NewWorkspaceState creates and initializes a new workspace state for rootDir.
@@ -53,6 +56,14 @@ func NewWorkspaceState(rootDir string) *WorkspaceState {
 	return ws
 }
 
+// IsRemote reports whether the workspace is located on a remote SSH server.
+func (ws *WorkspaceState) IsRemote() bool {
+	if ws == nil {
+		return false
+	}
+	return strings.HasPrefix(ws.RootDir, "ssh://")
+}
+
 // Refresh re-scans the workspace directory for editable files.
 func (ws *WorkspaceState) Refresh() {
 	ws.mu.Lock()
@@ -61,6 +72,47 @@ func (ws *WorkspaceState) Refresh() {
 	var files []WorkspaceFile
 	maxFiles := 300
 	count := 0
+
+	// Handle remote SSH directory scanning
+	if strings.HasPrefix(ws.RootDir, "ssh://") && ws.RemoteFS != nil {
+		var walkRemote func(dirURI string, depth int)
+		walkRemote = func(dirURI string, depth int) {
+			if depth > 3 || count >= maxFiles {
+				return
+			}
+			entries, isRemote, err := ws.RemoteFS.ListDirectory(dirURI)
+			if !isRemote || err != nil {
+				return
+			}
+			for _, entry := range entries {
+				if entry == nil {
+					continue
+				}
+				name := filepath.Base(entry.Path)
+				if strings.HasPrefix(name, ".") && name != ".env" {
+					continue
+				}
+				if entry.IsDir && (name == "node_modules" || name == ".git" || name == "dist" || name == "build" || name == ".next") {
+					continue
+				}
+				rel := strings.TrimPrefix(entry.Path, ws.RootDir)
+				rel = strings.TrimPrefix(rel, "/")
+				files = append(files, WorkspaceFile{
+					RelativePath: rel,
+					FullPath:     entry.Path,
+					IsDir:        entry.IsDir,
+					Size:         entry.Size,
+				})
+				count++
+				if entry.IsDir {
+					walkRemote(entry.Path, depth+1)
+				}
+			}
+		}
+		walkRemote(ws.RootDir, 0)
+		ws.Files = files
+		return
+	}
 
 	_ = filepath.Walk(ws.RootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || count >= maxFiles {

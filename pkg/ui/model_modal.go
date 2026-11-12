@@ -56,7 +56,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 	}
 	if a.ACPMgr != nil {
 		for _, ag := range a.ACPMgr.Agents {
-			if ag.Available && ag.ID != "agent-internal" {
+			if ag.ID != "agent-internal" {
 				harnesses = append(harnesses, harnessDef{
 					ID:        ag.ID,
 					Name:      ag.Name,
@@ -104,6 +104,14 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 	}
 	for _, m := range defaultInternalModels {
 		internalModels = append(internalModels, m)
+	}
+
+	// If internal models are empty and user hasn't explicitly picked a harness, default to first ACP harness
+	if len(internalModels) == 0 && (a.SelectedHarnessID == "" || a.SelectedHarnessID == "agent-internal") && len(harnesses) > 1 {
+		a.SelectedHarnessID = harnesses[1].ID
+		for i := range harnesses {
+			harnesses[i].IsCurrent = (harnesses[i].ID == a.SelectedHarnessID)
+		}
 	}
 
 	if isSearching {
@@ -173,16 +181,25 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		}
 	}
 
-	selectModel := func(modelID, displayName string) {
+	selectModel := func(modelID, displayName, harnessID string) {
 		a.Agent.ActiveModel = displayName
+		a.SelectedAgentModel = displayName
+		if harnessID != "" {
+			a.SelectedHarnessID = harnessID
+		}
 		if sess := a.Agent.ActiveSession(); sess != nil {
 			sess.Model = displayName
+			if harnessID != "" {
+				sess.AgentID = harnessID
+				if harnessID != "agent-internal" {
+					sess.AgentType = "acp"
+				}
+			}
 		}
-		a.SelectedAgentModel = displayName
 		a.ShowModelPalette = false
 		c.AddToast(ui.Toast{
 			Title:       "Model Selected",
-			Description: fmt.Sprintf("Active model set to %s", displayName),
+			Description: fmt.Sprintf("%s · %s", harnessID, displayName),
 			Type:        "info",
 		})
 		if a.Window != nil {
@@ -202,7 +219,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				ui.Icon(c, icons.TablerSearch).Width(15).Height(15).TextColor(tc.IconMuted)
 				in := ui.TextInput(c, &a.ModelSearchQuery).Placeholder("Search models, providers, or harnesses...").Grow(1).AutoFocus()
 				if in.Submitted() && len(visibleModels) > 0 {
-					selectModel(visibleModels[0].ID, visibleModels[0].DisplayName)
+					selectModel(visibleModels[0].ID, visibleModels[0].DisplayName, visibleModels[0].HarnessID)
 				}
 
 				if a.ModelSearchQuery != "" {
@@ -324,7 +341,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 										ui.Text(c, fmt.Sprintf("No models found matching \"%s\"", a.ModelSearchQuery)).FontSize(12).TextColor(tc.TextMuted)
 										customBtn := ui.PrimaryButton(c, fmt.Sprintf("+ Use custom \"%s\"", a.ModelSearchQuery)).FontSize(12)
 										if customBtn.Clicked() {
-											selectModel(a.ModelSearchQuery, a.ModelSearchQuery)
+											selectModel(a.ModelSearchQuery, a.ModelSearchQuery, a.SelectedHarnessID)
 										}
 									} else {
 										ui.Icon(c, icons.TablerCpu).Width(32).Height(32).TextColor(tc.IconMuted)
@@ -378,7 +395,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 									row.Background(tc.Text.Alpha(0.04))
 								}
 								if row.Clicked() {
-									selectModel(m.ID, m.DisplayName)
+									selectModel(m.ID, m.DisplayName, m.HarnessID)
 								}
 							}
 						})

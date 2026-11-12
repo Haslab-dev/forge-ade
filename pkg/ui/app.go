@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -17,6 +19,7 @@ import (
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/terminal"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
+	"github.com/hasdev/forge-ade/internal/remotefs"
 )
 
 // Application surface modes
@@ -126,6 +129,23 @@ type AppUI struct {
 	SelectedProviderTab     string
 	CollapsedProjectGroups  map[string]bool
 	ExpandedFileTreeFolders map[string]bool
+	ShowSSHModal            bool
+	ShowSSHQuickMenu        bool
+	SSHLabel                string
+	SSHHost                 string
+	SSHPort                 int
+	SSHUser                 string
+	SSHAuthType             string // "key_file", "password", "agent"
+	SSHKeyPath              string
+	SSHKeyPassphrase        string
+	SSHPassword             string
+	SSHRemotePath           string
+	SSHIsConnecting         bool
+	SSHErrorMsg             string
+	SSHSavedConfigs         []remotefs.SSHConfig
+	SSHSelectedConfigID     string
+	SSHIsChangingDir        bool
+	SSHNewDirPath           string
 }
 
 // NewAppUI constructs the complete AppUI state tree.
@@ -155,6 +175,11 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SelectedProviderTab:     "all",
 		CollapsedProjectGroups:  make(map[string]bool),
 		ExpandedFileTreeFolders: make(map[string]bool),
+		SSHPort:                 22,
+		SSHAuthType:             "key_file",
+		SSHKeyPath:              "~/.ssh/id_ed25519",
+		SSHRemotePath:           "/var/www",
+		SSHSavedConfigs:         make([]remotefs.SSHConfig, 0),
 		SideChatModel:        "Claude 3.7 Sonnet",
 		SideChatMode:         "full",
 		SideChatMessages:     make([]*agent.ChatMessage, 0),
@@ -182,11 +207,53 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 					last := s.Messages[len(s.Messages)-1]
 					if last.Role == "assistant" && !last.Done {
 						last.Text += text
+						last.IsThinking = false
 					}
 				}
 				break
 			}
 		}
+		appUI.Agent.Unlock()
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	}
+
+	appUI.ACPMgr.OnThoughtChunk = func(sessionID, text string) {
+		appUI.Agent.Lock()
+		for _, s := range appUI.Agent.Sessions {
+			if s.ID == sessionID {
+				if len(s.Messages) > 0 {
+					last := s.Messages[len(s.Messages)-1]
+					if last.Role == "assistant" && !last.Done {
+						last.Thinking += text
+					}
+				}
+				break
+			}
+		}
+		appUI.Agent.Unlock()
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	}
+
+	appUI.ACPMgr.OnTurnDone = func(sessionID string) {
+		appUI.Agent.Lock()
+		for _, s := range appUI.Agent.Sessions {
+			if s.ID == sessionID {
+				if len(s.Messages) > 0 {
+					last := s.Messages[len(s.Messages)-1]
+					last.Done = true
+					last.IsThinking = false
+				}
+				s.Status = "idle"
+				s.UpdatedAt = time.Now()
+				appUI.Agent.SaveSessionToDisk(s)
+				break
+			}
+		}
+		appUI.Agent.IsStreaming = false
 		appUI.Agent.Unlock()
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
@@ -260,6 +327,14 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Workspace.GitDirty = len(appUI.Git.Staged)+len(appUI.Git.Unstaged)+len(appUI.Git.Untracked) > 0
 	}
 
+	if appUI.Workspace != nil && engine != nil {
+		appUI.Workspace.RemoteFS = engine.RemoteFS
+	}
+	if appUI.Editor != nil && engine != nil {
+		appUI.Editor.RemoteFS = engine.RemoteFS
+	}
+	appUI.LoadSavedSSHConfigs()
+
 	return appUI
 }
 
@@ -301,6 +376,19 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			if a.Git != nil {
 				go a.Git.Refresh()
 			}
+		}},
+		{ID: "ssh-connect", Label: "SSH: Connect to Remote Host...", Detail: "Open SSH & SFTP connection manager", Shortcut: "⇧⌘R", Run: func() {
+			a.OpenSSHModal()
+		}},
+		{ID: "ssh-quick", Label: "SSH: Remote Actions Menu", Detail: "Quick menu for active SSH connection", Run: func() {
+			if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+				a.ShowSSHQuickMenu = true
+			} else {
+				a.OpenSSHModal()
+			}
+		}},
+		{ID: "ssh-disconnect", Label: "SSH: Disconnect from Remote Host", Detail: "Close remote workspace and return to local files", Run: func() {
+			a.DisconnectSSH()
 		}},
 	}
 }
@@ -491,11 +579,35 @@ func (a *AppUI) openWorkspaceFolder() {
 
 func (a *AppUI) switchWorkspace(dir string) {
 	a.Workspace = workspace.NewWorkspaceState(dir)
+	if a.Engine != nil {
+		a.Workspace.RemoteFS = a.Engine.RemoteFS
+		a.Workspace.Refresh()
+	}
+	if a.Editor != nil && a.Engine != nil {
+		a.Editor.RemoteFS = a.Engine.RemoteFS
+	}
 	a.Agent.SetWorkspacePath(dir)
 	a.Terminal.Cwd = dir
 	a.Editor.CloseAll()
 	a.SelectedFile = ""
 	a.SelectedDiffPath = ""
+
+	if strings.HasPrefix(dir, "ssh://") {
+		// Remote SSH workspace
+		if a.Database != nil {
+			a.Database.Workspace = a.Workspace
+		}
+		if len(a.Workspace.Files) > 0 {
+			first := a.Workspace.Files[0]
+			a.SelectedFile = first.RelativePath
+			_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
+		}
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	}
+
 	if a.Database != nil {
 		a.Database.Workspace = a.Workspace
 		go a.Database.ScanDatabases()

@@ -70,6 +70,32 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			activityButton(icons.TablerGitBranch, ActivityGit, gitChanges, nil)
 			activityButton(icons.TablerDatabase, ActivityDatabase, 0, nil)
 			ui.Box(c).Grow(1)
+
+			// Remote SSH Button on ActivityBar
+			isSSH := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
+			sshBtn := ui.Row(c).Size(ActivityBarWidth-8, 40).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+			sshBtn.Children(func() {
+				ic := ui.Icon(c, icons.TablerServer).Width(20).Height(20)
+				if isSSH {
+					ic.TextColor(tc.Accent)
+					ui.Box(c).Absolute().Top(4).Right(4).Size(6, 6).Radius(3).Background(tc.Success)
+				} else {
+					ic.TextColor(tc.IconMuted)
+				}
+			})
+			if isSSH {
+				sshBtn.Background(tc.Accent.Alpha(0.12))
+			} else if sshBtn.Hovered() {
+				sshBtn.Background(tc.Text.Alpha(0.04))
+			}
+			if sshBtn.Clicked() {
+				if isSSH {
+					a.ShowSSHQuickMenu = true
+				} else {
+					a.OpenSSHModal()
+				}
+			}
+
 			activityButton(icons.TablerSettings, -1, 0, func() {
 				if a.Settings != nil {
 					a.Settings.Toggle()
@@ -264,6 +290,39 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	doc := em.ActiveDoc()
 	if doc == nil {
+		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+			_, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
+				ui.Row(c).Size(48, 48).Radius(12).Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerServer).Width(24).Height(24).TextColor(tc.Accent)
+				})
+				ui.Text(c, fmt.Sprintf("Connected to %s", displayHost)).FontSize(15).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, remotePath).FontSize(12).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(8).Padding(6, 0).Children(func() {
+					termBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+						Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+					termBtn.Children(func() {
+						ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Canvas)
+						ui.Text(c, "Remote Terminal").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+					})
+					if termBtn.Clicked() {
+						a.ShowBottomTerminal = true
+					}
+
+					quickBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+						AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+					quickBtn.Children(func() {
+						ui.Icon(c, icons.TablerServer).Width(13).Height(13).TextColor(tc.Accent)
+						ui.Text(c, "Remote Actions").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					})
+					if quickBtn.Clicked() {
+						a.ShowSSHQuickMenu = true
+					}
+				})
+			})
+			return
+		}
 		ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 			ui.Text(c, "No file open").FontSize(17).FontWeight(600).TextColor(t.TextMuted)
 			ui.Text(c, "Select a file from the workspace sidebar or press ⌘P to open.").FontSize(13).TextColor(t.TextMuted)
@@ -399,6 +458,37 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 	}
 	ui.Row(c).Height(StatusBarHeight).Gap(12).Padding(0, 12).AlignItems(ui.Center).
 		Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
+		// Remote SSH indicator
+		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+			_, _, displayHost, folderName := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			remoteChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center).
+				Background(tc.Accent.Alpha(0.15)).BorderWidth(1, 1, 1, 1).BorderColor(tc.Accent.Alpha(0.3))
+			remoteChip.Children(func() {
+				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.Accent)
+				ui.Box(c).Size(5, 5).Radius(2.5).Background(tc.Success)
+				ui.Text(c, fmt.Sprintf("SSH: %s", displayHost)).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+				ui.Text(c, fmt.Sprintf("(%s)", folderName)).FontSize(11).TextColor(tc.TextMuted)
+			})
+			if remoteChip.Hovered() {
+				remoteChip.Background(tc.Accent.Alpha(0.25))
+			}
+			if remoteChip.Clicked() {
+				a.ShowSSHQuickMenu = true
+			}
+		} else {
+			remoteChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
+			remoteChip.Children(func() {
+				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.IconMuted)
+				statusText("Remote")
+			})
+			if remoteChip.Hovered() {
+				remoteChip.Background(tc.Text.Alpha(0.06))
+			}
+			if remoteChip.Clicked() {
+				a.OpenSSHModal()
+			}
+		}
+
 		folderChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
 		folderChip.Children(func() {
 			ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)

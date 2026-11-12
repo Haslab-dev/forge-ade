@@ -15,6 +15,7 @@ import (
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
+	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/agentsession"
 )
 
@@ -1325,13 +1326,51 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 		}()
 
 		// 1. Check if ACP session can handle this turn
-		if activeSess != nil && (activeSess.AgentType == "acp" || activeSess.AgentID == "agent-agy" || activeSess.AgentID == "agent-claude" || activeSess.AgentID == "agent-codex") {
-			if as.engine != nil && as.engine.ACPMgr != nil {
-				err := as.engine.ACPMgr.Prompt(activeSess.ID, prompt)
-				if err == nil {
-					return
+		isACPAgent := activeSess != nil && (activeSess.AgentType == "acp" ||
+			activeSess.AgentID == "agent-agy" ||
+			activeSess.AgentID == "agent-claude" ||
+			activeSess.AgentID == "agent-codex" ||
+			activeSess.AgentID == "agent-opencode" ||
+			activeSess.AgentID == "agent-commandcode" ||
+			activeSess.AgentID == "agent-pi" ||
+			activeSess.AgentID == "agent-ohmypi" ||
+			activeSess.AgentID == "agent-gemini")
+
+		if isACPAgent {
+			var startErr error
+			if as.ACPMgr != nil {
+				_, startErr = as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model)
+				if startErr == nil {
+					if promptErr := as.ACPMgr.Prompt(activeSess.ID, prompt); promptErr == nil {
+						return
+					} else {
+						startErr = promptErr
+					}
+				}
+			} else if as.engine != nil && as.engine.ACPMgr != nil {
+				_, startErr = as.engine.ACPMgr.StartSession(acp.SessionOpts{
+					SessionID: activeSess.ID,
+					AgentID:   activeSess.AgentID,
+					Cwd:       as.workspacePath,
+					Model:     activeSess.Model,
+				})
+				if startErr == nil {
+					if promptErr := as.engine.ACPMgr.Prompt(activeSess.ID, prompt); promptErr == nil {
+						return
+					} else {
+						startErr = promptErr
+					}
 				}
 			}
+			as.mu.Lock()
+			if startErr != nil {
+				assistantMsg.Text = fmt.Sprintf("ACP agent **%s** could not be started: %v\n\nPlease ensure the CLI executable is installed on PATH (or select another agent harness in ⌘M).", activeSess.AgentID, startErr)
+			} else {
+				assistantMsg.Text = fmt.Sprintf("ACP agent **%s** error: %v", activeSess.AgentID, startErr)
+			}
+			assistantMsg.IsThinking = false
+			as.mu.Unlock()
+			return
 		}
 
 		// 2. Execute via internal LLMClient

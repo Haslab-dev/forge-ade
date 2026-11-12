@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
+	"github.com/hasdev/forge-ade/internal/remotefs"
 )
 
 // OpenDocument represents an open file buffer with its editor and diff states.
@@ -37,6 +38,7 @@ type EditorManager struct {
 	DiffInline   string // "Words", "Characters", "Off"
 	StatusMsg    string
 	Theme        *theme.ThemeManager
+	RemoteFS     *remotefs.Manager
 }
 
 // NewEditorManager creates and initializes an EditorManager.
@@ -103,7 +105,18 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 		return doc, nil
 	}
 
-	contentBytes, err := os.ReadFile(fullPath)
+	var contentBytes []byte
+	var err error
+	if strings.HasPrefix(fullPath, "ssh://") && em.RemoteFS != nil {
+		data, isRemote, rErr := em.RemoteFS.ReadFile(fullPath)
+		if isRemote {
+			contentBytes, err = data, rErr
+		} else {
+			contentBytes, err = os.ReadFile(fullPath)
+		}
+	} else {
+		contentBytes, err = os.ReadFile(fullPath)
+	}
 	if err != nil {
 		em.StatusMsg = fmt.Sprintf("Error reading %s: %v", relPath, err)
 		return nil, err
@@ -315,9 +328,17 @@ func (em *EditorManager) SaveActiveFile() error {
 	}
 
 	newText := doc.Editor.Buffer.String()
-	if err := os.WriteFile(doc.FullPath, []byte(newText), 0644); err != nil {
-		em.StatusMsg = fmt.Sprintf("Error saving %s: %v", doc.RelativePath, err)
-		return err
+	if strings.HasPrefix(doc.FullPath, "ssh://") && em.RemoteFS != nil {
+		isRemote, err := em.RemoteFS.WriteFile(doc.FullPath, []byte(newText))
+		if isRemote && err != nil {
+			em.StatusMsg = fmt.Sprintf("Error saving remote %s: %v", doc.RelativePath, err)
+			return err
+		}
+	} else {
+		if err := os.WriteFile(doc.FullPath, []byte(newText), 0644); err != nil {
+			em.StatusMsg = fmt.Sprintf("Error saving %s: %v", doc.RelativePath, err)
+			return err
+		}
 	}
 
 	doc.DiskContent = newText

@@ -49,6 +49,12 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowModelPalette {
 		a.renderModelProviderPaletteModal(c)
 	}
+	if a.ShowSSHModal {
+		a.renderSSHConnectModal(c)
+	}
+	if a.ShowSSHQuickMenu {
+		a.renderSSHQuickMenuModal(c)
+	}
 }
 
 func (a *AppUI) renderPaletteModal(c *ui.Context) {
