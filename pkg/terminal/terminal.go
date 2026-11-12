@@ -14,6 +14,10 @@ type TerminalState struct {
 	Title    string
 	ExitCode int
 	Exited   bool
+	// Command and Env override the spawned program; empty runs the user's
+	// shell (a local shell, or an ssh remote shell for remote workspaces).
+	Command []string
+	Env     []string
 }
 
 // NewTerminalState creates a new terminal manager for the given working directory.
@@ -42,7 +46,7 @@ func (ts *TerminalState) Restart() error {
 		ts.term.Close()
 	}
 
-	term, err := termplugin.New(termplugin.Options{
+	opts := termplugin.Options{
 		Dir: ts.Cwd,
 		OnTitle: func(title string) {
 			ts.mu.Lock()
@@ -55,7 +59,14 @@ func (ts *TerminalState) Restart() error {
 			ts.ExitCode = code
 			ts.mu.Unlock()
 		},
-	})
+	}
+	if len(ts.Command) > 0 {
+		opts.Command = ts.Command
+	}
+	if len(ts.Env) > 0 {
+		opts.Env = ts.Env
+	}
+	term, err := termplugin.New(opts)
 	if err != nil {
 		return err
 	}

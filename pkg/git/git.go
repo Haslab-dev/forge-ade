@@ -23,16 +23,19 @@ type GitManager struct {
 	mu                 sync.RWMutex
 	engine             *engine.Engine
 	RootDir            string
+	DiscardPendingPath string // file awaiting discard confirmation
 	Branch             string
 	ActiveTab          int
 	Staged             []internalgit.FileStatus
 	Unstaged           []internalgit.FileStatus
 	Untracked          []internalgit.FileStatus
+	Conflicts          []internalgit.FileStatus
 	Commits            []internalgit.CommitNode
 	Branches           []string
 	CommitMsg          string
 	CommitSummary      string
 	CommitDesc         string
+	NewBranchName      string
 	StatusMsg          string
 	IsGeneratingAI     bool
 	IsFetching         bool
@@ -75,6 +78,7 @@ func (gm *GitManager) Refresh() {
 	gm.Staged = st.Staged
 	gm.Unstaged = st.Unstaged
 	gm.Untracked = st.Untracked
+	gm.Conflicts = st.Conflicts
 	gm.StatusMsg = fmt.Sprintf("Refreshed (Branch: %s)", st.Branch)
 
 	// Fetch history & branches in background
@@ -140,6 +144,24 @@ func (gm *GitManager) Unstage(path string) {
 }
 
 // UnstageAll unstages all staged files back to working tree.
+// Discard reverts the working-tree changes of one file, as forge-ade's
+// discard action does.
+func (gm *GitManager) Discard(path string) {
+	gm.mu.Lock()
+	eng := gm.engine
+	root := gm.RootDir
+	gm.DiscardPendingPath = ""
+	gm.mu.Unlock()
+	if eng == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := eng.GitEngine.Discard(ctx, root, []string{path}); err == nil {
+		gm.Refresh()
+	}
+}
+
 func (gm *GitManager) UnstageAll() {
 	if gm.engine == nil {
 		return

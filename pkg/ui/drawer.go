@@ -51,6 +51,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				{RightTabBoard, "Board", icons.TablerLayoutKanban},
 				{RightTabGit, "Git", icons.TablerGitBranch},
 				{RightTabDatabase, "DB", icons.TablerDatabase},
+				{RightTabFiles, "Files", icons.TablerFolder},
 			}
 
 			ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
@@ -111,6 +112,8 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderGitPane(c)
 			case RightTabDatabase:
 				a.renderDatabasePane(c)
+			case RightTabFiles:
+				a.renderFilesPane(c)
 			}
 		})
 	})
@@ -718,6 +721,17 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 	}
 	tc := a.ThemeMgr.Colors()
 
+	// Git operations run against the local working tree only, exactly as
+	// forge-ade skips git for ssh:// workspaces.
+	if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		ui.Column(c).Grow(1).Center().Gap(8).Padding(20).Children(func() {
+			ui.Icon(c, icons.TablerGitBranch).Width(32).Height(32).TextColor(tc.IconMuted)
+			ui.Text(c, "Git is unavailable over SSH").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Text(c, "Source control works on local workspaces only. Disconnect to use git.").FontSize(12).TextColor(tc.TextMuted).MaxWidth(240)
+		})
+		return
+	}
+
 	ui.Column(c).Fill().Children(func() {
 		// Header row with Branch pill + Remotes (Fetch, Pull, Push) + Refresh
 		ui.Row(c).Height(40).Padding(0, 10).Gap(6).AlignItems(ui.Center).
@@ -899,28 +913,51 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 				}
 			})
 		case git.GitTabBranches:
-			ui.Scroll(c).Grow(1).Padding(8).Children(func() {
-				ui.Column(c).Gap(2).Children(func() {
-					for _, b := range gm.Branches {
-						branch := b
-						isCurrent := branch == gm.Branch
-						row := ui.Row(c.Key("branch-"+branch)).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
-						row.Children(func() {
-							ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.IconMuted)
-							ui.Text(c, branch).FontSize(11).FontWeight(500).Grow(1).SingleLine()
-							if isCurrent {
-								Badge(c, tc, "HEAD", tc.Accent)
+			ui.Column(c).Grow(1).Children(func() {
+				// Create branch, as forge-ade's BranchSelector does
+				ui.Row(c).Padding(8, 10, 4, 10).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.TextInput(c, &gm.NewBranchName).Placeholder("New branch name…").Grow(1)
+					createBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).Gap(4).AlignItems(ui.Center).
+						Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+					createBtn.Children(func() {
+						ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(tc.Accent)
+						ui.Text(c, "Create").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+					})
+					if createBtn.Clicked() && strings.TrimSpace(gm.NewBranchName) != "" {
+						name := strings.TrimSpace(gm.NewBranchName)
+						gm.NewBranchName = ""
+						go func() {
+							if err := gm.CreateBranch(name); err != nil {
+								c.AddToast(ui.Toast{Title: "Branch Error", Description: err.Error(), Type: "error"})
+							} else {
+								c.AddToast(ui.Toast{Title: "Branch Created", Description: name, Type: "success"})
 							}
-						})
-						if isCurrent {
-							row.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-						} else if row.Hovered() {
-							row.Background(tc.Text.Alpha(0.04))
-						}
-						if row.Clicked() && !isCurrent {
-							a.checkoutBranch(branch)
-						}
+						}()
 					}
+				})
+				ui.Scroll(c).Grow(1).Padding(8).Children(func() {
+					ui.Column(c).Gap(2).Children(func() {
+						for _, b := range gm.Branches {
+							branch := b
+							isCurrent := branch == gm.Branch
+							row := ui.Row(c.Key("branch-"+branch)).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
+							row.Children(func() {
+								ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Text(c, branch).FontSize(11).FontWeight(500).Grow(1).SingleLine()
+								if isCurrent {
+									Badge(c, tc, "HEAD", tc.Accent)
+								}
+							})
+							if isCurrent {
+								row.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+							} else if row.Hovered() {
+								row.Background(tc.Text.Alpha(0.04))
+							}
+							if row.Clicked() && !isCurrent {
+								a.checkoutBranch(branch)
+							}
+						}
+					})
 				})
 			})
 		}

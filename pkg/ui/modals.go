@@ -43,6 +43,9 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowRenameModal {
 		a.renderRenameModal(c)
 	}
+	if a.ShowRenameFileModal {
+		a.renderRenameFileModal(c)
+	}
 	if a.ShowBranchModal {
 		a.renderBranchModal(c)
 	}

@@ -50,6 +50,7 @@ const (
 	RightTabBoard    = 4
 	RightTabGit      = 5
 	RightTabDatabase = 6
+	RightTabFiles    = 7
 )
 
 // Layout metrics of ForgeADE's CSS
@@ -121,6 +122,9 @@ type AppUI struct {
 	ShowTaskMenuModal       bool
 	ShowRenameModal         bool
 	RenameSessionTitle      string
+	ShowRenameFileModal     bool
+	RenameFileOldPath       string
+	RenameFilePath          string
 	ShowBranchModal         bool
 	BranchSearchQuery       string
 	ShowModelPalette        bool
@@ -134,6 +138,7 @@ type AppUI struct {
 	SSHLabel                string
 	SSHHost                 string
 	SSHPort                 int
+	SSHPortText             string
 	SSHUser                 string
 	SSHAuthType             string // "key_file", "password", "agent"
 	SSHKeyPath              string
@@ -186,6 +191,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		CollapsedProjectGroups:  make(map[string]bool),
 		ExpandedFileTreeFolders: make(map[string]bool),
 		SSHPort:                 22,
+		SSHPortText:             "22",
 		SSHAuthType:             "key_file",
 		SSHKeyPath:              "~/.ssh/id_ed25519",
 		SSHRemotePath:           "/var/www",

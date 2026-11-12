@@ -116,6 +116,15 @@ func (e *Engine) GitUnstage(repoPath string, paths []string) error {
 }
 
 // GitCommit creates a git commit.
+// GitDiscard reverts unstaged changes of the given paths to HEAD, as
+// forge-ade's GitDiscard binding does (git restore --worktree, plus clean
+// for untracked paths).
+func (e *Engine) GitDiscard(repoPath string, paths []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return e.GitEngine.Discard(ctx, repoPath, paths)
+}
+
 func (e *Engine) GitCommit(repoPath string, message string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

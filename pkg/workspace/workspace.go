@@ -1,12 +1,14 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
+	mygoshell "github.com/egoist/mygo"
 	"github.com/hasdev/forge-ade/internal/remotefs"
 )
 
@@ -188,6 +190,14 @@ func (ws *WorkspaceState) ResolveFullPath(rel string) string {
 // CreateFile creates a new empty file at relPath and refreshes the workspace index.
 func (ws *WorkspaceState) CreateFile(relPath string) error {
 	fullPath := ws.ResolveFullPath(relPath)
+	if strings.HasPrefix(fullPath, "ssh://") {
+		if ws.RemoteFS == nil {
+			return fmt.Errorf("not connected")
+		}
+		_, err := ws.RemoteFS.WriteFile(fullPath, []byte(""))
+		ws.Refresh()
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return err
 	}
@@ -203,6 +213,14 @@ func (ws *WorkspaceState) CreateFile(relPath string) error {
 // CreateFolder creates a new directory at relPath and refreshes the workspace index.
 func (ws *WorkspaceState) CreateFolder(relPath string) error {
 	fullPath := ws.ResolveFullPath(relPath)
+	if strings.HasPrefix(fullPath, "ssh://") {
+		if ws.RemoteFS == nil {
+			return fmt.Errorf("not connected")
+		}
+		_, err := ws.RemoteFS.CreateFolder(fullPath)
+		ws.Refresh()
+		return err
+	}
 	if err := os.MkdirAll(fullPath, 0755); err != nil {
 		return err
 	}
@@ -213,7 +231,40 @@ func (ws *WorkspaceState) CreateFolder(relPath string) error {
 // DeleteFile deletes a file at relPath and refreshes the workspace index.
 func (ws *WorkspaceState) DeleteFile(relPath string) error {
 	fullPath := ws.ResolveFullPath(relPath)
+	if strings.HasPrefix(fullPath, "ssh://") {
+		if ws.RemoteFS == nil {
+			return fmt.Errorf("not connected")
+		}
+		_, err := ws.RemoteFS.DeleteFile(fullPath)
+		ws.Refresh()
+		return err
+	}
+	// Move to the system trash first, so a delete stays recoverable.
+	if err := mygoshell.Shell.TrashItem(fullPath); err == nil {
+		ws.Refresh()
+		return nil
+	}
 	if err := os.Remove(fullPath); err != nil {
+		return err
+	}
+	ws.Refresh()
+	return nil
+}
+
+// RenameFile renames or moves a file/folder in the workspace, locally or
+// over SFTP for remote workspaces.
+func (ws *WorkspaceState) RenameFile(oldRel, newRel string) error {
+	oldPath := ws.ResolveFullPath(oldRel)
+	newPath := ws.ResolveFullPath(newRel)
+	if strings.HasPrefix(oldPath, "ssh://") {
+		if ws.RemoteFS == nil {
+			return fmt.Errorf("not connected")
+		}
+		_, err := ws.RemoteFS.RenameFile(oldPath, newPath)
+		ws.Refresh()
+		return err
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
 		return err
 	}
 	ws.Refresh()

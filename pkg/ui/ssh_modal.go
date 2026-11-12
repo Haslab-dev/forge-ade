@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,30 @@ import (
 const sshSavedHostsFile = "ssh_saved_hosts.json"
 
 // parseSSHWorkspaceURI parses a ssh://<connID>/<remotePath> URI into its components.
+// openRemoteTerminal spawns the ssh client under the PTY for the active
+// remote workspace, as forge-ade's CreateShell(ssh://…) does.
+func (a *AppUI) openRemoteTerminal() {
+	if a.Engine == nil || a.Engine.RemoteFS == nil {
+		return
+	}
+	client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
+	if isRemote && client != nil {
+		prog, args, env := client.SSHCommand(remotePath)
+		a.ShowBottomTerminal = true
+		a.Terminal.Command = append([]string{prog}, args...)
+		a.Terminal.Env = env
+		a.Terminal.Title = "SSH"
+		_ = a.Terminal.Restart()
+	} else {
+		a.ShowBottomTerminal = true
+		a.Terminal.Cwd = a.Workspace.RootDir
+		_ = a.Terminal.Restart()
+	}
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
 func parseSSHWorkspaceURI(uri string) (connID, remotePath, displayHost, folderName string) {
 	if !strings.HasPrefix(uri, "ssh://") {
 		return "", uri, "", filepath.Base(uri)
@@ -62,6 +87,7 @@ func (a *AppUI) ResetSSHForm() {
 	a.SSHLabel = ""
 	a.SSHHost = ""
 	a.SSHPort = 22
+	a.SSHPortText = "22"
 	a.SSHUser = ""
 	a.SSHAuthType = "key_file"
 	a.SSHKeyPath = "~/.ssh/id_ed25519"
@@ -82,6 +108,7 @@ func (a *AppUI) LoadSSHConfig(cfg remotefs.SSHConfig) {
 	} else {
 		a.SSHPort = 22
 	}
+	a.SSHPortText = strconv.Itoa(a.SSHPort)
 	a.SSHUser = cfg.User
 	if cfg.AuthType != "" {
 		a.SSHAuthType = cfg.AuthType
@@ -404,8 +431,7 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 							})
 							ui.Column(c).Grow(1).Gap(4).Children(func() {
 								ui.Text(c, "Port").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
-								portStr := fmt.Sprintf("%d", a.SSHPort)
-								ui.TextInput(c, &portStr).Placeholder("22").Grow(1)
+								ui.TextInput(c, &a.SSHPortText).Placeholder("22").Grow(1)
 							})
 						})
 
@@ -719,10 +745,7 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 
 				actionItem(icons.TablerTerminal, "Open Remote Terminal", "Launch an interactive terminal in this directory", "⌘`", false, func() {
 					a.ShowSSHQuickMenu = false
-					a.ShowBottomTerminal = true
-					if a.Terminal != nil {
-						a.Terminal.Cwd = a.Workspace.RootDir
-					}
+					a.openRemoteTerminal()
 				})
 
 				actionItem(icons.TablerFolderOpen, "Change Remote Directory", fmt.Sprintf("Switch to another path on %s", displayHost), "", false, func() {

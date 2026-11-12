@@ -190,6 +190,46 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			if tab.Clicked() {
 				em.ActivePath = path
 			}
+
+			// Zed-style tab context menu, as forge-ade's tab bar has.
+			tab.ContextMenu(func(m *ui.Menu) {
+				if m.Item("Close").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
+					em.CloseTab(path)
+				}
+				if m.Item("Close Others").Chosen() {
+					em.CloseOthers(path)
+				}
+				if m.Item("Close to the Left").Chosen() {
+					seen := false
+					for _, p := range em.OpenTabs() {
+						if p == path {
+							seen = true
+							continue
+						}
+						if !seen {
+							em.CloseTab(p)
+						}
+					}
+				}
+				if m.Item("Close to the Right").Chosen() {
+					em.CloseToRight(path)
+				}
+				if m.Item("Close All").Chosen() {
+					em.CloseAll()
+				}
+				m.Separator()
+				if m.Item("Copy Path").Chosen() {
+					mygo.Clipboard.WriteText(path)
+				}
+				if m.Item("Copy Relative Path").Chosen() {
+					mygo.Clipboard.WriteText(doc.RelativePath)
+				}
+				if !strings.HasPrefix(path, "ssh://") {
+					if m.Item("Reveal in Finder").Chosen() {
+						mygo.Shell.ShowItemInFolder(path)
+					}
+				}
+			})
 		}
 
 		if len(em.OpenTabPaths) == 0 {
@@ -306,7 +346,7 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 						ui.Text(c, "Remote Terminal").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
 					})
 					if termBtn.Clicked() {
-						a.ShowBottomTerminal = true
+						a.openRemoteTerminal()
 					}
 
 					quickBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
