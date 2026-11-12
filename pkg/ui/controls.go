@@ -53,7 +53,7 @@ func ToggleIconButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, iconSiz
 // rounded-[6px], px-2.5, text-ui-sm medium, hover bg-foreground/5, with an
 // optional kbd hint at the trailing edge.
 func SidebarActionButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, label, kbd string, active bool) ui.Element {
-	row := ui.Row(c.Key("sb-btn-" + label)).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	row := ui.Row(c.Key("sb-btn-"+label)).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	row.Children(func() {
 		ic := ui.Icon(c, icon).Width(15).Height(15)
 		if active {
@@ -77,7 +77,7 @@ func SidebarActionButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, labe
 
 // SidebarDangerActionButton renders a danger/delete action row with red accents.
 func SidebarDangerActionButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, label string) ui.Element {
-	row := ui.Row(c.Key("sb-danger-" + label)).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	row := ui.Row(c.Key("sb-danger-"+label)).Height(30).Radius(6).Padding(0, 10).Gap(10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	labelColor := tc.Error
 	row.Children(func() {
 		ui.Icon(c, icon).Width(15).Height(15).TextColor(labelColor)

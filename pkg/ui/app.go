@@ -67,43 +67,43 @@ const (
 
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
 type AppUI struct {
-	Engine               *engine.Engine
-	Window               *mygo.Window
-	Workspace            *workspace.WorkspaceState
-	Editor               *editor.EditorManager
-	Terminal             *terminal.TerminalState
-	Agent                *agent.AgentState
-	Git                  *git.GitManager
-	Database             *database.DatabaseManager
-	Palette              *palette.PaletteManager
-	Settings             *settings.SettingsManager
-	ThemeMgr             *theme.ThemeManager
-	ACPMgr               *agent.ACPManager
-	CLIMgr               *agent.AgentCLIManager
-	Board                *board.BoardManager
-	Mode                 int     // ModeAgent or ModeEditor
-	ActiveTaskKind       string  // "agent" or "cli"
-	ShowLeftSidebar      bool    // Left sidebar visibility
-	AgentSidebarView     int     // AgentSidebarTasks or AgentSidebarFiles
-	ShowBottomTerminal   bool    // Collapsible bottom terminal drawer
-	BottomTerminalHeight float32 // Resizable terminal height
-	ShowRightDrawer      bool    // Collapsible right side pane
-	RightDrawerWidth     float32 // Resizable right pane width
-	LeftSidebarWidth     float32 // Resizable left sidebar width
-	RightDrawerTab       int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
-	EditorActivity       int     // ActivityExplorer, ActivityGit, ActivityDatabase
-	SelectedFile         string
-	SelectedDiffPath     string
-	SideChatMessages     []*agent.ChatMessage
-	SideChatInput        string
-	SideChatModel        string
-	SideChatMode         string // "full", "ask", "plan"
-	SideChatStreaming    bool
-	SideChatMd           markdown.Options
-	ShowNewFileModal     bool
-	NewFileName          string
-	ShowNewFolderModal   bool
-	NewFolderName        string
+	Engine                  *engine.Engine
+	Window                  *mygo.Window
+	Workspace               *workspace.WorkspaceState
+	Editor                  *editor.EditorManager
+	Terminal                *terminal.TerminalState
+	Agent                   *agent.AgentState
+	Git                     *git.GitManager
+	Database                *database.DatabaseManager
+	Palette                 *palette.PaletteManager
+	Settings                *settings.SettingsManager
+	ThemeMgr                *theme.ThemeManager
+	ACPMgr                  *agent.ACPManager
+	CLIMgr                  *agent.AgentCLIManager
+	Board                   *board.BoardManager
+	Mode                    int     // ModeAgent or ModeEditor
+	ActiveTaskKind          string  // "agent" or "cli"
+	ShowLeftSidebar         bool    // Left sidebar visibility
+	AgentSidebarView        int     // AgentSidebarTasks or AgentSidebarFiles
+	ShowBottomTerminal      bool    // Collapsible bottom terminal drawer
+	BottomTerminalHeight    float32 // Resizable terminal height
+	ShowRightDrawer         bool    // Collapsible right side pane
+	RightDrawerWidth        float32 // Resizable right pane width
+	LeftSidebarWidth        float32 // Resizable left sidebar width
+	RightDrawerTab          int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
+	EditorActivity          int     // ActivityExplorer, ActivityGit, ActivityDatabase
+	SelectedFile            string
+	SelectedDiffPath        string
+	SideChatMessages        []*agent.ChatMessage
+	SideChatInput           string
+	SideChatModel           string
+	SideChatMode            string // "full", "ask", "plan"
+	SideChatStreaming       bool
+	SideChatMd              markdown.Options
+	ShowNewFileModal        bool
+	NewFileName             string
+	ShowNewFolderModal      bool
+	NewFolderName           string
 	ShowNewTaskModal        bool
 	NewTaskTitle            string
 	NewTaskAgentType        string // "acp" or "cli"
@@ -117,14 +117,14 @@ type AppUI struct {
 	NewTaskUninstalledOpen  bool
 	NewTaskStep             string // "agent" or "workspace"
 	SelectedAgentID         string
-	SelectedAgentModel   string
-	ShowTaskMenuModal    bool
-	ShowRenameModal      bool
-	RenameSessionTitle   string
-	ShowBranchModal      bool
-	BranchSearchQuery    string
-	ShowModelPalette     bool
-	ModelSearchQuery     string
+	SelectedAgentModel      string
+	ShowTaskMenuModal       bool
+	ShowRenameModal         bool
+	RenameSessionTitle      string
+	ShowBranchModal         bool
+	BranchSearchQuery       string
+	ShowModelPalette        bool
+	ModelSearchQuery        string
 	SelectedHarnessID       string
 	SelectedProviderTab     string
 	CollapsedProjectGroups  map[string]bool
@@ -190,9 +190,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SSHKeyPath:              "~/.ssh/id_ed25519",
 		SSHRemotePath:           "/var/www",
 		SSHSavedConfigs:         make([]remotefs.SSHConfig, 0),
-		SideChatModel:        "Claude 3.7 Sonnet",
-		SideChatMode:         "full",
-		SideChatMessages:     make([]*agent.ChatMessage, 0),
+		SideChatModel:           "Claude 3.7 Sonnet",
+		SideChatMode:            "full",
+		SideChatMessages:        make([]*agent.ChatMessage, 0),
 	}
 
 	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {
@@ -209,105 +209,33 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	})
 	appUI.Agent.ACPMgr = appUI.ACPMgr
 
-	appUI.ACPMgr.OnTokenChunk = func(sessionID, text string) {
-		appUI.Agent.Lock()
-		for _, s := range appUI.Agent.Sessions {
-			if s.ID == sessionID {
-				if len(s.Messages) == 0 || s.Messages[len(s.Messages)-1].Role == "user" {
-					newMsg := &agent.ChatMessage{
-						ID:        len(s.Messages) + 1,
-						Role:      "assistant",
-						Text:      text,
-						Done:      false,
-						Timestamp: time.Now(),
-					}
-					s.Messages = append(s.Messages, newMsg)
-				} else {
-					last := s.Messages[len(s.Messages)-1]
-					last.Text += text
-					last.IsThinking = false
-				}
-				break
-			}
-		}
-		appUI.Agent.Unlock()
-		if appUI.Window != nil {
-			appUI.Window.Invalidate()
+	appUI.ACPMgr.OnTokenChunk = appUI.Agent.HandleTokenChunk
+	appUI.ACPMgr.OnThoughtChunk = appUI.Agent.HandleThoughtChunk
+	appUI.ACPMgr.OnToolEvent = appUI.Agent.HandleToolEvent
+	appUI.ACPMgr.OnTurnStart = appUI.Agent.HandleTurnStart
+	appUI.ACPMgr.OnAsk = appUI.Agent.HandleAsk
+	appUI.ACPMgr.OnUsage = appUI.Agent.HandleUsage
+	appUI.ACPMgr.OnCommands = appUI.Agent.HandleCommands
+
+	appUI.ACPMgr.OnTurnDone = func(sessionID string, info agent.TurnEndInfo) {
+		// Finalizes the message, maps the status, records turn changes, and
+		// returns the next queued steer prompt to run.
+		if next := appUI.Agent.HandleTurnDone(sessionID, info); next != "" {
+			go appUI.Agent.TriggerTurn(next)
 		}
 	}
 
-	appUI.ACPMgr.OnThoughtChunk = func(sessionID, text string) {
-		appUI.Agent.Lock()
-		for _, s := range appUI.Agent.Sessions {
-			if s.ID == sessionID {
-				if len(s.Messages) > 0 {
-					last := s.Messages[len(s.Messages)-1]
-					last.Thinking += text
-					last.IsThinking = true
-				}
-				break
+	// Live elapsed indicators ("Working for 12s", spinners): repaint once a
+	// second while a turn is streaming.
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if appUI.Agent.IsStreaming && appUI.Window != nil {
+				appUI.Window.Invalidate()
 			}
 		}
-		appUI.Agent.Unlock()
-		if appUI.Window != nil {
-			appUI.Window.Invalidate()
-		}
-	}
-
-	appUI.ACPMgr.OnToolStep = func(sessionID, toolName, status string) {
-		appUI.Agent.Lock()
-		for _, s := range appUI.Agent.Sessions {
-			if s.ID == sessionID {
-				if len(s.Messages) > 0 {
-					last := s.Messages[len(s.Messages)-1]
-					var existing *agent.ToolExecution
-					for _, t := range last.Tools {
-						if t.ToolName == toolName && t.Status == "running" {
-							existing = t
-							break
-						}
-					}
-					if existing != nil {
-						existing.Status = status
-					} else {
-						last.Tools = append(last.Tools, &agent.ToolExecution{
-							ID:          fmt.Sprintf("tool-%d", time.Now().UnixNano()%100000),
-							ToolName:    toolName,
-							Status:      status,
-							CreatedAtMs: time.Now().UnixMilli(),
-						})
-					}
-				}
-				break
-			}
-		}
-		appUI.Agent.Unlock()
-		if appUI.Window != nil {
-			appUI.Window.Invalidate()
-		}
-	}
-
-	appUI.ACPMgr.OnTurnDone = func(sessionID string) {
-		appUI.Agent.Lock()
-		for _, s := range appUI.Agent.Sessions {
-			if s.ID == sessionID {
-				if len(s.Messages) > 0 {
-					last := s.Messages[len(s.Messages)-1]
-					last.Done = true
-					last.IsThinking = false
-				}
-				s.Status = "idle"
-				s.UpdatedAt = time.Now()
-				appUI.Agent.SaveSessionToDisk(s)
-				break
-			}
-		}
-		appUI.Agent.IsStreaming = false
-		appUI.Agent.Unlock()
-		if appUI.Window != nil {
-			appUI.Window.Invalidate()
-		}
-	}
+	}()
 
 	appUI.CLIMgr = agent.NewAgentCLIManager(rootDir, func() {
 		if appUI.Window != nil {

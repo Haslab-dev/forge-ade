@@ -385,10 +385,21 @@ func (a *AppUI) renderPermissionModal(c *ui.Context) {
 				ui.Icon(c, icons.TablerShieldAlert).Width(18).Height(18).TextColor(tc.Warning)
 				ui.Text(c, "Agent Permission Request").FontSize(14).FontWeight(600)
 			})
-			ui.Text(c, req.Description).FontSize(12).TextColor(tc.TextMuted)
-			if req.Command != "" {
+			summary := req.Title
+			if summary == "" {
+				summary = req.Description
+			}
+			ui.Text(c, summary).FontSize(13)
+			if req.Description != "" && req.Title != "" && req.Description != req.Title {
+				ui.Text(c, req.Description).FontSize(12).TextColor(tc.TextMuted)
+			}
+			if req.Arguments != "" {
+				args := req.Arguments
+				if len(args) > 600 {
+					args = args[:600] + "…"
+				}
 				ui.Box(c).Padding(8).Radius(6).Background(tc.Canvas).Children(func() {
-					ui.Text(c, req.Command).FontSize(11)
+					ui.Text(c, args).FontSize(11).Selectable()
 				})
 			}
 			ui.Row(c).AlignItems(ui.Center).Gap(6).Justify(ui.End).Children(func() {

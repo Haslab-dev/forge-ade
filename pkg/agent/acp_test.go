@@ -60,10 +60,11 @@ func TestACPAgentRegistry(t *testing.T) {
 
 	// Test Permission request handling
 	acpMgr.ActiveReq = &PermissionRequest{
-		SessionID: sess.ID,
-		RequestID: "req-1",
-		ToolName:  "bash",
-		Command:   "go build ./...",
+		SessionID:   sess.ID,
+		RequestID:   "req-1",
+		ToolName:    "bash",
+		Description: "go build ./...",
+		Arguments:   "go build ./...",
 	}
 
 	_ = acpMgr.RespondPermission(sess.ID, "req-1", true)

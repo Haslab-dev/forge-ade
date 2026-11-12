@@ -116,7 +116,16 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			}
 			switch sess.Status {
 			case "running":
-				pill("Running", tc.Accent)
+				runningPill := ui.Row(c).Radius(999).Padding(2, 8).Gap(5).AlignItems(ui.Center).
+					Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
+				runningPill.Children(func() {
+					ui.Spinner(c).Size(10, 10).Label("Running")
+					ui.Text(c, "Running").FontSize(11).TextColor(tc.Accent)
+				})
+			case "awaiting-approval", "waiting_permission":
+				pill("Waiting for approval", tc.Warning)
+			case "error":
+				pill("Error", tc.Error)
 			case "completed":
 				pill("Completed", tc.Success)
 			default:
@@ -210,25 +219,28 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 
 func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
 	running := !m.Done
-	totalSteps := len(m.Tools)
-	if m.Thinking != "" || m.IsThinking {
-		totalSteps++
+	totalSteps := m.TotalSteps
+	if totalSteps == 0 {
+		totalSteps = len(m.Tools)
+	}
+
+	// Live elapsed while the turn runs; the app ticks once a second while
+	// streaming, so this label counts up like forge-ade's "Working for 12s".
+	elapsedSec := m.ThinkingTimeSec
+	if running && !m.TurnStartedAt.IsZero() {
+		elapsedSec = time.Since(m.TurnStartedAt).Seconds()
 	}
 
 	label := "Worked"
 	if running {
 		label = "Working…"
-		if m.ThinkingTimeSec > 0 {
-			label = fmt.Sprintf("Working (%.0fs)…", m.ThinkingTimeSec)
+		if elapsedSec >= 1 {
+			label = fmt.Sprintf("Working for %.0fs…", elapsedSec)
 		}
 	} else {
 		durationSec := m.ThinkingTimeSec
 		if durationSec <= 0 {
-			dur := len(m.Tools) * 2
-			if dur < 1 {
-				dur = 1
-			}
-			durationSec = float64(dur)
+			durationSec = elapsedSec
 		}
 		if totalSteps > 0 {
 			stepWord := "steps"
@@ -247,7 +259,7 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, m *agent.Cha
 		Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.04))
 	pill.Children(func() {
 		if running {
-			ui.Icon(c, icons.TablerLoader).Width(13).Height(13).TextColor(tc.Accent)
+			ui.Spinner(c).Size(13, 13).Label("Working")
 			ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(tc.Accent)
 		} else {
 			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
@@ -281,8 +293,12 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 	label := "Thought"
 	if isThinking {
 		label = "Thinking…"
-		if m.ThinkingTimeSec > 0 {
-			label = fmt.Sprintf("Thinking for %.0fs…", m.ThinkingTimeSec)
+		elapsed := m.ThinkingTimeSec
+		if !m.TurnStartedAt.IsZero() {
+			elapsed = time.Since(m.TurnStartedAt).Seconds()
+		}
+		if elapsed >= 1 {
+			label = fmt.Sprintf("Thinking for %.0fs…", elapsed)
 		}
 	} else {
 		durationText := "a few seconds"
@@ -299,10 +315,13 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 	ui.Column(c).FillWidth().Gap(3).Children(func() {
 		header := ui.Row(c).Radius(6).Padding(3, 6).Gap(6).AlignItems(ui.Center).MinHeight(26)
 		header.Children(func() {
-			brainIcon := ui.Icon(c, icons.TablerBrain).Width(14).Height(14).TextColor(tc.IconMuted)
+			if isThinking {
+				ui.Spinner(c).Size(13, 13).Label("Thinking")
+			} else {
+				ui.Icon(c, icons.TablerBrain).Width(14).Height(14).TextColor(tc.IconMuted)
+			}
 			labelColor := tc.SecondaryLabel
 			if isThinking {
-				brainIcon.TextColor(tc.Accent)
 				labelColor = tc.Accent
 			}
 			ui.Text(c, label).FontSize(11).TextColor(labelColor).FontWeight(500)
@@ -364,7 +383,7 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				Background(tc.SurfaceRaised.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
 			groupBar.Children(func() {
 				if hasRunning {
-					ui.Icon(c, icons.TablerLoader).Width(13).Height(13).TextColor(tc.Accent)
+					ui.Spinner(c).Size(13, 13).Label("Running tools")
 				} else if hasFailed {
 					ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Error)
 				} else {
@@ -445,7 +464,7 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 					detailText = detailText[:62] + "…"
 				}
 
-				toolCard := ui.Column(c.Key("tool-"+thisTool.ID)).Radius(8).
+				toolCard := ui.Column(c.Key("tool-" + thisTool.ID)).Radius(8).
 					Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
 
 				toolCard.Children(func() {
@@ -472,7 +491,7 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 								ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.Error)
 							})
 						default:
-							ui.Icon(c, icons.TablerLoader).Width(12).Height(12).TextColor(tc.Accent)
+							ui.Spinner(c).Size(12, 12).Label("Running")
 						}
 
 						chev := icons.TablerChevronRight

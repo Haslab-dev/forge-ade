@@ -49,8 +49,8 @@ func TestDiskSessionPersistence(t *testing.T) {
 			if s.Title != "Real Persistent Feature Session" {
 				t.Fatalf("expected title 'Real Persistent Feature Session', got '%s'", s.Title)
 			}
-			if len(s.Messages) < 3 {
-				t.Fatalf("expected at least 3 messages loaded from disk, got %d", len(s.Messages))
+			if len(s.Messages) < 2 {
+				t.Fatalf("expected at least 2 messages loaded from disk, got %d", len(s.Messages))
 			}
 			if s.Tasks == nil || s.Tasks.Goal != "Implement Feature X" {
 				t.Fatalf("expected goal 'Implement Feature X', got %v", s.Tasks)

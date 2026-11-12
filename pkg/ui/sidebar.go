@@ -94,11 +94,12 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
 			})
 
-			// Filter Tabs: Active, Pinned, Archived with counts
-			activeCount, pinnedCount, archivedCount := a.Agent.TabCounts()
+			// Filter Tabs: Active, Pinned, Snoozed, Archived with counts
+			activeCount, pinnedCount, snoozedCount, archivedCount := a.Agent.TabCounts()
 			tabCounts := map[string]int{
 				"active":   activeCount,
 				"pinned":   pinnedCount,
+				"snoozed":  snoozedCount,
 				"archived": archivedCount,
 			}
 			ui.Row(c).Gap(4).Padding(4, 10).AlignItems(ui.Center).Children(func() {
@@ -108,7 +109,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 					}
 					return strings.ToUpper(s[:1]) + s[1:]
 				}
-				for _, tab := range []string{"active", "pinned", "archived"} {
+				for _, tab := range []string{"active", "pinned", "snoozed", "archived"} {
 					thisTab := tab
 					active := a.Agent.ActiveFilterTab == thisTab
 					pill := ui.Row(c).Radius(999).Padding(2, 8).AlignItems(ui.Center).Gap(4)
@@ -215,7 +216,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						isCollapsed := a.CollapsedProjectGroups[group.ProjectName]
 
 						// Project Group Header
-						pHeader := ui.Row(c.Key("pheader-" + group.ProjectName)).Height(28).Radius(6).
+						pHeader := ui.Row(c.Key("pheader-"+group.ProjectName)).Height(28).Radius(6).
 							Padding(0, 6).Gap(5).AlignItems(ui.Center)
 						pHeader.Children(func() {
 							if isCollapsed {
@@ -232,7 +233,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								ui.Text(c, fmt.Sprintf("%d", totalCount)).FontSize(10).TextColor(tc.SidebarMutedForeground)
 							}
 
-							newBtn := ui.Row(c.Key("pnew-" + group.ProjectName)).Size(18, 18).Radius(4).
+							newBtn := ui.Row(c.Key("pnew-"+group.ProjectName)).Size(18, 18).Radius(4).
 								AlignItems(ui.Center).Justify(ui.Center)
 							newBtn.Children(func() {
 								ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(tc.IconMuted)
@@ -254,7 +255,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 
 						// Expanded Project Tasks
 						if !isCollapsed {
-							ui.Column(c.Key("pbody-" + group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
+							ui.Column(c.Key("pbody-"+group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
 								if totalCount == 0 {
 									ui.Row(c).Height(24).Padding(0, 8).AlignItems(ui.Center).Children(func() {
 										ui.Text(c, "No tasks in this project").FontSize(11).TextColor(tc.SidebarMutedForeground)
@@ -568,7 +569,7 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 
 				if node.IsDir {
 					isOpen := a.isFolderExpanded(node.RelativePath, depth)
-					row := ui.Row(c.Key("fdir-" + node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
+					row := ui.Row(c.Key("fdir-"+node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
 						Padding(0, 6, 0, indent).Gap(4).AlignItems(ui.Center)
 					row.Children(func() {
 						if isOpen {
@@ -600,7 +601,7 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 						dirty = true
 					}
 
-					row := ui.Row(c.Key("ffile-" + node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
+					row := ui.Row(c.Key("ffile-"+node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
 						Padding(0, 6, 0, indent+15).Gap(6).AlignItems(ui.Center)
 					row.Children(func() {
 						ui.Icon(c, icons.FileIconSVG(node.RelativePath)).Width(14).Height(14).TextColor(tc.IconMuted)

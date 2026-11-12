@@ -592,7 +592,7 @@ func (a *AppUI) renderBoardPane(c *ui.Context) {
 					colIcon = icons.TablerCircleCheck
 				}
 
-				ui.Column(c.Key("col-"+thisCol.Name)).Gap(6).Children(func() {
+				ui.Column(c.Key("col-" + thisCol.Name)).Gap(6).Children(func() {
 					// Column Header
 					ui.Row(c).AlignItems(ui.Center).Gap(6).Padding(4, 2).Children(func() {
 						ui.Icon(c, colIcon).Width(13).Height(13).TextColor(colColor)

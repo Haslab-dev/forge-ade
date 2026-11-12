@@ -60,6 +60,21 @@ const (
 	ModeBypass ExecutionMode = "bypass" // Full autonomous access
 )
 
+// PermissionMode maps the UI autonomy level onto forge-ade's
+// SessionOpts.PermissionMode values.
+func (m ExecutionMode) PermissionMode() string {
+	switch m {
+	case ModeBypass:
+		return "full"
+	case ModeCode:
+		return "auto"
+	case ModePlan:
+		return "auto_edits"
+	default:
+		return "supervised"
+	}
+}
+
 // ReasoningEffort represents the thinking depth budget.
 type ReasoningEffort string
 
@@ -86,24 +101,31 @@ type ChatMessage struct {
 	ShowTools       bool
 	Changes         []*FileChange
 	PendingApproval *PendingApproval
+	TotalSteps      int       // steps reported by agent:turn_end
+	TurnStartedAt   time.Time `json:"-"` // live elapsed while streaming
 }
 
 // AgentSession represents a single task session in the ForgeADE agent workspace.
 type AgentSession struct {
-	ID            string
-	Title         string
-	Status        string // "running", "idle", "completed"
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	Messages      []*ChatMessage
-	Tasks         *TaskManager
-	Model         string
-	Provider      string
-	AgentID       string
-	AgentType     string
-	WorkspacePath string
-	Pinned        bool
-	Archived      bool
+	ID                string
+	Title             string
+	Status            string // "running", "idle", "completed"
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	Messages          []*ChatMessage
+	Tasks             *TaskManager
+	Model             string
+	Provider          string
+	AgentID           string
+	AgentType         string
+	WorkspacePath     string
+	Pinned            bool
+	Archived          bool
+	Snoozed           bool            `json:"snoozed,omitempty"`
+	RemoteSessionID   string          `json:"remoteSessionId,omitempty"` // agent conversation id
+	AvailableCommands []string        `json:"availableCommands,omitempty"`
+	LastUsage         *UsageInfo      `json:"lastUsage,omitempty"`
+	turnStartFiles    map[string]bool // git snapshot at turn start
 }
 
 // AgentState tracks sessions, conversation history, streaming responses, and prompt composer.
@@ -202,13 +224,300 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 	// Load real sessions from ~/.forge/sessions/ and ~/.forge-ade/sessions/
 	as.LoadSessionsFromDisk(workspacePath)
 
-	// Fallback: if no sessions exist on disk, create an initial real session
-	if len(as.Sessions) == 0 {
-		initialSess := as.NewSession("Pair Programming Task")
-		as.SaveSessionToDisk(initialSess)
-	}
-
 	return as
+}
+
+// ensureStreamingMessage returns the assistant message currently being
+// streamed for the session, appending a fresh placeholder when the turn has
+// none yet (as forge-ade's callbacks do).
+func (as *AgentState) ensureStreamingMessage(sess *AgentSession) *ChatMessage {
+	if len(sess.Messages) > 0 {
+		last := sess.Messages[len(sess.Messages)-1]
+		if last.Role == "assistant" && !last.Done {
+			return last
+		}
+	}
+	msg := &ChatMessage{
+		ID:            len(sess.Messages) + 1,
+		Role:          "assistant",
+		Done:          false,
+		Timestamp:     time.Now(),
+		TurnStartedAt: time.Now(),
+		IsThinking:    true,
+	}
+	sess.Messages = append(sess.Messages, msg)
+	return msg
+}
+
+// HandleTokenChunk applies an agent:message_delta payload.
+func (as *AgentState) HandleTokenChunk(sessionID, text string) {
+	if text == "" {
+		return
+	}
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		msg := as.ensureStreamingMessage(s)
+		msg.Text += text
+		msg.IsThinking = false
+		as.Messages = s.Messages
+		s.UpdatedAt = time.Now()
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// HandleThoughtChunk applies an agent:thinking_delta payload.
+func (as *AgentState) HandleThoughtChunk(sessionID, text string) {
+	if text == "" {
+		return
+	}
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		msg := as.ensureStreamingMessage(s)
+		msg.Thinking += text
+		msg.IsThinking = true
+		if !msg.ShowThinking && len(msg.Tools) == 0 {
+			// The thinking row opens by default until tools arrive.
+			msg.ShowThinking = true
+		}
+		as.Messages = s.Messages
+		s.UpdatedAt = time.Now()
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// HandleToolEvent applies an agent:tool_start / agent:tool_end payload.
+func (as *AgentState) HandleToolEvent(ev ToolEvent) {
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != ev.SessionID {
+			continue
+		}
+		msg := as.ensureStreamingMessage(s)
+
+		var existing *ToolExecution
+		if ev.ToolCallID != "" {
+			for _, t := range msg.Tools {
+				if t.ID == ev.ToolCallID {
+					existing = t
+					break
+				}
+			}
+		}
+		if existing == nil {
+			// Fall back to a matching in-flight tool of the same name.
+			for _, t := range msg.Tools {
+				if t.Status == "running" && (ev.Name == "" || t.ToolName == ev.Name) {
+					existing = t
+					break
+				}
+			}
+		}
+		if existing == nil {
+			id := ev.ToolCallID
+			if id == "" {
+				id = fmt.Sprintf("tool-%d", time.Now().UnixNano()%100000)
+			}
+			existing = &ToolExecution{
+				ID:          id,
+				ToolName:    ev.Name,
+				Status:      ev.Status,
+				CreatedAtMs: time.Now().UnixMilli(),
+			}
+			msg.Tools = append(msg.Tools, existing)
+		}
+		if ev.Name != "" {
+			existing.ToolName = ev.Name
+		}
+		if ev.Args != "" {
+			existing.Command = ev.Args
+		}
+		if ev.Output != "" {
+			existing.Output = ev.Output
+		}
+		existing.Status = ev.Status
+		if ev.Status != "running" {
+			existing.DurationMs = time.Now().UnixMilli() - existing.CreatedAtMs
+		}
+		as.Messages = s.Messages
+		s.UpdatedAt = time.Now()
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// HandleTurnStart applies an agent:turn_start payload.
+func (as *AgentState) HandleTurnStart(sessionID, prompt string) {
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		msg := as.ensureStreamingMessage(s)
+		msg.TurnStartedAt = time.Now()
+		msg.IsThinking = true
+		s.Status = "running"
+		as.Messages = s.Messages
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// HandleTurnDone applies an agent:turn_end payload: finalizes the assistant
+// message, maps the status vocabulary, records the turn's file changes, and
+// returns the next queued steer prompt, if any.
+func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSteer string) {
+	start := time.Now()
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		msg := as.ensureStreamingMessage(s)
+		msg.Done = true
+		msg.IsThinking = false
+		if !msg.TurnStartedAt.IsZero() {
+			msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
+		} else {
+			msg.ThinkingTimeSec = time.Since(msg.Timestamp).Seconds()
+		}
+		if info.TotalSteps > 0 {
+			msg.TotalSteps = info.TotalSteps
+		} else if info.StepCount > 0 {
+			msg.TotalSteps = info.StepCount
+		}
+		if info.RemoteSessionID != "" && !strings.HasPrefix(info.RemoteSessionID, "session-") && !strings.HasPrefix(info.RemoteSessionID, "acp-") {
+			s.RemoteSessionID = info.RemoteSessionID
+		}
+
+		// Turn changes: files git newly reports as changed since the turn
+		// started, with real +/- counts from their diffs.
+		turnEndFiles := as.gitStatusPaths()
+		var turnChanges []*FileChange
+		for path := range turnEndFiles {
+			if s.turnStartFiles == nil || !s.turnStartFiles[path] {
+				turnChanges = append(turnChanges, &FileChange{Path: path, Additions: -1, Deletions: -1})
+			}
+		}
+		s.turnStartFiles = nil
+		as.computeChangeStats(turnChanges)
+		if len(turnChanges) > 0 {
+			msg.Changes = turnChanges
+		}
+
+		// Status vocabulary of the original app.
+		switch {
+		case info.Error != "":
+			s.Status = "error"
+			if strings.TrimSpace(msg.Text) == "" {
+				msg.Text = fmt.Sprintf("⚠️ **Error**: %s", info.Error)
+			} else {
+				msg.Text += fmt.Sprintf("\n\n⚠️ **Error**: %s", info.Error)
+			}
+		case info.Status == "completed":
+			s.Status = "completed"
+		case info.Status == "stopped":
+			s.Status = "idle"
+			if strings.TrimSpace(msg.Text) == "" {
+				msg.Text = "*(stopped by user)*"
+			}
+		default:
+			s.Status = "idle"
+		}
+		s.UpdatedAt = time.Now()
+		as.SaveSessionToDisk(s)
+		break
+	}
+	// Only the visible session drives the global streaming flag.
+	if as.ActiveSessionID == sessionID || sessionID == "" {
+		as.IsStreaming = false
+	}
+	// ACP turns never drained the steer queue before; do it here.
+	if len(as.SteerQueue) > 0 {
+		nextSteer = as.SteerQueue[0]
+		as.SteerQueue = as.SteerQueue[1:]
+	}
+	as.mu.Unlock()
+	_ = start
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+	return nextSteer
+}
+
+// HandleAsk applies an agent:ask permission request: surfaces it on the
+// streaming message and flips the session to awaiting-approval.
+func (as *AgentState) HandleAsk(req *PermissionRequest) {
+	if req == nil {
+		return
+	}
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != req.SessionID {
+			continue
+		}
+		s.Status = "awaiting-approval"
+		msg := as.ensureStreamingMessage(s)
+		msg.PendingApproval = &PendingApproval{
+			SessionID:  s.ID,
+			ToolCallID: req.RequestID,
+			ToolName:   req.ToolName,
+			Summary:    req.Title,
+			Arguments:  req.Arguments,
+		}
+		as.Messages = s.Messages
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// HandleUsage records a usage report for the context gauge and quota modal.
+func (as *AgentState) HandleUsage(sessionID string, usage UsageInfo) {
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		u := usage
+		s.LastUsage = &u
+		break
+	}
+	as.mu.Unlock()
+}
+
+// HandleCommands stores the slash commands the agent advertises.
+func (as *AgentState) HandleCommands(sessionID string, commands []string) {
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		s.AvailableCommands = commands
+		break
+	}
+	as.mu.Unlock()
 }
 
 // ExecutionModeIcon returns the Tabler SVG icon for the active execution mode.
@@ -325,26 +634,29 @@ func (as *AgentState) RestoreStash(idx int) {
 }
 
 type diskSessionRaw struct {
-	ID             string           `json:"id"`
-	Title          string           `json:"title"`
-	Name           string           `json:"name"`
-	Goal           string           `json:"goal"`
-	Status         string           `json:"status"`
-	State          string           `json:"state"`
-	CreatedAt      json.RawMessage  `json:"createdAt"`
-	UpdatedAt      json.RawMessage  `json:"updatedAt"`
-	Model          string           `json:"model"`
-	Provider       string           `json:"provider"`
-	AgentID        string           `json:"agentId"`
-	AgentType      string           `json:"agentType"`
-	ExecutionMode  string           `json:"executionMode"`
-	ReasoningLevel string           `json:"reasoningLevel"`
-	WorkspacePath  string           `json:"workspacePath"`
-	Folder         string           `json:"folder"`
-	Pinned         bool             `json:"pinned"`
-	Archived       bool             `json:"archived"`
-	Messages       []diskMessageRaw `json:"messages"`
-	Tasks          []TaskItem       `json:"tasks"`
+	ID              string           `json:"id"`
+	Title           string           `json:"title"`
+	Name            string           `json:"name"`
+	Goal            string           `json:"goal"`
+	Status          string           `json:"status"`
+	State           string           `json:"state"`
+	CreatedAt       json.RawMessage  `json:"createdAt"`
+	UpdatedAt       json.RawMessage  `json:"updatedAt"`
+	Model           string           `json:"model"`
+	Provider        string           `json:"provider"`
+	AgentID         string           `json:"agentId"`
+	AgentType       string           `json:"agentType"`
+	ExecutionMode   string           `json:"executionMode"`
+	ReasoningLevel  string           `json:"reasoningLevel"`
+	WorkspacePath   string           `json:"workspacePath"`
+	Folder          string           `json:"folder"`
+	Pinned          bool             `json:"pinned"`
+	Archived        bool             `json:"archived"`
+	Snoozed         bool             `json:"snoozed"`
+	RemoteSessionID string           `json:"remoteSessionId"`
+	LastUsage       *UsageInfo       `json:"lastUsage"`
+	Messages        []diskMessageRaw `json:"messages"`
+	Tasks           []TaskItem       `json:"tasks"`
 }
 
 type diskMessageRaw struct {
@@ -554,20 +866,23 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 		}
 
 		loaded = append(loaded, &AgentSession{
-			ID:            diskSess.ID,
-			Title:         sessTitle,
-			Status:        status,
-			CreatedAt:     createdTime,
-			UpdatedAt:     updatedTime,
-			Model:         sessModel,
-			Provider:      diskSess.Provider,
-			AgentID:       sessAgentID,
-			AgentType:     sessAgentType,
-			WorkspacePath: wsPath,
-			Pinned:        diskSess.Pinned,
-			Archived:      diskSess.Archived,
-			Messages:      msgs,
-			Tasks:         tm,
+			ID:              diskSess.ID,
+			Title:           sessTitle,
+			Status:          status,
+			CreatedAt:       createdTime,
+			UpdatedAt:       updatedTime,
+			Model:           sessModel,
+			Provider:        diskSess.Provider,
+			AgentID:         sessAgentID,
+			AgentType:       sessAgentType,
+			WorkspacePath:   wsPath,
+			Pinned:          diskSess.Pinned,
+			Archived:        diskSess.Archived,
+			Snoozed:         diskSess.Snoozed,
+			RemoteSessionID: diskSess.RemoteSessionID,
+			LastUsage:       diskSess.LastUsage,
+			Messages:        msgs,
+			Tasks:           tm,
 		})
 	}
 
@@ -640,8 +955,15 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		"workspacePath":  wsPath,
 		"pinned":         sess.Pinned,
 		"archived":       sess.Archived,
+		"snoozed":        sess.Snoozed,
 		"messages":       diskMsgs,
 		"tasks":          tasksList,
+	}
+	if sess.RemoteSessionID != "" {
+		data["remoteSessionId"] = sess.RemoteSessionID
+	}
+	if sess.LastUsage != nil {
+		data["lastUsage"] = sess.LastUsage
 	}
 
 	bytes, err := json.MarshalIndent(data, "", "  ")
@@ -851,14 +1173,6 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 	now := time.Now()
 	id := fmt.Sprintf("session-%d", now.UnixMilli())
 
-	initialMsg := &ChatMessage{
-		ID:        1,
-		Role:      "assistant",
-		Text:      "Hello! I am your pair programming assistant. Ask me questions, explore code, or run tasks.",
-		Done:      true,
-		Timestamp: now,
-	}
-
 	agentID := as.ActiveAgentID
 	if agentID == "" || agentID == "agent-monolith" {
 		agentID = "agent-agy"
@@ -872,9 +1186,6 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 		}
 	}
 	model := as.ActiveModel
-	if model == "" {
-		model = "gemini-3.8-flash-high"
-	}
 
 	sess := &AgentSession{
 		ID:            id,
@@ -887,7 +1198,7 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 		AgentID:       agentID,
 		AgentType:     agentType,
 		WorkspacePath: as.workspacePath,
-		Messages:      []*ChatMessage{initialMsg},
+		Messages:      nil,
 		Tasks:         NewTaskManager(),
 	}
 
@@ -943,6 +1254,28 @@ func (as *AgentState) ToggleArchive(id string) {
 	}
 }
 
+// ToggleSnooze snoozes or unsnoozes the given session.
+func (as *AgentState) ToggleSnooze(id string) {
+	as.mu.Lock()
+	var updated *AgentSession
+	for _, s := range as.Sessions {
+		if s.ID == id {
+			s.Snoozed = !s.Snoozed
+			s.UpdatedAt = time.Now()
+			updated = s
+			break
+		}
+	}
+	as.mu.Unlock()
+
+	if updated != nil {
+		as.SaveSessionToDisk(updated)
+	}
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
 // DeleteSession permanently removes a session from memory and disk.
 func (as *AgentState) DeleteSession(id string) {
 	as.mu.Lock()
@@ -970,15 +1303,18 @@ func (as *AgentState) DeleteSession(id string) {
 	}
 }
 
-// TabCounts returns session counts for active, pinned, and archived tabs.
-func (as *AgentState) TabCounts() (active, pinned, archived int) {
+// TabCounts returns session counts for active, pinned, snoozed, and archived tabs.
+func (as *AgentState) TabCounts() (active, pinned, snoozed, archived int) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
 
 	for _, s := range as.Sessions {
-		if s.Archived {
+		switch {
+		case s.Archived:
 			archived++
-		} else {
+		case s.Snoozed:
+			snoozed++
+		default:
 			active++
 			if s.Pinned {
 				pinned++
@@ -992,6 +1328,19 @@ func (as *AgentState) TabCounts() (active, pinned, archived int) {
 func (as *AgentState) ContextUsage() (tokens int, pct int) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+
+	// Prefer the usage report the agent streams (agent:usage / turn_end).
+	for _, s := range as.Sessions {
+		if s.ID == as.ActiveSessionID && s.LastUsage != nil && s.LastUsage.TotalTokens > 0 {
+			tokens = s.LastUsage.TotalTokens
+			const maxContext = 200000
+			pct = (tokens * 100) / maxContext
+			if pct == 0 {
+				pct = 1
+			}
+			return
+		}
+	}
 
 	totalChars := 0
 	for _, m := range as.Messages {
@@ -1032,9 +1381,11 @@ func (as *AgentState) FilteredSessions() []*AgentSession {
 				continue
 			}
 		case "snoozed":
-			continue
+			if !s.Snoozed || s.Archived {
+				continue
+			}
 		default: // "active"
-			if s.Archived {
+			if s.Archived || s.Snoozed {
 				continue
 			}
 		}
@@ -1160,10 +1511,63 @@ func (as *AgentState) SubmitMessage() {
 		as.SaveSessionToDisk(activeSess)
 	}
 
-	// Handle Slash Commands
+	// Slash commands: /clear and /help are native; every other command goes
+	// to the agent, exactly as forge-ade sends them.
 	if strings.HasPrefix(text, "/") {
-		as.handleSlashCommand(text)
-		return
+		root := text
+		if i := strings.IndexAny(text, " \n"); i >= 0 {
+			root = text[:i]
+		}
+		switch root {
+		case "/clear":
+			as.mu.Lock()
+			for _, s := range as.Sessions {
+				if s.ID == as.ActiveSessionID {
+					s.Messages = s.Messages[:0]
+					as.Messages = s.Messages
+					s.UpdatedAt = time.Now()
+					as.SaveSessionToDisk(s)
+					break
+				}
+			}
+			as.mu.Unlock()
+			if as.Invalidate != nil {
+				as.Invalidate()
+			}
+			return
+		case "/help":
+			as.mu.Lock()
+			for _, s := range as.Sessions {
+				if s.ID == as.ActiveSessionID {
+					help := "### ForgeADE Commands\n" +
+						"- `/clear` — clear this conversation\n" +
+						"- `/help` — this reference\n\n" +
+						"Everything else is sent to the agent. The agent's own commands"
+					if len(s.AvailableCommands) > 0 {
+						help += " (from the agent):"
+						for _, c := range s.AvailableCommands {
+							help += fmt.Sprintf("\n- `/%s`", c)
+						}
+					} else {
+						help += " arrive as they are advertised (`/goal`, `/plan`, `/compact`, ...)."
+					}
+					s.Messages = append(s.Messages, &ChatMessage{
+						ID:        len(s.Messages) + 1,
+						Role:      "assistant",
+						Text:      help,
+						Done:      true,
+						Timestamp: time.Now(),
+					})
+					as.Messages = s.Messages
+					break
+				}
+			}
+			as.mu.Unlock()
+			if as.Invalidate != nil {
+				as.Invalidate()
+			}
+			return
+		}
 	}
 
 	// Trigger streaming AI turn
@@ -1174,115 +1578,46 @@ func (as *AgentState) SubmitMessage() {
 	}
 }
 
-// CancelStreaming aborts active agent response generation.
+// CancelStreaming aborts the active turn: it interrupts the ACP agent
+// (process-group SIGINT for stream CLIs, protocol cancel for standard ACP)
+// and stops the internal LLM stream. HandleTurnDone finalizes the message
+// when the agent acknowledges the stop.
 func (as *AgentState) CancelStreaming() {
 	as.mu.Lock()
 	as.IsStreaming = false
+	sessionID := as.ActiveSessionID
+	last := as.Messages
 	as.mu.Unlock()
-	if as.Invalidate != nil {
-		as.Invalidate()
+
+	if sessionID != "" && as.ACPMgr != nil {
+		_ = as.ACPMgr.Cancel(sessionID)
 	}
-}
 
-func (as *AgentState) handleSlashCommand(cmd string) {
-	parts := strings.Fields(cmd)
-	rootCmd := parts[0]
-
+	// The internal LLM path has no event to finalize; close it here.
+	if len(last) > 0 {
+		msg := last[len(last)-1]
+		if msg.Role == "assistant" && !msg.Done {
+			msg.Done = true
+			msg.IsThinking = false
+			msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
+			if strings.TrimSpace(msg.Text) == "" {
+				msg.Text = "*(stopped by user)*"
+			}
+		}
+	}
 	as.mu.Lock()
-	defer as.mu.Unlock()
-
-	var reply string
-	var activeSess *AgentSession
 	for _, s := range as.Sessions {
-		if s.ID == as.ActiveSessionID {
-			activeSess = s
+		if s.ID == sessionID {
+			if s.Status == "running" {
+				s.Status = "idle"
+			}
+			as.SaveSessionToDisk(s)
 			break
 		}
 	}
-
-	switch rootCmd {
-	case "/clear":
-		if activeSess != nil {
-			activeSess.Messages = activeSess.Messages[:0]
-			as.Messages = activeSess.Messages
-		}
-		reply = "Chat history cleared."
-	case "/goal":
-		desc := strings.TrimSpace(strings.TrimPrefix(cmd, "/goal"))
-		if desc == "" {
-			desc = "Decompose and execute objective"
-		}
-		if as.TaskManager != nil {
-			as.TaskManager.SetGoal(desc, []TaskItem{
-				{ID: "1", Title: "Analyze target requirements and symbols", Status: TaskInProgress, ActiveForm: "Scanning symbols..."},
-				{ID: "2", Title: "Formulate code changes and dependency updates", Status: TaskPending},
-				{ID: "3", Title: "Execute regression tests and static validation", Status: TaskPending},
-				{ID: "4", Title: "Review diff hunks and commit changes", Status: TaskPending},
-			})
-		}
-		reply = fmt.Sprintf("Declared Goal: **%s**\nDecomposed into 4 atomic tasks on the floating checklist.", desc)
-	case "/plan":
-		desc := strings.TrimSpace(strings.TrimPrefix(cmd, "/plan"))
-		if desc == "" {
-			desc = "Architectural Analysis and Planning"
-		}
-		if as.TaskManager != nil {
-			as.TaskManager.SetGoal("Plan: "+desc, []TaskItem{
-				{ID: "1", Title: "Survey existing codebase structure and symbols", Status: TaskInProgress, ActiveForm: "Inspecting symbols..."},
-				{ID: "2", Title: "Formulate architectural change plan & interfaces", Status: TaskPending},
-				{ID: "3", Title: "Identify regression risks and test coverage gaps", Status: TaskPending},
-			})
-		}
-		reply = fmt.Sprintf("**Plan Mode Activated**: `%s`\nStep-by-step architectural breakdown populated on the floating checklist.", desc)
-	case "/vibe":
-		reply = "**Vibe Mode Activated**: Autonomous execution with automatic error diagnosis and fix cycles enabled."
-	case "/tasks":
-		if as.TaskManager != nil {
-			c, total := as.TaskManager.Progress()
-			reply = fmt.Sprintf("### Current Task Checklist (%d/%d completed)\nActive Goal: `%s`", c, total, as.TaskManager.Goal)
-		} else {
-			reply = "No active tasks."
-		}
-	case "/model":
-		if as.engine != nil {
-			cfg := as.engine.GetLLMConfig()
-			reply = fmt.Sprintf("Active Provider: `%s`\nActive Model: `%s`", cfg.ProviderID, cfg.Model)
-		} else {
-			reply = fmt.Sprintf("Active Model: `%s`", as.ActiveModel)
-		}
-	case "/help":
-		reply = "### Available Slash Commands:\n" +
-			"- `/goal <description>` — Set an active goal and decompose into tasks\n" +
-			"- `/tasks` — Show current task checklist status\n" +
-			"- `/clear` — Clear current conversation history\n" +
-			"- `/model` — Inspect active LLM provider and model profile\n" +
-			"- `/status` — View workspace indexing and engine health\n" +
-			"- `/vibe` — Activate high-velocity autonomous mode\n" +
-			"- `/help` — Display command reference"
-	case "/status":
-		reply = "### Workspace Health\n" +
-			"- **Engine**: ForgeADE Go Monolith\n" +
-			"- **UI Runtime**: MyGo Native GPU (`CGO_ENABLED=0`)\n" +
-			"- **Terminal**: Ghostty `libghostty-vt` embedded\n" +
-			"- **Editor**: Zed-style virtualized buffer with live diff gutters\n" +
-			"- **Persistent Sessions**: Loaded from disk (~/.forge/sessions/)"
-	default:
-		reply = fmt.Sprintf("Unknown command `%s`. Type `/help` for available commands.", rootCmd)
-	}
-
-	replyMsg := &ChatMessage{
-		ID:        len(as.Messages) + 1,
-		Role:      "assistant",
-		Text:      reply,
-		Done:      true,
-		Timestamp: time.Now(),
-	}
-
-	if activeSess != nil {
-		activeSess.Messages = append(activeSess.Messages, replyMsg)
-		as.Messages = activeSess.Messages
-		activeSess.Status = "idle"
-		as.SaveSessionToDisk(activeSess)
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
 	}
 }
 
@@ -1385,6 +1720,7 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 		Text:            "",
 		Done:            false,
 		Timestamp:       startTime,
+		TurnStartedAt:   startTime,
 		IsThinking:      true,
 		ThinkingTimeSec: 0,
 		ShowThinking:    false,
@@ -1394,13 +1730,22 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 	var activeSess *AgentSession
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID {
+			// A stale approval gate from the previous turn must not leak
+			// into this one.
+			if len(s.Messages) > 0 {
+				if prev := s.Messages[len(s.Messages)-1]; prev.PendingApproval != nil {
+					prev.PendingApproval.Resolved = true
+				}
+			}
 			s.Messages = append(s.Messages, assistantMsg)
 			as.Messages = s.Messages
 			s.Status = "running"
+			s.turnStartFiles = turnStartFiles
 			activeSess = s
 			break
 		}
 	}
+	permissionMode := as.ExecutionMode.PermissionMode()
 	as.mu.Unlock()
 
 	hasInternalKey := false
@@ -1438,16 +1783,17 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 		go func() {
 			var startErr error
 			if as.ACPMgr != nil {
-				_, startErr = as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model)
+				_, startErr = as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model, permissionMode)
 				if startErr == nil {
 					startErr = as.ACPMgr.Prompt(activeSess.ID, prompt)
 				}
 			} else if as.engine != nil && as.engine.ACPMgr != nil {
 				_, startErr = as.engine.ACPMgr.StartSession(acp.SessionOpts{
-					SessionID: activeSess.ID,
-					AgentID:   activeSess.AgentID,
-					Cwd:       as.workspacePath,
-					Model:     activeSess.Model,
+					SessionID:      activeSess.ID,
+					AgentID:        activeSess.AgentID,
+					Cwd:            as.workspacePath,
+					Model:          activeSess.Model,
+					PermissionMode: permissionMode,
 				})
 				if startErr == nil {
 					startErr = as.engine.ACPMgr.Prompt(activeSess.ID, prompt)
@@ -1462,7 +1808,8 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 				assistantMsg.IsThinking = false
 				as.IsStreaming = false
 				if activeSess != nil {
-					activeSess.Status = "idle"
+					activeSess.Status = "error"
+					activeSess.turnStartFiles = nil
 				}
 				assistantMsg.Text = fmt.Sprintf("ACP agent **%s** error: %v\n\nPlease ensure the CLI executable is installed on PATH (or select another agent harness in ⌘M).", activeSess.AgentID, startErr)
 				as.mu.Unlock()
@@ -1472,8 +1819,8 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 				return
 			}
 			// ACP agent is now executing asynchronously.
-			// Chunks stream via events -> OnTokenChunk -> assistantMsg.Text.
-			// Turn completion is handled by OnTurnDone -> assistantMsg.Done = true.
+			// Chunks stream via events -> HandleTokenChunk; completion is
+			// handled by HandleTurnDone (status, changes, steer queue).
 		}()
 		return
 	}
@@ -1502,6 +1849,9 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 			}
 			as.computeChangeStats(turnChanges)
 			assistantMsg.Changes = turnChanges
+			if activeSess != nil {
+				activeSess.turnStartFiles = nil
+			}
 
 			// If steer queue has items, pop next
 			var nextSteer string
