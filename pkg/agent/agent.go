@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -118,6 +119,8 @@ type AgentState struct {
 	ListState       ui.ListState
 	MdOpts          markdown.Options
 	ActiveModel     string
+	ActiveAgentID   string
+	ActiveAgentType string
 	ExecutionMode   ExecutionMode
 	ReasoningEffort ReasoningEffort
 	AutoVerify      bool
@@ -138,18 +141,59 @@ type AgentState struct {
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
 func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func()) *AgentState {
+	// Detect default agent harness: prefer installed ACP agent (e.g. agy, claude, codex)
+	// when no internal LLM provider keys are configured.
+	defaultAgentID := "agent-agy"
+	defaultAgentType := "acp"
+	defaultModel := "gemini-3.8-flash-high"
+
+	hasInternalKey := false
+	if engine != nil && engine.LLMClient != nil {
+		cfg := engine.LLMClient.GetConfig()
+		if strings.TrimSpace(cfg.APIKey) != "" {
+			hasInternalKey = true
+		}
+	}
+
+	if !hasInternalKey {
+		if _, err := exec.LookPath("agy"); err == nil {
+			defaultAgentID = "agent-agy"
+			defaultAgentType = "acp"
+			defaultModel = "gemini-3.8-flash-high"
+		} else if _, err := exec.LookPath("claude"); err == nil {
+			defaultAgentID = "agent-claude"
+			defaultAgentType = "claude"
+			defaultModel = "sonnet"
+		} else if _, err := exec.LookPath("codex"); err == nil {
+			defaultAgentID = "agent-codex"
+			defaultAgentType = "codex"
+			defaultModel = "deepseek-v4-1-flash"
+		}
+	} else {
+		defaultAgentID = "agent-internal"
+		defaultAgentType = "internal"
+		if engine != nil && engine.LLMClient != nil {
+			cfg := engine.LLMClient.GetConfig()
+			if cfg.Model != "" {
+				defaultModel = cfg.Model
+			}
+		}
+	}
+
 	as := &AgentState{
 		engine:          engine,
 		workspacePath:   workspacePath,
-		ActiveModel:     "",
+		ActiveAgentID:   defaultAgentID,
+		ActiveAgentType: defaultAgentType,
+		ActiveModel:     defaultModel,
 		ActiveFilterTab: "active",
 		ExecutionMode:   ModeBypass,
 		ReasoningEffort: EffortMedium,
 		AutoVerify:      false,
 		SteerQueue:      make([]string, 0),
 		AvailableModels: []string{},
-		Invalidate: invalidate,
-		NextID:     1,
+		Invalidate:      invalidate,
+		NextID:          1,
 		MdOpts: markdown.Options{
 			Reveal: &markdown.Reveal{Unit: markdown.ByWord},
 		},
@@ -422,7 +466,26 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 		}
 
 		sessModel := diskSess.Model
-		if sessModel == "" {
+		sessAgentID := diskSess.AgentID
+		sessAgentType := diskSess.AgentType
+
+		hasInternalKey := false
+		if as.engine != nil && as.engine.LLMClient != nil {
+			cfg := as.engine.LLMClient.GetConfig()
+			if strings.TrimSpace(cfg.APIKey) != "" {
+				hasInternalKey = true
+			}
+		}
+
+		if !hasInternalKey {
+			if sessAgentID == "" || sessAgentID == "agent-monolith" || sessAgentType == "internal" || sessAgentType == "" {
+				sessAgentID = as.ActiveAgentID
+				sessAgentType = as.ActiveAgentType
+			}
+			if sessModel == "" || sessModel == "gpt-4o" || strings.Contains(sessModel, "gpt-4o") || strings.Contains(sessModel, "Sonnet") {
+				sessModel = as.ActiveModel
+			}
+		} else if sessModel == "" {
 			sessModel = "Claude 3.7 Sonnet / gpt-4o"
 		}
 
@@ -498,8 +561,8 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 			UpdatedAt:     updatedTime,
 			Model:         sessModel,
 			Provider:      diskSess.Provider,
-			AgentID:       diskSess.AgentID,
-			AgentType:     diskSess.AgentType,
+			AgentID:       sessAgentID,
+			AgentType:     sessAgentType,
 			WorkspacePath: wsPath,
 			Pinned:        diskSess.Pinned,
 			Archived:      diskSess.Archived,
@@ -623,6 +686,15 @@ func (as *AgentState) syncActiveSession() {
 		if active.Tasks != nil {
 			as.TaskManager = active.Tasks
 		}
+		if active.Model != "" {
+			as.ActiveModel = active.Model
+		}
+		if active.AgentID != "" {
+			as.ActiveAgentID = active.AgentID
+		}
+		if active.AgentType != "" {
+			as.ActiveAgentType = active.AgentType
+		}
 	} else {
 		as.Messages = nil
 	}
@@ -703,19 +775,36 @@ func (as *AgentState) CreateSessionWithInitialPrompt(prompt, agentID string) *Ag
 		Done:      true,
 		Timestamp: now,
 	}
-	if agentID == "" {
-		agentID = "agent-monolith"
+
+	if agentID == "" || agentID == "agent-monolith" {
+		agentID = as.ActiveAgentID
 	}
+	if agentID == "" {
+		agentID = "agent-agy"
+	}
+	agentType := as.ActiveAgentType
+	if agentType == "" {
+		if agentID == "agent-internal" {
+			agentType = "internal"
+		} else {
+			agentType = "acp"
+		}
+	}
+	model := as.ActiveModel
+	if model == "" {
+		model = "gemini-3.8-flash-high"
+	}
+
 	sess := &AgentSession{
 		ID:            id,
 		Title:         title,
 		Status:        "idle",
 		CreatedAt:     now,
 		UpdatedAt:     now,
-		Model:         as.ActiveModel,
+		Model:         model,
 		Provider:      "",
 		AgentID:       agentID,
-		AgentType:     "internal",
+		AgentType:     agentType,
 		WorkspacePath: as.workspacePath,
 		Messages:      []*ChatMessage{userMsg},
 		Tasks:         NewTaskManager(),
@@ -770,16 +859,33 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 		Timestamp: now,
 	}
 
+	agentID := as.ActiveAgentID
+	if agentID == "" || agentID == "agent-monolith" {
+		agentID = "agent-agy"
+	}
+	agentType := as.ActiveAgentType
+	if agentType == "" {
+		if agentID == "agent-internal" {
+			agentType = "internal"
+		} else {
+			agentType = "acp"
+		}
+	}
+	model := as.ActiveModel
+	if model == "" {
+		model = "gemini-3.8-flash-high"
+	}
+
 	sess := &AgentSession{
 		ID:            id,
 		Title:         title,
 		Status:        "idle",
 		CreatedAt:     now,
 		UpdatedAt:     now,
-		Model:         as.ActiveModel,
+		Model:         model,
 		Provider:      "",
-		AgentID:       "agent-monolith",
-		AgentType:     "internal",
+		AgentID:       agentID,
+		AgentType:     agentType,
 		WorkspacePath: as.workspacePath,
 		Messages:      []*ChatMessage{initialMsg},
 		Tasks:         NewTaskManager(),
@@ -1003,16 +1109,32 @@ func (as *AgentState) SubmitMessage() {
 		if title == "" {
 			title = "New Task"
 		}
+		agentID := as.ActiveAgentID
+		if agentID == "" || agentID == "agent-monolith" {
+			agentID = "agent-agy"
+		}
+		agentType := as.ActiveAgentType
+		if agentType == "" {
+			if agentID == "agent-internal" {
+				agentType = "internal"
+			} else {
+				agentType = "acp"
+			}
+		}
+		model := as.ActiveModel
+		if model == "" {
+			model = "gemini-3.8-flash-high"
+		}
 		activeSess = &AgentSession{
 			ID:            id,
 			Title:         title,
 			Status:        "idle",
 			CreatedAt:     now,
 			UpdatedAt:     now,
-			Model:         as.ActiveModel,
+			Model:         model,
 			Provider:      "",
-			AgentID:       "agent-monolith",
-			AgentType:     "internal",
+			AgentID:       agentID,
+			AgentType:     agentType,
 			WorkspacePath: as.workspacePath,
 			Messages:      nil,
 			Tasks:         NewTaskManager(),
@@ -1281,6 +1403,82 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 	}
 	as.mu.Unlock()
 
+	hasInternalKey := false
+	if as.engine != nil && as.engine.LLMClient != nil {
+		cfg := as.engine.LLMClient.GetConfig()
+		if strings.TrimSpace(cfg.APIKey) != "" {
+			hasInternalKey = true
+		}
+	}
+
+	// 1. Check if ACP session can handle this turn
+	isACPAgent := activeSess != nil && (activeSess.AgentType == "acp" ||
+		activeSess.AgentID == "agent-agy" ||
+		activeSess.AgentID == "agent-claude" ||
+		activeSess.AgentID == "agent-codex" ||
+		activeSess.AgentID == "agent-opencode" ||
+		activeSess.AgentID == "agent-commandcode" ||
+		activeSess.AgentID == "agent-pi" ||
+		activeSess.AgentID == "agent-ohmypi" ||
+		activeSess.AgentID == "agent-gemini")
+
+	// If no internal provider API key is configured, automatically route turn to installed ACP agent
+	if !isACPAgent && !hasInternalKey {
+		if activeSess != nil {
+			activeSess.AgentID = "agent-agy"
+			activeSess.AgentType = "acp"
+			if activeSess.Model == "" || activeSess.Model == "gpt-4o" || strings.Contains(activeSess.Model, "gpt-4o") {
+				activeSess.Model = "gemini-3.8-flash-high"
+			}
+		}
+		isACPAgent = true
+	}
+
+	if isACPAgent {
+		go func() {
+			var startErr error
+			if as.ACPMgr != nil {
+				_, startErr = as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model)
+				if startErr == nil {
+					startErr = as.ACPMgr.Prompt(activeSess.ID, prompt)
+				}
+			} else if as.engine != nil && as.engine.ACPMgr != nil {
+				_, startErr = as.engine.ACPMgr.StartSession(acp.SessionOpts{
+					SessionID: activeSess.ID,
+					AgentID:   activeSess.AgentID,
+					Cwd:       as.workspacePath,
+					Model:     activeSess.Model,
+				})
+				if startErr == nil {
+					startErr = as.engine.ACPMgr.Prompt(activeSess.ID, prompt)
+				}
+			} else {
+				startErr = fmt.Errorf("no ACP manager available")
+			}
+
+			if startErr != nil {
+				as.mu.Lock()
+				assistantMsg.Done = true
+				assistantMsg.IsThinking = false
+				as.IsStreaming = false
+				if activeSess != nil {
+					activeSess.Status = "idle"
+				}
+				assistantMsg.Text = fmt.Sprintf("ACP agent **%s** error: %v\n\nPlease ensure the CLI executable is installed on PATH (or select another agent harness in ⌘M).", activeSess.AgentID, startErr)
+				as.mu.Unlock()
+				if as.Invalidate != nil {
+					as.Invalidate()
+				}
+				return
+			}
+			// ACP agent is now executing asynchronously.
+			// Chunks stream via events -> OnTokenChunk -> assistantMsg.Text.
+			// Turn completion is handled by OnTurnDone -> assistantMsg.Done = true.
+		}()
+		return
+	}
+
+	// 2. Execute via internal LLMClient
 	go func() {
 		defer func() {
 			as.mu.Lock()
@@ -1324,54 +1522,6 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 				as.triggerAgentTurn(nextSteer)
 			}
 		}()
-
-		// 1. Check if ACP session can handle this turn
-		isACPAgent := activeSess != nil && (activeSess.AgentType == "acp" ||
-			activeSess.AgentID == "agent-agy" ||
-			activeSess.AgentID == "agent-claude" ||
-			activeSess.AgentID == "agent-codex" ||
-			activeSess.AgentID == "agent-opencode" ||
-			activeSess.AgentID == "agent-commandcode" ||
-			activeSess.AgentID == "agent-pi" ||
-			activeSess.AgentID == "agent-ohmypi" ||
-			activeSess.AgentID == "agent-gemini")
-
-		if isACPAgent {
-			var startErr error
-			if as.ACPMgr != nil {
-				_, startErr = as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model)
-				if startErr == nil {
-					if promptErr := as.ACPMgr.Prompt(activeSess.ID, prompt); promptErr == nil {
-						return
-					} else {
-						startErr = promptErr
-					}
-				}
-			} else if as.engine != nil && as.engine.ACPMgr != nil {
-				_, startErr = as.engine.ACPMgr.StartSession(acp.SessionOpts{
-					SessionID: activeSess.ID,
-					AgentID:   activeSess.AgentID,
-					Cwd:       as.workspacePath,
-					Model:     activeSess.Model,
-				})
-				if startErr == nil {
-					if promptErr := as.engine.ACPMgr.Prompt(activeSess.ID, prompt); promptErr == nil {
-						return
-					} else {
-						startErr = promptErr
-					}
-				}
-			}
-			as.mu.Lock()
-			if startErr != nil {
-				assistantMsg.Text = fmt.Sprintf("ACP agent **%s** could not be started: %v\n\nPlease ensure the CLI executable is installed on PATH (or select another agent harness in ⌘M).", activeSess.AgentID, startErr)
-			} else {
-				assistantMsg.Text = fmt.Sprintf("ACP agent **%s** error: %v", activeSess.AgentID, startErr)
-			}
-			assistantMsg.IsThinking = false
-			as.mu.Unlock()
-			return
-		}
 
 		// 2. Execute via internal LLMClient
 		if as.engine != nil && as.engine.LLMClient != nil {

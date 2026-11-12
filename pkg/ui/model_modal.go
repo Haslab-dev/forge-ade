@@ -186,6 +186,13 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		a.SelectedAgentModel = displayName
 		if harnessID != "" {
 			a.SelectedHarnessID = harnessID
+			a.SelectedAgentID = harnessID
+			a.Agent.ActiveAgentID = harnessID
+			if harnessID == "agent-internal" {
+				a.Agent.ActiveAgentType = "internal"
+			} else {
+				a.Agent.ActiveAgentType = "acp"
+			}
 		}
 		if sess := a.Agent.ActiveSession(); sess != nil {
 			sess.Model = displayName
@@ -193,8 +200,11 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				sess.AgentID = harnessID
 				if harnessID != "agent-internal" {
 					sess.AgentType = "acp"
+				} else {
+					sess.AgentType = "internal"
 				}
 			}
+			a.Agent.SaveSessionToDisk(sess)
 		}
 		a.ShowModelPalette = false
 		c.AddToast(ui.Toast{

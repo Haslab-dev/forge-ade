@@ -169,9 +169,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		NewTaskAgentType:        "acp",
 		NewTaskFilterTab:        "all",
 		NewTaskStep:             "agent",
-		SelectedAgentID:         "agent-internal",
-		SelectedAgentModel:      "Claude 3.7 Sonnet",
-		SelectedHarnessID:       "agent-internal",
+		SelectedAgentID:         "agent-agy",
+		SelectedAgentModel:      "gemini-3.8-flash-high",
+		SelectedHarnessID:       "agent-agy",
 		SelectedProviderTab:     "all",
 		CollapsedProjectGroups:  make(map[string]bool),
 		ExpandedFileTreeFolders: make(map[string]bool),
@@ -203,12 +203,19 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Agent.Lock()
 		for _, s := range appUI.Agent.Sessions {
 			if s.ID == sessionID {
-				if len(s.Messages) > 0 {
-					last := s.Messages[len(s.Messages)-1]
-					if last.Role == "assistant" && !last.Done {
-						last.Text += text
-						last.IsThinking = false
+				if len(s.Messages) == 0 || s.Messages[len(s.Messages)-1].Role == "user" {
+					newMsg := &agent.ChatMessage{
+						ID:        len(s.Messages) + 1,
+						Role:      "assistant",
+						Text:      text,
+						Done:      false,
+						Timestamp: time.Now(),
 					}
+					s.Messages = append(s.Messages, newMsg)
+				} else {
+					last := s.Messages[len(s.Messages)-1]
+					last.Text += text
+					last.IsThinking = false
 				}
 				break
 			}
@@ -225,8 +232,40 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 			if s.ID == sessionID {
 				if len(s.Messages) > 0 {
 					last := s.Messages[len(s.Messages)-1]
-					if last.Role == "assistant" && !last.Done {
-						last.Thinking += text
+					last.Thinking += text
+					last.IsThinking = true
+				}
+				break
+			}
+		}
+		appUI.Agent.Unlock()
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
+	}
+
+	appUI.ACPMgr.OnToolStep = func(sessionID, toolName, status string) {
+		appUI.Agent.Lock()
+		for _, s := range appUI.Agent.Sessions {
+			if s.ID == sessionID {
+				if len(s.Messages) > 0 {
+					last := s.Messages[len(s.Messages)-1]
+					var existing *agent.ToolExecution
+					for _, t := range last.Tools {
+						if t.ToolName == toolName && t.Status == "running" {
+							existing = t
+							break
+						}
+					}
+					if existing != nil {
+						existing.Status = status
+					} else {
+						last.Tools = append(last.Tools, &agent.ToolExecution{
+							ID:          fmt.Sprintf("tool-%d", time.Now().UnixNano()%100000),
+							ToolName:    toolName,
+							Status:      status,
+							CreatedAtMs: time.Now().UnixMilli(),
+						})
 					}
 				}
 				break
@@ -269,9 +308,11 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI.Editor.Theme = appUI.ThemeMgr
 
 	appUI.Settings = settings.NewSettingsManager(engine, func(provider, model string) {
-		appUI.Agent.ActiveModel = model
+		if appUI.Settings.APIKey != "" {
+			appUI.Agent.ActiveModel = model
+		}
 	})
-	if appUI.Settings.Model != "" {
+	if appUI.Settings.APIKey != "" && appUI.Settings.Model != "" {
 		appUI.Agent.ActiveModel = appUI.Settings.Model
 	}
 	appUI.Settings.ThemeMgr = appUI.ThemeMgr
@@ -432,57 +473,64 @@ func (a *AppUI) View(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyP) {
 		a.Palette.Toggle()
 	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyP) {
+	cmdOrCtrl := func(key ui.Key) bool {
+		return c.Shortcut(ui.Cmd, key) || c.Shortcut(ui.Ctrl, key)
+	}
+	cmdOrCtrlShift := func(key ui.Key) bool {
+		return c.Shortcut(ui.Cmd|ui.Shift, key) || c.Shortcut(ui.Ctrl|ui.Shift, key)
+	}
+
+	if cmdOrCtrlShift(ui.KeyP) {
 		a.Palette.OpenCommands()
 	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyF) {
+	if cmdOrCtrlShift(ui.KeyF) {
 		a.Palette.Toggle()
 	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyE) {
+	if cmdOrCtrlShift(ui.KeyE) {
 		a.Mode = ModeEditor
 		a.ShowLeftSidebar = true
 		a.EditorActivity = ActivityExplorer
 	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyG) {
+	if cmdOrCtrlShift(ui.KeyG) {
 		a.Mode = ModeEditor
 		a.ShowLeftSidebar = true
 		a.EditorActivity = ActivityGit
 	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyJ) {
+	if cmdOrCtrlShift(ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyComma) {
+	if cmdOrCtrl(ui.KeyComma) {
 		a.Settings.Toggle()
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyB) {
+	if cmdOrCtrl(ui.KeyB) {
 		a.ShowLeftSidebar = !a.ShowLeftSidebar
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyN) {
+	if cmdOrCtrl(ui.KeyN) {
 		a.NewAgentTask("")
 	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyN) {
+	if cmdOrCtrlShift(ui.KeyN) {
 		a.OpenNewTaskModal()
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyM) {
+	if cmdOrCtrl(ui.KeyM) {
 		a.ShowModelPalette = !a.ShowModelPalette
 		a.ModelSearchQuery = ""
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyO) {
+	if cmdOrCtrl(ui.KeyO) {
 		a.openWorkspaceFolder()
 	}
-	if c.Shortcut(ui.Cmd, ui.Key1) {
+	if cmdOrCtrl(ui.Key1) {
 		a.Mode = ModeAgent
 	}
-	if c.Shortcut(ui.Cmd, ui.Key2) {
+	if cmdOrCtrl(ui.Key2) {
 		a.Mode = ModeEditor
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyJ) {
+	if cmdOrCtrl(ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
 	}
-	if c.Shortcut(ui.Cmd, ui.KeySlash) {
+	if cmdOrCtrl(ui.KeySlash) {
 		a.toggleAppearance()
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyBackquote) {
+	if cmdOrCtrl(ui.KeyBackquote) {
 		a.ShowBottomTerminal = !a.ShowBottomTerminal
 	}
 	if c.Shortcut(ui.Ctrl, ui.KeyTab) {
@@ -491,7 +539,7 @@ func (a *AppUI) View(c *ui.Context) {
 	if c.Shortcut(ui.Ctrl|ui.Shift, ui.KeyTab) {
 		a.Editor.CycleTab(-1)
 	}
-	if c.Shortcut(ui.Cmd, ui.KeyW) {
+	if cmdOrCtrl(ui.KeyW) {
 		if a.Mode == ModeEditor && a.Editor.ActivePath != "" {
 			a.Editor.CloseTab(a.Editor.ActivePath)
 		}

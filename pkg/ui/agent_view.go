@@ -593,6 +593,9 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				placeholder = "Keep typing to queue follow-up changes..."
 			}
 			in := ui.TextInput(c, &as.InputText).Placeholder(placeholder).Grow(1)
+			if isHome {
+				in.AutoFocus()
+			}
 			if in.Submitted() {
 				as.SubmitMessage()
 			}
@@ -868,6 +871,9 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 				}
 				if chip.Clicked() {
 					as.InputText = thisS.prompt
+					if as.Invalidate != nil {
+						as.Invalidate()
+					}
 				}
 			}
 		})

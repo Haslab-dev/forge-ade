@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -270,10 +271,19 @@ func (mgr *ACPManager) StartSessionWithID(sessionID, agentID, cwd string, model 
 			break
 		}
 	}
+	// Fallback to first available ACP agent if unknown or legacy monolith
+	if targetDef == nil || targetDef.ID == "agent-monolith" {
+		for i := range mgr.Agents {
+			if mgr.Agents[i].Available && mgr.Agents[i].Type != "internal" {
+				targetDef = &mgr.Agents[i]
+				break
+			}
+		}
+	}
 	mgr.mu.Unlock()
 
 	if targetDef == nil {
-		return nil, fmt.Errorf("unknown agent ID: %s", agentID)
+		return nil, fmt.Errorf("no available ACP agent found for ID: %s", agentID)
 	}
 
 	if sessionID == "" {
@@ -292,7 +302,20 @@ func (mgr *ACPManager) StartSessionWithID(sessionID, agentID, cwd string, model 
 		}, nil
 	}
 
-	if model == "" {
+	// Normalize model against agent's supported models
+	if len(targetDef.SupportedModels) > 0 {
+		isSupported := false
+		for _, sm := range targetDef.SupportedModels {
+			if strings.EqualFold(sm, model) {
+				isSupported = true
+				model = sm
+				break
+			}
+		}
+		if !isSupported {
+			model = targetDef.Model
+		}
+	} else if model == "" {
 		model = targetDef.Model
 	}
 
@@ -355,6 +378,12 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			sessionID, _ = e.Data["session_id"].(string)
 		}
 		text, _ := e.Data["text"].(string)
+		if text == "" {
+			text, _ = e.Data["delta"].(string)
+		}
+		if text == "" {
+			text, _ = e.Data["content"].(string)
+		}
 		if sessionID != "" && text != "" && mgr.OnTokenChunk != nil {
 			mgr.OnTokenChunk(sessionID, text)
 		}
@@ -372,6 +401,9 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		if text == "" {
 			text, _ = e.Data["delta"].(string)
 		}
+		if text == "" {
+			text, _ = e.Data["thinking"].(string)
+		}
 		if sessionID != "" && text != "" && mgr.OnThoughtChunk != nil {
 			mgr.OnThoughtChunk(sessionID, text)
 		}
@@ -382,7 +414,13 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			return
 		}
 		sessionID, _ := e.Data["sessionId"].(string)
+		if sessionID == "" {
+			sessionID, _ = e.Data["session_id"].(string)
+		}
 		tool, _ := e.Data["toolName"].(string)
+		if tool == "" {
+			tool, _ = e.Data["name"].(string)
+		}
 		if mgr.OnToolStep != nil && sessionID != "" {
 			mgr.OnToolStep(sessionID, tool, "running")
 		}
@@ -393,7 +431,13 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			return
 		}
 		sessionID, _ := e.Data["sessionId"].(string)
+		if sessionID == "" {
+			sessionID, _ = e.Data["session_id"].(string)
+		}
 		tool, _ := e.Data["toolName"].(string)
+		if tool == "" {
+			tool, _ = e.Data["name"].(string)
+		}
 		if mgr.OnToolStep != nil && sessionID != "" {
 			mgr.OnToolStep(sessionID, tool, "completed")
 		}

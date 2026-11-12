@@ -597,24 +597,38 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 			a.ActiveTaskKind = "cli"
 			a.ShowNewTaskModal = false
 			a.Mode = ModeAgent
-		} else if a.NewTaskSelectedAgentID != "" && a.NewTaskSelectedAgentID != "agent-internal" && a.ACPMgr != nil {
+		} else if a.NewTaskSelectedAgentID != "" && a.NewTaskSelectedAgentID != "agent-internal" {
+			a.SelectedAgentID = a.NewTaskSelectedAgentID
+			a.SelectedHarnessID = a.NewTaskSelectedAgentID
+			if a.Agent != nil {
+				a.Agent.ActiveAgentID = a.NewTaskSelectedAgentID
+				a.Agent.ActiveAgentType = "acp"
+			}
 			if title != "" {
-				_, _ = a.ACPMgr.StartSession(a.NewTaskSelectedAgentID, a.Workspace.RootDir, title)
+				if a.Agent != nil {
+					a.Agent.CreateSessionWithInitialPrompt(title, a.NewTaskSelectedAgentID)
+				}
+			} else {
+				a.NewAgentTask(a.Workspace.RootDir)
+				return
 			}
 			a.ActiveTaskKind = "agent"
 			a.ShowNewTaskModal = false
 			a.Mode = ModeAgent
-			if title == "" {
-				a.NewAgentTask(a.Workspace.RootDir)
-				return
-			}
 		} else {
 			if title == "" {
 				a.NewAgentTask(a.Workspace.RootDir)
 				return
 			}
 			if a.Agent != nil {
-				a.Agent.CreateSessionWithInitialPrompt(title, "agent-internal")
+				agentID := a.SelectedAgentID
+				if agentID == "" {
+					agentID = a.SelectedHarnessID
+				}
+				if agentID == "" {
+					agentID = "agent-agy"
+				}
+				a.Agent.CreateSessionWithInitialPrompt(title, agentID)
 			}
 			a.ActiveTaskKind = "agent"
 			a.ShowNewTaskModal = false
