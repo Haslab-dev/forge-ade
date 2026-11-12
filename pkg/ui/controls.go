@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
@@ -194,16 +197,58 @@ func Badge(c *ui.Context, tc theme.ThemeColors, label string, color ui.Color) ui
 
 // taskRowData is one AgentSidebar task session row.
 type taskRowData struct {
-	Key      string
-	Title    string
-	Subtitle string
-	Status   string
-	Active   bool
-	Pinned   bool
-	Archived bool
-	OnPin    func()
-	OnDelete func()
-	OnOpen   func()
+	Key         string
+	Title       string
+	Subtitle    string
+	Status      string
+	Active      bool
+	Pinned      bool
+	Archived    bool
+	Snoozed     bool
+	AgentID     string
+	UpdatedTime time.Time
+	OnPin       func()
+	OnSnooze    func()
+	OnDelete    func()
+	OnOpen      func()
+}
+
+// relativeTime formats a timestamp the way forge-ade's task rows do:
+// "now", "5m", "3h", "20h", "4d", then a date.
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < 2*time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	default:
+		return t.Format("Jan 2")
+	}
+}
+
+// providerGlyph returns the small brand glyph of an agent harness, as
+// forge-ade's ProviderIcon does for the built-in agents.
+func providerGlyph(agentID string) (glyph rune, color ui.Color, ok bool) {
+	switch agentID {
+	case "agent-agy":
+		return '◆', ui.Hex("#4285f4"), true
+	case "agent-claude":
+		return '✳', ui.Hex("#d97757"), true
+	case "agent-codex":
+		return '✦', ui.Hex("#10a37f"), true
+	case "agent-gemini":
+		return '✦', ui.Hex("#8e44ec"), true
+	default:
+		return 0, ui.Color{}, false
+	}
 }
 
 // renderTaskRow draws AgentSidebar's TaskRow: rounded-[8px] py-1.5 pl-2.5
@@ -213,6 +258,12 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	row := ui.Row(c.Key(d.Key)).Radius(8).Padding(6, 8, 6, 10).Gap(8).AlignItems(ui.Center)
 	row.Children(func() {
 		StatusDot(c, tc, d.Status)
+		if glyph, color, ok := providerGlyph(d.AgentID); ok {
+			g := ui.Box(c).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			g.Children(func() {
+				ui.Text(c, string(glyph)).FontSize(10).TextColor(color)
+			})
+		}
 		ui.Column(c).Grow(1).Gap(1).Children(func() {
 			title := ui.Text(c, d.Title).FontSize(13).SingleLine()
 			if d.Active {
@@ -222,6 +273,9 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 				ui.Text(c, d.Subtitle).FontSize(11).TextColor(tc.SidebarMutedForeground).SingleLine()
 			}
 		})
+		if ts := relativeTime(d.UpdatedTime); ts != "" {
+			ui.Text(c, ts).FontSize(11).TextColor(tc.SidebarMutedForeground)
+		}
 		if d.Pinned {
 			ui.Icon(c, icons.TablerPinFilled).Width(13).Height(13).TextColor(tc.Accent)
 		}
@@ -247,4 +301,35 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	if d.Archived {
 		row.Opacity(0.65)
 	}
+
+	// Right-click actions, as forge-ade's row hover menu.
+	row.ContextMenu(func(m *ui.Menu) {
+		if m.Item("Open").Chosen() && d.OnOpen != nil {
+			d.OnOpen()
+		}
+		if d.OnPin != nil {
+			pinLabel := "Pin"
+			if d.Pinned {
+				pinLabel = "Unpin"
+			}
+			if m.Item(pinLabel).Chosen() {
+				d.OnPin()
+			}
+		}
+		if d.OnSnooze != nil {
+			snoozeLabel := "Snooze"
+			if d.Snoozed {
+				snoozeLabel = "Unsnooze"
+			}
+			if m.Item(snoozeLabel).Chosen() {
+				d.OnSnooze()
+			}
+		}
+		m.Separator()
+		if d.OnDelete != nil {
+			if m.Item("Delete").Danger().Chosen() {
+				d.OnDelete()
+			}
+		}
+	})
 }

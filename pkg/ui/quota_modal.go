@@ -18,6 +18,66 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	as := a.Agent
 
+	// Real quota data (account, weekly/five-hour windows) from forge-ade's
+	// quota engine, falling back to ACP usage totals.
+	quotaData := map[string]interface{}{}
+	if a.Engine != nil {
+		quotaData = a.Engine.GetAgentQuota("agent-agy")
+	}
+	quotaStr := func(group, key string) string {
+		g, _ := quotaData[group].(map[string]interface{})
+		if g == nil {
+			return ""
+		}
+		v, _ := g[key].(string)
+		return v
+	}
+	quotaPct := func(group, key string) float64 {
+		g, _ := quotaData[group].(map[string]interface{})
+		if g == nil {
+			return 100
+		}
+		v, _ := g[key].(float64)
+		if v <= 0 {
+			return 100
+		}
+		return v
+	}
+	weeklyPct := quotaPct("weekly", "remainingPercent")
+	fiveHourPct := quotaPct("fiveHour", "remainingPercent")
+	account := ""
+	if v, ok := quotaData["account"].(string); ok {
+		account = v
+	}
+
+	pctColor := func(p float64) ui.Color {
+		if p > 30 {
+			return tc.Success
+		}
+		if p > 15 {
+			return ui.Hex("#fbbf24")
+		}
+		return tc.Error
+	}
+	quotaBar := func(label string, pct float64, resetsIn string) {
+		color := pctColor(pct)
+		ui.Column(c).Gap(4).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(color)
+				ui.Box(c).Grow(1)
+				ui.Text(c, fmt.Sprintf("%.2f%%", pct)).FontSize(11).FontWeight(700).TextColor(color)
+			})
+			ui.Box(c).FillWidth().Height(6).Radius(3).Background(tc.Border.Alpha(0.6)).Children(func() {
+				ui.Box(c).WidthPercent(float32(pct)).Height(6).Radius(3).Background(color)
+			})
+			resetText := "Quota available"
+			if resetsIn != "" {
+				resetText = "Quota available · Resets in " + resetsIn
+			}
+			ui.Text(c, resetText).FontSize(10).TextColor(color)
+		})
+	}
+
 	ui.Modal(c, &a.ShowUsageModal, func() {
 		modal := ui.Column(c).Width(520).Radius(18).
 			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
@@ -89,7 +149,11 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 					ui.Row(c).AlignItems(ui.Center).Children(func() {
 						ui.Column(c).Children(func() {
 							ui.Text(c, "MODELS & QUOTA").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-							ui.Text(c, "Account: Antigravity ACP Local").FontSize(11).FontWeight(600).TextColor(tc.Success)
+							accountLabel := "Account: Antigravity ACP Local"
+							if account != "" {
+								accountLabel = "Account: " + account
+							}
+							ui.Text(c, accountLabel).FontSize(11).FontWeight(600).TextColor(tc.Success)
 						})
 						ui.Box(c).Grow(1)
 						ui.Row(c).Radius(4).Padding(2, 8).Background(ui.RGBA(14, 165, 233, 0.15)).
@@ -101,33 +165,9 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 					ui.Text(c, fmt.Sprintf("Active model: %s (also supports Gemini Pro, Claude 3.7 Sonnet)", activeModel)).
 						FontSize(11).TextColor(tc.TextMuted)
 
-					// Weekly Limit Remaining
-					ui.Column(c).Gap(4).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, "Weekly Limit Remaining").FontSize(11).FontWeight(500).TextColor(tc.Success)
-							ui.Box(c).Grow(1)
-							ui.Text(c, "100.00%").FontSize(11).FontWeight(700).TextColor(tc.Success)
-						})
-						// Progress bar
-						ui.Box(c).FillWidth().Height(6).Radius(3).Background(tc.Border.Alpha(0.6)).Children(func() {
-							ui.Box(c).WidthPercent(100).Height(6).Radius(3).Background(tc.Success)
-						})
-						ui.Text(c, "Quota available · Resets in 6d 22h").FontSize(10).TextColor(tc.Success)
-					})
-
-					// Five Hour Limit Remaining
-					ui.Column(c).Gap(4).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, "Five Hour Limit Remaining").FontSize(11).FontWeight(500).TextColor(tc.Success)
-							ui.Box(c).Grow(1)
-							ui.Text(c, "100.00%").FontSize(11).FontWeight(700).TextColor(tc.Success)
-						})
-						// Progress bar
-						ui.Box(c).FillWidth().Height(6).Radius(3).Background(tc.Border.Alpha(0.6)).Children(func() {
-							ui.Box(c).WidthPercent(100).Height(6).Radius(3).Background(tc.Success)
-						})
-						ui.Text(c, "Quota available · Resets in 4h 55m").FontSize(10).TextColor(tc.Success)
-					})
+					// Live quota windows from forge-ade's quota engine
+					quotaBar("Weekly Limit Remaining", weeklyPct, quotaStr("weekly", "refreshesIn"))
+					quotaBar("Five Hour Limit Remaining", fiveHourPct, quotaStr("fiveHour", "refreshesIn"))
 				})
 
 				// Card 2: Session Context Window Gauge

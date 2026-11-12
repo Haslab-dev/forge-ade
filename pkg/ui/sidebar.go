@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -40,14 +41,14 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			ui.Box(c).Grow(1)
 		})
 
-		// Primary Action Buttons: + New Task (⌘N), Search (⌘P)
+		// Primary Action Buttons: + New Task (⌘N), Search (⌘K)
 		ui.Column(c).Padding(6, 10).Gap(2).Children(func() {
 			isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
 			newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New Task", "⌘N", isNewTaskActive)
 			if newTask.Clicked() {
 				a.NewAgentTask("")
 			}
-			search := SidebarActionButton(c, tc, icons.TablerSearch, "Search", "⌘P", false)
+			search := SidebarActionButton(c, tc, icons.TablerSearch, "Search", "⌘K", false)
 			if search.Clicked() {
 				a.Palette.Toggle()
 			}
@@ -262,22 +263,44 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									})
 								}
 
-								// 1. Agent ACP Sessions
-								for _, sess := range group.Sessions {
+								// 1. Agent ACP Sessions — progressive reveal with
+								// "Show more", as forge-ade's groups do.
+								visible := group.Sessions
+								expandKey := "showmore-" + group.ProjectName
+								if !a.ExpandedProjectGroups[expandKey] && len(visible) > 6 {
+									visible = visible[:6]
+								}
+								for _, sess := range visible {
 									s := sess
 									isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
 									renderTaskRow(c, tc, taskRowData{
-										Key:      "sess-" + s.ID,
-										Title:    s.Title,
-										Subtitle: s.Model,
-										Status:   s.Status,
-										Active:   isActive,
-										Pinned:   s.Pinned,
-										Archived: s.Archived,
-										OnPin:    func() { a.Agent.TogglePin(s.ID) },
-										OnDelete: func() { a.Agent.DeleteSession(s.ID) },
-										OnOpen:   func() { a.ActiveTaskKind = "agent"; a.Agent.SelectSession(s.ID) },
+										Key:         "sess-" + s.ID,
+										Title:       s.Title,
+										Subtitle:    s.Model,
+										Status:      s.Status,
+										Active:      isActive,
+										Pinned:      s.Pinned,
+										Archived:    s.Archived,
+										Snoozed:     s.Snoozed,
+										AgentID:     s.AgentID,
+										UpdatedTime: s.UpdatedAt,
+										OnPin:       func() { a.Agent.TogglePin(s.ID) },
+										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
+										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
+										OnOpen:      func() { a.ActiveTaskKind = "agent"; a.Agent.SelectSession(s.ID) },
 									})
+								}
+								if !a.ExpandedProjectGroups[expandKey] && len(group.Sessions) > 6 {
+									showMore := ui.Row(c.Key("showmore-"+group.ProjectName)).Height(26).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
+									showMore.Children(func() {
+										ui.Text(c, fmt.Sprintf("Show more (%d)", len(group.Sessions)-6)).FontSize(11).TextColor(tc.Accent)
+									})
+									if showMore.Hovered() {
+										showMore.Background(tc.SidebarRowHover)
+									}
+									if showMore.Clicked() {
+										a.ExpandedProjectGroups[expandKey] = true
+									}
 								}
 
 								// 2. Active CLI Sessions
@@ -285,12 +308,14 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									cs := cliSess
 									isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
 									renderTaskRow(c, tc, taskRowData{
-										Key:      "cli-sess-" + cs.ID,
-										Title:    cs.Title,
-										Subtitle: cs.AgentName + " · CLI Task",
-										Status:   "running",
-										Active:   isActive,
-										OnOpen:   func() { a.ActiveTaskKind = "cli"; a.CLIMgr.ActiveID = cs.ID },
+										Key:         "cli-sess-" + cs.ID,
+										Title:       cs.Title,
+										Subtitle:    cs.AgentName + " · CLI Task",
+										Status:      "running",
+										Active:      isActive,
+										AgentID:     "agent-agy",
+										UpdatedTime: time.Now(),
+										OnOpen:      func() { a.ActiveTaskKind = "cli"; a.CLIMgr.ActiveID = cs.ID },
 									})
 								}
 							})

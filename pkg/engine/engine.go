@@ -13,6 +13,7 @@ import (
 	"github.com/hasdev/forge-ade/internal/acp"
 	"github.com/hasdev/forge-ade/internal/commitmsg"
 	"github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/internal/quota"
 	"github.com/hasdev/forge-ade/internal/remotefs"
 	"github.com/hasdev/forge-ade/internal/watcher"
 )
@@ -216,6 +217,16 @@ func (e *Engine) GenerateAICommit(ctx context.Context, repoPath, instruction str
 	}
 	cfg := e.GetLLMConfig()
 	return e.CommitGenerator.Generate(ctx, repoPath, cfg.ProviderID, cfg.Model, instruction)
+}
+
+// GetAgentQuota returns real account/tier/quota usage for an agent (e.g.
+// agent-agy), falling back to ACP usage totals, as forge-ade's binding does.
+func (e *Engine) GetAgentQuota(agentID string) map[string]interface{} {
+	summary := func() map[string]interface{} { return e.ACPMgr.GetUsageSummary() }
+	if res, err := quota.GetAgentQuota(agentID, summary); err == nil {
+		return res
+	}
+	return summary()
 }
 
 // StartWatcher attaches file system monitoring to the root directory and calls onChange when changes occur.

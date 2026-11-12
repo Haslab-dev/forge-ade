@@ -132,6 +132,7 @@ type AppUI struct {
 	SelectedHarnessID       string
 	SelectedProviderTab     string
 	CollapsedProjectGroups  map[string]bool
+	ExpandedProjectGroups   map[string]bool
 	ExpandedFileTreeFolders map[string]bool
 	ShowSSHModal            bool
 	ShowSSHQuickMenu        bool
@@ -189,6 +190,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SelectedHarnessID:       "agent-agy",
 		SelectedProviderTab:     "all",
 		CollapsedProjectGroups:  make(map[string]bool),
+		ExpandedProjectGroups:   make(map[string]bool),
 		ExpandedFileTreeFolders: make(map[string]bool),
 		SSHPort:                 22,
 		SSHPortText:             "22",
@@ -426,6 +428,9 @@ func (a *AppUI) View(c *ui.Context) {
 				Type:        "success",
 			})
 		}
+	}
+	if c.Shortcut(ui.Cmd, ui.KeyK) {
+		a.Palette.Toggle()
 	}
 	if c.Shortcut(ui.Cmd, ui.KeyP) {
 		a.Palette.Toggle()
