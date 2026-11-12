@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	mygoshell "github.com/egoist/mygo"
 	"github.com/hasdev/forge-ade/internal/remotefs"
 )
 
@@ -238,11 +237,6 @@ func (ws *WorkspaceState) DeleteFile(relPath string) error {
 		_, err := ws.RemoteFS.DeleteFile(fullPath)
 		ws.Refresh()
 		return err
-	}
-	// Move to the system trash first, so a delete stays recoverable.
-	if err := mygoshell.Shell.TrashItem(fullPath); err == nil {
-		ws.Refresh()
-		return nil
 	}
 	if err := os.Remove(fullPath); err != nil {
 		return err
