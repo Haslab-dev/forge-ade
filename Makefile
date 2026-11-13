@@ -64,7 +64,7 @@ webview-dev: ## Run the Wails app in dev mode (hot reload)
 
 .PHONY: webview-build
 webview-build: ## Build the Wails app (with devtools)
-	cd $(WEBVIEW_DIR) && $(WAILS) build -devtools -tags private_mac_apis
+	cd $(WEBVIEW_DIR) && $(WAILS) build -tags private_mac_apis
 
 .PHONY: webview-package
 webview-package: ## Build + package the Wails .app bundle
