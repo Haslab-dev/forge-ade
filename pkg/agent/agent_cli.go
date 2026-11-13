@@ -110,10 +110,13 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 		if r.StartedAt > 0 {
 			started = time.UnixMilli(r.StartedAt)
 		}
-		term := terminal.NewTerminalState(r.WorkingDirectory)
-		logPath := filepath.Join(home, ".forge-ade", "agentsessions", "output", r.ID+".log")
-		if logBytes, err := os.ReadFile(logPath); err == nil && len(logBytes) > 0 {
-			term.SendInput(string(logBytes))
+		// Restored sessions have no live process: build a deferred terminal
+		// state (Restart relaunches the CLI on demand). The on-disk output log
+		// is PTY output — never feed it back as input, the shell would try to
+		// execute the raw escape sequences.
+		term := terminal.NewTerminalStateDeferred(r.WorkingDirectory)
+		if r.Executable != "" {
+			term.Command = []string{r.Executable}
 		}
 
 		status := r.Status
@@ -132,7 +135,7 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 			StartedAt: started,
 			Terminal:  term,
 		}
-		if mgr.ActiveID == "" {
+		if mgr.ActiveID == "" && status == "running" {
 			mgr.ActiveID = r.ID
 		}
 	}
@@ -215,7 +218,9 @@ func (mgr *AgentCLIManager) CreateSessionWithTitle(agentID, agentName, command s
 	return sess
 }
 
-// CreateSession launches an interactive agent CLI task session in the terminal.
+// CreateSession launches an interactive agent CLI task session. As forge-ade's
+// backend does, the CLI executable itself becomes the PTY program — no wrapping
+// shell, so its escape sequences never leak into a shell prompt.
 func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, args []string, cwd string) *AgentCLISession {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
@@ -227,7 +232,12 @@ func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, ar
 	sessionID := fmt.Sprintf("cli-%s-%d", agentID, time.Now().UnixNano()%100000)
 	title := fmt.Sprintf("%s Task", agentName)
 
-	term := terminal.NewTerminalState(cwd)
+	term := terminal.NewTerminalStateDeferred(cwd)
+	term.Command = append([]string{command}, args...)
+	status := "running"
+	if err := term.Restart(); err != nil {
+		status = "error"
+	}
 
 	sess := &AgentCLISession{
 		ID:        sessionID,
@@ -237,23 +247,13 @@ func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, ar
 		Command:   command,
 		Args:      args,
 		Cwd:       cwd,
-		Status:    "running",
+		Status:    status,
 		StartedAt: time.Now(),
 		Terminal:  term,
 	}
 
 	mgr.Sessions[sessionID] = sess
 	mgr.ActiveID = sessionID
-
-	// Send initial launch command to embedded terminal
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		cmdLine := command
-		for _, a := range args {
-			cmdLine += " " + a
-		}
-		term.SendInput(cmdLine + "\n")
-	}()
 
 	return sess
 }
@@ -265,15 +265,91 @@ func (mgr *AgentCLIManager) ActiveSession() *AgentCLISession {
 	return mgr.Sessions[mgr.ActiveID]
 }
 
-// StopSession sends interrupt signal to the active CLI session.
+// StopSession stops a CLI session: Ctrl+C first (graceful for TUIs), then the
+// process is killed if it survived the grace window.
 func (mgr *AgentCLIManager) StopSession(sessionID string) {
+	mgr.mu.RLock()
+	sess := mgr.Sessions[sessionID]
+	var term *terminal.TerminalState
+	if sess != nil {
+		term = sess.Terminal
+	}
+	mgr.mu.RUnlock()
+	if term == nil {
+		return
+	}
+
+	term.SendInput("\x03")
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		if !term.IsExited() {
+			term.Close()
+		}
+	}()
+
+	mgr.mu.Lock()
+	if sess, ok := mgr.Sessions[sessionID]; ok {
+		sess.Status = "completed"
+	}
+	mgr.mu.Unlock()
+}
+
+// RestartSession relaunches the session's CLI within the same record, as
+// forge-ade's Restart does — the executable becomes the new PTY program again.
+func (mgr *AgentCLIManager) RestartSession(sessionID string) {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 
-	if sess, ok := mgr.Sessions[sessionID]; ok {
-		if sess.Terminal != nil {
-			sess.Terminal.SendInput("\x03") // Ctrl+C
+	sess := mgr.Sessions[sessionID]
+	if sess == nil || sess.Terminal == nil || strings.TrimSpace(sess.Command) == "" {
+		return
+	}
+	sess.Terminal.Close()
+	sess.Terminal.Command = append([]string{sess.Command}, sess.Args...)
+	if err := sess.Terminal.Restart(); err != nil {
+		sess.Status = "error"
+		return
+	}
+	sess.Status = "running"
+	sess.ExitCode = 0
+	sess.StartedAt = time.Now()
+}
+
+// DeleteSession removes a CLI session and terminates its process.
+func (mgr *AgentCLIManager) DeleteSession(sessionID string) {
+	mgr.mu.Lock()
+	sess := mgr.Sessions[sessionID]
+	var term *terminal.TerminalState
+	if sess != nil {
+		term = sess.Terminal
+		delete(mgr.Sessions, sessionID)
+	}
+	if mgr.ActiveID == sessionID {
+		mgr.ActiveID = ""
+		for id := range mgr.Sessions {
+			mgr.ActiveID = id
+			break
 		}
-		sess.Status = "completed"
+	}
+	mgr.mu.Unlock()
+
+	if term != nil {
+		term.Close()
+	}
+}
+
+// SyncExitStatus flips a running session to completed once its PTY process
+// has exited, so the UI reflects the real lifecycle.
+func (mgr *AgentCLIManager) SyncExitStatus() {
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+	for _, sess := range mgr.Sessions {
+		if sess.Status != "running" || sess.Terminal == nil {
+			continue
+		}
+		if sess.Terminal.IsExited() {
+			sess.Status = "completed"
+			sess.ExitCode = sess.Terminal.ExitStatus()
+		}
 	}
 }

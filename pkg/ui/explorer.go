@@ -77,7 +77,13 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 						row.Background(tc.Text.Alpha(0.04))
 					}
 					if row.Clicked() {
-						a.openExplorerNode(node)
+						if a.LeftSidebarView == "files" {
+							// The agent sidebar's explorer previews files in the
+							// right sidebar, as forge-ade's side preview does.
+							a.openSideFile(node.RelativePath)
+						} else {
+							a.openExplorerNode(node)
+						}
 					}
 					a.attachExplorerMenu(c, row, node, tc)
 				}
@@ -142,14 +148,25 @@ func (a *AppUI) openExplorerNode(node *FileTreeNode) {
 func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTreeNode, tc theme.ThemeColors) {
 	row.ContextMenu(func(m *ui.Menu) {
 		if !node.IsDir {
-			if m.Item("Open").Chosen() {
-				a.openExplorerNode(node)
+			if a.LeftSidebarView == "files" {
+				if m.Item("Open in Side Preview").Chosen() {
+					a.openSideFile(node.RelativePath)
+				}
+				if m.Item("Open in Editor").Chosen() {
+					_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+					a.Mode = ModeEditor
+				}
+				m.Separator()
+			} else {
+				if m.Item("Open").Chosen() {
+					a.openExplorerNode(node)
+				}
+				if m.Item("Open in Editor").Chosen() {
+					_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+					a.Mode = ModeEditor
+				}
+				m.Separator()
 			}
-			if m.Item("Open in Editor").Chosen() {
-				_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
-				a.Mode = ModeEditor
-			}
-			m.Separator()
 		}
 		if m.Item("New File...").Chosen() {
 			a.ShowNewFileModal = true

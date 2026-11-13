@@ -1541,17 +1541,26 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 	}
 
 	ui.Column(c).Fill().Children(func() {
-		// Session Top Bar
+		a.CLIMgr.SyncExitStatus()
+
+		// Session Top Bar: one title, real status, elapsed, Stop/Restart.
 		ui.Row(c).Gap(10).Padding(8, 14).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-			TablerIcon(c, icons.TablerRobot, 16)
-			ui.Text(c, sess.AgentName).Bold().FontSize(13)
-			ui.Text(c, sess.Title).FontSize(12).TextColor(t.TextMuted)
+			TablerIcon(c, icons.TablerTerminal, 16)
+			title := sess.Title
+			if title == "" || title == sess.AgentName {
+				title = sess.AgentName
+				ui.Text(c, title).Bold().FontSize(13)
+			} else {
+				ui.Text(c, sess.AgentName).Bold().FontSize(13)
+				ui.Text(c, title).FontSize(12).TextColor(t.TextMuted)
+			}
 
 			ui.Box(c).Grow(1)
 
-			if sess.Status == "running" {
+			isRunning := sess.Status == "running" && sess.Terminal != nil && !sess.Terminal.IsExited()
+			if isRunning {
 				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, icons.TablerLoader, 13)
+					ui.Box(c).Size(7, 7).Radius(4).Background(t.Accent)
 					ui.Text(c, "Running").FontSize(11).TextColor(t.Accent)
 				})
 			} else {
@@ -1567,7 +1576,7 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 				ui.Text(c, fmt.Sprintf("%s", elapsed)).FontSize(11).TextColor(t.TextMuted)
 			})
 
-			if sess.Status == "running" {
+			if isRunning {
 				stopBtn := ui.Button(c, "")
 				stopBtn.Children(func() {
 					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
@@ -1577,6 +1586,17 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 				})
 				if stopBtn.Clicked() {
 					a.CLIMgr.StopSession(sess.ID)
+				}
+			} else {
+				restartBtn := ui.Button(c, "")
+				restartBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerRotate).Width(12).Height(12)
+						ui.Text(c, "Restart").FontSize(11)
+					})
+				})
+				if restartBtn.Clicked() {
+					a.CLIMgr.RestartSession(sess.ID)
 				}
 			}
 		})

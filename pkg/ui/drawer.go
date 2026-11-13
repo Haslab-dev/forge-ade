@@ -47,6 +47,13 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				{RightTabChat, "Chat", icons.TablerMessage},
 				{RightTabFiles, "Files", icons.TablerFolder},
 			}
+			if len(a.SideFileTabs) > 0 {
+				tabs = append(tabs, struct {
+					Tab  int
+					Name string
+					Icon *ui.SVG
+				}{RightTabSideFile, filepath.Base(a.ActiveSideFile), icons.TablerEye})
+			}
 
 			ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
 				for _, tab := range tabs {
@@ -98,6 +105,8 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderSideChatPane(c)
 			case RightTabFiles:
 				a.renderFilesPane(c)
+			case RightTabSideFile:
+				a.renderSideFilePane(c)
 			}
 		})
 	})
@@ -927,4 +936,80 @@ func maxF(a, b float32) float32 {
 		return a
 	}
 	return b
+}
+
+// renderSideFilePane draws the right sidebar's file preview tabs — files
+// opened from the agent sidebar's explorer, as forge-ade's side preview:
+// a tab strip plus the file in the MyGo editor view.
+func (a *AppUI) renderSideFilePane(c *ui.Context) {
+	tc := a.ThemeMgr.Colors()
+	if len(a.SideFileTabs) == 0 {
+		ui.Column(c).Grow(1).Center().Children(func() {
+			ui.Text(c, "No file preview open").FontSize(12).TextColor(tc.TextMuted)
+		})
+		return
+	}
+
+	// File tab strip (forge-ade's sideFileTabs mirrored into pane tabs).
+	ui.ScrollHorizontal(c).Height(34).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		for _, p := range a.SideFileTabs {
+			thisPath := p
+			active := a.ActiveSideFile == thisPath
+			tab := ui.Row(c.Key("sidefile-" + thisPath)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center)
+			tab.Children(func() {
+				ui.Icon(c, icons.FileIconSVG(thisPath)).Width(12).Height(12).TextColor(tc.IconMuted)
+				txt := ui.Text(c, filepath.Base(thisPath)).FontSize(11).SingleLine()
+				if active {
+					txt.FontWeight(600).TextColor(tc.Text)
+				} else {
+					txt.TextColor(tc.TextMuted)
+				}
+				closeBtn := ui.Row(c.Key("sidefile-x-" + thisPath)).Size(14, 14).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				closeBtn.Children(func() {
+					ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.IconMuted)
+				})
+				if closeBtn.Hovered() {
+					closeBtn.Background(tc.Text.Alpha(0.08))
+				}
+				if closeBtn.Clicked() {
+					a.closeSideFile(thisPath)
+				}
+			})
+			if active {
+				tab.Background(tc.Accent.Alpha(0.14))
+			} else if tab.Hovered() {
+				tab.Background(tc.Text.Alpha(0.05))
+			}
+			if tab.Clicked() {
+				a.ActiveSideFile = thisPath
+			}
+		}
+	})
+
+	// Editor view of the active file.
+	full := ""
+	if a.Workspace != nil {
+		full = a.Workspace.ResolveFullPath(a.ActiveSideFile)
+	}
+	doc := a.Editor.GetDoc(full)
+	if doc == nil {
+		ui.Column(c).Grow(1).Center().Children(func() {
+			ui.Text(c, "File unavailable").FontSize(12).TextColor(tc.TextMuted)
+		})
+		return
+	}
+	ui.Column(c).Grow(1).FillHeight().Children(func() {
+		mygoeditor.View(c, doc.Editor).Grow(1).FillWidth()
+		// Keep the drawer preview in sync with the editor-mode active tab.
+		ui.Row(c).Height(26).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+			BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
+			ui.Text(c, a.ActiveSideFile).FontSize(10).TextColor(tc.TextMuted).SingleLine()
+			ui.Box(c).Grow(1)
+			if ui.Text(c, "Open in Editor").FontSize(10).TextColor(tc.Accent).Clicked() {
+				_, _ = a.Editor.OpenFile(full, a.ActiveSideFile)
+				a.Mode = ModeEditor
+			}
+		})
+	})
 }

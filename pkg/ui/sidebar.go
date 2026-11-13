@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
 )
 
@@ -41,46 +42,24 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			ui.Box(c).Grow(1)
 		})
 
-		// Primary Action Buttons: + New Task (⌘N), Search (⌘K)
-		ui.Column(c).Padding(6, 10).Gap(2).Children(func() {
-			isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
-			newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New task", "⌘N", isNewTaskActive)
-			if newTask.Clicked() {
-				a.NewAgentTask("")
-			}
-			search := SidebarActionButton(c, tc, icons.TablerSearch, "Search", "⌘K", false)
-			if search.Clicked() {
-				a.Palette.Toggle()
-			}
-		})
-
-		// Sidebar View Switcher: Tasks | Files
-		ui.Row(c).Gap(4).Padding(2, 10).Children(func() {
-			pill := func(label string, icon *ui.SVG, active bool, onPick func()) {
-				btn := ui.Row(c).Height(24).Radius(999).Padding(0, 10).Gap(5).AlignItems(ui.Center)
-				btn.Children(func() {
-					ui.Icon(c, icon).Width(12).Height(12).TextColor(tc.SidebarForeground)
-					ui.Text(c, label).FontSize(12)
-				})
-				if active {
-					btn.Background(tc.Text.Alpha(0.15))
-				} else if btn.Hovered() {
-					btn.Background(tc.SidebarRowHover)
-				}
-				if btn.Clicked() {
-					onPick()
-				}
-			}
-			pill("Tasks", icons.TablerChecklist, a.AgentSidebarView == AgentSidebarTasks, func() { a.AgentSidebarView = AgentSidebarTasks })
-			pill("Files", icons.TablerFiles, a.AgentSidebarView == AgentSidebarFiles, func() { a.AgentSidebarView = AgentSidebarFiles })
-		})
-
-		if a.AgentSidebarView == AgentSidebarFiles {
-			// Embedded Project File Explorer in Agent Sidebar
-			ui.Column(c).Grow(1).Children(func() {
-				a.renderFileTree(c)
-			})
+		// forge-ade's leftSidebarView: the file explorer replaces the whole
+		// tasks body ("Explore project files" swaps it in, "Back to tasks" out).
+		if a.LeftSidebarView == "files" {
+			a.renderSidebarFileExplorer(c, tc)
 		} else {
+			// Primary Action Buttons: + New task (⌘N), Search (⌘K)
+			ui.Column(c).Padding(6, 10).Gap(2).Children(func() {
+				isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
+				newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New task", "⌘N", isNewTaskActive)
+				if newTask.Clicked() {
+					a.OpenNewTaskModal()
+				}
+				search := SidebarActionButton(c, tc, icons.TablerSearch, "Search", "⌘K", false)
+				if search.Clicked() {
+					a.Palette.Toggle()
+				}
+			})
+
 			activeWsPath := ""
 			if a.Workspace != nil {
 				activeWsPath = a.Workspace.RootDir
@@ -299,7 +278,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 
 						isCollapsed := a.CollapsedProjectGroups[group.ProjectName]
 
-						// Project Group Header
+						// Project Group Header: chevron + folder + name, with the
+						// hover actions (Explore project files / New task / Delete
+						// workspace) that forge-ade shows on group hover.
+						canExplore := group.ProjectName != "General" && group.FolderPath != ""
 						pHeader := ui.Row(c.Key("pheader-"+group.ProjectName)).Height(28).Radius(6).
 							Padding(0, 6).Gap(5).AlignItems(ui.Center)
 						pHeader.Children(func() {
@@ -313,20 +295,51 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 
 							ui.Text(c, group.ProjectName).FontSize(12).FontWeight(600).Grow(1).SingleLine()
 
-							if totalCount > 0 {
-								ui.Text(c, fmt.Sprintf("%d", totalCount)).FontSize(10).TextColor(tc.SidebarMutedForeground)
-							}
+							// Hover-only actions, as forge-ade's opacity-0
+							// group-hover actions.
+							if pHeader.Hovered() {
+								groupAction := func(key string, icon *ui.SVG, danger bool, onPick func()) {
+									btn := ui.Row(c.Key("gact-" + key)).Size(20, 20).Radius(5).
+										AlignItems(ui.Center).Justify(ui.Center)
+									btn.Children(func() {
+										ic := ui.Icon(c, icon).Width(13).Height(13)
+										if danger {
+											ic.TextColor(tc.Error)
+										} else {
+											ic.TextColor(tc.SidebarMutedForeground)
+										}
+									})
+									if danger && btn.Hovered() {
+										btn.Background(tc.Error.Alpha(0.12))
+									} else if btn.Hovered() {
+										btn.Background(tc.Text.Alpha(0.05))
+									}
+									if btn.Clicked() {
+										onPick()
+									}
+								}
 
-							newBtn := ui.Row(c.Key("pnew-"+group.ProjectName)).Size(18, 18).Radius(4).
-								AlignItems(ui.Center).Justify(ui.Center)
-							newBtn.Children(func() {
-								ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(tc.IconMuted)
-							})
-							if newBtn.Hovered() {
-								newBtn.Background(tc.Text.Alpha(0.08))
-							}
-							if newBtn.Clicked() {
-								a.NewAgentTask(group.FolderPath)
+								if canExplore {
+									groupAction("explore-"+group.ProjectName, icons.TablerFolderTree, false, func() {
+										if group.FolderPath != "" && group.FolderPath != a.Workspace.RootDir {
+											a.switchWorkspace(group.FolderPath)
+										}
+										a.Workspace.Refresh()
+										a.LeftSidebarView = "files"
+									})
+								}
+								groupAction("new-"+group.ProjectName, icons.TablerPlus, false, func() {
+									if group.ProjectName == "General" || group.FolderPath == "" {
+										a.OpenNewTaskModal()
+									} else {
+										a.OpenNewTaskModalFor(group.FolderPath)
+									}
+								})
+								if canExplore {
+									groupAction("delws-"+group.ProjectName, icons.TablerTrash, true, func() {
+										a.deleteWorkspaceGroup(c, group.ProjectName, group.FolderPath)
+									})
+								}
 							}
 						})
 
@@ -389,13 +402,23 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								for _, cliSess := range group.CLISessions {
 									cs := cliSess
 									isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
+									isCLIRunning := cs.Status == "running" && cs.Terminal != nil && !cs.Terminal.IsExited()
+									status := cs.Status
+									if isCLIRunning {
+										status = "running"
+									} else if status == "running" {
+										status = "completed"
+									}
 									renderTaskRow(c, tc, taskRowData{
 										Key:         "cli-sess-" + cs.ID,
 										Title:       cs.Title,
-										Status:      "running",
+										Status:      status,
 										Active:      isActive,
 										AgentID:     "agent-agy",
-										UpdatedTime: time.Now(),
+										UpdatedTime: cs.StartedAt,
+										OnStop:      func() { a.CLIMgr.StopSession(cs.ID) },
+										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
+										OnDelete:    func() { a.CLIMgr.DeleteSession(cs.ID) },
 										OnOpen: func() {
 											a.ActiveTaskKind = "cli"
 											a.AgentViewMode = AgentViewChat
@@ -473,6 +496,64 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				}
 			})
 		_ = t
+	})
+}
+
+// renderSidebarFileExplorer draws forge-ade's SidebarFileExplorer: "← Back to
+// tasks", the file search, the project header (reveal / collapse-all /
+// refresh) and the workspace tree. Files open in the right sidebar's preview
+// tabs, mirroring the original's side preview.
+func (a *AppUI) renderSidebarFileExplorer(c *ui.Context, tc theme.ThemeColors) {
+	// Back to tasks
+	ui.Column(c).Padding(4, 8, 0, 8).Children(func() {
+		back := ui.Row(c.Key("back-to-tasks")).Height(28).Radius(8).Padding(0, 8).Gap(8).AlignItems(ui.Center)
+		back.Children(func() {
+			ui.Icon(c, icons.TablerArrowLeft).Width(13).Height(13).TextColor(tc.Text.Alpha(0.85))
+			ui.Text(c, "Back to tasks").FontSize(13).FontWeight(500).TextColor(tc.Text.Alpha(0.85))
+		})
+		if back.Hovered() {
+			back.Background(tc.SidebarRowHover)
+		}
+		if back.Clicked() {
+			a.LeftSidebarView = "tasks"
+		}
+	})
+
+	// Search files
+	ui.Row(c).Padding(8, 10, 6, 10).Children(func() {
+		ui.TextInput(c, &a.Workspace.FilterQuery).Placeholder("Search files...").Grow(1)
+	})
+
+	// Project header: name + external link, collapse-all, refresh
+	ui.Row(c).Padding(2, 14, 6, 14).AlignItems(ui.Center).Gap(4).Children(func() {
+		projectName := resolveProjectName(a.Workspace.RootDir)
+		nameBtn := ui.Row(c.Key("exp-project")).Gap(5).AlignItems(ui.Center)
+		nameBtn.Children(func() {
+			ui.Text(c, projectName).FontSize(13).FontWeight(500).TextColor(tc.SidebarMutedForeground).SingleLine()
+			ui.Icon(c, icons.TablerExternalLink).Width(11).Height(11).TextColor(tc.SidebarMutedForeground)
+		})
+		if nameBtn.Clicked() {
+			a.Palette.Toggle()
+		}
+		ui.Box(c).Grow(1)
+		if IconButton(c, tc, icons.TablerChevronsDownUp, 12).Clicked() {
+			for k := range a.ExpandedFileTreeFolders {
+				a.ExpandedFileTreeFolders[k] = false
+			}
+		}
+		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() {
+			a.Workspace.Refresh()
+			if a.Git != nil {
+				go a.Git.Refresh()
+			}
+		}
+	})
+
+	// Tree — clicks open the side preview in the right sidebar.
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Padding(2, 8, 8, 8).Children(func() {
+			a.renderExplorerTree(c, tc)
+		})
 	})
 }
 

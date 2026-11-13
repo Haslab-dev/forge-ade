@@ -208,6 +208,8 @@ type taskRowData struct {
 	UpdatedTime time.Time
 	OnPin       func()
 	OnSnooze    func()
+	OnStop      func() // terminal sessions: stop while running
+	OnRestart   func() // terminal sessions: relaunch when stopped
 	OnDelete    func()
 	OnOpen      func()
 }
@@ -300,9 +302,34 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			})
 		}
 
-		// Hover actions: pin (always when pinned), snooze, delete — size-5
-		// hit areas, as forge-ade's group-hover buttons.
+		// Hover actions: stop (running) / restart (stopped) for terminal
+		// sessions, pin (always when pinned), snooze, delete — size-5 hit
+		// areas, as forge-ade's group-hover buttons.
 		showActions := row.Hovered() || d.Pinned || d.Snoozed
+		if showActions && isRunning && d.OnStop != nil {
+			stopBtn := ui.Row(c.Key("ract-stop-" + d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			stopBtn.Children(func() {
+				ui.Icon(c, icons.TablerSquare).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+			})
+			if stopBtn.Hovered() {
+				stopBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if stopBtn.Clicked() {
+				d.OnStop()
+			}
+		}
+		if showActions && !isRunning && d.OnRestart != nil {
+			restartBtn := ui.Row(c.Key("ract-restart-" + d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			restartBtn.Children(func() {
+				ui.Icon(c, icons.TablerRotate).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+			})
+			if restartBtn.Hovered() {
+				restartBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if restartBtn.Clicked() {
+				d.OnRestart()
+			}
+		}
 		if showActions && d.OnPin != nil {
 			pinBtn := ui.Row(c.Key("ract-pin-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 			pinBtn.Children(func() {
@@ -368,6 +395,16 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	row.ContextMenu(func(m *ui.Menu) {
 		if m.Item("Open").Chosen() && d.OnOpen != nil {
 			d.OnOpen()
+		}
+		if d.OnStop != nil && isRunning {
+			if m.Item("Stop Session").Chosen() {
+				d.OnStop()
+			}
+		}
+		if d.OnRestart != nil && !isRunning {
+			if m.Item("Restart Session").Chosen() {
+				d.OnRestart()
+			}
 		}
 		if d.OnPin != nil {
 			pinLabel := "Pin"

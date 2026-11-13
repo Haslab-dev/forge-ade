@@ -49,12 +49,16 @@ func TestAppUIModeSwitchAndPanels(t *testing.T) {
 	}
 
 	// Agent sidebar view modes
-	if app.AgentSidebarView != AgentSidebarTasks {
-		t.Fatalf("expected initial AgentSidebarTasks, got %d", app.AgentSidebarView)
+	if app.LeftSidebarView != "" {
+		t.Fatalf("expected initial left sidebar view (tasks), got %q", app.LeftSidebarView)
 	}
-	app.AgentSidebarView = AgentSidebarFiles
-	if app.AgentSidebarView != AgentSidebarFiles {
-		t.Fatalf("expected AgentSidebarFiles, got %d", app.AgentSidebarView)
+	app.LeftSidebarView = "files"
+	if app.LeftSidebarView != "files" {
+		t.Fatalf("expected files view, got %q", app.LeftSidebarView)
+	}
+	app.LeftSidebarView = "tasks"
+	if app.LeftSidebarView != "tasks" {
+		t.Fatalf("expected tasks view, got %q", app.LeftSidebarView)
 	}
 }
 

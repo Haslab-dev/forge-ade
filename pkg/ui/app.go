@@ -31,12 +31,6 @@ const (
 	ModeSettings = 2
 )
 
-// Agent sidebar view modes
-const (
-	AgentSidebarTasks = 0
-	AgentSidebarFiles = 1
-)
-
 // Editor activity bar tabs
 const (
 	ActivityExplorer = 0
@@ -55,6 +49,7 @@ const (
 	RightTabGit      = 5
 	RightTabDatabase = 6
 	RightTabFiles    = 7
+	RightTabSideFile = 8
 )
 
 // Layout metrics of ForgeADE's CSS
@@ -89,7 +84,9 @@ type AppUI struct {
 	Mode                    int     // ModeAgent or ModeEditor
 	ActiveTaskKind          string  // "agent" or "cli"
 	ShowLeftSidebar         bool    // Left sidebar visibility
-	AgentSidebarView        int     // AgentSidebarTasks or AgentSidebarFiles
+	LeftSidebarView         string  // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	SideFileTabs            []string // files opened in the right sidebar from the explorer
+	ActiveSideFile          string
 	ShowBottomTerminal      bool    // Collapsible bottom terminal drawer
 	BottomTerminalHeight    float32 // Resizable terminal height
 	ShowRightDrawer         bool    // Collapsible right side pane
@@ -113,6 +110,7 @@ type AppUI struct {
 	NewFolderName           string
 	ShowNewTaskModal        bool
 	NewTaskTitle            string
+	NewTaskWorkspacePath    string // preselected folder for group-level "+ New task"
 	NewTaskAgentType        string // "acp" or "cli"
 	NewTaskSearchQuery      string
 	NewTaskFilterTab        string // "all", "acp", "cli"
@@ -548,7 +546,8 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowLeftSidebar = !a.ShowLeftSidebar
 	}
 	if cmdOrCtrl(ui.KeyN) {
-		a.NewAgentTask("")
+		// New task opens the ACP/CLI agent picker, as the user expects.
+		a.OpenNewTaskModal()
 	}
 	if cmdOrCtrlShift(ui.KeyN) {
 		a.OpenNewTaskModal()
@@ -648,6 +647,78 @@ func (a *AppUI) OpenNewTaskModal() {
 	if a.CLIMgr != nil {
 		a.CLIMgr.RefreshConfigs()
 	}
+}
+
+// OpenNewTaskModalFor opens the ACP/CLI agent picker pre-bound to a project
+// folder, as forge-ade's group-level "+ New task" does.
+func (a *AppUI) OpenNewTaskModalFor(folderPath string) {
+	a.OpenNewTaskModal()
+	a.NewTaskWorkspacePath = folderPath
+}
+
+// openSideFile opens a workspace file in the right sidebar's file tabs, as
+// forge-ade's explorer "Open in Side Preview" does.
+func (a *AppUI) openSideFile(relPath string) {
+	full := a.Workspace.ResolveFullPath(relPath)
+	if doc := a.Editor.GetDoc(full); doc == nil {
+		_, _ = a.Editor.OpenFile(full, relPath)
+	}
+	for i, p := range a.SideFileTabs {
+		if p == relPath {
+			a.SideFileTabs = append(a.SideFileTabs[:i], a.SideFileTabs[i+1:]...)
+			break
+		}
+	}
+	a.SideFileTabs = append([]string{relPath}, a.SideFileTabs...)
+	a.ActiveSideFile = relPath
+	a.ShowRightDrawer = true
+	a.RightDrawerTab = RightTabSideFile
+	a.SelectedFile = relPath
+}
+
+// closeSideFile removes a file tab from the right sidebar.
+func (a *AppUI) closeSideFile(relPath string) {
+	for i, p := range a.SideFileTabs {
+		if p == relPath {
+			a.SideFileTabs = append(a.SideFileTabs[:i], a.SideFileTabs[i+1:]...)
+			break
+		}
+	}
+	if a.ActiveSideFile == relPath {
+		if len(a.SideFileTabs) > 0 {
+			a.ActiveSideFile = a.SideFileTabs[0]
+		} else {
+			a.ActiveSideFile = ""
+			a.RightDrawerTab = RightTabChanges
+		}
+	}
+}
+
+// deleteWorkspaceGroup removes every task session bound to a project folder
+// and releases the workspace (back to General) when it is the active one —
+// forge-ade's "Delete workspace" group action. Files on disk are untouched.
+func (a *AppUI) deleteWorkspaceGroup(c *ui.Context, groupName, folderPath string) {
+	if groupName == "General" || folderPath == "" {
+		return
+	}
+	if a.Agent != nil {
+		for _, sess := range a.Agent.FilteredSessions() {
+			if resolveProjectName(sess.WorkspacePath) == groupName {
+				a.Agent.DeleteSession(sess.ID)
+			}
+		}
+	}
+	if a.CLIMgr != nil {
+		for id, cs := range a.CLIMgr.Sessions {
+			if resolveProjectName(cs.Cwd) == groupName {
+				a.CLIMgr.DeleteSession(id)
+			}
+		}
+	}
+	if a.Workspace != nil && a.Workspace.RootDir == folderPath {
+		a.switchWorkspace("")
+	}
+	c.AddToast(ui.Toast{Title: "Workspace Removed", Description: groupName, Type: "info"})
 }
 
 func (a *AppUI) openWorkspaceFolder() {

@@ -642,6 +642,13 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 
 	startSession := func() {
 		title := strings.TrimSpace(a.NewTaskTitle)
+		wsPath := a.NewTaskWorkspacePath
+		if wsPath == "" {
+			wsPath = a.Workspace.RootDir
+		}
+		if wsPath != "" && wsPath != a.Workspace.RootDir {
+			a.switchWorkspace(wsPath)
+		}
 
 		if a.NewTaskSelectedKind == "cli" && a.CLIMgr != nil {
 			if title == "" {
@@ -656,7 +663,7 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 				a.NewTaskSelectedName,
 				a.NewTaskSelectedExec,
 				a.NewTaskSelectedArgs,
-				a.Workspace.RootDir,
+				wsPath,
 				title,
 			)
 			a.ActiveTaskKind = "cli"
@@ -674,7 +681,7 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 					a.Agent.CreateSessionWithInitialPrompt(title, a.NewTaskSelectedAgentID)
 				}
 			} else {
-				a.NewAgentTask(a.Workspace.RootDir)
+				a.NewAgentTask(wsPath)
 				return
 			}
 			a.ActiveTaskKind = "agent"
@@ -682,7 +689,7 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 			a.Mode = ModeAgent
 		} else {
 			if title == "" {
-				a.NewAgentTask(a.Workspace.RootDir)
+				a.NewAgentTask(wsPath)
 				return
 			}
 			if a.Agent != nil {
@@ -870,7 +877,11 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 										}
 										if card.Clicked() {
 											if thisAg.ID == "agent-internal" || thisAg.Type == "internal" {
-												a.NewAgentTask(a.Workspace.RootDir)
+												wsPath := a.NewTaskWorkspacePath
+												if wsPath == "" {
+													wsPath = a.Workspace.RootDir
+												}
+												a.NewAgentTask(wsPath)
 												return
 											}
 											a.NewTaskSelectedKind = "acp"

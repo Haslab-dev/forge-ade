@@ -30,6 +30,17 @@ func NewTerminalState(cwd string) *TerminalState {
 	return ts
 }
 
+// NewTerminalStateDeferred creates a terminal manager without spawning a
+// process — Restart starts it on demand. Used for restored sessions whose
+// process is long gone.
+func NewTerminalStateDeferred(cwd string) *TerminalState {
+	return &TerminalState{
+		Cwd:    cwd,
+		Title:  "Terminal",
+		Exited: true,
+	}
+}
+
 // Term returns the underlying terminal instance safely.
 func (ts *TerminalState) Term() *termplugin.Terminal {
 	ts.mu.Lock()
@@ -107,4 +118,11 @@ func (ts *TerminalState) IsExited() bool {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	return ts.Exited
+}
+
+// ExitStatus returns the process exit code once it has exited.
+func (ts *TerminalState) ExitStatus() int {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	return ts.ExitCode
 }
