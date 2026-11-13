@@ -38,7 +38,7 @@ import {
   UninstallForgeMCPFromAgent,
   InstallForgeMCPToAllAgents,
 } from '../lib/wails';
-import type { DatabaseInfo, QueryResult } from '../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
+import type { DatabaseInfo, QueryResult } from '../../bindings/github.com/hasdev/forge-ade/core/dbviewer/models';
 
 import {
   WorkspaceApi,

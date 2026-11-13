@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { ApiBridge, ApiBridgeEffect } from '../../services/apiBridge';
 import { useRunEffect, runPromiseExit, Cause } from '../../effect';
-import type { DatabaseInfo, QueryResult, TableInfo } from '../../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
+import type { DatabaseInfo, QueryResult, TableInfo } from '../../../bindings/github.com/hasdev/forge-ade/core/dbviewer/models';
 
 interface DatabaseViewerProps {
   filePath: string;

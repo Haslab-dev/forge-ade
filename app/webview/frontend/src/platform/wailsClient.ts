@@ -1,5 +1,5 @@
 import { Events as RuntimeEvents, Clipboard as RuntimeClipboard } from '@wailsio/runtime';
-import * as App from '../../bindings/github.com/hasdev/forge-ade/internal/app/app';
+import * as App from '../../bindings/github.com/hasdev/forge-ade/app/webview/internal/app/app';
 import { WailsBridgeError } from '../effect/errors';
 
 /**

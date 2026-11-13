@@ -12,73 +12,73 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as agent$0 from "../../../../Haslab-dev/RakitKode/agent/models.js";
+import * as agent$0 from "../../../../../../Haslab-dev/RakitKode/agent/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as agentclirc$0 from "../../../../Haslab-dev/RakitKode/agentclirc/models.js";
+import * as agentclirc$0 from "../../../../../../Haslab-dev/RakitKode/agentclirc/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as events$0 from "../../../../Haslab-dev/RakitKode/events/models.js";
+import * as events$0 from "../../../../../../Haslab-dev/RakitKode/events/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as index$0 from "../../../../Haslab-dev/RakitKode/index/models.js";
+import * as index$0 from "../../../../../../Haslab-dev/RakitKode/index/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as llm$0 from "../../../../Haslab-dev/RakitKode/llm/models.js";
+import * as llm$0 from "../../../../../../Haslab-dev/RakitKode/llm/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as mcp$0 from "../../../../Haslab-dev/RakitKode/mcp/models.js";
+import * as mcp$0 from "../../../../../../Haslab-dev/RakitKode/mcp/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as memory$0 from "../../../../Haslab-dev/RakitKode/memory/models.js";
+import * as memory$0 from "../../../../../../Haslab-dev/RakitKode/memory/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as plugins$0 from "../../../../Haslab-dev/RakitKode/plugins/models.js";
+import * as plugins$0 from "../../../../../../Haslab-dev/RakitKode/plugins/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as search$0 from "../../../../Haslab-dev/RakitKode/search/models.js";
+import * as search$0 from "../../../../../../Haslab-dev/RakitKode/search/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as skills$0 from "../../../../Haslab-dev/RakitKode/skills/models.js";
+import * as skills$0 from "../../../../../../Haslab-dev/RakitKode/skills/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as acp$0 from "../acp/models.js";
+import * as acp$0 from "../../../../core/acp/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as agentsession$0 from "../agentsession/models.js";
+import * as agentsession$0 from "../../../../core/agentsession/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as automations$0 from "../automations/models.js";
+import * as automations$0 from "../../../../core/automations/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as computeruse$0 from "../computeruse/models.js";
+import * as computeruse$0 from "../../../../core/computeruse/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as dbviewer$0 from "../dbviewer/models.js";
+import * as dbviewer$0 from "../../../../core/dbviewer/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as discovery$0 from "../discovery/models.js";
+import * as discovery$0 from "../../../../core/discovery/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as editor$0 from "../editor/models.js";
+import * as editor$0 from "../../../../core/editor/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as forgemcp$0 from "../forgemcp/models.js";
+import * as forgemcp$0 from "../../../../core/forgemcp/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as git$0 from "../git/models.js";
+import * as git$0 from "../../../../core/git/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as remotefs$0 from "../remotefs/models.js";
+import * as remotefs$0 from "../../../../core/remotefs/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as terminal$0 from "../terminal/models.js";
+import * as terminal$0 from "../../../../core/terminal/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as workspace$0 from "../workspace/models.js";
+import * as workspace$0 from "../../../../core/workspace/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as application$0 from "../../../../wailsapp/wails/v3/pkg/application/models.js";
+import * as application$0 from "../../../../../../wailsapp/wails/v3/pkg/application/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports

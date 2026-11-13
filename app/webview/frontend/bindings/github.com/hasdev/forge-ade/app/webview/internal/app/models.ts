@@ -3,7 +3,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as board$0 from "../board/models.js";
+import * as board$0 from "../../../../core/board/models.js";
 
 /**
  * AgentAvailabilityQuery specifies an agent to check for system availability.

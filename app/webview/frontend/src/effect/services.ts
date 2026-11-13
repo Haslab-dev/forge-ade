@@ -9,7 +9,7 @@ import {
 } from './errors';
 import * as Wails from '../lib/wails';
 import type { FileItem } from '../types';
-import type { DatabaseInfo, QueryResult } from '../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
+import type { DatabaseInfo, QueryResult } from '../../bindings/github.com/hasdev/forge-ade/core/dbviewer/models';
 
 // ============================================================================
 // FileSystemService

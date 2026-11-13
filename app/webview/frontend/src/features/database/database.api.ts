@@ -3,7 +3,7 @@ import {
   GetDatabaseTableRows as WailsGetDatabaseTableRows,
   ExecuteDatabaseQuery as WailsExecuteDatabaseQuery,
 } from '../../lib/wails';
-import type { DatabaseInfo, QueryResult } from '../../../bindings/github.com/hasdev/forge-ade/internal/dbviewer/models';
+import type { DatabaseInfo, QueryResult } from '../../../bindings/github.com/hasdev/forge-ade/core/dbviewer/models';
 
 export class DatabaseApi {
   public static async inspectDatabase(path: string): Promise<DatabaseInfo | null> {
