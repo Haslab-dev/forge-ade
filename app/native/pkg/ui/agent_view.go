@@ -63,23 +63,10 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 	}
 }
 
-// chatLaneInset computes the horizontal padding that centers the chat lane
-// within the CHAT COLUMN (window minus optional sidebar and drawer — not the
-// window itself, which over-padded the lane and squeezed the transcript).
+// chatLaneInset returns the chat content insets: ZCode-style left-aligned
+// full-width content with a fixed gutter on both sides (no centered lane).
 func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
-	lane := float32(736)
-	if a.ThemeMgr != nil {
-		lane = a.ThemeMgr.ChatLaneWidth()
-	}
-	colW := a.chatColumnWidth(c)
-	if lane <= 0 || lane > colW {
-		return 24, 24
-	}
-	inset := (colW - lane) / 2
-	if inset < 24 {
-		inset = 24
-	}
-	return inset, inset
+	return 32, 32
 }
 
 // renderAgentChat renders the active conversation view, message bubbles, task checklist, and prompt composer.
@@ -905,29 +892,63 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 		return
 	}
 
-	tray := ui.Column(c).Padding(8).Radius(16).Background(tc.SurfaceRaised).
-		BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).Gap(4)
+	// ZCode queued-prompt tray: compact rows — grip, text, then per-row
+	// Steer (first row only, dashed into the running turn), edit and delete.
+	tray := ui.Column(c).Padding(6).Radius(12).Background(tc.SurfaceRaised).
+		BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).Gap(2)
 	tray.Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Icon(c, icons.TablerGripVertical).Width(13).Height(13).TextColor(tc.IconMuted)
-			ui.Text(c, fmt.Sprintf("Queued Instructions (%d)", len(as.SteerQueue))).FontSize(12).FontWeight(500)
-			ui.Text(c, "· auto-steers when turn completes").FontSize(11).TextColor(tc.TextMuted)
-			ui.Box(c).Grow(1)
-			clear := composerControlChip(c, tc, icons.TablerX, "Clear all", "", false)
-			if clear.Clicked() {
-				as.SteerQueue = as.SteerQueue[:0]
-			}
-		})
 		for idx, item := range as.SteerQueue {
 			thisIdx, thisItem := idx, item
-			ui.Row(c.Key(fmt.Sprintf("steer-%d", thisIdx))).Gap(6).Padding(2, 4).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.TablerGripVertical).Width(12).Height(12).TextColor(tc.IconMuted)
-				ui.Text(c, thisItem).FontSize(12).MaxWidth(420).Grow(1)
-				del := composerControlChip(c, tc, icons.TablerX, "", "", true)
+			row := ui.Row(c.Key(fmt.Sprintf("steer-%d", thisIdx))).MinHeight(34).Radius(8).
+				Padding(4, 8).Gap(8).AlignItems(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			row.Children(func() {
+				ui.Icon(c, icons.TablerGripVertical).Width(13).Height(13).TextColor(tc.IconMuted)
+				ui.Text(c, thisItem).FontSize(12).Grow(1).SingleLine()
+				if thisIdx == 0 {
+					steerBtn := ui.Row(c.Key("steer-now")).Height(26).Radius(7).Padding(0, 10).Gap(4).
+						AlignItems(ui.Center).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border)
+					steerBtn.Children(func() {
+						ui.Icon(c, icons.TablerArrowUp).Width(12).Height(12).TextColor(tc.Text)
+						ui.Text(c, "Steer").FontSize(12).FontWeight(600).TextColor(tc.Text)
+					})
+					if steerBtn.Clicked() && as.IsStreaming {
+						text := thisItem
+						go func() {
+							as.SteerInternal(as.ActiveSessionID, text)
+							as.Lock()
+							if thisIdx < len(as.SteerQueue) {
+								as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+							}
+							as.Unlock()
+							if as.Invalidate != nil {
+								as.Invalidate()
+							}
+						}()
+					}
+				}
+				edit := ui.Row(c.Key("steer-edit")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+				edit.Children(func() {
+					ui.Icon(c, icons.TablerPencil).Width(13).Height(13).TextColor(tc.TextMuted)
+				})
+				if edit.Clicked() {
+					as.InputText = thisItem
+					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+				}
+				del := ui.Row(c.Key("steer-del")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+				del.Children(func() {
+					ui.Icon(c, icons.TablerTrash).Width(13).Height(13).TextColor(tc.TextMuted)
+				})
+				if del.Hovered() {
+					del.Background(tc.Error.Alpha(0.12))
+				}
 				if del.Clicked() {
 					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
 				}
 			})
+			if row.Hovered() {
+				row.Background(tc.SurfaceOverlay)
+			}
 		}
 	})
 }
@@ -939,45 +960,13 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 	}
 	inset, rightInset := a.chatLaneInset(c)
 
+	// ZCode layout: the composer card only — workspace/branch context lives
+	// in the sidebar and status surfaces, not below the composer.
 	ui.Column(c).Padding(0, inset, 12, rightInset).Gap(6).Children(func() {
-		// Glass composer card
 		a.renderComposerCard(c, tc, false)
-
-		// Context Strip below composer (workspace folder + git branch chips)
-		ui.Row(c).Gap(8).Padding(2, 4, 0, 4).AlignItems(ui.Center).Children(func() {
-			projectName := filepath.Base(a.Workspace.RootDir)
-			wsChip := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-				Background(tc.Surface.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
-			wsChip.Children(func() {
-				ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
-				ui.Text(c, projectName).FontSize(11).FontWeight(500)
-				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
-			})
-			if wsChip.Clicked() {
-				a.openWorkspaceFolder()
-			}
-
-			branchName := "main"
-			if a.Git != nil && a.Git.Branch != "" {
-				branchName = a.Git.Branch
-			}
-			branchChip := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-				Background(tc.Surface.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
-			branchChip.Children(func() {
-				ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
-				ui.Text(c, branchName).FontSize(11).FontWeight(500).TextColor(tc.Accent)
-				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
-			})
-			if branchChip.Clicked() {
-				a.ShowBranchModal = true
-				a.BranchSearchQuery = ""
-				if a.Git != nil {
-					a.Git.Refresh()
-				}
-			}
-		})
 	})
 	_ = sess
+	_ = rightInset
 }
 
 func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome bool) {
@@ -986,7 +975,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		return
 	}
 
-	card := ui.Column(c).Radius(22).Background(tc.Surface).
+	card := ui.Column(c).Radius(16).Background(tc.Surface).
 		BorderWidth(1).BorderColor(tc.Border).
 		Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
 		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))

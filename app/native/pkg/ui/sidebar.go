@@ -48,15 +48,35 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		if a.LeftSidebarView == "files" {
 			a.renderSidebarFileExplorer(c, tc)
 		} else {
-			// Primary Action Buttons: + New task (⌘N), Search (⌘K)
-			ui.Column(c).Padding(6, 10).Gap(2).Children(func() {
+			// Primary action rows: New task, Automations — ZCode stack.
+			ui.Column(c).Padding(10, 12, 6, 12).Gap(2).Children(func() {
 				isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
 				newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New task", "⌘N", isNewTaskActive)
 				if newTask.Clicked() {
 					a.OpenNewTaskModal()
 				}
-				search := SidebarActionButton(c, tc, icons.TablerSearch, "Search", "⌘K", false)
-				if search.Clicked() {
+				autos := SidebarActionButton(c, tc, icons.TablerClock, "Automations", "", false)
+				if autos.Clicked() {
+					a.Mode = ModeSettings
+					if a.Settings != nil {
+						a.Settings.IsOpen = true
+						a.Settings.ActiveTab = settings.SettingsTabAutos
+					}
+				}
+			})
+
+			// "Task list" section header with trailing search + filter icons
+			// (ZCode header); the search icon toggles the filter input.
+			ui.Row(c).Padding(10, 14, 4, 14).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Task list").FontSize(13).FontWeight(700)
+				ui.Box(c).Grow(1)
+				if IconButton(c, tc, icons.TablerSearch, 13).Clicked() {
+					a.SidebarSearchOpen = !a.SidebarSearchOpen
+					if !a.SidebarSearchOpen {
+						a.Agent.SearchQuery = ""
+					}
+				}
+				if IconButton(c, tc, icons.TablerFilter, 13).Clicked() {
 					a.Palette.Toggle()
 				}
 			})
@@ -137,10 +157,16 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				}
 			})
 
-			// Search Input Filter
-			ui.Row(c).Padding(2, 10, 4, 10).Children(func() {
-				ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
-			})
+			// Search Input Filter — toggled from the Task list header icon.
+			if a.SidebarSearchOpen {
+				ui.Row(c).Padding(2, 10, 4, 10).Children(func() {
+					in := ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
+					if in.Submitted() {
+						a.SidebarSearchOpen = false
+						a.Agent.SearchQuery = ""
+					}
+				})
+			}
 
 			// Filter segmented tabs: Active, Pinned, Snoozed, Archived — the
 			// selected tab is a foreground/15 pill; counts render as an

@@ -5,6 +5,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
+	"path/filepath"
 )
 
 // renderBottomTerminal renders the bottom collapsible terminal drawer.
@@ -12,22 +13,39 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
 	ui.Column(c).Height(a.BottomTerminalHeight).Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
-		// Terminal Drawer Header
-		ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 12).AlignItems(ui.Center).
+		// Terminal Drawer Header — ZCode dock style: bold label, shell name,
+		// session tab pill, then new/close on the right.
+		ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 12).Gap(10).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.TablerTerminal).Width(14).Height(14).TextColor(tc.IconMuted)
-				ui.Text(c, "Terminal").FontSize(13).FontWeight(500)
-			})
-			ui.Box(c).Grow(1)
-			restartBtn := ui.Row(c).Radius(4).Padding(2, 8).AlignItems(ui.Center)
-			restartBtn.Children(func() {
-				ui.Text(c, "Restart").FontSize(12).TextColor(tc.TextMuted)
-			})
-			if restartBtn.Hovered() {
-				restartBtn.Background(tc.Text.Alpha(0.05))
+			ui.Text(c, "Terminal").FontSize(13).FontWeight(600)
+			shellName := "zsh"
+			if a.Settings != nil && a.Settings.DefaultShell != "" {
+				shellName = filepath.Base(a.Settings.DefaultShell)
 			}
-			if restartBtn.Clicked() && a.Terminal != nil {
+			ui.Text(c, shellName).FontSize(12).TextColor(tc.TextMuted)
+
+			title := "shell"
+			if a.Terminal != nil {
+				title = a.Terminal.Title
+			}
+			tab := ui.Row(c.Key("term-tab")).Height(24).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
+				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+			tab.Children(func() {
+				ui.Text(c, title).FontSize(12).FontWeight(500)
+				closeTab := ui.Row(c.Key("term-tab-x")).Size(14, 14).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				closeTab.Children(func() {
+					ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.IconMuted)
+				})
+				if closeTab.Hovered() {
+					closeTab.Background(tc.Text.Alpha(0.08))
+				}
+				if closeTab.Clicked() && a.Terminal != nil {
+					_ = a.Terminal.Restart()
+				}
+			})
+
+			ui.Box(c).Grow(1)
+			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && a.Terminal != nil {
 				_ = a.Terminal.Restart()
 			}
 			if IconButton(c, tc, icons.TablerX, 13).Clicked() {

@@ -59,8 +59,8 @@ const (
 // Layout metrics of ForgeADE's CSS
 const (
 	WorkspaceTopBarHeight = float32(52)
-	RightDrawerDefault    = float32(420)
-	LeftSidebarDefault    = float32(260)
+	RightDrawerDefault    = float32(360)
+	LeftSidebarDefault    = float32(288)
 	TerminalHeaderHeight  = float32(36)
 	StatusBarHeight       = float32(24)
 	ActivityBarWidth      = float32(48)
@@ -209,6 +209,7 @@ type AppUI struct {
 	// Follow Agent: auto-jump the editor to files the agent edits.
 	FollowAgent           bool
 	GitHistoryWidth       float32
+	SidebarSearchOpen     bool
 	ShowProjectSearch     bool
 	SSHKeyPassphrase      string
 	SSHPassword           string
