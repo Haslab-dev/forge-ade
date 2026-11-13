@@ -105,14 +105,14 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	as.ListState.FollowEnd = true
 	as.ListState.FollowAnimation = &ui.Smooth
 
-	leftInset, rightInset := a.chatLaneInset(c)
+	leftInset, _ := a.chatLaneInset(c)
 
 	// The chat fills a box so the floating task tracker can overlay it at
 	// the top-right, as forge-ade's FloatingTaskTracker does.
 	ui.Box(c).Fill().Children(func() {
 		ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
 			// Session header: title, status pill, model, Fork
-			ui.Row(c).Height(44).Gap(10).Padding(0, leftInset+8, 0, rightInset+8).AlignItems(ui.Center).
+			ui.Row(c).Height(44).Gap(10).Padding(0, leftInset+8, 0, leftInset+8).AlignItems(ui.Center).
 				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 				ui.Text(c, sessionTitle).FontSize(13).FontWeight(600).MaxWidth(380)
 
@@ -164,7 +164,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 				}
 				m := as.Messages[i]
 				if m.Role == "user" {
-					ui.Row(c.Key("urow")).Padding(8, leftInset, 8, 96).Justify(ui.End).Children(func() {
+					// User bubble: right-aligned inside the centered lane
+					// (Padding is CSS order top,right,bottom,left — the lane
+					// inset belongs on BOTH sides).
+					ui.Row(c.Key("urow")).Padding(8, leftInset, 8, leftInset).Justify(ui.End).Children(func() {
 						bubble := ui.Column(c).Padding(10, 14).Radius(18).
 							Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
 							MaxWidth(600)
@@ -174,7 +177,9 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
 					})
 				} else {
-					ui.Column(c.Key("arow")).Padding(8, leftInset, 8, 96).Gap(6).MaxWidth(860).Children(func() {
+					// Agent message: full lane width (centered via the insets),
+					// work blocks and markdown spanning the lane like forge-ade.
+					ui.Column(c.Key("arow")).Padding(8, leftInset, 8, leftInset).Gap(6).Children(func() {
 						// "Working / Worked for Ns" pill
 						hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
 						if hasWork {
