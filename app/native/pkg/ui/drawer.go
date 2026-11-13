@@ -1042,6 +1042,18 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		}
 	})
 
+	// Special preview modes (image / markdown) render instead of the buffer.
+	if a.ActiveSideFile == a.SideFilePreviewImage || a.ActiveSideFile == a.SideFilePreviewMd {
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			a.renderSideFilePreviewBody(c, tc, func() {
+				ui.Column(c).Grow(1).Center().Children(func() {
+					ui.Text(c, "File unavailable").FontSize(12).TextColor(tc.TextMuted)
+				})
+			})
+		})
+		return
+	}
+
 	// Editor view of the active file.
 	full := ""
 	if a.Workspace != nil {

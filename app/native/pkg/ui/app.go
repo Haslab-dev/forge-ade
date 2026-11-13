@@ -138,6 +138,12 @@ type AppUI struct {
 	WTPane          *worktreePaneState
 	HunkRevertPaths map[string]bool
 
+	// Inline AI edit bar (⌘I) + side-file preview modes.
+	InlineAI             *editor.InlineAI
+	InlineAICancel       chan struct{}
+	SideFilePreviewImage string
+	SideFilePreviewMd    string
+
 	// Right-drawer browser viewer tab (native web view) + subagent pane.
 	BrowserWebView    *mygo.WebView
 	BrowserURLInput   string
@@ -277,6 +283,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SideChatMode:            "full",
 		SideChatMessages:        make([]*agent.ChatMessage, 0),
 		QuestionDrafts:          make(map[string]*string),
+		InlineAI:                editor.NewInlineAI(),
 	}
 
 	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {
@@ -604,6 +611,14 @@ func (a *AppUI) View(c *ui.Context) {
 		a.AgentViewMode = AgentViewChat
 		a.ShowLeftSidebar = true
 		a.EditorActivity = ActivitySearch
+	}
+	if cmdOrCtrl(ui.KeyI) && a.Mode == ModeEditor {
+		// Edit with AI over the selection (CodeEditorPane's Mod-i).
+		a.openInlineAI()
+	}
+	if c.Shortcut(ui.Shift|ui.Alt, ui.KeyF) && a.Mode == ModeEditor {
+		// Format Document (Shift-Alt-F).
+		a.formatActiveDocument(c)
 	}
 	if cmdOrCtrl(ui.KeyF) && a.Mode == ModeAgent && a.Agent != nil && a.Agent.ActiveSession() != nil {
 		// Find-in-thread, as forge-ade's ⌘F ThreadFindBar in the chat surface.

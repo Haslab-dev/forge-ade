@@ -269,6 +269,8 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 		actionBtn(icons.TablerColumns, splitLabel, false, func() { em.IsSplit = !em.IsSplit })
 		actionBtn(icons.TablerGitCompare, "Diff", em.IsDiffView, func() { em.IsDiffView = !em.IsDiffView })
 		actionBtn(icons.TablerRefresh, "Wrap", em.SoftWrap, func() { em.SoftWrap = !em.SoftWrap })
+		actionBtn(icons.TablerWand, "Format", false, func() { a.formatActiveDocument(c) })
+		actionBtn(icons.TablerSparkles, "Edit with AI", a.InlineAI != nil && a.InlineAI.Open, func() { a.openInlineAI() })
 		actionBtn(icons.TablerDeviceFloppy, "Save", false, func() { _ = em.SaveActiveFile() })
 	})
 }
@@ -434,7 +436,11 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 		a.renderBreadcrumbs(c, doc)
 
 		// Virtualized Code Editor View
-		mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+		ui.Box(c).Fill().Children(func() {
+			mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+			// Inline AI edit bar floats over the buffer (⌘I, InlineAiBar).
+			a.renderInlineAiBar(c, tc)
+		})
 	})
 	_ = tc
 }
