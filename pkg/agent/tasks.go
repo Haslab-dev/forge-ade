@@ -31,7 +31,7 @@ type TaskManager struct {
 // NewTaskManager creates an empty TaskManager.
 func NewTaskManager() *TaskManager {
 	return &TaskManager{
-		IsExpanded: true,
+		IsExpanded: false, // the floating tracker starts as the collapsed pill
 		Tasks:      make([]TaskItem, 0),
 	}
 }

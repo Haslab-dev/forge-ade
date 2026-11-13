@@ -99,121 +99,123 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 
 	leftInset, rightInset := a.chatLaneInset(c)
 
-	ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
-		// Session header: title, status pill, model, Fork
-		ui.Row(c).Height(44).Gap(10).Padding(0, leftInset+8, 0, rightInset+8).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-			ui.Text(c, sessionTitle).FontSize(13).FontWeight(600).MaxWidth(380)
+	// The chat fills a box so the floating task tracker can overlay it at
+	// the top-right, as forge-ade's FloatingTaskTracker does.
+	ui.Box(c).Fill().Children(func() {
+		ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
+			// Session header: title, status pill, model, Fork
+			ui.Row(c).Height(44).Gap(10).Padding(0, leftInset+8, 0, rightInset+8).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+				ui.Text(c, sessionTitle).FontSize(13).FontWeight(600).MaxWidth(380)
 
-			// Status pill
-			pill := func(label string, color ui.Color) {
-				p := ui.Row(c).Radius(999).Padding(2, 8).Gap(4).AlignItems(ui.Center).
-					Background(color.Alpha(0.1)).BorderWidth(1).BorderColor(color.Alpha(0.25))
-				p.Children(func() {
-					ui.Box(c).Size(6, 6).Radius(3).Background(color)
-					ui.Text(c, label).FontSize(11).TextColor(color)
-				})
-			}
-			switch sess.Status {
-			case "running":
-				runningPill := ui.Row(c).Radius(999).Padding(2, 8).Gap(5).AlignItems(ui.Center).
-					Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
-				runningPill.Children(func() {
-					ui.Spinner(c).Size(10, 10).Label("Running")
-					ui.Text(c, "Running").FontSize(11).TextColor(tc.Accent)
-				})
-			case "awaiting-approval", "waiting_permission":
-				pill("Waiting for approval", tc.Warning)
-			case "error":
-				pill("Error", tc.Error)
-			case "completed":
-				pill("Completed", tc.Success)
-			default:
-				pill("Idle", tc.SidebarMutedForeground)
-			}
-
-			ui.Box(c).Grow(1)
-			ui.Text(c, as.ActiveModel).FontSize(11).TextColor(tc.TextMuted)
-			if as.IsStreaming {
-				ui.Text(c, "Streaming…").FontSize(11).TextColor(tc.Accent)
-			}
-			fork := composerControlChip(c, tc, icons.TablerGitFork, "Fork", "", false)
-			if fork.Clicked() && sess != nil {
-				forked := as.ForkSession(sess)
-				if forked != nil {
-					as.SaveSessionToDisk(forked)
+				// Status pill
+				pill := func(label string, color ui.Color) {
+					p := ui.Row(c).Radius(999).Padding(2, 8).Gap(4).AlignItems(ui.Center).
+						Background(color.Alpha(0.1)).BorderWidth(1).BorderColor(color.Alpha(0.25))
+					p.Children(func() {
+						ui.Box(c).Size(6, 6).Radius(3).Background(color)
+						ui.Text(c, label).FontSize(11).TextColor(color)
+					})
 				}
+				switch sess.Status {
+				case "running":
+					runningPill := ui.Row(c).Radius(999).Padding(2, 8).Gap(5).AlignItems(ui.Center).
+						Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
+					runningPill.Children(func() {
+						ui.Spinner(c).Size(10, 10).Label("Running")
+						ui.Text(c, "Running").FontSize(11).TextColor(tc.Accent)
+					})
+				case "awaiting-approval", "waiting_permission":
+					pill("Waiting for approval", tc.Warning)
+				case "error":
+					pill("Error", tc.Error)
+				case "completed":
+					pill("Completed", tc.Success)
+				default:
+					pill("Idle", tc.SidebarMutedForeground)
+				}
+
+				ui.Box(c).Grow(1)
+				ui.Text(c, as.ActiveModel).FontSize(11).TextColor(tc.TextMuted)
+				if as.IsStreaming {
+					ui.Text(c, "Streaming…").FontSize(11).TextColor(tc.Accent)
+				}
+				fork := composerControlChip(c, tc, icons.TablerGitFork, "Fork", "", false)
+				if fork.Clicked() && sess != nil {
+					forked := as.ForkSession(sess)
+					if forked != nil {
+						as.SaveSessionToDisk(forked)
+					}
+				}
+			})
+
+			// Message list: the chat lane
+			ui.List(c, &as.ListState, len(as.Messages), func(i int) {
+				if i >= len(as.Messages) {
+					return
+				}
+				m := as.Messages[i]
+				if m.Role == "user" {
+					ui.Row(c.Key("urow")).Padding(8, leftInset, 8, 96).Justify(ui.End).Children(func() {
+						bubble := ui.Column(c).Padding(10, 14).Radius(18).
+							Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
+							MaxWidth(600)
+						bubble.Children(func() {
+							ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
+						})
+						bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
+					})
+				} else {
+					ui.Column(c.Key("arow")).Padding(8, leftInset, 8, 96).Gap(6).MaxWidth(860).Children(func() {
+						// "Working / Worked for Ns" pill
+						hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+						if hasWork {
+							a.renderWorkPill(c, tc, m)
+							work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+								BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+							work.Children(func() {
+								if m.Thinking != "" || m.IsThinking {
+									a.renderThinkingBlock(c, tc, m)
+								}
+								if len(m.Tools) > 0 {
+									a.renderFoldedToolTraces(c, tc, m)
+								}
+							})
+						}
+
+						// Turn Changes Card
+						if len(m.Changes) > 0 {
+							a.renderTurnChangesCard(c, tc, m)
+						}
+
+						// Pending Approval Bar
+						if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+							a.renderApprovalBar(c, tc, m)
+						}
+
+						// Response Markdown body
+						if m.Text != "" {
+							if m.Done {
+								markdown.View(c, m.Text, &as.MdOpts)
+							} else {
+								markdown.Stream(c, m.Text, &as.MdOpts)
+							}
+						}
+					})
+				}
+			}).Grow(1).Padding(16, 0, 16, 0).Gap(14).Justify(ui.End)
+
+			// Mid-turn Steering Queue Tray
+			if len(as.SteerQueue) > 0 {
+				a.renderSteerQueueTray(c)
 			}
+
+			// Composer
+			a.renderComposer(c, tc, sess)
 		})
 
-		// Message list: the chat lane
-		ui.List(c, &as.ListState, len(as.Messages), func(i int) {
-			if i >= len(as.Messages) {
-				return
-			}
-			m := as.Messages[i]
-			if m.Role == "user" {
-				ui.Row(c.Key("urow")).Padding(8, leftInset, 8, 96).Justify(ui.End).Children(func() {
-					bubble := ui.Column(c).Padding(10, 14).Radius(18).
-						Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
-						MaxWidth(600)
-					bubble.Children(func() {
-						ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
-					})
-					bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
-				})
-			} else {
-				ui.Column(c.Key("arow")).Padding(8, leftInset, 8, 96).Gap(6).MaxWidth(860).Children(func() {
-					// "Working / Worked for Ns" pill
-					hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
-					if hasWork {
-						a.renderWorkPill(c, tc, m)
-						work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
-							BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
-						work.Children(func() {
-							if m.Thinking != "" || m.IsThinking {
-								a.renderThinkingBlock(c, tc, m)
-							}
-							if len(m.Tools) > 0 {
-								a.renderFoldedToolTraces(c, tc, m)
-							}
-						})
-					}
-
-					// Turn Changes Card
-					if len(m.Changes) > 0 {
-						a.renderTurnChangesCard(c, tc, m)
-					}
-
-					// Pending Approval Bar
-					if m.PendingApproval != nil && !m.PendingApproval.Resolved {
-						a.renderApprovalBar(c, tc, m)
-					}
-
-					// Response Markdown body
-					if m.Text != "" {
-						if m.Done {
-							markdown.View(c, m.Text, &as.MdOpts)
-						} else {
-							markdown.Stream(c, m.Text, &as.MdOpts)
-						}
-					}
-				})
-			}
-		}).Grow(1).Padding(16, 0, 16, 0).Gap(14).Justify(ui.End)
-
-		// Floating Task Checklist
-		if as.TaskManager != nil {
-			a.renderTaskChecklist(c)
-		}
-
-		// Mid-turn Steering Queue Tray
-		if len(as.SteerQueue) > 0 {
-			a.renderSteerQueueTray(c)
-		}
-
-		// Composer
-		a.renderComposer(c, tc, sess)
+		// Floating Task Tracker overlay (pill <-> card), top-right
+		a.renderTaskTracker(c, tc)
 	})
 }
 
@@ -1141,6 +1143,129 @@ func (a *AppUI) renderModelPickerModal(c *ui.Context) {
 				as.ShowModelPicker = false
 			}
 		}
+	})
+}
+
+// renderTaskTracker draws forge-ade's FloatingTaskTracker: a collapsed pill
+// at the chat's top-right that expands into a floating progress card.
+func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
+	tm := a.Agent.TaskManager
+	if tm == nil {
+		return
+	}
+	tasks := tm.GetTasks()
+	if len(tasks) == 0 {
+		return
+	}
+
+	completed, total := tm.Progress()
+	var current *agent.TaskItem
+	for i := range tasks {
+		if tasks[i].Status == agent.TaskInProgress {
+			current = &tasks[i]
+			break
+		}
+	}
+	allDone := completed == total && total > 0
+
+	if !tm.IsExpanded {
+		// Collapsed pill: status glyph, N/M, current task, chevron.
+		pill := ui.Row(c).Absolute().Top(54).Right(20).Height(30).Radius(999).
+			Padding(0, 12).Gap(6).AlignItems(ui.Center).
+			Background(tc.SurfaceRaised.Alpha(0.95)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
+			Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.18))
+		pill.Children(func() {
+			if current != nil {
+				ui.Spinner(c).Size(11, 11).Label("working")
+			} else if allDone {
+				ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
+					Background(tc.Success.Alpha(0.15)).Children(func() {
+					ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
+				})
+			} else {
+				ui.Icon(c, icons.TablerChecklist).Width(12).Height(12).TextColor(tc.IconMuted)
+			}
+			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600)
+			if current != nil {
+				label := current.Title
+				if current.ActiveForm != "" {
+					label = current.ActiveForm
+				}
+				ui.Text(c, label).FontSize(11).TextColor(tc.TextMuted).MaxWidth(180).SingleLine()
+			}
+			ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
+		})
+		if pill.Clicked() {
+			tm.ToggleExpanded()
+		}
+		return
+	}
+
+	// Expanded floating card, anchored under the pill.
+	card := ui.Column(c).Absolute().Top(92).Right(24).Width(352).Radius(16).
+		Padding(14).Gap(10).
+		Background(tc.SurfaceRaised.Alpha(0.97)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
+		Shadow(0, 12, 32, -8, ui.RGBA(0, 0, 0, 0.35))
+	card.Children(func() {
+		// Header: goal + progress count + collapse chevron
+		header := ui.Row(c).Gap(8).AlignItems(ui.Center)
+		header.Children(func() {
+			ui.Icon(c, icons.TablerChecklist).Width(14).Height(14).TextColor(tc.IconMuted)
+			goal := tm.Goal
+			if goal == "" {
+				goal = "Active Goal"
+			}
+			ui.Text(c, goal).FontSize(13).FontWeight(600).Grow(1).SingleLine()
+			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+			ui.Icon(c, icons.TablerChevronUp).Width(13).Height(13).TextColor(tc.IconMuted)
+		})
+		if header.Hovered() {
+			header.Background(tc.Text.Alpha(0.04)).Radius(6)
+		}
+		if header.Clicked() {
+			tm.ToggleExpanded()
+		}
+
+		// Progress bar: fill = foreground, as forge-ade's tracker does.
+		pct := float32(0)
+		if total > 0 {
+			pct = float32(completed) / float32(total) * 100
+		}
+		track := ui.Box(c).FillWidth().Height(4).Radius(2).Background(tc.Border.Alpha(0.6))
+		track.Children(func() {
+			ui.Box(c).WidthPercent(pct).Height(4).Radius(2).Background(tc.Text)
+		})
+
+		// Task rows
+		ui.Column(c).Gap(6).Children(func() {
+			for _, task := range tasks {
+				tid := task.ID
+				isDone := task.Status == agent.TaskCompleted
+				isCurrent := task.Status == agent.TaskInProgress
+				row := ui.Row(c.Key("trk-" + tid)).Gap(8).AlignItems(ui.Center).MinHeight(24)
+				row.Children(func() {
+					if isDone {
+						ui.Icon(c, icons.TablerCircleCheck).Width(14).Height(14).TextColor(tc.TextMuted)
+					} else if isCurrent {
+						ui.Spinner(c).Size(13, 13).Label("current task")
+					} else {
+						ui.Icon(c, icons.TablerCircle).Width(14).Height(14).TextColor(tc.IconMuted)
+					}
+					txt := ui.Text(c, task.Title).FontSize(12).Grow(1).SingleLine()
+					if isDone {
+						txt.TextColor(tc.TextMuted)
+					} else if isCurrent {
+						txt.FontWeight(600).TextColor(tc.Accent)
+					}
+				})
+				if row.Hovered() {
+					row.Background(tc.Text.Alpha(0.03)).Radius(6)
+				}
+				if row.Clicked() {
+					tm.ToggleTask(tid)
+				}
+			}
+		})
 	})
 }
 
