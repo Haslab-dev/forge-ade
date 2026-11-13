@@ -406,6 +406,20 @@ func (a *AppUI) RefreshBoard() {
 // SetWindow attaches the native window reference for redraw invalidations.
 func (a *AppUI) SetWindow(w *mygo.Window) {
 	a.Window = w
+
+	// Files dropped anywhere the composer does not take them attach to the
+	// draft, as forge-ade accepts drops across the window.
+	if w != nil {
+		w.OnFileDrop(func(e *mygo.FileDropEvent) {
+			if len(e.Paths) == 0 {
+				return
+			}
+			a.Agent.AttachFiles(e.Paths)
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		})
+	}
 }
 
 // View builds the entire native GPU frame matching ForgeADE layout.

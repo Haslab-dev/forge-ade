@@ -802,7 +802,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 
 		// 3. Bottom Controls Tray
 		ui.Row(c).Gap(6).Padding(4, 12, 12, 12).AlignItems(ui.Center).Children(func() {
-			// [+] Add Context Button
+			// [+] Add Context Button: attach picker, active file, or workspace file
 			addBtn := ui.Row(c).Size(28, 28).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
 				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
 			addBtn.Children(func() {
@@ -811,14 +811,35 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			if addBtn.Hovered() {
 				addBtn.Background(tc.Text.Alpha(0.06))
 			}
-			if addBtn.Clicked() {
-				if a.Editor.ActivePath != "" {
-					as.AttachFile(a.Editor.ActiveDoc().RelativePath)
-					c.AddToast(ui.Toast{Title: "Attached Active Buffer", Description: a.Editor.ActiveDoc().RelativePath, Type: "info"})
-				} else {
+			addBtn.ContextMenu(func(m *ui.Menu) {
+				if m.Item("Attach Files...").Chosen() {
+					if a.Window != nil {
+						win := a.Window
+						go func() {
+							paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+								Parent:   win,
+								Title:    "Attach Files",
+								Multiple: true,
+							})
+							if err != nil || len(paths) == 0 {
+								return
+							}
+							as.AttachFiles(paths)
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+						}()
+					}
+				}
+				if doc := a.Editor.ActiveDoc(); doc != nil {
+					if m.Item("Attach Active File").Subtitle(doc.RelativePath).Chosen() {
+						as.AttachFile(doc.RelativePath)
+					}
+				}
+				if m.Item("Attach Workspace File...").Chosen() {
 					a.Palette.Toggle()
 				}
-			}
+			})
 
 			// Permission Mode selector chip
 			var modeIcon *ui.SVG

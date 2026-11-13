@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -591,6 +592,20 @@ func (as *AgentState) CycleReasoningEffort() {
 		as.ReasoningEffort = EffortMax
 	default:
 		as.ReasoningEffort = EffortOff
+	}
+}
+
+// AttachFiles adds several files, resolving workspace-relative paths to
+// absolute ones so the ACP manager's image extraction finds them.
+func (as *AgentState) AttachFiles(paths []string) {
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(as.workspacePath, p)
+		}
+		as.AttachFile(p)
 	}
 }
 
