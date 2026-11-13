@@ -126,8 +126,14 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				Background(tc.ToolbarControl).
 				BorderWidth(1).BorderColor(tc.ToolbarBorder).
 				AlignItems(ui.Center).Children(func() {
-				segmentedModeButton(c, tc, icons.TablerSparkles, "Agent", a.Mode == ModeAgent, func() { a.Mode = ModeAgent })
-				segmentedModeButton(c, tc, icons.TablerCode, "Editor", a.Mode == ModeEditor, func() { a.Mode = ModeEditor })
+				segmentedModeButton(c, tc, icons.TablerSparkles, "Agent", a.Mode == ModeAgent, func() {
+					a.Mode = ModeAgent
+					a.AgentViewMode = AgentViewChat
+				})
+				segmentedModeButton(c, tc, icons.TablerCode, "Editor", a.Mode == ModeEditor, func() {
+					a.Mode = ModeEditor
+					a.AgentViewMode = AgentViewChat
+				})
 			})
 
 			// 4px×16px divider (h-4 w-px bg-border/60)

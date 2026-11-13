@@ -93,17 +93,17 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 			seg.Children(func() {
 				segBtn := func(label string, icon *ui.SVG, active bool, onPick func()) {
 					b := ui.Row(c).Height(24).Radius(4).Padding(0, 10).Gap(5).AlignItems(ui.Center).Justify(ui.Center)
-					b.Children(func() {
-						ui.Icon(c, icon).Width(12).Height(12).TextColor(tc.IconMuted)
-						ui.Text(c, label).FontSize(11).FontWeight(500)
-					})
+					icColor, txtColor := tc.IconMuted, tc.Text
+					weight := 500
 					if active {
 						b.Background(tc.Accent)
-						b.Children(func() {
-							ui.Icon(c, icon).Width(12).Height(12).TextColor(tc.AccentForeground)
-							ui.Text(c, label).FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
-						})
+						icColor, txtColor = tc.AccentForeground, tc.AccentForeground
+						weight = 600
 					}
+					b.Children(func() {
+						ui.Icon(c, icon).Width(12).Height(12).TextColor(icColor)
+						ui.Text(c, label).FontSize(11).FontWeight(weight).TextColor(txtColor)
+					})
 					if b.Clicked() {
 						onPick()
 					}
@@ -122,6 +122,19 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 			}
 			if refreshBtn.Clicked() {
 				a.RefreshBoard()
+			}
+
+			// Back to chat, as the Git Client's close button
+			closeBtn := ui.Row(c).Size(30, 30).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+			closeBtn.Children(func() {
+				ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
+			})
+			if closeBtn.Hovered() {
+				closeBtn.Background(tc.Text.Alpha(0.05))
+			}
+			if closeBtn.Clicked() {
+				a.AgentViewMode = AgentViewChat
 			}
 
 			ui.Box(c).Grow(1)

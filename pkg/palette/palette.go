@@ -86,6 +86,30 @@ func (pm *PaletteManager) Close() {
 	pm.IsOpen = false
 }
 
+// MoveSelection steps the highlighted row, clamped to the current mode's
+// results (arrow-key navigation).
+func (pm *PaletteManager) MoveSelection(dir int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	limit := 0
+	if pm.Mode == PaletteFiles {
+		limit = len(pm.FilteredFiles())
+	} else {
+		limit = len(pm.FilteredCommands())
+	}
+	if limit == 0 {
+		pm.SelectedIndex = 0
+		return
+	}
+	pm.SelectedIndex += dir
+	if pm.SelectedIndex < 0 {
+		pm.SelectedIndex = 0
+	}
+	if pm.SelectedIndex >= limit {
+		pm.SelectedIndex = limit - 1
+	}
+}
+
 // FilteredFiles ranks workspace files by the fuzzy query.
 func (pm *PaletteManager) FilteredFiles() []FileMatch {
 	pm.mu.RLock()

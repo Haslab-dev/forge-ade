@@ -76,6 +76,12 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 	if c.Shortcut(0, ui.KeyEscape) {
 		pm.Close()
 	}
+	if c.Shortcut(0, ui.KeyDown) {
+		pm.MoveSelection(1)
+	}
+	if c.Shortcut(0, ui.KeyUp) {
+		pm.MoveSelection(-1)
+	}
 
 	matches := pm.FilteredFiles()
 	commands := pm.FilteredCommands()
@@ -131,6 +137,12 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 			// Result list
 			ui.Scroll(c).MaxHeight(320).Children(func() {
 				ui.Column(c).Padding(6).Gap(2).Children(func() {
+					if mode == palette.PaletteFiles && len(matches) == 0 {
+						ui.Text(c, "No matching files").FontSize(13).TextColor(tc.TextMuted).Padding(8, 0)
+					}
+					if mode == palette.PaletteCommands && len(commands) == 0 {
+						ui.Text(c, "No matching commands").FontSize(13).TextColor(tc.TextMuted).Padding(8, 0)
+					}
 					if mode == palette.PaletteFiles {
 						for i, m := range matches {
 							i, path := i, m.File.RelativePath
@@ -176,6 +188,36 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 						}
 					}
 				})
+			})
+
+			// Footer: mode switches + hints
+			ui.Row(c).Padding(8, 12).Gap(8).AlignItems(ui.Center).
+				BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
+				modeBtn := func(label string, m int) {
+					active := mode == m
+					btn := ui.Row(c).Radius(4).Padding(2, 8).AlignItems(ui.Center)
+					btn.Children(func() {
+						txt := ui.Text(c, label).FontSize(12)
+						if active {
+							txt.TextColor(tc.Accent).FontWeight(500)
+						} else {
+							txt.TextColor(tc.TextMuted)
+						}
+					})
+					if active {
+						btn.Background(tc.Accent.Alpha(0.1))
+					} else if btn.Hovered() {
+						btn.Background(tc.Text.Alpha(0.04))
+					}
+					if btn.Clicked() {
+						pm.Mode = m
+						pm.SelectedIndex = 0
+					}
+				}
+				modeBtn("Files", palette.PaletteFiles)
+				modeBtn("Commands", palette.PaletteCommands)
+				ui.Box(c).Grow(1)
+				ui.Text(c, "↑↓ navigate · ↵ open").FontSize(12).TextColor(tc.TextMuted)
 			})
 		})
 	})
