@@ -209,6 +209,7 @@ type AppUI struct {
 	// Follow Agent: auto-jump the editor to files the agent edits.
 	FollowAgent           bool
 	GitHistoryWidth       float32
+	ShowProjectSearch     bool
 	SSHKeyPassphrase      string
 	SSHPassword           string
 	SSHRemotePath         string
@@ -642,11 +643,9 @@ func (a *AppUI) View(c *ui.Context) {
 		a.Palette.OpenCommands()
 	}
 	if cmdOrCtrlShift(ui.KeyF) {
-		// Search in files, as forge-ade's Search activity (Zed style).
+		// Project search modal (Zed style), prefilled with the selection.
 		a.Mode = ModeEditor
-		a.AgentViewMode = AgentViewChat
-		a.ShowLeftSidebar = true
-		a.EditorActivity = ActivitySearch
+		a.openProjectSearch()
 	}
 	if cmdOrCtrl(ui.KeyY) && a.Agent != nil && a.Agent.ActiveSession() != nil {
 		// Approve the pending permission (⌘Y, AgentApprovalBar parity).

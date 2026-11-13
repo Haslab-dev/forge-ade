@@ -69,6 +69,7 @@ func (a *AppUI) renderModals(c *ui.Context) {
 		a.renderNewBoardTaskModal(c)
 	}
 	a.renderQuestionModal(c)
+	a.renderProjectSearchModal(c)
 }
 
 func (a *AppUI) renderPaletteModal(c *ui.Context) {
