@@ -895,8 +895,10 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
 		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
 	if isHome {
-		// Landing composer: max-w-[48rem] with the stacked tray attached above.
-		card.Width(768)
+		// Landing composer: max-w-[48rem], but grow-and-shrink so a narrow
+		// window (or the right drawer) never gets pushed off-screen — a fixed
+		// width here would raise the chat column's min width.
+		card.Grow(1).MaxWidth(768)
 	}
 
 	card.Children(func() {
@@ -1262,7 +1264,9 @@ func (a *AppUI) recentWorkspacePaths() []string {
 // renderLandingTray draws the Kybern stacked strip attached above the landing
 // composer: the project selector chip + git branch chip (git repos only).
 func (a *AppUI) renderLandingTray(c *ui.Context, tc theme.ThemeColors, projectName string) {
-	ui.Row(c).Width(717).Padding(5, 14).Gap(6).AlignItems(ui.Center).
+	// w-14/15 of the composer above which it stacks — grows/shrinks with the
+	// composer instead of imposing a fixed min width on the chat column.
+	ui.Row(c).Grow(1).MaxWidth(717).Padding(5, 14).Gap(6).AlignItems(ui.Center).
 		Background(tc.Surface.Alpha(0.5)).
 		BorderWidth(1, 1, 0, 1).BorderColor(tc.Border.Alpha(0.55)).
 		Radius(10, 10, 0, 0).Children(func() {
@@ -1336,7 +1340,7 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 		})
 
 		// Landing composer with the stacked context tray above it
-		ui.Column(c).AlignItems(ui.Center).Gap(0).Children(func() {
+		ui.Column(c).FillWidth().AlignItems(ui.Center).Gap(0).Children(func() {
 			a.renderLandingTray(c, tc, projectName)
 			a.renderComposerCard(c, tc, true)
 		})
