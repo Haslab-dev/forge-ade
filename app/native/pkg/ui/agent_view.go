@@ -616,6 +616,10 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 							switch {
 							case isRead && args.Path != "":
 								a.renderToolReadBlock(c, tc, args.Path, cleanOut)
+							case isEdit && (args.OldString != "" || args.NewString != ""):
+								// Edit tool: colored old/new snippet, as the
+								// webview tool view's diff body.
+								renderToolEditDiff(c, tc, args.OldString, args.NewString)
 							case isBash:
 								cmdStr := args.Cmd
 								if cmdStr == "" {
@@ -2253,4 +2257,51 @@ func userMessageAttachments(text string) []string {
 		}
 	}
 	return atts
+}
+
+// renderToolEditDiff draws the old/new strings of an edit tool call as a
+// colored diff snippet: red − lines for removed text, green + lines for
+// added text, capped like the webview's inline diff bodies.
+func renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, oldStr, newStr string) {
+	const maxRows = 24
+	rows := 0
+	truncated := false
+
+	box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+	box.Children(func() {
+		emit := func(prefix string, text string, color ui.Color) {
+			if rows >= maxRows {
+				truncated = true
+				return
+			}
+			lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+			for _, ln := range lines {
+				if rows >= maxRows {
+					truncated = true
+					break
+				}
+				shown := ln
+				if len(shown) > 160 {
+					shown = shown[:157] + "…"
+				}
+				rowText := shown
+				row := ui.Row(c.Key(fmt.Sprintf("ed-%s-%d", prefix, rows))).Padding(1, 8).Background(color.Alpha(0.08))
+				row.Children(func() {
+					ui.Text(c, prefix+rowText).FontSize(11).Font("monospace").TextColor(color).SingleLine().Selectable()
+				})
+				rows++
+			}
+		}
+		if oldStr != "" {
+			emit("-", oldStr, tc.DiffDeletionForeground)
+		}
+		if newStr != "" {
+			emit("+", newStr, tc.DiffAdditionForeground)
+		}
+		if truncated {
+			ui.Row(c).Padding(2, 8).Children(func() {
+				ui.Text(c, fmt.Sprintf("… diff truncated at %d lines", maxRows)).FontSize(10).TextColor(tc.TextMuted)
+			})
+		}
+	})
 }
