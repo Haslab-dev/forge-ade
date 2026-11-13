@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -243,6 +244,86 @@ func (ws *WorkspaceState) DeleteFile(relPath string) error {
 	}
 	ws.Refresh()
 	return nil
+}
+
+// FileSearchHit is one match of a text search across workspace files.
+type FileSearchHit struct {
+	Path      string // relative path
+	Line      int    // 1-based line number
+	Text      string // the matched line, trimmed
+	ByteStart int    // match start offset in the file (for editor selection)
+}
+
+const (
+	searchMaxFileBytes = 512 << 10 // skip files above 512 KB
+	searchMaxHits      = 200
+	searchMaxPerFile   = 20
+)
+
+// SearchFiles greps the workspace's tracked files for a case-insensitive
+// substring and returns up to 200 hits, mirroring forge-ade's project
+// search. Binary-looking files are skipped.
+func (ws *WorkspaceState) SearchFiles(query string) []FileSearchHit {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil
+	}
+	var hits []FileSearchHit
+	for _, f := range ws.Files {
+		if f.IsDir || len(hits) >= searchMaxHits {
+			break
+		}
+		data, err := os.ReadFile(f.FullPath)
+		if err != nil || len(data) > searchMaxFileBytes {
+			continue
+		}
+		if isBinary(data) {
+			continue
+		}
+		lower := strings.ToLower(string(data))
+		start := 0
+		perFile := 0
+		line := 1
+		for perFile < searchMaxPerFile && len(hits) < searchMaxHits {
+			idx := strings.Index(lower[start:], query)
+			if idx == -1 {
+				break
+			}
+			abs := start + idx
+			line += strings.Count(lower[start:abs], "\n")
+			lineStart := strings.LastIndexByte(lower[:abs], '\n') + 1
+			lineEnd := lineStart
+			if lineEnd < len(lower) {
+				if nl := strings.IndexByte(lower[abs:], '\n'); nl != -1 {
+					lineEnd = abs + nl
+				} else {
+					lineEnd = len(lower)
+				}
+			}
+			text := strings.TrimSpace(string(data)[lineStart:lineEnd])
+			if len(text) > 160 {
+				text = text[:160] + "…"
+			}
+			hits = append(hits, FileSearchHit{
+				Path:      f.RelativePath,
+				Line:      line,
+				Text:      text,
+				ByteStart: abs,
+			})
+			perFile++
+			start = abs + len(query)
+		}
+	}
+	return hits
+}
+
+// isBinary reports whether data looks binary (NUL byte in the first 8 KB).
+func isBinary(data []byte) bool {
+	n := len(data)
+	if n > 8192 {
+		n = 8192
+	}
+	return bytes.IndexByte(data[:n], 0) != -1
 }
 
 // RenameFile renames or moves a file/folder in the workspace, locally or

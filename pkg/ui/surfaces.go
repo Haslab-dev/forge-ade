@@ -170,7 +170,6 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 		}
 	})
 
-	a.renderBoardTaskModal(c)
 }
 
 // renderBoardColumns draws the five-lane kanban with per-column create.
@@ -222,9 +221,11 @@ func (a *AppUI) renderBoardColumns(c *ui.Context, tc theme.ThemeColors) {
 						addBtn.Background(tc.Text.Alpha(0.06))
 					}
 					if addBtn.Clicked() {
-						a.ShowBoardTaskModal = true
-						a.BoardTaskStatus = col.Status
-						a.BoardTaskTitle = ""
+						a.NewBoardTaskTitle = ""
+						a.NewBoardTaskDesc = ""
+						a.NewBoardTaskPriority = "medium"
+						a.NewBoardTaskStatus = col.Status
+						a.ShowNewBoardTaskModal = true
 					}
 				})
 
@@ -241,9 +242,11 @@ func (a *AppUI) renderBoardColumns(c *ui.Context, tc theme.ThemeColors) {
 									ui.Text(c, "+ Create").FontSize(11).FontWeight(500).TextColor(tc.Accent)
 								})
 								if create.Clicked() {
-									a.ShowBoardTaskModal = true
-									a.BoardTaskStatus = col.Status
-									a.BoardTaskTitle = ""
+									a.NewBoardTaskTitle = ""
+									a.NewBoardTaskDesc = ""
+									a.NewBoardTaskPriority = "medium"
+									a.NewBoardTaskStatus = col.Status
+									a.ShowNewBoardTaskModal = true
 								}
 							})
 							_ = empty
@@ -342,48 +345,6 @@ func (a *AppUI) renderBoardList(c *ui.Context, tc theme.ThemeColors) {
 				}
 			}
 		})
-	})
-}
-
-// renderBoardTaskModal is the inline create-task dialog for a column.
-func (a *AppUI) renderBoardTaskModal(c *ui.Context) {
-	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowBoardTaskModal, func() {
-		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
-			Children(func() {
-				status := a.BoardTaskStatus
-				if status == "" {
-					status = "todo"
-				}
-				ui.Text(c, fmt.Sprintf("New Board Task — %s", status)).FontSize(14).FontWeight(600)
-				in := ui.TextInput(c, &a.BoardTaskTitle).Placeholder("Task title...").Grow(1).AutoFocus()
-				create := func() {
-					if strings.TrimSpace(a.BoardTaskTitle) == "" {
-						return
-					}
-					go func() {
-						_, _ = a.Board.AddTask(strings.TrimSpace(a.BoardTaskTitle), "", status, "")
-						a.RefreshBoard()
-						if a.Window != nil {
-							a.Window.Invalidate()
-						}
-					}()
-					a.ShowBoardTaskModal = false
-				}
-				if in.Submitted() {
-					create()
-				}
-				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
-					ui.Box(c).Grow(1)
-					if ui.Button(c, "Cancel").Clicked() {
-						a.ShowBoardTaskModal = false
-					}
-					if ui.PrimaryButton(c, "Create").Clicked() {
-						create()
-					}
-				})
-			})
 	})
 }
 

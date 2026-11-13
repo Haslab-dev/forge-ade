@@ -42,6 +42,7 @@ const (
 	ActivityExplorer = 0
 	ActivityGit      = 1
 	ActivityDatabase = 2
+	ActivitySearch   = 3
 )
 
 // Right drawer tab constants
@@ -97,6 +98,8 @@ type AppUI struct {
 	RightDrawerTab          int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
 	EditorActivity          int     // ActivityExplorer, ActivityGit, ActivityDatabase
 	SelectedFile            string
+	FileSearchQuery         string
+	FileSearchHits          []workspace.FileSearchHit
 	SelectedDiffPath        string
 	SideChatMessages        []*agent.ChatMessage
 	SideChatInput           string
@@ -373,7 +376,7 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			a.ShowNewBoardTaskModal = true
 		}},
 		{ID: "usage-quota", Label: "Agent: Usage & Quota Limits", Detail: "Inspect context window tokens, weekly & 5-hour quotas", Run: func() {
-			a.ShowUsageModal = true
+			a.openUsageModal()
 		}},
 		{ID: "unified-rules", Label: "Rules: Unified Project Rules Manager", Detail: "Manage and sync AGENTS.md, .cursorrules, CLAUDE.md", Run: func() {
 			a.OpenRulesModal()
@@ -512,7 +515,11 @@ func (a *AppUI) View(c *ui.Context) {
 		a.Palette.OpenCommands()
 	}
 	if cmdOrCtrlShift(ui.KeyF) {
-		a.Palette.Toggle()
+		// Search in files, as forge-ade's Search activity (Zed style).
+		a.Mode = ModeEditor
+		a.AgentViewMode = AgentViewChat
+		a.ShowLeftSidebar = true
+		a.EditorActivity = ActivitySearch
 	}
 	if cmdOrCtrlShift(ui.KeyE) {
 		a.Mode = ModeEditor

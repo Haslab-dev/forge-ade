@@ -67,6 +67,7 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 		ui.Column(c).Width(ActivityBarWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).
 			Padding(8, 0).AlignItems(ui.Center).Gap(4).Children(func() {
 			activityButton(icons.TablerFiles, ActivityExplorer, 0, nil)
+			activityButton(icons.TablerSearch, ActivitySearch, len(a.FileSearchHits), nil)
 			activityButton(icons.TablerGitBranch, ActivityGit, gitChanges, nil)
 			activityButton(icons.TablerDatabase, ActivityDatabase, 0, nil)
 			ui.Box(c).Grow(1)
@@ -107,6 +108,8 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			switch a.EditorActivity {
 			case ActivityExplorer:
 				a.renderFileTree(c)
+			case ActivitySearch:
+				a.renderFileSearch(c)
 			case ActivityGit:
 				a.renderGitPane(c)
 			case ActivityDatabase:
@@ -600,4 +603,90 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 // FormatLineCol formats cursor position.
 func FormatLineCol(line, col int) string {
 	return fmt.Sprintf("Ln %d, Col %d", line+1, col+1)
+}
+
+// renderFileSearch renders forge-ade's project search: a query over all
+// workspace files with per-line hits that open the file at the match.
+func (a *AppUI) renderFileSearch(c *ui.Context) {
+	tc := a.ThemeMgr.Colors()
+
+	ui.Row(c).Height(35).Padding(0, 12).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		ui.Text(c, "SEARCH").FontSize(12).FontWeight(600).LetterSpacing(0.4)
+		ui.Box(c).Grow(1)
+		if len(a.FileSearchHits) > 0 {
+			ui.Text(c, fmt.Sprintf("%d results", len(a.FileSearchHits))).FontSize(10).TextColor(tc.TextMuted)
+		}
+	})
+
+	ui.Row(c).Padding(4, 10).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.IconMuted)
+		in := ui.TextInput(c, &a.FileSearchQuery).Placeholder("Search in files... (⏎)").Grow(1)
+		if in.Changed() || in.Submitted() {
+			query := strings.TrimSpace(a.FileSearchQuery)
+			if len(query) >= 2 {
+				a.FileSearchHits = a.Workspace.SearchFiles(query)
+			} else if query == "" {
+				a.FileSearchHits = nil
+			}
+		}
+	})
+
+	if len(a.FileSearchHits) == 0 {
+		ui.Column(c).Grow(1).Center().Gap(6).Padding(20).Children(func() {
+			ui.Icon(c, icons.TablerSearch).Width(28).Height(28).TextColor(tc.IconMuted)
+			q := strings.TrimSpace(a.FileSearchQuery)
+			if q != "" && len(q) >= 2 {
+				ui.Text(c, "No results for \""+q+"\"").FontSize(12).TextColor(tc.TextMuted).MaxWidth(200)
+			} else {
+				ui.Text(c, "Type at least 2 characters").FontSize(12).TextColor(tc.TextMuted)
+				ui.Text(c, "Searches across all workspace files").FontSize(11).TextColor(tc.TextMuted)
+			}
+		})
+		return
+	}
+
+	// Results grouped by file
+	ui.Scroll(c).Grow(1).Children(func() {
+		ui.Column(c).Padding(2, 6).Gap(2).Children(func() {
+			lastPath := ""
+			for i, hit := range a.FileSearchHits {
+				i, hit := i, hit
+				if hit.Path != lastPath {
+					lastPath = hit.Path
+					ui.Row(c.Key("fsh-h-"+hit.Path)).Height(24).Radius(4).Padding(0, 6).Gap(6).
+						AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.FileIconSVG(hit.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+						ui.Text(c, filepath.Base(hit.Path)).FontSize(11).FontWeight(600).Grow(1).SingleLine()
+						ui.Text(c, filepath.Dir(hit.Path)).FontSize(10).TextColor(tc.TextMuted).SingleLine()
+					})
+				}
+				row := ui.Row(c.Key(fmt.Sprintf("fsh-%d", i))).Height(24).Radius(4).
+					Padding(0, 6, 0, 20).Gap(6).AlignItems(ui.Center)
+				row.Children(func() {
+					ui.Text(c, fmt.Sprintf("%d", hit.Line)).FontSize(10).TextColor(tc.TextMuted)
+					line := hit.Text
+					if len(line) > 60 {
+						line = line[:60] + "…"
+					}
+					ui.Text(c, line).FontSize(11).Grow(1).SingleLine()
+				})
+				if a.SelectedFile == hit.Path {
+					row.Background(tc.Accent.Alpha(0.08))
+				} else if row.Hovered() {
+					row.Background(tc.Text.Alpha(0.04))
+				}
+				if row.Clicked() {
+					full := a.Workspace.ResolveFullPath(hit.Path)
+					if doc, err := a.Editor.OpenFile(full, hit.Path); err == nil && doc != nil {
+						if hit.ByteStart >= 0 && hit.ByteStart < doc.Editor.Buffer.Len() {
+							doc.Editor.Select(hit.ByteStart, hit.ByteStart+len(strings.ToLower(a.FileSearchQuery)))
+							doc.Editor.GoTo(doc.Editor.CursorPos())
+						}
+					}
+					a.SelectedFile = hit.Path
+				}
+			}
+		})
+	})
 }

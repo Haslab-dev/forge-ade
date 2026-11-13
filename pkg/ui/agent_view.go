@@ -220,6 +220,23 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			a.renderComposer(c, tc, sess)
 		})
 
+		// Jump to latest: shown when the user scrolled the transcript up,
+		// as forge-ade's "Jump to latest" pill does.
+		if !as.ListState.AtEnd() {
+			ui.Row(c).Absolute().Bottom(120).Left(0).Right(0).Justify(ui.Center).Children(func() {
+				inner := ui.Row(c).Height(30).Radius(999).Padding(0, 14).Gap(6).AlignItems(ui.Center).
+					Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
+					Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.2))
+				inner.Children(func() {
+					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+					ui.Text(c, "Jump to latest").FontSize(12).FontWeight(500)
+				})
+				if inner.Clicked() {
+					as.ListState.ScrollToEnd()
+				}
+			})
+		}
+
 		// Floating Task Tracker overlay (pill <-> card), top-right
 		a.renderTaskTracker(c, tc)
 	})
