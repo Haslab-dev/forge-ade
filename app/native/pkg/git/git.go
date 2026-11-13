@@ -13,9 +13,11 @@ import (
 
 // Git Sub-Tab Constants
 const (
-	GitTabChanges  = 0 // Staged and Unstaged Working Tree Changes
-	GitTabHistory  = 1 // Commit Log & Graph
-	GitTabBranches = 2 // Branch Management
+	GitTabChanges   = 0 // Staged and Unstaged Working Tree Changes
+	GitTabHistory   = 1 // Commit Log & Graph
+	GitTabBranches  = 2 // Branch Management
+	GitTabPRs       = 3 // Pull Requests / Merge Requests
+	GitTabWorktrees = 4 // Linked Worktrees
 )
 
 // GitManager manages repository status, staging, unstaging, AI commits, and branches.

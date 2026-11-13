@@ -121,6 +121,11 @@ type AppUI struct {
 	ShowQuestionModal bool
 	QuestionDrafts    map[string]*string
 
+	// Git client PRs / Worktrees pane states (git_pr_worktrees.go).
+	PRPane          *prPaneState
+	WTPane          *worktreePaneState
+	HunkRevertPaths map[string]bool
+
 	// Right-drawer browser viewer tab (native web view) + subagent pane.
 	BrowserWebView    *mygo.WebView
 	BrowserURLInput   string

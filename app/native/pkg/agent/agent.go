@@ -113,25 +113,26 @@ type ChatMessage struct {
 
 // AgentSession represents a single task session in the ForgeADE agent workspace.
 type AgentSession struct {
-	ID                string
-	Title             string
-	Status            string // "running", "idle", "completed"
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	Messages          []*ChatMessage
-	Tasks             *TaskManager
-	Model             string
-	Provider          string
-	AgentID           string
-	AgentType         string
-	WorkspacePath     string
-	Pinned            bool
-	Archived          bool
-	Snoozed           bool            `json:"snoozed,omitempty"`
-	RemoteSessionID   string          `json:"remoteSessionId,omitempty"` // agent conversation id
-	AvailableCommands []string        `json:"availableCommands,omitempty"`
-	LastUsage         *UsageInfo      `json:"lastUsage,omitempty"`
-	turnStartFiles    map[string]bool // git snapshot at turn start
+	ID                   string
+	Title                string
+	Status               string // "running", "idle", "completed"
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	Messages             []*ChatMessage
+	Tasks                *TaskManager
+	Model                string
+	Provider             string
+	AgentID              string
+	AgentType            string
+	WorkspacePath        string
+	Pinned               bool
+	Archived             bool
+	Snoozed              bool            `json:"snoozed,omitempty"`
+	RemoteSessionID      string          `json:"remoteSessionId,omitempty"`      // agent conversation id
+	LastCheckpointTurnID string          `json:"lastCheckpointTurnId,omitempty"` // pre-turn snapshot id
+	AvailableCommands    []string        `json:"availableCommands,omitempty"`
+	LastUsage            *UsageInfo      `json:"lastUsage,omitempty"`
+	turnStartFiles       map[string]bool // git snapshot at turn start
 }
 
 // AgentState tracks sessions, conversation history, streaming responses, and prompt composer.

@@ -14,6 +14,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
@@ -414,6 +415,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 					ui.Text(c, "No diff available for this file").FontSize(12).TextColor(tc.TextMuted)
 				})
 			} else {
+				a.renderHunkRevertStrip(c, tc, gm, diffTitle)
 				d := a.Editor.OpenPatchDiff(diffTitle, patch, a.ThemeMgr)
 				if d != nil {
 					mygoeditor.DiffView(c, d).Grow(1).FillWidth()
@@ -1064,5 +1066,65 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 				a.Mode = ModeEditor
 			}
 		})
+	})
+}
+
+// renderHunkRevertStrip lists the working-tree hunks of a file with per-hunk
+// Revert buttons (GetGitFileDiffHunks / RevertGitHunk parity) above the diff.
+func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager, path string) {
+	if gm == nil || path == "" {
+		return
+	}
+	hunks, err := gm.GetFileDiffHunks(path)
+	if err != nil || len(hunks) == 0 {
+		return
+	}
+	if len(a.HunkRevertPaths) == 0 {
+		a.HunkRevertPaths = make(map[string]bool)
+	}
+	strip := ui.Column(c.Key("hunks-"+path)).Gap(2).Padding(4, 8).
+		BorderWidth(1, 1, 0, 1).BorderColor(tc.Border.Alpha(0.5)).
+		Background(tc.SurfaceRaised.Alpha(0.3))
+	strip.Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, fmt.Sprintf("Hunks (%d)", len(hunks))).FontSize(10).FontWeight(700).TextColor(tc.TextMuted)
+			ui.Box(c).Grow(1)
+			ui.Text(c, "revert restores the hunk to HEAD").FontSize(9).TextColor(tc.SecondaryLabel)
+		})
+		for i, h := range hunks {
+			i, h := i, h
+			header := ""
+			if len(h.Header) > 0 {
+				header = strings.TrimSpace(h.Header)
+			}
+			row := ui.Row(c.Key(fmt.Sprintf("hunk-%s-%d", path, i))).Height(24).Radius(6).Padding(0, 6).Gap(6).AlignItems(ui.Center)
+			row.Children(func() {
+				ui.Text(c, header).FontSize(10).Font("monospace").TextColor(tc.Accent).Grow(1).SingleLine()
+				reverted := a.HunkRevertPaths[path+"#"+fmt.Sprint(i)]
+				if reverted {
+					ui.Text(c, "reverted").FontSize(9).TextColor(tc.Success)
+				} else {
+					btn := ui.Row(c).Height(20).Radius(4).Padding(0, 7).AlignItems(ui.Center).
+						Background(tc.Warning.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.4))
+					btn.Children(func() {
+						ui.Text(c, "Revert").FontSize(9).FontWeight(600).TextColor(tc.Warning)
+					})
+					if btn.Clicked() {
+						a.HunkRevertPaths[path+"#"+fmt.Sprint(i)] = true
+						go func() {
+							if rerr := gm.RevertDiffHunk(path, i); rerr != nil {
+								a.HunkRevertPaths[path+"#"+fmt.Sprint(i)] = false
+							}
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+						}()
+					}
+				}
+			})
+			if row.Hovered() {
+				row.Background(tc.Text.Alpha(0.04))
+			}
+		}
 	})
 }

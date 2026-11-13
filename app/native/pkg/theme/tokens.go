@@ -92,6 +92,7 @@ type ThemeColors struct {
 	DiffAdditionForeground ui.Color
 	DiffDeletionForeground ui.Color
 	FullAccess             ui.Color // --full-access-accent #f97316
+	GraphColors            [10]ui.Color // --graph-c0..c9 commit-graph lanes
 }
 
 // forgePaletteLight returns the light appearance of one of the six built-in
@@ -471,6 +472,14 @@ func addSemanticExtras(tc *ThemeColors, dark bool) {
 	tc.DiffAddition = tc.Success
 	tc.DiffDeletion = tc.Error
 	tc.FullAccess = ui.Hex("#f97316")
+	// Commit-graph lane colors of index.css (--graph-c0..c9).
+	graphHexes := [10]string{
+		"#a78bfa", "#22d3ee", "#34d399", "#fbbf24", "#fb7185",
+		"#60a5fa", "#c084fc", "#f472b6", "#2dd4bf", "#facc15",
+	}
+	for i, hx := range graphHexes {
+		tc.GraphColors[i] = ui.Hex(hx)
+	}
 }
 
 // PaletteColors returns the full role set of one built-in palette in one

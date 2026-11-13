@@ -229,3 +229,10 @@ var (
 	TablerZoomIn  = tablerSVG(`<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M7 10l6 0"/><path d="M10 7l0 6"/><path d="M21 21l-6 -6"/>`)
 	TablerZoomOut = tablerSVG(`<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M7 10l6 0"/><path d="M21 21l-6 -6"/>`)
 )
+
+// Pull-request state icons.
+var (
+	TablerGitPullRequestClosed = tablerSVG(`<path d="M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 8v8"/><path d="M11 6h4a2 2 0 0 1 2 2v8"/><path d="M14 9l-3 -3l3 -3"/><path d="M17 17l4 -4"/><path d="M21 17l-4 -4"/>`)
+	TablerGitPullRequestDraft  = tablerSVG(`<path d="M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 8v8"/><path d="M11 6h4a2 2 0 0 1 2 2v8"/><path d="M14 9l-3 -3l3 -3" stroke-dasharray="2 2"/>`)
+	TablerGitMerge             = tablerSVG(`<path d="M12 7m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 16v-5a3 3 0 0 1 3 -3h1"/><path d="M12 9v1a3 3 0 0 0 3 3h1"/>`)
+)

@@ -778,6 +778,35 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 			if totalDel > 0 {
 				ui.Text(c, fmt.Sprintf("−%d", totalDel)).FontSize(11).TextColor(tc.DiffDeletionForeground)
 			}
+			// Multi-file review bar: accept dismisses, reject restores the
+			// pre-turn checkpoint (RestoreSessionCheckpoint parity).
+			if m.Done {
+				acceptBtn := ui.Row(c.Key("tchg-accept")).Height(22).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+					Background(tc.Success.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
+				acceptBtn.Children(func() {
+					ui.Text(c, "Accept all").FontSize(10).FontWeight(600).TextColor(tc.Success)
+				})
+				if acceptBtn.Clicked() {
+					m.Changes = nil
+				}
+				rejectBtn := ui.Row(c.Key("tchg-reject")).Height(22).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+					Background(tc.Error.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.35))
+				rejectBtn.Children(func() {
+					ui.Text(c, "Revert all").FontSize(10).FontWeight(600).TextColor(tc.Error)
+				})
+				if rejectBtn.Clicked() {
+					m.Changes = nil
+					session := as.ActiveSessionID
+					go func() {
+						if rerr := as.RestoreLastTurnCheckpoint(session); rerr != nil {
+							// No checkpoint recorded (e.g. ACP turn); git discard fallback.
+						}
+						if a.Window != nil {
+							a.Window.Invalidate()
+						}
+					}()
+				}
+			}
 		})
 		ui.Column(c).Padding(8).Gap(4).Children(func() {
 			for _, ch := range m.Changes {

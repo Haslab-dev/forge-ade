@@ -9,8 +9,10 @@ package agent
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Haslab-dev/RakitKode/agent"
+	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
 // AgentQuestion is one structured question of an agent:ask payload
@@ -105,6 +107,20 @@ func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string) err
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return fmt.Errorf("agent engine unavailable")
 	}
+
+	// Snapshot the workspace before the turn runs (CreateSessionCheckpoint
+	// parity) so the review bar can revert all files of the turn.
+	turnID := fmt.Sprintf("turn-%d", time.Now().UnixMilli())
+	as.mu.Lock()
+	sess.LastCheckpointTurnID = turnID
+	wsPath := sess.WorkspacePath
+	as.mu.Unlock()
+	if as.engine.GitEngine != nil && wsPath != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		_, _ = internalgit.CreateCheckpoint(ctx, wsPath, sess.ID, turnID, prompt)
+		cancel()
+	}
+
 	// The manager owns turn lifetime (interrupt via StopTurn); the app
 	// context stays alive like the webview's app-level ctx.
 	return as.engine.AgentMgr.SendMessage(context.Background(), mgrID, prompt, mentions)
@@ -323,4 +339,33 @@ func (as *AgentState) Subagents(sessionID string) []*agent.Session {
 		return nil
 	}
 	return as.engine.AgentMgr.GetSubagents(mgrID)
+}
+
+// RestoreLastTurnCheckpoint rolls the workspace back to the snapshot taken
+// before the session's last agent turn (RestoreSessionCheckpoint parity,
+// powering the chat review bar's Reject all).
+func (as *AgentState) RestoreLastTurnCheckpoint(sessionID string) error {
+	if as.engine == nil || as.engine.GitEngine == nil {
+		return fmt.Errorf("git engine unavailable")
+	}
+	as.mu.Lock()
+	var wsPath, turnID string
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			wsPath = s.WorkspacePath
+			turnID = s.LastCheckpointTurnID
+			break
+		}
+	}
+	as.mu.Unlock()
+	if wsPath == "" || turnID == "" {
+		return fmt.Errorf("no checkpoint for this turn")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := internalgit.RestoreCheckpoint(ctx, wsPath, sessionID, turnID)
+	if err == nil && as.engine != nil {
+		as.engine.GitEngine.Invalidate(wsPath)
+	}
+	return err
 }

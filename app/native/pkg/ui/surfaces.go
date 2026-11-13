@@ -378,6 +378,10 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 				}
 			}
 
+			prLabel := "Pull Requests"
+			if src, err := gm.RemoteSource(); err == nil && src != nil && src.IsGitLab {
+				prLabel = "Merge Requests"
+			}
 			tabs := []struct {
 				Tab  int
 				Name string
@@ -385,6 +389,8 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked))},
 				{git.GitTabHistory, "History"},
 				{git.GitTabBranches, "Branches"},
+				{git.GitTabPRs, prLabel},
+				{git.GitTabWorktrees, "Worktrees"},
 			}
 			for _, tab := range tabs {
 				t := tab
@@ -483,6 +489,10 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 			a.renderGitHistorySurface(c, tc, gm)
 		case git.GitTabBranches:
 			a.renderGitBranchesSurface(c, tc, gm)
+		case git.GitTabPRs:
+			a.renderGitPRsSurface(c, tc, gm)
+		case git.GitTabWorktrees:
+			a.renderGitWorktreesSurface(c, tc, gm)
 		default:
 			a.renderGitChangesSurface(c, tc, gm)
 		}
@@ -576,11 +586,8 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 						row := ui.Column(c.Key("gcm-"+cm.Hash)).Radius(8).Padding(8, 10).Gap(2)
 						row.Children(func() {
 							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-								ui.Box(c).Size(8, 8).Radius(4).Background(tc.Accent.Alpha(0.7))
+								renderGraphLanes(c, tc, cm.GraphPrefix)
 								ui.Text(c, cm.Message).FontSize(12).FontWeight(500).Grow(1).SingleLine()
-								if cm.GraphPrefix != "" && strings.TrimSpace(cm.GraphPrefix) != "" {
-									ui.Text(c, cm.GraphPrefix).FontSize(9).TextColor(tc.Accent.Alpha(0.6))
-								}
 							})
 							ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(0, 16).Children(func() {
 								ui.Text(c, cm.AuthorName).FontSize(11).TextColor(tc.TextMuted)
@@ -679,5 +686,36 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 				})
 			})
 		})
+	})
+}
+
+// renderGraphLanes draws the commit-graph lane glyphs with the per-lane
+// colors of index.css (--graph-c0..c9): each non-space rune takes the color
+// of its column, GitGraphPane parity for the history list.
+func renderGraphLanes(c *ui.Context, tc theme.ThemeColors, prefix string) {
+	if strings.TrimSpace(prefix) == "" {
+		ui.Box(c).Size(8, 8).Radius(4).Background(tc.Accent.Alpha(0.7))
+		return
+	}
+	runes := []rune(prefix)
+	laneIdx := 0
+	ui.Row(c).Gap(1).AlignItems(ui.Center).Children(func() {
+		for _, r := range runes {
+			r := r
+			if r == ' ' {
+				ui.Box(c).Width(4)
+				continue
+			}
+			color := tc.GraphColors[laneIdx%len(tc.GraphColors)]
+			if r == '│' || r == '|' || r == '/' || r == '\\' {
+				ui.Text(c, string(r)).FontSize(10).Font("monospace").TextColor(color.Alpha(0.8))
+				continue
+			}
+			// Node glyphs (●, *, ○) advance the lane for the next branch.
+			if r != '│' {
+				ui.Text(c, string(r)).FontSize(10).Font("monospace").TextColor(color)
+				laneIdx++
+			}
+		}
 	})
 }

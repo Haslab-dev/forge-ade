@@ -10,6 +10,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
@@ -186,3 +187,9 @@ func (gm *GitManager) RemoteSource() (*internalgit.GitRemoteSource, error) {
 
 // errNoEngine guards calls when no engine is wired (tests, detached state).
 var errNoEngine = errors.New("git engine not initialized")
+
+// Engine exposes the underlying composition root for UI panes that call the
+// shared core/git surface (PRs, remote source) directly.
+func (gm *GitManager) Engine() *engine.Engine {
+	return gm.engine
+}
