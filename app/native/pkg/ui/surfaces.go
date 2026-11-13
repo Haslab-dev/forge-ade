@@ -7,10 +7,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/git"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
-	"github.com/hasdev/forge-ade/internal/board"
+	"github.com/hasdev/forge-ade/app/native/pkg/git"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/core/board"
 )
 
 // Full-window surfaces opened from the sidebar dock, as forge-ade opens the

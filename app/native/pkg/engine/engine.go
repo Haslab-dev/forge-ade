@@ -10,12 +10,12 @@ import (
 
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/llm"
-	"github.com/hasdev/forge-ade/internal/acp"
-	"github.com/hasdev/forge-ade/internal/commitmsg"
-	"github.com/hasdev/forge-ade/internal/git"
-	"github.com/hasdev/forge-ade/internal/quota"
-	"github.com/hasdev/forge-ade/internal/remotefs"
-	"github.com/hasdev/forge-ade/internal/watcher"
+	"github.com/hasdev/forge-ade/core/acp"
+	"github.com/hasdev/forge-ade/core/commitmsg"
+	"github.com/hasdev/forge-ade/core/git"
+	"github.com/hasdev/forge-ade/core/quota"
+	"github.com/hasdev/forge-ade/core/remotefs"
+	"github.com/hasdev/forge-ade/core/watcher"
 )
 
 // Engine is the lightweight, CGO-free composition root for ForgeADE Native.

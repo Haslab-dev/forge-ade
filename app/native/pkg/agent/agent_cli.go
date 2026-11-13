@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/agentclirc"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/terminal"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 )
 
 // AgentCLIDefinition describes an agent CLI known to ForgeADE.

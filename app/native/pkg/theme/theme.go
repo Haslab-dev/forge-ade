@@ -7,7 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
 // Workspace Surface Modes (ForgeADE Dual-Surface architecture)

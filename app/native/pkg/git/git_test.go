@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 )
 
 func TestGitManager(t *testing.T) {

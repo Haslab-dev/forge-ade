@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
 func TestRichAgentTimelineFeatures(t *testing.T) {

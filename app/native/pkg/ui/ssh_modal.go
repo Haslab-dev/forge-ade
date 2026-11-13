@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/internal/remotefs"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
 const sshSavedHostsFile = "ssh_saved_hosts.json"

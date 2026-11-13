@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 // Shared controls replicating ForgeADE's Tailwind recipes at their exact
@@ -307,7 +307,7 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 		// areas, as forge-ade's group-hover buttons.
 		showActions := row.Hovered() || d.Pinned || d.Snoozed
 		if showActions && isRunning && d.OnStop != nil {
-			stopBtn := ui.Row(c.Key("ract-stop-" + d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			stopBtn := ui.Row(c.Key("ract-stop-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 			stopBtn.Children(func() {
 				ui.Icon(c, icons.TablerSquare).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
 			})
@@ -319,7 +319,7 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			}
 		}
 		if showActions && !isRunning && d.OnRestart != nil {
-			restartBtn := ui.Row(c.Key("ract-restart-" + d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			restartBtn := ui.Row(c.Key("ract-restart-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 			restartBtn.Children(func() {
 				ui.Icon(c, icons.TablerRotate).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
 			})

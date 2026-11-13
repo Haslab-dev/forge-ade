@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/events"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	"github.com/hasdev/forge-ade/internal/acp"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/core/acp"
 )
 
 // ACPAgentDefinition defines metadata and CLI execution parameters for an ACP coding agent.

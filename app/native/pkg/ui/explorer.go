@@ -7,8 +7,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 // Shared project explorer: the hierarchical tree, its context menus, and the

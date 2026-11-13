@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	"github.com/hasdev/forge-ade/internal/remotefs"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
 func TestParseSSHWorkspaceURI(t *testing.T) {

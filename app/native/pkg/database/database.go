@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
-	"github.com/hasdev/forge-ade/internal/dbviewer"
+	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
+	"github.com/hasdev/forge-ade/core/dbviewer"
 )
 
 // DatabaseManager coordinates database schema inspection, data browsing, and query execution.

@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/agent"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 )
 
 // ModelMetadata describes a model option for selection.

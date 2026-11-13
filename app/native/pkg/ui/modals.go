@@ -8,10 +8,10 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/palette"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/agent"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/palette"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 )
 
 // renderModals orchestrates all popup modals and overlay dialogs.

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	internalgit "github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
 // Git Sub-Tab Constants

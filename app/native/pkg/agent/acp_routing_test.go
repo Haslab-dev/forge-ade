@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/events"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 )
 
 func TestACPRoutingWithoutInternalAPIKey(t *testing.T) {

@@ -3,7 +3,7 @@ package palette
 import (
 	"testing"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
+	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 )
 
 func TestPaletteManager(t *testing.T) {

@@ -16,11 +16,11 @@ import (
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
-	"github.com/hasdev/forge-ade/internal/acp"
-	"github.com/hasdev/forge-ade/internal/agentsession"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/core/acp"
+	"github.com/hasdev/forge-ade/core/agentsession"
 )
 
 // ToolExecution represents an individual tool run in an agent turn.

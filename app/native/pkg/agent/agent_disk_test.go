@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 )
 
 func TestDiskSessionPersistence(t *testing.T) {

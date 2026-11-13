@@ -10,8 +10,8 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
-	"github.com/hasdev/forge-ade/internal/remotefs"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
 // OpenDocument represents an open file buffer with its editor and diff states.

@@ -10,10 +10,10 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
+	"github.com/hasdev/forge-ade/app/native/pkg/agent"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 )
 
 // renderAgentSidebar renders the full-height task sessions sidebar with filter tabs and profile row.
@@ -101,7 +101,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				ui.Box(c).Grow(1)
 
 				smallAction := func(key string, icon *ui.SVG, active bool, onPick func()) {
-					btn := ui.Row(c.Key("hdract-" + key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+					btn := ui.Row(c.Key("hdract-"+key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 					btn.Children(func() {
 						ic := ui.Icon(c, icon).Width(14).Height(14)
 						if active {
@@ -165,7 +165,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 					if n := tabCounts[thisTab]; n > 0 {
 						label += fmt.Sprintf(" (%d)", n)
 					}
-					pill := ui.Row(c.Key("ftab-" + thisTab)).Radius(999).Padding(2, 8).AlignItems(ui.Center)
+					pill := ui.Row(c.Key("ftab-"+thisTab)).Radius(999).Padding(2, 8).AlignItems(ui.Center)
 					pill.Children(func() {
 						txt := ui.Text(c, label).FontSize(12)
 						if active {
@@ -299,7 +299,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 							// group-hover actions.
 							if pHeader.Hovered() {
 								groupAction := func(key string, icon *ui.SVG, danger bool, onPick func()) {
-									btn := ui.Row(c.Key("gact-" + key)).Size(20, 20).Radius(5).
+									btn := ui.Row(c.Key("gact-"+key)).Size(20, 20).Radius(5).
 										AlignItems(ui.Center).Justify(ui.Center)
 									btn.Children(func() {
 										ic := ui.Icon(c, icon).Width(13).Height(13)
@@ -353,7 +353,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						// Expanded Project Tasks — forge-ade renders empty groups
 						// as just their header row, no placeholder text.
 						if !isCollapsed && totalCount > 0 {
-							ui.Column(c.Key("pbody-" + group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
+							ui.Column(c.Key("pbody-"+group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
 
 								// 1. Agent ACP Sessions — progressive reveal with
 								// "Show more", as forge-ade's groups do.

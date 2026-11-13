@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hasdev/forge-ade/internal/remotefs"
+	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
 // IgnoredDirectoryNames holds names of directories to skip during workspace scans.

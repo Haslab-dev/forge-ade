@@ -3,7 +3,7 @@ package board
 import (
 	"sort"
 
-	internalboard "github.com/hasdev/forge-ade/internal/board"
+	internalboard "github.com/hasdev/forge-ade/core/board"
 )
 
 // BoardColumnDefs defines board columns in WorkflowBoardView order.

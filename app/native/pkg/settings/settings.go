@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 // SupportedLLMProviders lists the primary LLM provider options.

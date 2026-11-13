@@ -11,10 +11,10 @@ import (
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/git"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	internalgit "github.com/hasdev/forge-ade/internal/git"
+	"github.com/hasdev/forge-ade/app/native/pkg/agent"
+	"github.com/hasdev/forge-ade/app/native/pkg/git"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
 // renderRightDrawer renders the collapsible side drawer: tabs and active pane.
@@ -956,7 +956,7 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		for _, p := range a.SideFileTabs {
 			thisPath := p
 			active := a.ActiveSideFile == thisPath
-			tab := ui.Row(c.Key("sidefile-" + thisPath)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center)
+			tab := ui.Row(c.Key("sidefile-"+thisPath)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center)
 			tab.Children(func() {
 				ui.Icon(c, icons.FileIconSVG(thisPath)).Width(12).Height(12).TextColor(tc.IconMuted)
 				txt := ui.Text(c, filepath.Base(thisPath)).FontSize(11).SingleLine()
@@ -965,7 +965,7 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 				} else {
 					txt.TextColor(tc.TextMuted)
 				}
-				closeBtn := ui.Row(c.Key("sidefile-x-" + thisPath)).Size(14, 14).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				closeBtn := ui.Row(c.Key("sidefile-x-"+thisPath)).Size(14, 14).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 				closeBtn.Children(func() {
 					ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.IconMuted)
 				})

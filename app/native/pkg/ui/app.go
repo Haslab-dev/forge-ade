@@ -10,18 +10,18 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/board"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/database"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/editor"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/git"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/palette"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/settings"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/terminal"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/workspace"
-	"github.com/hasdev/forge-ade/internal/remotefs"
+	"github.com/hasdev/forge-ade/app/native/pkg/agent"
+	"github.com/hasdev/forge-ade/app/native/pkg/board"
+	"github.com/hasdev/forge-ade/app/native/pkg/database"
+	"github.com/hasdev/forge-ade/app/native/pkg/editor"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/git"
+	"github.com/hasdev/forge-ade/app/native/pkg/palette"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
+	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
 // Application surface modes
@@ -81,10 +81,10 @@ type AppUI struct {
 	ACPMgr                  *agent.ACPManager
 	CLIMgr                  *agent.AgentCLIManager
 	Board                   *board.BoardManager
-	Mode                    int     // ModeAgent or ModeEditor
-	ActiveTaskKind          string  // "agent" or "cli"
-	ShowLeftSidebar         bool    // Left sidebar visibility
-	LeftSidebarView         string  // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	Mode                    int      // ModeAgent or ModeEditor
+	ActiveTaskKind          string   // "agent" or "cli"
+	ShowLeftSidebar         bool     // Left sidebar visibility
+	LeftSidebarView         string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
 	SideFileTabs            []string // files opened in the right sidebar from the explorer
 	ActiveSideFile          string
 	ShowBottomTerminal      bool    // Collapsible bottom terminal drawer

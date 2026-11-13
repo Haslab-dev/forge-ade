@@ -8,8 +8,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/engine"
-	nativeui "github.com/hasdev/forge-ade/forge-ade-native/pkg/ui"
+	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	nativeui "github.com/hasdev/forge-ade/app/native/pkg/ui"
 )
 
 func main() {

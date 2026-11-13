@@ -8,8 +8,8 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/editor"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/editor"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
 // renderEditorSurface renders the Editor mode layout: ActivityBar + Sidebar, Editor Tabs & Buffers, Bottom Terminal, Right Drawer.

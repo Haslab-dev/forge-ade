@@ -5,9 +5,9 @@ import (
 	"os/exec"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/settings"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 // renderSettingsScreen renders ForgeADE's full Settings Screen experience.

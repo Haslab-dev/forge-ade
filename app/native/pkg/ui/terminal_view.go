@@ -3,8 +3,8 @@ package ui
 import (
 	termplugin "github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/terminal"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 )
 
 // renderBottomTerminal renders the bottom collapsible terminal drawer.

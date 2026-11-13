@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/forge-ade-native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
 // StandardRuleFile represents a known agent guideline file.
