@@ -181,6 +181,26 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								MaxWidth(600)
 							bubble.Children(func() {
 								ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
+								// Attachment chips for the "Attached files:" block,
+								// as the webview's UserAttachmentThumbnail pills.
+								atts := userMessageAttachments(m.Text)
+								if len(atts) > 0 {
+									chipRow := ui.Row(c).Gap(5).Wrap().Padding(6, 0, 0, 0)
+									chipRow.Children(func() {
+										for _, att := range atts {
+											att := att
+											chip := ui.Row(c.Key("uatt-"+att)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).
+												Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+											chip.Children(func() {
+												ui.Icon(c, icons.FileIconSVG(att)).Width(12).Height(12).TextColor(tc.Accent)
+												ui.Text(c, filepath.Base(att)).FontSize(11).FontWeight(500)
+											})
+											if chip.Clicked() {
+												a.openSideFile(att)
+											}
+										}
+									})
+								}
 							})
 							bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
 						})
@@ -2210,4 +2230,27 @@ func (a *AppUI) renderQuestionModal(c *ui.Context) {
 			})
 		})
 	})
+}
+
+// userMessageAttachments extracts the @path entries of a user message's
+// "Attached files:" block (as SubmitMessage formats them).
+func userMessageAttachments(text string) []string {
+	var atts []string
+	inBlock := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Attached files:") {
+			inBlock = true
+			continue
+		}
+		if inBlock {
+			if trimmed == "" {
+				break // blank line ends the attachment block
+			}
+			if strings.HasPrefix(trimmed, "@") {
+				atts = append(atts, strings.TrimPrefix(trimmed, "@"))
+			}
+		}
+	}
+	return atts
 }
