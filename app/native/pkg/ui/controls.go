@@ -208,7 +208,9 @@ type taskRowData struct {
 	UpdatedTime time.Time
 	DiffAdded   int // cumulative +n/−n badge, as forge-ade's diff-stats chip
 	DiffRemoved int
+	Progress    float32 // 0..1 task progress bar on running rows
 	OnPin       func()
+	OnArchive   func()
 	OnFork      func() // fork the conversation, as forge-ade's GitFork action
 	OnSnooze    func()
 	OnStop      func() // terminal sessions: stop while running
@@ -290,7 +292,17 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			if d.Pinned {
 				ui.Icon(c, icons.TablerPinFilled).Width(10).Height(10).TextColor(tc.Accent)
 			}
+			if isRunning && d.Progress > 0 {
+				ui.Text(c, fmt.Sprintf("%.0f%%", d.Progress*100)).FontSize(9).TextColor(tc.TextMuted)
+			}
 		})
+		// Thin task progress bar on running rows, as the webview's TaskRow.
+		if isRunning && d.Progress > 0 {
+			track := ui.Row(c).Height(2).Radius(1).Background(tc.Border.Alpha(0.5)).Grow(1).Clip()
+			track.Children(func() {
+				ui.Box(c).Width(180 * d.Progress).Height(2).Background(tc.Accent)
+			})
+		}
 
 		// "Approval" chip while a tool permission is pending, as forge-ade's
 		// amber badge on awaiting rows.
@@ -392,6 +404,18 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 				d.OnSnooze()
 			}
 		}
+		if showActions && d.OnArchive != nil {
+			archBtn := ui.Row(c.Key("ract-arch-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			archBtn.Children(func() {
+				ui.Icon(c, icons.TablerArchive).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+			})
+			if archBtn.Hovered() {
+				archBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if archBtn.Clicked() {
+				d.OnArchive()
+			}
+		}
 		if showActions && d.OnDelete != nil {
 			delBtn := ui.Row(c.Key("ract-del-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 			delBtn.Children(func() {
@@ -451,6 +475,15 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			}
 			if m.Item(snoozeLabel).Chosen() {
 				d.OnSnooze()
+			}
+		}
+		if d.OnArchive != nil {
+			archLabel := "Archive"
+			if d.Archived {
+				archLabel = "Unarchive"
+			}
+			if m.Item(archLabel).Chosen() {
+				d.OnArchive()
 			}
 		}
 		m.Separator()

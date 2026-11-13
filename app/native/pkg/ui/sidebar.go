@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 )
@@ -366,6 +367,12 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									s := sess
 									isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
 									added, removed := a.Agent.SessionDiffStats(s.ID)
+									progress := float32(0)
+									if s.Tasks != nil {
+										if done, total := s.Tasks.Progress(); total > 0 {
+											progress = float32(done) / float32(total)
+										}
+									}
 									renderTaskRow(c, tc, taskRowData{
 										Key:         "sess-" + s.ID,
 										Title:       s.Title,
@@ -378,8 +385,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										UpdatedTime: s.UpdatedAt,
 										DiffAdded:   added,
 										DiffRemoved: removed,
+										Progress:    progress,
 										OnPin:       func() { a.Agent.TogglePin(s.ID) },
 										OnFork:      func() { a.Agent.ForkSessionByID(s.ID) },
+										OnArchive:   func() { a.Agent.ToggleArchive(s.ID) },
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
 										OnOpen: func() {
@@ -448,7 +457,12 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			})
 			botRow := SidebarActionButton(c, tc, icons.TablerBot, "Add a bot or schedule", "", false)
 			if botRow.Clicked() {
-				a.OpenNewTaskModal()
+				// Automations manager, as forge-ade's AutomationsModal entry.
+				a.Mode = ModeSettings
+				if a.Settings != nil {
+					a.Settings.IsOpen = true
+					a.Settings.ActiveTab = settings.SettingsTabAutos
+				}
 			}
 		})
 
