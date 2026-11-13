@@ -24,6 +24,14 @@ var IgnoredDirectoryNames = map[string]bool{
 	".cache":       true,
 	"target":       true,
 	"vendor":       true,
+	// macOS system / cloud-provider trees: enormous, irrelevant as project
+	// files, and (iCloud "Mobile Documents" in particular) their opens can
+	// block indefinitely when files are not downloaded.
+	"Library":         true,
+	"Applications":    true,
+	"Mobile Documents": true,
+	"CloudStorage":    true,
+	"Volumes":         true,
 }
 
 // WorkspaceFile represents an indexed file in the workspace.
@@ -48,8 +56,14 @@ type WorkspaceState struct {
 
 // NewWorkspaceState creates and initializes a new workspace state for rootDir.
 func NewWorkspaceState(rootDir string) *WorkspaceState {
-	if rootDir == "" {
-		rootDir, _ = os.Getwd()
+	if rootDir == "" || rootDir == "/" {
+		// LaunchServices starts double-clicked bundles with CWD=/ — treat
+		// that (and an explicit empty dir) as the General home workspace
+		// instead of indexing the whole filesystem.
+		home, err := os.UserHomeDir()
+		if err == nil {
+			rootDir = home
+		}
 	}
 	ws := &WorkspaceState{
 		RootDir: rootDir,
@@ -117,7 +131,13 @@ func (ws *WorkspaceState) Refresh() {
 	}
 
 	_ = filepath.Walk(ws.RootDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || count >= maxFiles {
+		// Bound the walk: once the file cap is reached stop descending —
+		// returning nil here would keep walking every remaining directory
+		// (disaster on a home-dir "General" workspace).
+		if count >= maxFiles {
+			return filepath.SkipAll
+		}
+		if err != nil {
 			return nil
 		}
 		name := info.Name()

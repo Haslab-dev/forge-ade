@@ -234,6 +234,13 @@ func (e *Engine) StartWatcher(rootDir string, onChange func()) {
 	if e.Watcher == nil || e.Bus == nil {
 		return
 	}
+	// The General home workspace is never recursively watched: a recursive
+	// watch over the user's home exhausts the per-process file-descriptor
+	// budget (macOS GUI apps start at 256) and floods the bus with noise
+	// from unrelated tools writing into ~.
+	if home, err := os.UserHomeDir(); err == nil && (rootDir == home || rootDir == "" || rootDir == "/") {
+		return
+	}
 	e.Watcher.Start()
 	_ = e.Watcher.WatchDir(rootDir)
 
