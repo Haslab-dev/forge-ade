@@ -34,7 +34,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 		}
 	}
 
-	ui.Column(c).Width(drawerWidth).Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
+	ui.Column(c).Width(drawerWidth).Shrink(0).Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
 		// Drawer Header Tabs with ScrollHorizontal so it never overflows or cuts off
 		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {

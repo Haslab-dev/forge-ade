@@ -28,22 +28,28 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 	}
 	tc := a.ThemeMgr.Colors()
 
-	// Center Column: Main Chat Container (or CLI surface) + Collapsible Bottom Terminal
-	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		// Agent Main Container
-		ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
-			if a.ActiveTaskKind == "cli" && a.CLIMgr != nil && a.CLIMgr.ActiveSession() != nil {
-				a.renderTerminalSessionSurface(c, a.CLIMgr.ActiveID)
-			} else {
-				a.renderAgentChat(c)
+	// Center Column: Main Chat Container (or CLI surface) + Collapsible Bottom
+	// Terminal. The wrapping Box carries Clip so the column's automatic
+	// minimum width is zero: non-wrapping composer rows would otherwise
+	// freeze the column at its content width and push the right drawer
+	// off-screen via flex-shrink.
+	ui.Box(c).Grow(1).FillHeight().Clip().Children(func() {
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			// Agent Main Container
+			ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
+				if a.ActiveTaskKind == "cli" && a.CLIMgr != nil && a.CLIMgr.ActiveSession() != nil {
+					a.renderTerminalSessionSurface(c, a.CLIMgr.ActiveID)
+				} else {
+					a.renderAgentChat(c)
+				}
+			})
+
+			// Collapsible Bottom Terminal with interactive drag resize handle
+			if a.ShowBottomTerminal {
+				TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
+				a.renderBottomTerminal(c)
 			}
 		})
-
-		// Collapsible Bottom Terminal with interactive drag resize handle
-		if a.ShowBottomTerminal {
-			TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
-			a.renderBottomTerminal(c)
-		}
 	})
 
 	// Collapsible Right Drawer with interactive drag resize handle
@@ -57,17 +63,19 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 	}
 }
 
-// chatLaneInset computes the horizontal padding that centers the chat lane in the viewport.
+// chatLaneInset computes the horizontal padding that centers the chat lane
+// within the CHAT COLUMN (window minus optional sidebar and drawer — not the
+// window itself, which over-padded the lane and squeezed the transcript).
 func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
 	lane := float32(736)
 	if a.ThemeMgr != nil {
 		lane = a.ThemeMgr.ChatLaneWidth()
 	}
-	if lane <= 0 {
+	colW := a.chatColumnWidth(c)
+	if lane <= 0 || lane > colW {
 		return 24, 24
 	}
-	w, _ := c.Size()
-	inset := (w - lane) / 2
+	inset := (colW - lane) / 2
 	if inset < 24 {
 		inset = 24
 	}
@@ -168,7 +176,11 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			// The row takes the column's remaining height; the List bounds
 			// itself to that height (FillHeight + Clip) so the transcript
 			// virtualizes and scrolls instead of overflowing the header.
-			ui.Row(c).Grow(1).Children(func() {
+			// MaxWidth caps the row's INTRINSIC width: a giant unwrapped
+			// message would otherwise inflate the chat column's flex basis
+			// and squeeze the right drawer via proportional flex-shrink.
+			transcriptWidth := a.chatColumnWidth(c)
+			ui.Row(c).Grow(1).MaxWidth(transcriptWidth).Children(func() {
 				a.renderTurnScrubber(c, tc, as)
 				ui.List(c, &as.ListState, len(as.Messages), func(i int) {
 					if i >= len(as.Messages) {
@@ -2337,4 +2349,25 @@ func renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, oldStr, newStr stri
 			})
 		}
 	})
+}
+
+// chatColumnWidth computes the width actually available to the chat column
+// (window minus optional left sidebar and right drawer), used to cap the
+// transcript's intrinsic width.
+func (a *AppUI) chatColumnWidth(c *ui.Context) float32 {
+	w, _ := c.Size()
+	if w <= 0 {
+		return 800
+	}
+	if a.ShowLeftSidebar {
+		w -= a.LeftSidebarWidth
+	}
+	if a.ShowRightDrawer {
+		w -= a.RightDrawerWidth
+		w -= 4 // resize handle
+	}
+	if w < 320 {
+		w = 320
+	}
+	return w
 }

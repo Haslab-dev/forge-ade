@@ -119,16 +119,21 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 		})
 	}
 
-	// 2. Center Column: Editor Tabs + Virtualized Code Buffer / Diff + Collapsible Bottom Terminal
-	ui.Column(c).Grow(1).FillHeight().Children(func() {
+	// 2. Center Column: Editor Tabs + Virtualized Code Buffer / Diff +
+	// Collapsible Bottom Terminal. The wrapping Box clips so non-wrapping
+	// rows inside cannot freeze the column's minimum width and push the
+	// right drawer off-screen (same flex-shrink protection as agent mode).
+	ui.Box(c).Grow(1).FillHeight().Clip().Children(func() {
 		ui.Column(c).Grow(1).FillHeight().Children(func() {
-			a.renderEditorView(c)
-		})
+			ui.Column(c).Grow(1).FillHeight().Children(func() {
+				a.renderEditorView(c)
+			})
 
-		if a.ShowBottomTerminal {
-			TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
-			a.renderBottomTerminal(c)
-		}
+			if a.ShowBottomTerminal {
+				TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
+				a.renderBottomTerminal(c)
+			}
+		})
 	})
 
 	// 3. Collapsible Right Drawer with interactive drag resize handle
