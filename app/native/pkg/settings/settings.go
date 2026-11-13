@@ -29,24 +29,38 @@ var ProviderDefaultModels = map[string]string{}
 
 // SettingsTab Constants
 const (
-	SettingsTabModels     = 0 // Providers & Models
-	SettingsTabAppearance = 1 // Appearance & Themes
-	SettingsTabAgents     = 2 // ACP & Agent CLIs
-	SettingsTabShortcuts  = 3 // Terminal & Shortcuts
-	SettingsTabGeneral    = 4 // General
-	SettingsTabMCP        = 5 // MCP Servers
-	SettingsTabSkills     = 6 // Skills
+	SettingsTabModels     = 0  // Providers & Models
+	SettingsTabAppearance = 1  // Appearance & Themes
+	SettingsTabAgents     = 2  // ACP & Agent CLIs
+	SettingsTabShortcuts  = 3  // Terminal & Shortcuts
+	SettingsTabGeneral    = 4  // General
+	SettingsTabMCP        = 5  // MCP Servers
+	SettingsTabSkills     = 6  // Skills
+	SettingsTabPlugins    = 7  // Plugins
+	SettingsTabMemory     = 8  // Memory
+	SettingsTabAutos      = 9  // Automations (bots)
+	SettingsTabSubagents  = 10 // Sub-Agents & Roles
 )
 
 // SettingsManager manages provider credentials, models, and application preferences.
 type SettingsManager struct {
-	mu              sync.RWMutex
-	IsOpen          bool
-	ActiveTab       int
-	SearchQuery     string
-	ShowAPIKey      bool
-	AutoSave        bool
-	DefaultShell    string
+	mu           sync.RWMutex
+	IsOpen       bool
+	ActiveTab    int
+	SearchQuery  string
+	ShowAPIKey   bool
+	AutoSave     bool
+	DefaultShell string
+
+	// Integration form state (MCP / Memory / Automations sections).
+	MCPFormOpen     bool
+	MCPName         string
+	MCPCommand      string
+	MCPType         string
+	MemoryNew       string
+	AutoName        string
+	AutoCron        string
+	AutoPrompt      string
 	engine          *engine.Engine
 	ThemeMgr        *theme.ThemeManager
 	Provider        string

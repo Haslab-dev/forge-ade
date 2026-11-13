@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -76,6 +77,12 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 					BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
 					Padding(12, 8).Gap(14).Children(func() {
 
+					// Nav search filter (SettingsScreen's section filter).
+					ui.Row(c).Padding(0, 4).Gap(6).AlignItems(ui.Center).Children(func() {
+						sIn := ui.TextInput(c, &sm.SearchQuery).Placeholder("Filter sections…").Grow(1).FontSize(12)
+						_ = sIn
+					})
+
 					// Group 1: Models & Agents
 					ui.Column(c).Gap(2).Children(func() {
 						ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
@@ -87,6 +94,8 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "ACP")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Sub-Agents & Roles", icons.TablerBot, "")
 					})
 
 					// Group 2: Workspace
@@ -98,7 +107,17 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabGeneral, "General", icons.TablerSettings, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAppearance, "Appearance", icons.TablerPalette, "")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMemory, "Memory", icons.TablerBrain, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabShortcuts, "Shortcuts & Keys", icons.TablerKeyboard, "")
+					})
+
+					// Group 3: Automation
+					ui.Column(c).Gap(2).Children(func() {
+						ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
+							ui.Text(c, "AUTOMATION").FontSize(10).FontWeight(700).LetterSpacing(0.5).
+								TextColor(tc.SidebarMutedForeground)
+						})
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAutos, "Automations", icons.TablerClock, "")
 					})
 				})
 
@@ -112,9 +131,17 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 							case settings.SettingsTabAgents:
 								a.renderSettingsTabAgents(c, tc, sm)
 							case settings.SettingsTabMCP:
-								a.renderSettingsTabMCP(c, tc, sm)
+								a.renderSettingsTabMCPReal(c, tc, sm)
 							case settings.SettingsTabSkills:
-								a.renderSettingsTabSkills(c, tc, sm)
+								a.renderSettingsTabSkillsReal(c, tc, sm)
+							case settings.SettingsTabPlugins:
+								a.renderSettingsTabPlugins(c, tc, sm)
+							case settings.SettingsTabMemory:
+								a.renderSettingsTabMemory(c, tc, sm)
+							case settings.SettingsTabAutos:
+								a.renderSettingsTabAutomations(c, tc, sm)
+							case settings.SettingsTabSubagents:
+								a.renderSettingsTabSubagents(c, tc, sm)
 							case settings.SettingsTabGeneral:
 								a.renderSettingsTabGeneral(c, tc, sm)
 							case settings.SettingsTabAppearance:
@@ -140,6 +167,14 @@ func settingsSectionTitle(tab int) string {
 		return "MCP Servers"
 	case settings.SettingsTabSkills:
 		return "Skills"
+	case settings.SettingsTabPlugins:
+		return "Plugins"
+	case settings.SettingsTabMemory:
+		return "Memory"
+	case settings.SettingsTabAutos:
+		return "Automations"
+	case settings.SettingsTabSubagents:
+		return "Sub-Agents & Roles"
 	case settings.SettingsTabGeneral:
 		return "General"
 	case settings.SettingsTabAppearance:
@@ -152,6 +187,11 @@ func settingsSectionTitle(tab int) string {
 }
 
 func (a *AppUI) renderSettingsNavItem(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager, tab int, label string, icon *ui.SVG, badge string) {
+	// Search filter hides non-matching sections (SettingsScreen parity).
+	if q := strings.ToLower(strings.TrimSpace(sm.SearchQuery)); q != "" && !strings.Contains(strings.ToLower(label), q) {
+		return
+	}
+
 	isActive := (sm.ActiveTab == tab)
 	btn := ui.Row(c.Key("nav-tab-"+label)).Height(30).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center)
 	btn.Children(func() {
@@ -316,70 +356,6 @@ func (a *AppUI) renderSettingsTabAgents(c *ui.Context, tc theme.ThemeColors, sm 
 				c.AddToast(ui.Toast{Title: "Scanning", Description: "Probed PATH for installed ACP binaries", Type: "info"})
 			}
 		})
-	})
-}
-
-func (a *AppUI) renderSettingsTabMCP(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Model Context Protocol (MCP) Servers", "Extend agent capabilities with tool and resource servers.")
-
-	servers := []struct {
-		Name  string
-		Desc  string
-		Tools int
-	}{
-		{"forge-filesystem", "Local workspace filesystem reads, writes, and tree operations", 8},
-		{"forge-terminal", "Integrated terminal, PTY multiplexing, and command execution", 4},
-		{"forge-git", "Git worktree inspection, staging, commits, and diff inspection", 6},
-		{"forge-database", "SQLite and DuckDB schema reflection and query runner", 3},
-	}
-
-	ui.Column(c).Gap(8).Children(func() {
-		for _, s := range servers {
-			thisS := s
-			settingsCard(c, tc, func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerPlug).Width(18).Height(18).TextColor(tc.Accent)
-					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, thisS.Name).FontSize(13).FontWeight(600)
-							Badge(c, tc, fmt.Sprintf("%d tools", thisS.Tools), tc.Accent)
-						})
-						ui.Text(c, thisS.Desc).FontSize(11).TextColor(tc.TextMuted)
-					})
-					Badge(c, tc, "RUNNING", tc.Success)
-				})
-			})
-		}
-	})
-}
-
-func (a *AppUI) renderSettingsTabSkills(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Agent Skills", "Built-in procedural skills loaded dynamically into the prompt context.")
-
-	skills := []struct {
-		Name string
-		Desc string
-	}{
-		{"auto-verify", "Runs test suites and executes self-correction routines after code edits"},
-		{"git-commit-helper", "Analyzes staged changes and generates conventional commits"},
-		{"db-inspector", "Discovers SQL tables, schemas, and indices for query planning"},
-		{"refactor-clean", "Safely renames symbols and updates cross-file imports"},
-	}
-
-	ui.Column(c).Gap(8).Children(func() {
-		for _, sk := range skills {
-			thisSk := sk
-			settingsCard(c, tc, func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerWand).Width(16).Height(16).TextColor(tc.Accent)
-					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Text(c, thisSk.Name).FontSize(13).FontWeight(600)
-						ui.Text(c, thisSk.Desc).FontSize(11).TextColor(tc.TextMuted)
-					})
-					Badge(c, tc, "ENABLED", tc.Success)
-				})
-			})
-		}
 	})
 }
 

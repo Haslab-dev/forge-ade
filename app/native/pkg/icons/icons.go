@@ -242,3 +242,8 @@ var (
 	TablerSymbol = tablerSVG(`<path d="M9 6l6 6l-6 6"/><circle cx="15" cy="12" r="1" fill="currentColor"/>`)
 	TablerHash   = tablerSVG(`<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3l-2 18"/><path d="M16 3l-2 18"/>`)
 )
+
+// Settings section icons.
+var (
+	TablerPuzzle = tablerSVG(`<path d="M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1"/>`)
+)
