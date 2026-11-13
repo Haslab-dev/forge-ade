@@ -52,3 +52,6 @@ MyADE/
 go.work
 go.work.sum
 run.sh
+
+# Monorepo build outputs
+dist/

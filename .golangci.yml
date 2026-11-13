@@ -1,0 +1,27 @@
+# golangci-lint configuration — conservative set for the monorepo migration.
+# Promote stricter linters (errcheck, revive, gocritic) gradually; do not
+# enable a linter until the tree passes it cleanly.
+version: 2
+
+run:
+  timeout: 5m
+
+linters:
+  # Disable default linters, enable explicitly below so upgrades stay stable.
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+
+issues:
+  # Generated / vendored code.
+  exclude-dirs:
+    - web
+    - plugins
+  exclude-files:
+    - "app/webview/frontend/bindings/.*"
+
+output:
+  show-stats: true

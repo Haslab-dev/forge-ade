@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, monorepo]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (vet + build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build (all targets)
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+    continue-on-error: true # soften while the codebase migrates; promote to required
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout 5m
+
+  frontend:
+    name: Frontend (tsc + build + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: app/webview/frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build (tsc + vite)
+        working-directory: app/webview/frontend
+        run: bun run build
+
+      - name: Test (vitest)
+        working-directory: app/webview/frontend
+        run: bun run test
+
+  native-bundle:
+    name: Native bundle (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: Build .app bundle
+        run: make native-app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-native-app
+          path: dist/forge-native.app
