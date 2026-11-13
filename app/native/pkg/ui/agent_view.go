@@ -980,10 +980,9 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
 		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
 	if isHome {
-		// Landing composer: max-w-[48rem], but grow-and-shrink so a narrow
-		// window (or the right drawer) never gets pushed off-screen — a fixed
-		// width here would raise the chat column's min width.
-		card.Grow(1).MaxWidth(768)
+		// Landing card: the tray above owns the top corners; this card owns
+		// the bottom ones — one continuous silhouette, width of the unit.
+		card.Radius(0, 0, 16, 16).FillWidth()
 	}
 
 	card.Children(func() {
@@ -1426,12 +1425,12 @@ func (a *AppUI) recentWorkspacePaths() []string {
 // renderLandingTray draws the Kybern stacked strip attached above the landing
 // composer: the project selector chip + git branch chip (git repos only).
 func (a *AppUI) renderLandingTray(c *ui.Context, tc theme.ThemeColors, projectName string) {
-	// w-14/15 of the composer above which it stacks — grows/shrinks with the
-	// composer instead of imposing a fixed min width on the chat column.
-	ui.Row(c).Grow(1).MaxWidth(717).Padding(5, 14).Gap(6).AlignItems(ui.Center).
-		Background(tc.Surface.Alpha(0.5)).
-		BorderWidth(1, 1, 0, 1).BorderColor(tc.Border.Alpha(0.55)).
-		Radius(10, 10, 0, 0).Children(func() {
+	// Fused to the composer card below: same width (FillWidth inside the
+	// landing unit), shared top corners, one continuous card silhouette.
+	ui.Row(c).FillWidth().Padding(7, 16).Gap(6).AlignItems(ui.Center).
+		Background(tc.Surface).
+		BorderWidth(1, 1, 0, 1).BorderColor(tc.Border).
+		Radius(16, 16, 0, 0).Children(func() {
 		// Project selector chip
 		projChip := ui.Row(c.Key("tray-project")).Height(26).Radius(6).Padding(0, 7).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 		projChip.Children(func() {
@@ -1481,62 +1480,64 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 		projectName = "General"
 	}
 
-	ui.Column(c).Grow(1).Fill().Center().Gap(24).Padding(24, 32).Background(tc.Canvas).Children(func() {
+	ui.Column(c).Grow(1).Fill().Center().Gap(28).Padding(24, 32).Background(tc.Canvas).Children(func() {
 		ui.Column(c).AlignItems(ui.Center).Gap(16).Children(func() {
-			ui.Icon(c, icons.ForgeSparkSVG).Width(54).Height(54).TextColor(tc.Text)
+			ui.Icon(c, icons.ForgeSparkSVG).Width(52).Height(52).TextColor(tc.Text)
 			// Heading: the workspace name is a dotted-underline button that
 			// opens the workspace switcher, as AgentHomeView's h2 does.
 			ui.Row(c).Gap(0).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "What should we do in").FontSize(28).FontWeight(600).LetterSpacing(-0.84)
+				ui.Text(c, "What should we do in").FontSize(27).FontWeight(600).LetterSpacing(-0.8)
 				ui.Box(c).Width(8)
 				wsBtn := ui.Row(c).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				wsBtn.Children(func() {
-					ui.Text(c, projectName).FontSize(28).FontWeight(600).LetterSpacing(-0.84).
+					ui.Text(c, projectName).FontSize(27).FontWeight(600).LetterSpacing(-0.8).
 						DottedUnderline().DecorationColor(tc.TextMuted.Alpha(0.55)).UnderlineOffset(6)
 				})
 				wsBtn.Menu(func(m *ui.Menu) {
 					a.workspaceMenuItems(m)
 				})
-				ui.Text(c, "?").FontSize(28).FontWeight(600).LetterSpacing(-0.84)
+				ui.Text(c, "?").FontSize(27).FontWeight(600).LetterSpacing(-0.8)
 			})
 		})
 
-		// Landing composer with the stacked context tray above it
-		ui.Column(c).FillWidth().AlignItems(ui.Center).Gap(0).Children(func() {
-			a.renderLandingTray(c, tc, projectName)
-			a.renderComposerCard(c, tc, true)
-		})
-
-		// Suggestions
-		ui.Row(c).Gap(8).Wrap().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-			suggestions := []struct {
-				icon   *ui.SVG
-				label  string
-				prompt string
-			}{
-				{icons.TablerCompass, "Explore architecture", "Summarize the architecture of this repository, key packages, and entry points."},
-				{icons.TablerBug, "Find & fix a bug", "Help me diagnose and fix an issue in the codebase: "},
-				{icons.TablerFlask, "Run & improve tests", "Run the test suite, identify any failing or missing unit tests, and propose improvements."},
-				{icons.TablerGitPullRequest, "Review working tree", "Review uncommitted git changes in this workspace for bugs, edge cases, and style."},
-			}
-			for _, s := range suggestions {
-				thisS := s
-				chip := ui.Row(c.Key("sugg-"+thisS.label)).Radius(999).Padding(6, 12).Gap(6).AlignItems(ui.Center).
-					Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7))
-				chip.Children(func() {
-					ui.Icon(c, thisS.icon).Width(14).Height(14).TextColor(tc.IconMuted)
-					ui.Text(c, thisS.label).FontSize(12).FontWeight(500)
-				})
-				if chip.Hovered() {
-					chip.Background(tc.Text.Alpha(0.06))
+		// ZCode/webview landing unit: suggestion chips ABOVE the composer,
+		// with the context tray fused to the card's top (same width, shared
+		// border — one visual card, not floating boxes).
+		ui.Column(c).Grow(1).MaxWidth(768).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).FillWidth().Gap(8).Wrap().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
+				suggestions := []struct {
+					icon   *ui.SVG
+					label  string
+					prompt string
+				}{
+					{icons.TablerCompass, "Explore architecture", "Summarize the architecture of this repository, key packages, and entry points."},
+					{icons.TablerBug, "Find & fix a bug", "Help me diagnose and fix an issue in the codebase: "},
+					{icons.TablerFlask, "Run & improve tests", "Run the test suite, identify any failing or missing unit tests, and propose improvements."},
+					{icons.TablerGitPullRequest, "Review working tree", "Review uncommitted git changes in this workspace for bugs, edge cases, and style."},
 				}
-				if chip.Clicked() {
-					as.InputText = thisS.prompt
-					if as.Invalidate != nil {
-						as.Invalidate()
+				for _, s := range suggestions {
+					thisS := s
+					chip := ui.Row(c.Key("sugg-"+thisS.label)).Radius(999).Padding(6, 12).Gap(6).AlignItems(ui.Center).
+						Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7))
+					chip.Children(func() {
+						ui.Icon(c, thisS.icon).Width(14).Height(14).TextColor(tc.IconMuted)
+						ui.Text(c, thisS.label).FontSize(12).FontWeight(500)
+					})
+					if chip.Hovered() {
+						chip.Background(tc.Text.Alpha(0.06))
+					}
+					if chip.Clicked() {
+						as.InputText = thisS.prompt
+						if as.Invalidate != nil {
+							as.Invalidate()
+						}
 					}
 				}
-			}
+			})
+
+			// Tray fused to the card: same width, shared borders.
+			a.renderLandingTray(c, tc, projectName)
+			a.renderComposerCard(c, tc, true)
 		})
 
 		if as.ShowModelPicker {

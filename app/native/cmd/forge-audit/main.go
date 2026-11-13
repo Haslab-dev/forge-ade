@@ -96,7 +96,7 @@ func auditInternal(eng *engine.Engine, ws, model, mode string) {
 	// Real ACP manager shares the engine bus; internal turns flow through
 	// agent.Manager on the same bus.
 	sess := as.CreateSessionWithInitialPrompt(
-		"Reply with exactly one short sentence naming the primary language of this repository (look at go.mod if needed).",
+		"Reply with exactly: INTERNAL-OK (no tools needed).",
 		"agent-internal",
 	)
 	if sess == nil {

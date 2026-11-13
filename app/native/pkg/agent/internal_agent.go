@@ -9,6 +9,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/agent"
@@ -84,8 +85,18 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 		return
 	}
 	activeModel := ""
+	customProvider := false
 	if as.engine.LLMClient != nil {
-		activeModel = as.engine.LLMClient.GetConfig().Model
+		cfg := as.engine.LLMClient.GetConfig()
+		activeModel = cfg.Model
+		// Custom OpenAI-compatible gateways (kenari, etc.) often serve models
+		// whose chat templates emit in-band XML tool calls instead of native
+		// tool_calls — the manager's xml dialect parses those.
+		customProvider = cfg.BaseURL != "" && !strings.Contains(cfg.BaseURL, "api.openai.com") &&
+			!strings.Contains(cfg.BaseURL, "anthropic.com") &&
+			!strings.Contains(cfg.BaseURL, "generativelanguage.googleapis.com") &&
+			!strings.Contains(cfg.BaseURL, "api.deepseek.com") &&
+			!strings.Contains(cfg.BaseURL, "localhost") && !strings.Contains(cfg.BaseURL, "127.0.0.1")
 	}
 	if activeModel == "" {
 		activeModel = sess.Model
@@ -95,6 +106,9 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 		as.mu.Lock()
 		sess.Model = activeModel
 		as.mu.Unlock()
+	}
+	if customProvider {
+		_ = as.engine.AgentMgr.SetDialect(mgrID, "xml")
 	}
 	mode := as.ExecutionMode.PermissionMode()
 	if mode != "" {

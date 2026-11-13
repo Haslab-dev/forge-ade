@@ -1137,6 +1137,12 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 		if status == "" {
 			status = "idle"
 		}
+		// A process kill mid-turn persists "running"/"streaming"; nothing is
+		// actually streaming after a restart — show Idle, never a phantom
+		// Running pill (forge-ade marks interrupted sessions the same way).
+		if status == "running" || status == "streaming" || status == "working" {
+			status = "idle"
+		}
 
 		wsPath := diskSess.WorkspacePath
 		if wsPath == "" {
