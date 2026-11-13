@@ -2,8 +2,11 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -138,8 +141,9 @@ type AppUI struct {
 	CollapsedProjectGroups  map[string]bool
 	ExpandedProjectGroups   map[string]bool
 	ExpandedFileTreeFolders map[string]bool
-	ProjectFilter           string // "all" or a project name (sidebar "All projects" menu)
-	TaskSortBy              string // "updated" (default) or "created" (sidebar sort menu)
+	ProjectFilter           string   // "all" or a project name (sidebar "All projects" menu)
+	TaskSortBy              string   // "updated" (default) or "created" (sidebar sort menu)
+	RecentWorkspaces        []string // most-recent-first history of opened folders
 	ShowSSHModal            bool
 	ShowSSHQuickMenu        bool
 	SSHLabel                string
@@ -180,14 +184,25 @@ type AppUI struct {
 
 // NewAppUI constructs the complete AppUI state tree.
 func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
+	// No workspace (empty root dir): open in editor mode with the welcome
+	// state; the terminal defaults to the home directory.
+	startMode := ModeAgent
+	terminalDir := rootDir
+	if rootDir == "" {
+		startMode = ModeEditor
+		home, _ := os.UserHomeDir()
+		terminalDir = home
+	}
+
 	appUI := &AppUI{
 		Engine:                  engine,
 		Workspace:               workspace.NewWorkspaceState(rootDir),
 		Editor:                  editor.NewEditorManager(),
-		Terminal:                terminal.NewTerminalState(rootDir),
+		Terminal:                terminal.NewTerminalState(terminalDir),
 		ThemeMgr:                theme.NewThemeManager(),
-		Mode:                    ModeAgent,
+		Mode:                    startMode,
 		ActiveTaskKind:          "agent",
+		RecentWorkspaces:        loadRecentWorkspaces(),
 		ShowLeftSidebar:         true,
 		LeftSidebarWidth:        LeftSidebarDefault,
 		RightDrawerWidth:        RightDrawerDefault,
@@ -656,6 +671,67 @@ func (a *AppUI) OpenNewTaskModalFor(folderPath string) {
 	a.NewTaskWorkspacePath = folderPath
 }
 
+// ── Recent workspaces ────────────────────────────────────────────────────
+// Persisted most-recent-first list of opened folders, shown on the welcome
+// pane and in the workspace switcher menus.
+
+const recentWorkspacesCap = 12
+
+func recentWorkspacesPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".forge-ade", "recent-workspaces.json")
+}
+
+// loadRecentWorkspaces reads the persisted opened-folder history.
+func loadRecentWorkspaces() []string {
+	path := recentWorkspacesPath()
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil
+	}
+	return list
+}
+
+func saveRecentWorkspaces(list []string) {
+	path := recentWorkspacesPath()
+	if path == "" {
+		return
+	}
+	if data, err := json.MarshalIndent(list, "", "  "); err == nil {
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// recordRecentWorkspace moves dir to the front of the history (deduped) and
+// persists it. Empty paths (General) are not recorded.
+func (a *AppUI) recordRecentWorkspace(dir string) {
+	if dir == "" || dir == "/" || strings.HasPrefix(dir, "ssh://") {
+		return
+	}
+	rest := make([]string, 0, len(a.RecentWorkspaces))
+	for _, p := range a.RecentWorkspaces {
+		if p != dir {
+			rest = append(rest, p)
+		}
+	}
+	a.RecentWorkspaces = append([]string{dir}, rest...)
+	if len(a.RecentWorkspaces) > recentWorkspacesCap {
+		a.RecentWorkspaces = a.RecentWorkspaces[:recentWorkspacesCap]
+	}
+	saveRecentWorkspaces(a.RecentWorkspaces)
+}
+
 // openSideFile opens a workspace file in the right sidebar's file tabs, as
 // forge-ade's explorer "Open in Side Preview" does.
 func (a *AppUI) openSideFile(relPath string) {
@@ -740,6 +816,7 @@ func (a *AppUI) openWorkspaceFolder() {
 
 func (a *AppUI) switchWorkspace(dir string) {
 	a.Workspace = workspace.NewWorkspaceState(dir)
+	a.recordRecentWorkspace(dir)
 	if a.Engine != nil {
 		a.Workspace.RemoteFS = a.Engine.RemoteFS
 		a.Workspace.Refresh()
@@ -748,6 +825,10 @@ func (a *AppUI) switchWorkspace(dir string) {
 		a.Editor.RemoteFS = a.Engine.RemoteFS
 	}
 	a.Agent.SetWorkspacePath(dir)
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = home
+	}
 	a.Terminal.Cwd = dir
 	a.Editor.CloseAll()
 	a.SelectedFile = ""

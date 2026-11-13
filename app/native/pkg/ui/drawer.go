@@ -117,6 +117,15 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	gm := a.Git
 
+	// No workspace opened — nothing for git to report.
+	if a.Workspace.RootDir == "" {
+		ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
+			ui.Icon(c, icons.TablerFolder).Width(22).Height(22).TextColor(tc.IconMuted)
+			ui.Text(c, "No folder opened").FontSize(12).TextColor(tc.TextMuted)
+		})
+		return
+	}
+
 	var staged []internalgit.FileStatus
 	var unstaged []internalgit.FileStatus
 	if gm != nil {

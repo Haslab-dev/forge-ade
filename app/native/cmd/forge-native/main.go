@@ -20,11 +20,13 @@ func main() {
 	}
 
 	// Resolve target workspace directory. Bundles launched via Finder /
-	// `open` start with CWD=/ — fall back to the home "General" workspace
-	// instead of indexing the whole filesystem.
+	// `open` start with CWD=/ — that resolves to NO workspace: the app opens
+	// in an empty editor mode and the user picks a folder (recents offered).
+	// Running the binary from a project directory keeps that directory, and
+	// an explicit path argument always wins.
 	targetDir, err := os.Getwd()
 	if err != nil || targetDir == "/" {
-		targetDir, _ = os.UserHomeDir()
+		targetDir = ""
 	}
 	if len(os.Args) > 1 && os.Args[1] != "" {
 		if abs, err := filepath.Abs(os.Args[1]); err == nil {

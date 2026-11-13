@@ -23,6 +23,22 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Padding(2, 6).Gap(0).Children(func() {
+			// No workspace opened yet — invite the user to open a folder.
+			if a.Workspace.RootDir == "" {
+				ui.Column(c).Padding(16, 12).Gap(10).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "No folder opened").FontSize(12).TextColor(tc.TextMuted)
+					openBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					openBtn.Children(func() {
+						ui.Icon(c, icons.TablerFolder).Width(13).Height(13).TextColor(tc.Accent)
+						ui.Text(c, "Open Folder…").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					})
+					if openBtn.Clicked() {
+						a.openWorkspaceFolder()
+					}
+				})
+				return
+			}
 			var renderNode func(node *FileTreeNode, depth int)
 			renderNode = func(node *FileTreeNode, depth int) {
 				indent := float32(4 + depth*14)

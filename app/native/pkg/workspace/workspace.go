@@ -27,11 +27,11 @@ var IgnoredDirectoryNames = map[string]bool{
 	// macOS system / cloud-provider trees: enormous, irrelevant as project
 	// files, and (iCloud "Mobile Documents" in particular) their opens can
 	// block indefinitely when files are not downloaded.
-	"Library":         true,
-	"Applications":    true,
+	"Library":          true,
+	"Applications":     true,
 	"Mobile Documents": true,
-	"CloudStorage":    true,
-	"Volumes":         true,
+	"CloudStorage":     true,
+	"Volumes":          true,
 }
 
 // WorkspaceFile represents an indexed file in the workspace.
@@ -55,15 +55,11 @@ type WorkspaceState struct {
 }
 
 // NewWorkspaceState creates and initializes a new workspace state for rootDir.
+// An empty rootDir means NO workspace: files stay empty until the user opens
+// a folder ("" is also what CWD=/ collapses to for Finder-launched bundles).
 func NewWorkspaceState(rootDir string) *WorkspaceState {
-	if rootDir == "" || rootDir == "/" {
-		// LaunchServices starts double-clicked bundles with CWD=/ — treat
-		// that (and an explicit empty dir) as the General home workspace
-		// instead of indexing the whole filesystem.
-		home, err := os.UserHomeDir()
-		if err == nil {
-			rootDir = home
-		}
+	if rootDir == "/" {
+		rootDir = ""
 	}
 	ws := &WorkspaceState{
 		RootDir: rootDir,
@@ -88,6 +84,12 @@ func (ws *WorkspaceState) Refresh() {
 	var files []WorkspaceFile
 	maxFiles := 300
 	count := 0
+
+	// No workspace opened yet — nothing to scan.
+	if ws.RootDir == "" {
+		ws.Files = nil
+		return
+	}
 
 	// Handle remote SSH directory scanning
 	if strings.HasPrefix(ws.RootDir, "ssh://") && ws.RemoteFS != nil {

@@ -1214,7 +1214,11 @@ func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
 	if a.Workspace != nil {
 		current = a.Workspace.RootDir
 	}
-	for _, ws := range a.recentWorkspacePaths() {
+	recents := a.RecentWorkspaces // persisted opened-folder history
+	if len(recents) == 0 {
+		recents = a.recentWorkspacePaths() // fall back to session-derived
+	}
+	for _, ws := range recents {
 		path := ws
 		if m.Item(menuChecked(path == current, resolveProjectName(path))).Chosen() {
 			a.switchWorkspace(path)

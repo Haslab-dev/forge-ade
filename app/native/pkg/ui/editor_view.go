@@ -333,6 +333,59 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	doc := em.ActiveDoc()
 	if doc == nil {
+		// No workspace opened: welcome pane with Open Folder + the recent
+		// folders history (forge-ade's closeWorkspace flow, VS Code style).
+		if a.Workspace.RootDir == "" {
+			ui.Column(c).Grow(1).Center().Gap(14).Children(func() {
+				ui.Icon(c, icons.ForgeSparkSVG).Width(52).Height(52).TextColor(tc.Text)
+				ui.Text(c, "Welcome to ForgeADE").FontSize(19).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Open a folder to start working, or pick one from your history.").FontSize(13).TextColor(tc.TextMuted)
+
+				openBtn := ui.Row(c).Height(34).Radius(8).Padding(0, 16).Gap(7).AlignItems(ui.Center).Justify(ui.Center).
+					Background(tc.Accent).Margin(6, 0, 0, 0)
+				openBtn.Children(func() {
+					ui.Icon(c, icons.TablerFolder).Width(15).Height(15).TextColor(tc.Canvas)
+					ui.Text(c, "Open Folder…").FontSize(13).FontWeight(600).TextColor(tc.Canvas)
+				})
+				if openBtn.Clicked() {
+					a.openWorkspaceFolder()
+				}
+
+				if len(a.RecentWorkspaces) > 0 {
+					ui.Text(c, "RECENT FOLDERS").FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted).Margin(10, 0, 0, 0)
+					ui.Column(c).Width(420).Gap(2).Children(func() {
+						for _, ws := range a.RecentWorkspaces {
+							thisPath := ws
+							row := ui.Row(c.Key("recent-ws-"+thisPath)).Height(30).Radius(6).Padding(0, 10).Gap(8).AlignItems(ui.Center)
+							row.Children(func() {
+								ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
+								ui.Text(c, filepath.Base(thisPath)).FontSize(12).FontWeight(500).TextColor(tc.Text)
+								ui.Text(c, thisPath).FontSize(11).TextColor(tc.TextMuted).Grow(1).SingleLine()
+							})
+							if row.Hovered() {
+								row.Background(tc.Text.Alpha(0.05))
+							}
+							if row.Clicked() {
+								a.switchWorkspace(thisPath)
+							}
+						}
+					})
+				}
+
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Margin(8, 0, 0, 0).Children(func() {
+					sshBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					sshBtn.Children(func() {
+						ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.Accent)
+						ui.Text(c, "Connect via SSH").FontSize(11).TextColor(tc.Text)
+					})
+					if sshBtn.Clicked() {
+						a.OpenSSHModal()
+					}
+				})
+			})
+			return
+		}
 		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
 			_, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
 			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
@@ -519,10 +572,15 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 				a.ShowSSHQuickMenu = true
 			}
 		} else {
+			// Local workspace indicator: folder name (General when empty).
+			folderLabel := filepath.Base(a.Workspace.RootDir)
+			if a.Workspace.RootDir == "" {
+				folderLabel = "General"
+			}
 			remoteChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
 			remoteChip.Children(func() {
-				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.IconMuted)
-				statusText("Remote")
+				ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
+				statusText(folderLabel)
 			})
 			if remoteChip.Hovered() {
 				remoteChip.Background(tc.Text.Alpha(0.06))

@@ -17,6 +17,9 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
 	projectName := filepath.Base(a.Workspace.RootDir)
+	if a.Workspace.RootDir == "" {
+		projectName = "General"
+	}
 
 	// Derive display title
 	title := projectName
