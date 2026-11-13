@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -264,9 +265,11 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, m *agent.Cha
 			label = fmt.Sprintf("Working for %.0fs…", elapsedSec)
 		}
 	} else {
+		// forge-ade's workSecs: thought durations when known, otherwise an
+		// estimate of two seconds per tool run — never "0s".
 		durationSec := m.ThinkingTimeSec
 		if durationSec <= 0 {
-			durationSec = elapsedSec
+			durationSec = math.Max(float64(len(m.Tools))*2, 2)
 		}
 		if totalSteps > 0 {
 			stepWord := "steps"
@@ -395,12 +398,26 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 	})
 }
 
+// renderFoldedToolTraces draws forge-ade's folded tool traces: a summary bar
+// ("Ran 2 commands · Read 1 file · Edited 2 files" + Hide-N-steps), then
+// per-tool rows — chevron, kind icon, [Write]/[Read]/[$] badge, mono label,
+// output line count — with forge-ade's per-tool expanded views. Skill tools
+// are excluded from the rows (counted in the summary only), as the original
+// does with isSkillTool.
 func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
 	if len(m.Tools) == 0 {
 		return
 	}
 
 	summary, hasRunning, hasFailed := summarizeTools(m.Tools)
+
+	// Skill tools never render as rows (forge-ade filters isSkillTool).
+	ordinary := make([]*agent.ToolExecution, 0, len(m.Tools))
+	for _, t := range m.Tools {
+		if !strings.Contains(strings.ToLower(t.ToolName), "skill") {
+			ordinary = append(ordinary, t)
+		}
+	}
 
 	ui.Column(c).FillWidth().Gap(3).Children(func() {
 		// Group summary row for multi-tool execution
@@ -423,18 +440,16 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				if hasRunning {
 					summaryColor = tc.Accent
 				}
-				ui.Text(c, summary).FontSize(11).FontWeight(500).TextColor(summaryColor)
+				ui.Text(c, summary).FontSize(11).FontWeight(500).TextColor(summaryColor).Grow(1).SingleLine()
 
-				ui.Box(c).Grow(1)
-
-				// Step toggle pill
-				stepToggle := ui.Row(c).Radius(4).Padding(2, 6).Gap(4).AlignItems(ui.Center).
+				// Step toggle pill — fixed content, never wraps.
+				stepLabel := fmt.Sprintf("Show %d steps", len(m.Tools))
+				if m.ShowTools {
+					stepLabel = fmt.Sprintf("Hide %d steps", len(m.Tools))
+				}
+				stepToggle := ui.Row(c.Key("steps-toggle")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
 					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
 				stepToggle.Children(func() {
-					stepLabel := fmt.Sprintf("Show %d steps", len(m.Tools))
-					if m.ShowTools {
-						stepLabel = fmt.Sprintf("Hide %d steps", len(m.Tools))
-					}
 					ui.Text(c, stepLabel).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
 					chev := icons.TablerChevronRight
 					if m.ShowTools {
@@ -452,15 +467,16 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 		}
 
 		// Individual tool rows
-		if m.ShowTools || len(m.Tools) == 1 {
-			for _, tool := range m.Tools {
+		if m.ShowTools || len(ordinary) == 1 {
+			for _, tool := range ordinary {
 				thisTool := tool
 				args := parseToolArgs(thisTool.Command, thisTool.ToolName)
 				nl := strings.ToLower(thisTool.ToolName)
-				isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "command") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
+				isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
 				isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
 				isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
 				isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find")
+				failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
 
 				toolIcon := icons.TablerTerminal
 				if isRead {
@@ -471,60 +487,72 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 					toolIcon = icons.TablerSearch
 				}
 
+				// Row label + kind badge, as forge-ade's [Write]/[Read]/[$] chips.
+				badge := ""
 				displayLabel := thisTool.ToolName
-				detailText := ""
-				if isBash {
-					cmdText := extractShellCommand(thisTool.Command, args.Cmd)
-					if cmdText != "" {
-						detailText = "$ " + cmdText
+				if isEdit {
+					badge = "Write"
+					if nl != "write" && (strings.Contains(nl, "edit") || strings.Contains(nl, "patch")) {
+						badge = "Edit"
 					}
-				} else if (isRead || isEdit) && args.Path != "" {
-					detailText = args.Path
-				} else if args.Cmd != "" {
-					detailText = args.Cmd
+					displayLabel = args.Path
+				} else if isRead {
+					badge = "Read"
+					displayLabel = args.Path
+				} else if isBash {
+					badge = "$"
+					if cmd := extractShellCommand(thisTool.Command, args.Cmd); cmd != "" {
+						displayLabel = cmd
+					}
 				} else if args.Path != "" {
-					detailText = args.Path
+					displayLabel = args.Path
+				}
+				if displayLabel == "" {
+					displayLabel = thisTool.ToolName
+				}
+				if len(displayLabel) > 72 {
+					displayLabel = displayLabel[:69] + "…"
 				}
 
-				if len(detailText) > 65 {
-					detailText = detailText[:62] + "…"
+				// Output line count on the right, like the original's read rows.
+				outLines := 0
+				if thisTool.Output != "" && (isRead || isSearch) {
+					outLines = strings.Count(thisTool.Output, "\n") + 1
 				}
 
 				toolCard := ui.Column(c.Key("tool-" + thisTool.ID)).Radius(8).
 					Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+				if failed {
+					toolCard.BorderColor(tc.Error.Alpha(0.4))
+				}
 
 				toolCard.Children(func() {
-					// Row header
+					// Row header: chevron left, icon, badge, mono label, extras right.
 					row := ui.Row(c).Height(30).Padding(0, 8).Gap(7).AlignItems(ui.Center)
 					row.Children(func() {
-						ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
-						ui.Text(c, displayLabel).FontSize(12).FontWeight(500).TextColor(tc.Text)
-						if detailText != "" {
-							ui.Text(c, detailText).FontSize(11).TextColor(tc.TextMuted).MaxWidth(420)
-						}
-						ui.Box(c).Grow(1)
-
-						// Status indicator
-						switch thisTool.Status {
-						case "completed":
-							ui.Row(c).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-								Background(tc.Success.Alpha(0.15)).Children(func() {
-								ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
-							})
-						case "failed":
-							ui.Row(c).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-								Background(tc.Error.Alpha(0.15)).Children(func() {
-								ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.Error)
-							})
-						default:
-							ui.Spinner(c).Size(12, 12).Label("Running")
-						}
-
 						chev := icons.TablerChevronRight
 						if thisTool.Expanded {
 							chev = icons.TablerChevronDown
 						}
 						ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+						ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
+						if badge != "" {
+							ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).
+								BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+								ui.Text(c, badge).FontSize(10).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
+							})
+						}
+						ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+						if outLines > 0 {
+							ui.Text(c, fmt.Sprintf("%d lines", outLines)).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
+						}
+						if thisTool.Status == "running" {
+							ui.Spinner(c).Size(12, 12).Label("Running")
+						} else if failed {
+							ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Error.Alpha(0.12)).Children(func() {
+								ui.Text(c, "Failed").FontSize(10).FontWeight(600).TextColor(tc.Error)
+							})
+						}
 					})
 					if row.Hovered() {
 						row.Background(tc.Text.Alpha(0.04))
@@ -533,21 +561,30 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 						thisTool.Expanded = !thisTool.Expanded
 					}
 
-					// Expanded detail view
+					// Expanded detail views, mirroring forge-ade's tool blocks.
 					if thisTool.Expanded {
 						ui.Column(c).Padding(8, 10).Gap(6).
 							BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
 							Background(tc.Canvas.Alpha(0.6)).Children(func() {
-							// For bash tools, render terminal console style
-							if isBash {
+							cleanOut := thisTool.Output
+							if failed {
+								cleanOut = strings.ReplaceAll(cleanOut, "<tool_use_error>", "")
+								cleanOut = strings.ReplaceAll(cleanOut, "</tool_use_error>", "")
+								cleanOut = strings.TrimSpace(cleanOut)
+							}
+
+							switch {
+							case isRead && args.Path != "":
+								a.renderToolReadBlock(c, tc, args.Path, cleanOut)
+							case isBash:
 								cmdStr := args.Cmd
 								if cmdStr == "" {
 									cmdStr = thisTool.Command
 								}
 								ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 									ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
-									ui.Text(c, cmdStr).FontSize(11).TextColor(tc.Text).Grow(1).Selectable()
-									if thisTool.Output != "" {
+									ui.Text(c, cmdStr).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
+									if cleanOut != "" {
 										copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 										copyBtn.Children(func() {
 											ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
@@ -556,40 +593,115 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 											copyBtn.Background(tc.Text.Alpha(0.06))
 										}
 										if copyBtn.Clicked() {
-											mygo.Clipboard.WriteText(thisTool.Output)
+											mygo.Clipboard.WriteText(cleanOut)
 											c.AddToast(ui.Toast{Title: "Copied Output", Type: "success"})
 										}
 									}
 								})
-							}
-
-							if thisTool.Output != "" {
-								outText := thisTool.Output
-								isErr := strings.Contains(outText, "<tool_use_error>") || thisTool.Status == "failed"
-								boxBg := tc.Surface
-								boxBorder := tc.Border.Alpha(0.5)
-								textColor := tc.TextMuted
-								if isErr {
-									boxBg = tc.Error.Alpha(0.08)
-									boxBorder = tc.Error.Alpha(0.3)
-									textColor = tc.Error
-									outText = strings.ReplaceAll(outText, "<tool_use_error>", "")
-									outText = strings.ReplaceAll(outText, "</tool_use_error>", "")
-									outText = strings.TrimSpace(outText)
+								if cleanOut != "" {
+									renderToolOutputBox(c, tc, cleanOut, failed)
 								}
-								if len(outText) > 1200 {
-									outText = outText[:1200] + "\n… [truncated]"
+							default:
+								if cleanOut != "" {
+									renderToolOutputBox(c, tc, cleanOut, failed)
 								}
-								ui.Box(c).Padding(8).Radius(6).Background(boxBg).
-									BorderWidth(1).BorderColor(boxBorder).Children(func() {
-									ui.Text(c, outText).FontSize(11).TextColor(textColor).Selectable()
-								})
 							}
 						})
 					}
 				})
 			}
 		}
+	})
+}
+
+// renderToolReadBlock draws forge-ade's ToolReadBlock: a file header with
+// Open-in-Side-Viewer + Copy actions, then line-numbered content.
+func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, output string) {
+	fileName := filepath.Base(path)
+
+	ui.Column(c).Radius(8).Background(tc.Surface.Alpha(0.8)).
+		BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip().Children(func() {
+		// File header: icon + name + truncated path + actions
+		ui.Row(c).Height(30).Padding(0, 10).Gap(8).AlignItems(ui.Center).
+			Background(tc.SurfaceRaised.Alpha(0.6)).
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.4)).Children(func() {
+			ui.Icon(c, icons.TablerFileText).Width(13).Height(13).TextColor(tc.Accent)
+			ui.Text(c, fileName).FontSize(11).Font("monospace").FontWeight(600).TextColor(tc.Text).SingleLine()
+			ui.Text(c, path).FontSize(11).Font("monospace").TextColor(tc.TextMuted).Grow(1).SingleLine()
+			sideBtn := ui.Row(c.Key("read-side")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center)
+			sideBtn.Children(func() {
+				ui.Icon(c, icons.TablerExternalLink).Width(11).Height(11).TextColor(tc.TextMuted)
+				ui.Text(c, "Open in Side Viewer").FontSize(11).TextColor(tc.TextMuted)
+			})
+			if sideBtn.Hovered() {
+				sideBtn.Background(tc.Text.Alpha(0.05))
+			}
+			if sideBtn.Clicked() && a.Workspace != nil {
+				rel, err := filepath.Rel(a.Workspace.RootDir, path)
+				if err != nil || strings.HasPrefix(rel, "..") {
+					rel = path
+				}
+				a.openSideFile(rel)
+			}
+			copyBtn := ui.Row(c.Key("read-copy")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center)
+			copyBtn.Children(func() {
+				ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.TextMuted)
+				ui.Text(c, "Copy").FontSize(11).TextColor(tc.TextMuted)
+			})
+			if copyBtn.Hovered() {
+				copyBtn.Background(tc.Text.Alpha(0.05))
+			}
+			if copyBtn.Clicked() {
+				mygo.Clipboard.WriteText(output)
+				c.AddToast(ui.Toast{Title: "Copied", Description: fileName, Type: "success"})
+			}
+		})
+
+		// Line-numbered content (up to 40 lines), like the original's gutter.
+		ui.Column(c).Padding(6, 8).Children(func() {
+			lines := strings.Split(output, "\n")
+			maxLines := 40
+			shown := lines
+			truncated := false
+			if len(lines) > maxLines {
+				shown = lines[:maxLines]
+				truncated = true
+			}
+			for i, line := range shown {
+				idx := i
+				text := line
+				ui.Row(c.Key(fmt.Sprintf("rl-%d", idx))).Padding(1, 0).Gap(10).AlignItems(ui.Start).Children(func() {
+					ui.Text(c, fmt.Sprintf("%d", idx+1)).Width(24).FontSize(10).Font("monospace").
+						TextColor(tc.TextMuted.Alpha(0.6))
+					ui.Text(c, text).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
+				})
+			}
+			if truncated {
+				ui.Row(c).Padding(6, 2, 0, 2).Justify(ui.Center).Children(func() {
+					ui.Text(c, fmt.Sprintf("Truncated (+%d lines)", len(lines)-maxLines)).FontSize(10).TextColor(tc.TextMuted)
+				})
+			}
+		})
+	})
+}
+
+// renderToolOutputBox draws the generic mono output card with error styling
+// and the original's truncation marker.
+func renderToolOutputBox(c *ui.Context, tc theme.ThemeColors, outText string, failed bool) {
+	boxBg := tc.Surface
+	boxBorder := tc.Border.Alpha(0.5)
+	textColor := tc.TextMuted
+	if failed {
+		boxBg = tc.Error.Alpha(0.08)
+		boxBorder = tc.Error.Alpha(0.3)
+		textColor = tc.Error
+	}
+	if len(outText) > 1200 {
+		outText = outText[:1200] + "\n… [truncated]"
+	}
+	ui.Box(c).Padding(8).Radius(6).Background(boxBg).
+		BorderWidth(1).BorderColor(boxBorder).Children(func() {
+		ui.Text(c, outText).FontSize(11).Font("monospace").TextColor(textColor).Selectable()
 	})
 }
 
