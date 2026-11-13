@@ -107,6 +107,11 @@ type ChatMessage struct {
 	// PendingQuestions carries a structured agent:ask (ask tool) with option
 	// chips and custom answers — PendingQuestionsCard / AgentQuestionModal.
 	PendingQuestions []AgentQuestion
+	// SkipHarnessDumps drops further text deltas once the stream starts
+	// emitting a harness protocol-state JSON blob (active_skills /
+	// active_system_prompts / plugin catalogs) that some ACP CLIs print to
+	// stdout — forge-ade parses these in-band; native must not show them.
+	SkipHarnessDumps bool      `json:"-"`
 	TotalSteps       int       // steps reported by agent:turn_end
 	TurnStartedAt    time.Time `json:"-"` // live elapsed while streaming
 }
@@ -274,6 +279,15 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 			continue
 		}
 		msg := as.ensureStreamingMessage(s)
+		if isHarnessDumpDelta(text, msg.Text) {
+			msg.SkipHarnessDumps = true
+		}
+		if msg.SkipHarnessDumps {
+			// Harness protocol blob: never show it as chat text.
+			as.Messages = s.Messages
+			as.mu.Unlock()
+			return
+		}
 		msg.Text += text
 		msg.IsThinking = false
 		as.Messages = s.Messages
@@ -284,6 +298,47 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
+}
+
+// harnessDumpSignature reports whether a text span is (the start of) a
+// harness protocol-state JSON dump rather than chat content.
+func harnessDumpSignature(text string) bool {
+	// Quote-prefix matches both plain JSON keys ("active_skills") and
+	// escaped ones (backslash-quote prefix) inside harness dumps.
+	return strings.Contains(text, `"active_skills`) ||
+		strings.Contains(text, `"active_system_prompts`) ||
+		strings.Contains(text, `"plugin_id`)
+}
+
+// isHarnessDumpDelta decides whether this delta begins a protocol dump:
+// the message must still be (near-)empty and the chunk must look like the
+// JSON blob those harnesses print.
+func isHarnessDumpDelta(delta, current string) bool {
+	if len(strings.TrimSpace(current)) > 64 {
+		return false // a real reply already started
+	}
+	trimmed := strings.TrimSpace(delta)
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, `"{`) {
+		return false
+	}
+	return harnessDumpSignature(trimmed)
+}
+
+// cleanHarnessDumps removes protocol-state JSON lines from a finalized
+// message. Harness dumps arrive as one huge escaped-JSON line containing
+// the signature keys, so whole-line removal is exact and safe.
+func cleanHarnessDumps(text string) string {
+	if !harnessDumpSignature(text) {
+		return text
+	}
+	var kept []string
+	for _, line := range strings.Split(text, "\n") {
+		if harnessDumpSignature(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // HandleThoughtChunk applies an agent:thinking_delta payload.
@@ -415,7 +470,7 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		msg := as.ensureStreamingMessage(s)
 		msg.Done = true
 		msg.IsThinking = false
-		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(msg.Text))
+		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(msg.Text)))
 		msg.Thinking = cleanRawToolTags(msg.Thinking)
 		if !msg.TurnStartedAt.IsZero() {
 			msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()

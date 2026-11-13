@@ -76,13 +76,25 @@ func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, 
 
 // syncInternalSessionState pushes the current model / execution mode onto the
 // backing manager session before each turn, as SetAgentSessionModel and
-// agentExecutionMode do in forge-ade.
+// agentExecutionMode do in forge-ade. The MODEL always comes from the ACTIVE
+// provider profile: stale per-session models (set under a previous provider)
+// would 401 against the current provider's key.
 func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession) {
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return
 	}
-	if sess.Model != "" {
-		_ = as.engine.AgentMgr.SetSessionModel(mgrID, sess.Model)
+	activeModel := ""
+	if as.engine.LLMClient != nil {
+		activeModel = as.engine.LLMClient.GetConfig().Model
+	}
+	if activeModel == "" {
+		activeModel = sess.Model
+	}
+	if activeModel != "" {
+		_ = as.engine.AgentMgr.SetSessionModel(mgrID, activeModel)
+		as.mu.Lock()
+		sess.Model = activeModel
+		as.mu.Unlock()
 	}
 	mode := as.ExecutionMode.PermissionMode()
 	if mode != "" {
