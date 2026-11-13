@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -777,12 +778,13 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		return
 	}
 
-	card := ui.Column(c).Radius(20).Background(tc.Surface).
+	card := ui.Column(c).Radius(22).Background(tc.Surface).
 		BorderWidth(1).BorderColor(tc.Border).
 		Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
 		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
 	if isHome {
-		card.Width(680)
+		// Landing composer: max-w-[48rem] with the stacked tray attached above.
+		card.Width(768)
 	}
 
 	card.Children(func() {
@@ -965,7 +967,8 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 
 			ui.Box(c).Grow(1)
 
-			// Context Window Usage Gauge (Right side)
+			// Context Window Usage Gauge (Right side) — landing shows the
+			// status dot only; the in-chat gauge adds the percent label.
 			_, pct := as.ContextUsage()
 			gaugeBtn := ui.Row(c).Height(24).Radius(999).Padding(0, 8).Gap(4).AlignItems(ui.Center)
 			gaugeBtn.Children(func() {
@@ -976,7 +979,9 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					dotColor = tc.Warning
 				}
 				ui.Box(c).Size(6, 6).Radius(3).Background(dotColor)
-				ui.Text(c, fmt.Sprintf("%d%%", pct)).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+				if !isHome {
+					ui.Text(c, fmt.Sprintf("%d%%", pct)).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+				}
 			})
 			if gaugeBtn.Hovered() {
 				gaugeBtn.Background(tc.Text.Alpha(0.04))
@@ -1082,6 +1087,111 @@ func composerControlChip(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, labe
 	return row
 }
 
+// workspaceMenuItems builds the workspace switcher menu shared by the landing
+// heading and the tray project chip: recent session workspaces, then
+// "Open folder…" and "General (Work outside project)", as AgentHomeView does.
+func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
+	current := ""
+	if a.Workspace != nil {
+		current = a.Workspace.RootDir
+	}
+	for _, ws := range a.recentWorkspacePaths() {
+		path := ws
+		if m.Item(menuChecked(path == current, resolveProjectName(path))).Chosen() {
+			a.switchWorkspace(path)
+		}
+	}
+	m.Separator()
+	if m.Item("Open folder…").Chosen() {
+		a.openWorkspaceFolder()
+	}
+	if m.Item("General (Work outside project)").Chosen() {
+		a.switchWorkspace("")
+	}
+}
+
+// recentWorkspacePaths lists distinct session workspace paths, most recently
+// updated first (remote ssh:// paths excluded — the internal agent works on
+// local folders only, as forge-ade's landing filter does).
+func (a *AppUI) recentWorkspacePaths() []string {
+	type entry struct {
+		path     string
+		latestAt time.Time
+	}
+	var entries []entry
+	if a.Agent != nil {
+		for _, sess := range a.Agent.FilteredSessions() {
+			if sess.WorkspacePath == "" || strings.HasPrefix(sess.WorkspacePath, "ssh://") {
+				continue
+			}
+			found := false
+			for i := range entries {
+				if entries[i].path == sess.WorkspacePath {
+					if sess.UpdatedAt.After(entries[i].latestAt) {
+						entries[i].latestAt = sess.UpdatedAt
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				entries = append(entries, entry{path: sess.WorkspacePath, latestAt: sess.UpdatedAt})
+			}
+		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].latestAt.After(entries[j].latestAt) })
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, e.path)
+	}
+	return paths
+}
+
+// renderLandingTray draws the Kybern stacked strip attached above the landing
+// composer: the project selector chip + git branch chip (git repos only).
+func (a *AppUI) renderLandingTray(c *ui.Context, tc theme.ThemeColors, projectName string) {
+	ui.Row(c).Width(717).Padding(5, 14).Gap(6).AlignItems(ui.Center).
+		Background(tc.Surface.Alpha(0.5)).
+		BorderWidth(1, 1, 0, 1).BorderColor(tc.Border.Alpha(0.55)).
+		Radius(10, 10, 0, 0).Children(func() {
+		// Project selector chip
+		projChip := ui.Row(c.Key("tray-project")).Height(26).Radius(6).Padding(0, 7).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+		projChip.Children(func() {
+			ui.Icon(c, icons.TablerFolder).Width(13).Height(13).TextColor(tc.TextMuted)
+			ui.Text(c, projectName).FontSize(12).TextColor(tc.TextMuted)
+			ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.TextMuted.Alpha(0.5))
+		})
+		if projChip.Hovered() {
+			projChip.Background(tc.Text.Alpha(0.06))
+		}
+		projChip.Menu(func(m *ui.Menu) {
+			a.workspaceMenuItems(m)
+		})
+
+		// Git branch chip — only when the workspace is a local git repository.
+		branch := ""
+		if a.Git != nil && a.Git.Branch != "" && (a.Workspace == nil || !strings.HasPrefix(a.Workspace.RootDir, "ssh://")) {
+			branch = a.Git.Branch
+		}
+		if branch != "" {
+			branchChip := ui.Row(c.Key("tray-branch")).Height(26).Radius(6).Padding(0, 7).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			branchChip.Children(func() {
+				ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.TextMuted.Alpha(0.7))
+				ui.Text(c, branch).FontSize(12).TextColor(tc.TextMuted)
+				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.TextMuted.Alpha(0.5))
+			})
+			if branchChip.Hovered() {
+				branchChip.Background(tc.Text.Alpha(0.06))
+			}
+			if branchChip.Clicked() {
+				a.ShowBranchModal = true
+				a.BranchSearchQuery = ""
+				a.Git.Refresh()
+			}
+		}
+	})
+}
+
 func (a *AppUI) renderAgentHome(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	as := a.Agent
@@ -1089,21 +1199,35 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 		return
 	}
 	projectName := filepath.Base(as.WorkspacePath())
-	if projectName == "" || projectName == "." {
+	if projectName == "" || projectName == "." || projectName == "/" {
 		projectName = "General"
 	}
 
-	ui.Column(c).Grow(1).Fill().Center().Gap(20).Padding(24, 32).Background(tc.Canvas).Children(func() {
-		ui.Column(c).AlignItems(ui.Center).Gap(14).Children(func() {
+	ui.Column(c).Grow(1).Fill().Center().Gap(24).Padding(24, 32).Background(tc.Canvas).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Gap(16).Children(func() {
 			ui.Icon(c, icons.ForgeSparkSVG).Width(54).Height(54).TextColor(tc.Text)
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "What should we do in").FontSize(28).FontWeight(600).LetterSpacing(-0.6)
-				ui.Text(c, projectName+"?").FontSize(28).FontWeight(600).LetterSpacing(-0.6).TextColor(tc.Accent)
+			// Heading: the workspace name is a dotted-underline button that
+			// opens the workspace switcher, as AgentHomeView's h2 does.
+			ui.Row(c).Gap(0).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "What should we do in").FontSize(28).FontWeight(600).LetterSpacing(-0.84)
+				ui.Box(c).Width(8)
+				wsBtn := ui.Row(c).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				wsBtn.Children(func() {
+					ui.Text(c, projectName).FontSize(28).FontWeight(600).LetterSpacing(-0.84).
+						DottedUnderline().DecorationColor(tc.TextMuted.Alpha(0.55)).UnderlineOffset(6)
+				})
+				wsBtn.Menu(func(m *ui.Menu) {
+					a.workspaceMenuItems(m)
+				})
+				ui.Text(c, "?").FontSize(28).FontWeight(600).LetterSpacing(-0.84)
 			})
 		})
 
-		// Landing composer
-		a.renderComposerCard(c, tc, true)
+		// Landing composer with the stacked context tray above it
+		ui.Column(c).AlignItems(ui.Center).Gap(0).Children(func() {
+			a.renderLandingTray(c, tc, projectName)
+			a.renderComposerCard(c, tc, true)
+		})
 
 		// Suggestions
 		ui.Row(c).Gap(8).Wrap().Justify(ui.Center).AlignItems(ui.Center).Children(func() {

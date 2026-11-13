@@ -199,7 +199,6 @@ func Badge(c *ui.Context, tc theme.ThemeColors, label string, color ui.Color) ui
 type taskRowData struct {
 	Key         string
 	Title       string
-	Subtitle    string
 	Status      string
 	Active      bool
 	Pinned      bool
@@ -252,40 +251,100 @@ func providerGlyph(agentID string) (glyph rune, color ui.Color, ok bool) {
 }
 
 // renderTaskRow draws AgentSidebar's TaskRow: rounded-[8px] py-1.5 pl-2.5
-// pr-2 gap-2, active bg-foreground/10, provider dot, title + subtitle,
-// hover pin/delete actions.
+// pr-2 gap-2, active bg-foreground/10, provider glyph with a status dot
+// pinned to its corner (running/awaiting only — idle rows show no dot),
+// single-line title with inline pin, relative time, hover-only actions.
 func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	row := ui.Row(c.Key(d.Key)).Radius(8).Padding(6, 8, 6, 10).Gap(8).AlignItems(ui.Center)
+	isRunning := d.Status == "running" || d.Status == "working"
+	isAwaiting := d.Status == "awaiting-approval" || d.Status == "waiting"
 	row.Children(func() {
-		StatusDot(c, tc, d.Status)
-		if glyph, color, ok := providerGlyph(d.AgentID); ok {
-			g := ui.Box(c).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			g.Children(func() {
+		// Provider glyph with the status dot overlaid at its top-right corner,
+		// as forge-ade's ProviderIcon + state badge — unknown agents fall back
+		// to the ForgeADE brand glyph, so the slot always renders.
+		g := ui.Box(c).Size(16, 16).AlignItems(ui.Center).Justify(ui.Center)
+		g.Children(func() {
+			if glyph, color, ok := providerGlyph(d.AgentID); ok {
 				ui.Text(c, string(glyph)).FontSize(10).TextColor(color)
-			})
-		}
-		ui.Column(c).Grow(1).Gap(1).Children(func() {
-			title := ui.Text(c, d.Title).FontSize(13).SingleLine()
-			if d.Active {
-				title.FontWeight(500)
+			} else {
+				ui.Icon(c, icons.ForgeSparkSVG).Width(12).Height(12).TextColor(tc.Accent)
 			}
-			if d.Subtitle != "" {
-				ui.Text(c, d.Subtitle).FontSize(11).TextColor(tc.SidebarMutedForeground).SingleLine()
+			if isAwaiting {
+				ui.Box(c).Absolute().Top(-3).Right(-3).Size(8, 8).Radius(4).Background(tc.Warning)
+			} else if isRunning {
+				ui.Box(c).Absolute().Top(-2).Right(-2).Size(6, 6).Radius(3).Background(tc.Accent)
 			}
 		})
-		if ts := relativeTime(d.UpdatedTime); ts != "" {
-			ui.Text(c, ts).FontSize(11).TextColor(tc.SidebarMutedForeground)
+		// Title with the inline filled pin, as the original's title span.
+		titleRow := ui.Row(c).Grow(1).Gap(5).AlignItems(ui.Center)
+		titleRow.Children(func() {
+			title := ui.Text(c, d.Title).FontSize(13).SingleLine()
+			if d.Active {
+				title.FontWeight(500).TextColor(tc.Text)
+			}
+			if d.Pinned {
+				ui.Icon(c, icons.TablerPinFilled).Width(10).Height(10).TextColor(tc.Accent)
+			}
+		})
+
+		// Time (with running pulse dot), hidden while the hover actions show.
+		if !row.Hovered() {
+			timeRow := ui.Row(c).Gap(4).AlignItems(ui.Center)
+			timeRow.Children(func() {
+				if isRunning {
+					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+				}
+				if ts := relativeTime(d.UpdatedTime); ts != "" {
+					ui.Text(c, ts).FontSize(11).TextColor(tc.SidebarMutedForeground)
+				}
+			})
 		}
-		if d.Pinned {
-			ui.Icon(c, icons.TablerPinFilled).Width(13).Height(13).TextColor(tc.Accent)
-		}
-		if d.OnPin != nil {
-			if IconButton(c, tc, icons.TablerPin, 12).Clicked() {
+
+		// Hover actions: pin (always when pinned), snooze, delete — size-5
+		// hit areas, as forge-ade's group-hover buttons.
+		showActions := row.Hovered() || d.Pinned || d.Snoozed
+		if showActions && d.OnPin != nil {
+			pinBtn := ui.Row(c.Key("ract-pin-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			pinBtn.Children(func() {
+				if d.Pinned {
+					ui.Icon(c, icons.TablerPinFilled).Width(12).Height(12).TextColor(tc.Accent)
+				} else {
+					ui.Icon(c, icons.TablerPin).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+				}
+			})
+			if pinBtn.Hovered() {
+				pinBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if pinBtn.Clicked() {
 				d.OnPin()
 			}
 		}
-		if d.OnDelete != nil {
-			if IconButton(c, tc, icons.TablerTrash, 12).Clicked() {
+		if showActions && d.OnSnooze != nil {
+			snoozeBtn := ui.Row(c.Key("ract-sn-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			snoozeBtn.Children(func() {
+				bell := ui.Icon(c, icons.TablerBellOff).Width(12).Height(12)
+				if d.Snoozed {
+					bell.TextColor(tc.Warning)
+				} else {
+					bell.TextColor(tc.SidebarMutedForeground)
+				}
+			})
+			if snoozeBtn.Hovered() {
+				snoozeBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if snoozeBtn.Clicked() {
+				d.OnSnooze()
+			}
+		}
+		if showActions && d.OnDelete != nil {
+			delBtn := ui.Row(c.Key("ract-del-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			delBtn.Children(func() {
+				ui.Icon(c, icons.TablerTrash).Width(13).Height(13).TextColor(tc.SidebarMutedForeground)
+			})
+			if delBtn.Hovered() {
+				delBtn.Background(tc.Error.Alpha(0.12))
+			}
+			if delBtn.Clicked() {
 				d.OnDelete()
 			}
 		}
@@ -293,13 +352,16 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	if d.Active {
 		row.Background(tc.Text.Alpha(0.1))
 	} else if row.Hovered() {
-		row.Background(tc.SidebarRowHover)
+		row.Background(tc.Text.Alpha(0.1))
 	}
 	if row.Clicked() && d.OnOpen != nil {
 		d.OnOpen()
 	}
 	if d.Archived {
 		row.Opacity(0.65)
+	}
+	if d.Snoozed {
+		row.Opacity(0.5)
 	}
 
 	// Right-click actions, as forge-ade's row hover menu.

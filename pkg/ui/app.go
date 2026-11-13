@@ -140,6 +140,8 @@ type AppUI struct {
 	CollapsedProjectGroups  map[string]bool
 	ExpandedProjectGroups   map[string]bool
 	ExpandedFileTreeFolders map[string]bool
+	ProjectFilter           string // "all" or a project name (sidebar "All projects" menu)
+	TaskSortBy              string // "updated" (default) or "created" (sidebar sort menu)
 	ShowSSHModal            bool
 	ShowSSHQuickMenu        bool
 	SSHLabel                string
@@ -205,6 +207,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SelectedProviderTab:     "all",
 		CollapsedProjectGroups:  make(map[string]bool),
 		ExpandedProjectGroups:   make(map[string]bool),
+		ProjectFilter:           "all",
+		TaskSortBy:              "updated",
 		ExpandedFileTreeFolders: make(map[string]bool),
 		SSHPort:                 22,
 		SSHPortText:             "22",

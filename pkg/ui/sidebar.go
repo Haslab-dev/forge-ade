@@ -44,7 +44,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		// Primary Action Buttons: + New Task (⌘N), Search (⌘K)
 		ui.Column(c).Padding(6, 10).Gap(2).Children(func() {
 			isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
-			newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New Task", "⌘N", isNewTaskActive)
+			newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New task", "⌘N", isNewTaskActive)
 			if newTask.Clicked() {
 				a.NewAgentTask("")
 			}
@@ -81,12 +81,79 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				a.renderFileTree(c)
 			})
 		} else {
-			// Section header: PROJECTS
-			ui.Row(c).Padding(10, 14, 4, 14).AlignItems(ui.Center).Children(func() {
-				SectionLabel(c, tc, "PROJECTS")
+			activeWsPath := ""
+			if a.Workspace != nil {
+				activeWsPath = a.Workspace.RootDir
+			}
+			activeProjectName := resolveProjectName(activeWsPath)
+
+			// Project selector dropdown + quick actions, as forge-ade's
+			// "All projects ⌄" row: project filter + sort menu on the left,
+			// open-folder / new-task / archive / collapse-others on the right.
+			activeProject := resolveProjectName(activeWsPath)
+			ui.Row(c).Padding(6, 14, 2, 14).AlignItems(ui.Center).Children(func() {
+				filterLabel := "All projects"
+				if a.ProjectFilter != "" && a.ProjectFilter != "all" {
+					filterLabel = a.ProjectFilter
+				}
+				filterBtn := ui.Row(c).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				filterBtn.Children(func() {
+					ui.Text(c, filterLabel).FontSize(12).FontWeight(600).SingleLine()
+					ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+				})
+				filterBtn.Menu(func(m *ui.Menu) {
+					if m.Item(menuChecked(a.ProjectFilter == "all", "All projects")).Chosen() {
+						a.ProjectFilter = "all"
+					}
+					for _, name := range a.sidebarProjectNames(activeProject) {
+						thisName := name
+						if m.Item(menuChecked(a.ProjectFilter == thisName, thisName)).Chosen() {
+							a.ProjectFilter = thisName
+						}
+					}
+					m.Separator()
+					if m.Item(menuChecked(a.TaskSortBy == "updated", "Updated (recent)")).Chosen() {
+						a.TaskSortBy = "updated"
+					}
+					if m.Item(menuChecked(a.TaskSortBy == "created", "Created date")).Chosen() {
+						a.TaskSortBy = "created"
+					}
+				})
 				ui.Box(c).Grow(1)
-				if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-					a.NewAgentTask("")
+
+				smallAction := func(key string, icon *ui.SVG, active bool, onPick func()) {
+					btn := ui.Row(c.Key("hdract-" + key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+					btn.Children(func() {
+						ic := ui.Icon(c, icon).Width(14).Height(14)
+						if active {
+							ic.TextColor(tc.Text)
+						} else {
+							ic.TextColor(tc.SidebarMutedForeground)
+						}
+					})
+					if active {
+						btn.Background(tc.Text.Alpha(0.1))
+					} else if btn.Hovered() {
+						btn.Background(tc.Text.Alpha(0.05))
+					}
+					if btn.Clicked() {
+						onPick()
+					}
+				}
+				smallAction("open", icons.TablerArrowDownToLine, false, func() { a.openWorkspaceFolder() })
+				smallAction("new", icons.TablerPlus, false, func() { a.NewAgentTask("") })
+				smallAction("archive", icons.TablerArchive, a.Agent.ActiveFilterTab == "archived", func() {
+					if a.Agent.ActiveFilterTab == "archived" {
+						a.Agent.ActiveFilterTab = "active"
+					} else {
+						a.Agent.ActiveFilterTab = "archived"
+					}
+				})
+				collapsedOthers := a.otherProjectsCollapsed(activeProject)
+				if collapsedOthers {
+					smallAction("expand", icons.TablerMaximize2, false, func() { a.expandAllProjects() })
+				} else {
+					smallAction("collapse", icons.TablerMinimize2, false, func() { a.collapseOtherProjects(activeProject) })
 				}
 			})
 
@@ -95,10 +162,12 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
 			})
 
-			// Filter Tabs: Active, Pinned, Snoozed, Archived with counts
-			activeCount, pinnedCount, snoozedCount, archivedCount := a.Agent.TabCounts()
+			// Filter segmented tabs: Active, Pinned, Snoozed, Archived — the
+			// selected tab is a foreground/15 pill; counts render as an
+			// "(N)" suffix (Active never shows one), as forge-ade does.
+			_, pinnedCount, snoozedCount, archivedCount := a.Agent.TabCounts()
 			tabCounts := map[string]int{
-				"active":   activeCount,
+				"active":   0,
 				"pinned":   pinnedCount,
 				"snoozed":  snoozedCount,
 				"archived": archivedCount,
@@ -113,17 +182,23 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				for _, tab := range []string{"active", "pinned", "snoozed", "archived"} {
 					thisTab := tab
 					active := a.Agent.ActiveFilterTab == thisTab
-					pill := ui.Row(c).Radius(999).Padding(2, 8).AlignItems(ui.Center).Gap(4)
+					label := capitalize(thisTab)
+					if n := tabCounts[thisTab]; n > 0 {
+						label += fmt.Sprintf(" (%d)", n)
+					}
+					pill := ui.Row(c.Key("ftab-" + thisTab)).Radius(999).Padding(2, 8).AlignItems(ui.Center)
 					pill.Children(func() {
-						ui.Text(c, capitalize(thisTab)).FontSize(12)
-						if n := tabCounts[thisTab]; n > 0 {
-							ui.Text(c, fmt.Sprintf("%d", n)).FontSize(10).TextColor(tc.SidebarMutedForeground)
+						txt := ui.Text(c, label).FontSize(12)
+						if active {
+							txt.FontWeight(500)
+						} else {
+							txt.TextColor(tc.SidebarMutedForeground)
 						}
 					})
 					if active {
 						pill.Background(tc.Text.Alpha(0.15))
 					} else if pill.Hovered() {
-						pill.Background(tc.SidebarRowHover)
+						pill.Background(tc.Text.Alpha(0.05))
 					}
 					if pill.Clicked() {
 						a.Agent.ActiveFilterTab = thisTab
@@ -138,12 +213,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				Sessions    []*agent.AgentSession
 				CLISessions []*agent.AgentCLISession
 			}
-
-			activeWsPath := ""
-			if a.Workspace != nil {
-				activeWsPath = a.Workspace.RootDir
-			}
-			activeProjectName := resolveProjectName(activeWsPath)
 
 			groupMap := make(map[string]*projectTaskGroup)
 			var groupOrder []string
@@ -208,11 +277,25 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				ui.Column(c).Padding(2, 6).Gap(4).Children(func() {
 					for _, name := range groupOrder {
 						group := groupMap[name]
-						totalCount := len(group.Sessions) + len(group.CLISessions)
-
-						if a.Agent.SearchQuery != "" && totalCount == 0 {
+						// "All projects ⌄" filter: only the chosen project renders.
+						if a.ProjectFilter != "all" && a.ProjectFilter != "" && group.ProjectName != a.ProjectFilter {
 							continue
 						}
+						totalCount := len(group.Sessions) + len(group.CLISessions)
+
+						// forge-ade renders no group at all when it has no
+						// visible sessions (its groups derive from sessions).
+						if totalCount == 0 {
+							continue
+						}
+
+						// Sort within the group: updated (recent) or created date.
+						sort.SliceStable(group.Sessions, func(i, j int) bool {
+							if a.TaskSortBy == "created" {
+								return group.Sessions[i].CreatedAt.After(group.Sessions[j].CreatedAt)
+							}
+							return group.Sessions[i].UpdatedAt.After(group.Sessions[j].UpdatedAt)
+						})
 
 						isCollapsed := a.CollapsedProjectGroups[group.ProjectName]
 
@@ -254,14 +337,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 							a.CollapsedProjectGroups[group.ProjectName] = !isCollapsed
 						}
 
-						// Expanded Project Tasks
-						if !isCollapsed {
-							ui.Column(c.Key("pbody-"+group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
-								if totalCount == 0 {
-									ui.Row(c).Height(24).Padding(0, 8).AlignItems(ui.Center).Children(func() {
-										ui.Text(c, "No tasks in this project").FontSize(11).TextColor(tc.SidebarMutedForeground)
-									})
-								}
+						// Expanded Project Tasks — forge-ade renders empty groups
+						// as just their header row, no placeholder text.
+						if !isCollapsed && totalCount > 0 {
+							ui.Column(c.Key("pbody-" + group.ProjectName)).Padding(0, 0, 4, 8).Gap(2).Children(func() {
 
 								// 1. Agent ACP Sessions — progressive reveal with
 								// "Show more", as forge-ade's groups do.
@@ -276,7 +355,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									renderTaskRow(c, tc, taskRowData{
 										Key:         "sess-" + s.ID,
 										Title:       s.Title,
-										Subtitle:    s.Model,
 										Status:      s.Status,
 										Active:      isActive,
 										Pinned:      s.Pinned,
@@ -314,7 +392,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									renderTaskRow(c, tc, taskRowData{
 										Key:         "cli-sess-" + cs.ID,
 										Title:       cs.Title,
-										Subtitle:    cs.AgentName + " · CLI Task",
 										Status:      "running",
 										Active:      isActive,
 										AgentID:     "agent-agy",
@@ -410,6 +487,98 @@ func resolveProjectName(folderPath string) string {
 		return "General"
 	}
 	return base
+}
+
+// menuChecked prefixes a menu label with a check mark, matching forge-ade's
+// role="menuitemradio" check indicator.
+func menuChecked(checked bool, label string) string {
+	if checked {
+		return "✓ " + label
+	}
+	return label
+}
+
+// sidebarProjectNames lists the distinct project group names across all
+// agent + CLI sessions, most recently updated first — the "All projects"
+// filter menu entries.
+func (a *AppUI) sidebarProjectNames(activeProject string) []string {
+	seen := map[string]bool{activeProject: true, "General": true}
+	type entry struct {
+		name     string
+		latestAt time.Time
+	}
+	var entries []entry
+	touch := func(name string, at time.Time) {
+		for i := range entries {
+			if entries[i].name == name {
+				if at.After(entries[i].latestAt) {
+					entries[i].latestAt = at
+				}
+				return
+			}
+		}
+		entries = append(entries, entry{name: name, latestAt: at})
+	}
+	if a.Agent != nil {
+		for _, sess := range a.Agent.FilteredSessions() {
+			name := resolveProjectName(sess.WorkspacePath)
+			if sess.WorkspacePath == "" {
+				name = "General"
+			}
+			at := sess.UpdatedAt
+			if a.TaskSortBy == "created" {
+				at = sess.CreatedAt
+			}
+			touch(name, at)
+		}
+	}
+	if a.CLIMgr != nil {
+		for _, cs := range a.CLIMgr.Sessions {
+			touch(resolveProjectName(cs.Cwd), time.Now())
+		}
+	}
+	delete(seen, activeProject) // active project is seeded by the caller order
+	delete(seen, "General")
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].latestAt.After(entries[j].latestAt) })
+	var names []string
+	if activeProject != "" {
+		names = append(names, activeProject)
+	}
+	names = append(names, "General")
+	for _, e := range entries {
+		if e.name == activeProject || e.name == "General" || seen[e.name] {
+			continue
+		}
+		seen[e.name] = true
+		names = append(names, e.name)
+	}
+	return names
+}
+
+// collapseOtherProjects collapses every sidebar project group except the
+// active workspace's group, as forge-ade's Minimize2 toggle does.
+func (a *AppUI) collapseOtherProjects(activeProject string) {
+	for _, name := range a.sidebarProjectNames(activeProject) {
+		if name != activeProject {
+			a.CollapsedProjectGroups[name] = true
+		}
+	}
+}
+
+// expandAllProjects clears the per-project collapse state.
+func (a *AppUI) expandAllProjects() {
+	a.CollapsedProjectGroups = make(map[string]bool)
+}
+
+// otherProjectsCollapsed reports whether any non-active project group is
+// currently collapsed, driving the Minimize2/Maximize2 toggle icon.
+func (a *AppUI) otherProjectsCollapsed(activeProject string) bool {
+	for _, name := range a.sidebarProjectNames(activeProject) {
+		if name != activeProject && a.CollapsedProjectGroups[name] {
+			return true
+		}
+	}
+	return false
 }
 
 // FileTreeNode represents a node in the hierarchical file tree.

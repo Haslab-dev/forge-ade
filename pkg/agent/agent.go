@@ -636,7 +636,7 @@ func (as *AgentState) ReasoningEffortLabel() string {
 	case EffortMax:
 		return "Max"
 	default:
-		return "Med"
+		return "Medium"
 	}
 }
 
