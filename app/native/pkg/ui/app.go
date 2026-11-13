@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
@@ -70,43 +71,54 @@ const (
 
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
 type AppUI struct {
-	Engine               *engine.Engine
-	Window               *mygo.Window
-	Workspace            *workspace.WorkspaceState
-	Editor               *editor.EditorManager
-	Terminal             *terminal.TerminalState
-	Agent                *agent.AgentState
-	Git                  *git.GitManager
-	Database             *database.DatabaseManager
-	Palette              *palette.PaletteManager
-	Settings             *settings.SettingsManager
-	ThemeMgr             *theme.ThemeManager
-	ACPMgr               *agent.ACPManager
-	CLIMgr               *agent.AgentCLIManager
-	Board                *board.BoardManager
-	Mode                 int      // ModeAgent or ModeEditor
-	ActiveTaskKind       string   // "agent" or "cli"
-	ShowLeftSidebar      bool     // Left sidebar visibility
-	LeftSidebarView      string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
-	SideFileTabs         []string // files opened in the right sidebar from the explorer
-	ActiveSideFile       string
-	ShowBottomTerminal   bool    // Collapsible bottom terminal drawer
-	BottomTerminalHeight float32 // Resizable terminal height
-	ShowRightDrawer      bool    // Collapsible right side pane
-	RightDrawerWidth     float32 // Resizable right pane width
-	LeftSidebarWidth     float32 // Resizable left sidebar width
-	RightDrawerTab       int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
-	EditorActivity       int     // ActivityExplorer, ActivityGit, ActivityDatabase
-	SelectedFile         string
-	FileSearchQuery      string
-	FileSearchHits       []workspace.FileSearchHit
-	SelectedDiffPath     string
-	SideChatMessages     []*agent.ChatMessage
-	SideChatInput        string
-	SideChatModel        string
-	SideChatMode         string // "full", "ask", "plan"
-	SideChatStreaming    bool
-	SideChatMd           markdown.Options
+	Engine                *engine.Engine
+	Window                *mygo.Window
+	Workspace             *workspace.WorkspaceState
+	Editor                *editor.EditorManager
+	Terminal              *terminal.TerminalState
+	Agent                 *agent.AgentState
+	Git                   *git.GitManager
+	Database              *database.DatabaseManager
+	Palette               *palette.PaletteManager
+	Settings              *settings.SettingsManager
+	ThemeMgr              *theme.ThemeManager
+	ACPMgr                *agent.ACPManager
+	CLIMgr                *agent.AgentCLIManager
+	Board                 *board.BoardManager
+	Mode                  int      // ModeAgent or ModeEditor
+	ActiveTaskKind        string   // "agent" or "cli"
+	ShowLeftSidebar       bool     // Left sidebar visibility
+	LeftSidebarView       string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	SideFileTabs          []string // files opened in the right sidebar from the explorer
+	ActiveSideFile        string
+	ShowBottomTerminal    bool    // Collapsible bottom terminal drawer
+	BottomTerminalHeight  float32 // Resizable terminal height
+	ShowRightDrawer       bool    // Collapsible right side pane
+	RightDrawerWidth      float32 // Resizable right pane width
+	LeftSidebarWidth      float32 // Resizable left sidebar width
+	RightDrawerTab        int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
+	EditorActivity        int     // ActivityExplorer, ActivityGit, ActivityDatabase
+	SelectedFile          string
+	FileSearchQuery       string
+	FileSearchHits        []workspace.FileSearchHit
+	FileSearchMode        string // "files" | "content" (ProjectSearchModal parity)
+	FileSearchCase        bool
+	FileSearchRegex       bool
+	FileSearchWholeWord   bool
+	FileSearchGlob        string
+	FileSearchReplaceOpen bool
+	FileSearchReplace     string
+	FileSearchBusy        bool
+	SearchStatusMsg       string
+	ContentHits           []search.RankedResult
+	ContentHitsAt         string
+	SelectedDiffPath      string
+	SideChatMessages      []*agent.ChatMessage
+	SideChatInput         string
+	SideChatModel         string
+	SideChatMode          string // "full", "ask", "plan"
+	SideChatStreaming     bool
+	SideChatMd            markdown.Options
 
 	// Composer autocomplete state (slash commands / @-mentions): visibility
 	// derives from the composer text each frame; the dismissal latches hold
