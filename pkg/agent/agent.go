@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -341,6 +342,12 @@ func (as *AgentState) HandleToolEvent(ev ToolEvent) {
 			}
 			msg.Tools = append(msg.Tools, existing)
 		}
+		// update_tasks-style calls drive the floating tracker, like
+		// forge-ade's runtime task list.
+		if strings.Contains(strings.ToLower(ev.Name), "task") {
+			as.applyTaskUpdatePayload(ev.Args)
+			as.applyTaskUpdatePayload(ev.Output)
+		}
 		if ev.Name != "" {
 			existing.ToolName = ev.Name
 		}
@@ -397,6 +404,8 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		msg := as.ensureStreamingMessage(s)
 		msg.Done = true
 		msg.IsThinking = false
+		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(msg.Text))
+		msg.Thinking = cleanRawToolTags(msg.Thinking)
 		if !msg.TurnStartedAt.IsZero() {
 			msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
 		} else {
@@ -489,6 +498,57 @@ func (as *AgentState) HandleAsk(req *PermissionRequest) {
 		as.Messages = s.Messages
 		break
 	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// applyTaskUpdatePayload parses an update_tasks payload (args or result JSON
+// with a tasks array) into the active session's floating tracker.
+func (as *AgentState) applyTaskUpdatePayload(payload string) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" || payload[0] != '{' {
+		return
+	}
+	var parsed struct {
+		Tasks []struct {
+			Title      string `json:"title"`
+			Status     string `json:"status"`
+			ActiveForm string `json:"active_form"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil || len(parsed.Tasks) == 0 {
+		return
+	}
+	as.mu.Lock()
+	sess := as.ActiveSession()
+	if sess == nil {
+		as.mu.Unlock()
+		return
+	}
+	if sess.Tasks == nil {
+		sess.Tasks = NewTaskManager()
+	}
+	items := make([]TaskItem, 0, len(parsed.Tasks))
+	for i, tk := range parsed.Tasks {
+		status := TaskPending
+		switch strings.ToLower(tk.Status) {
+		case "completed", "done":
+			status = TaskCompleted
+		case "in_progress", "active", "running":
+			status = TaskInProgress
+		}
+		items = append(items, TaskItem{
+			ID:         fmt.Sprintf("%d", i+1),
+			Title:      tk.Title,
+			Status:     status,
+			ActiveForm: tk.ActiveForm,
+		})
+	}
+	sess.Tasks.SetTasks(items)
+	as.TaskManager = sess.Tasks
+	as.Messages = sess.Messages
 	as.mu.Unlock()
 	if as.Invalidate != nil {
 		as.Invalidate()
@@ -609,6 +669,123 @@ func (as *AgentState) AttachFiles(paths []string) {
 		as.AttachFile(p)
 	}
 }
+
+var (
+	rawToolOnce = sync.OnceValue(func() []*regexp.Regexp {
+		patterns := []string{
+			// 1. Complete in-band tool call and container blocks.
+			`(?i)<toolcall[\s\S]*?</toolcall>`,
+			`(?i)<tool_call[\s\S]*?</tool_call>`,
+			`(?i)<[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?calls>[\s\S]*?</[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?calls>`,
+			`(?i)<[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?invoke[\s\S]*?</[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?invoke>`,
+			`(?i)<function_call[\s\S]*?</function_call>`,
+			// 2. Unclosed in-band tool block at the end (streaming params).
+			`(?i)<[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?(?:calls|invoke)[\s\S]*$`,
+			`(?i)<(?:toolcall|tool_call|function_call)[\s\S]*$`,
+			// 3. Standalone or unclosed parameter blocks.
+			`(?i)<[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?parameter[\s\S]*?</[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?parameter>`,
+			`(?i)<[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?parameter[\s\S]*$`,
+			// 4. Residual tool tags.
+			`(?i)</?(?:toolcall|tool_call|function_call|[|\s\x{FF5C}]*(?:DSML[|\s\x{FF5C}]*)?(?:invoke|parameter|calls|call_begin|call_end))(?:=[^>]+|[^>]*)>`,
+		}
+		res := make([]*regexp.Regexp, 0, len(patterns))
+		for _, p := range patterns {
+			res = append(res, regexp.MustCompile(p))
+		}
+		return res
+	})
+)
+
+// cleanRawToolTags removes in-band tool-call blocks that models echo into
+// their text (DeepSeek DSML tags, toolcall/function_call blocks), exactly as
+// forge-ade's cleanRawToolTags does before a reply is shown.
+func cleanRawToolTags(text string) string {
+	if text == "" {
+		return ""
+	}
+	s := text
+	for _, re := range rawToolOnce() {
+		s = re.ReplaceAllString(s, "")
+	}
+	return strings.TrimSpace(s)
+}
+
+// cleanTaskJSONBlocks strips standalone update_tasks JSON blobs (tool
+// arguments/results the model echoes into its reply) from the final text.
+// A blob is a brace-balanced object carrying an update_tasks signature.
+func cleanTaskJSONBlocks(text string) string {
+	if !strings.Contains(text, `"tasks"`) &&
+		!strings.Contains(text, `"active_form"`) &&
+		!strings.Contains(text, `"just_completed"`) {
+		return text
+	}
+	signatures := []string{`"tasks"`, `"active_form"`, `"just_completed"`}
+	var out strings.Builder
+	i := 0
+	for i < len(text) {
+		if text[i] == '{' {
+			headEnd := i + 200
+			if headEnd > len(text) {
+				headEnd = len(text)
+			}
+			head := text[i:headEnd]
+			isTask := false
+			for _, sig := range signatures {
+				if strings.Contains(head, sig) {
+					isTask = true
+					break
+				}
+			}
+			if isTask {
+				if end := braceEnd(text, i); end != -1 {
+					i = end + 1
+					continue
+				}
+			}
+		}
+		out.WriteByte(text[i])
+		i++
+	}
+	return strings.TrimRight(out.String(), " \t\n")
+}
+
+// braceEnd returns the index of the '}' matching the '{' at start, honoring
+// strings and escapes, or -1.
+func braceEnd(text string, start int) int {
+	depth := 0
+	inStr, esc := false, false
+	for j := start; j < len(text); j++ {
+		c := text[j]
+		if esc {
+			esc = false
+			continue
+		}
+		if inStr {
+			switch {
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
+// CleanRawToolTags exposes the cleaner for the UI layer.
+func CleanRawToolTags(text string) string { return cleanRawToolTags(text) }
 
 // AttachFile adds a file path to the pending composer attachments.
 func (as *AgentState) AttachFile(path string) {
@@ -847,7 +1024,9 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 			if role == "agent" {
 				role = "assistant"
 			}
-			txt := extractMessageText(m)
+			// Clean raw tool tags and echoed task JSON, as forge-ade does
+			// for loaded sessions.
+			txt := cleanTaskJSONBlocks(cleanRawToolTags(extractMessageText(m)))
 			if txt == "" && len(m.ToolExecutions) == 0 && len(m.Thoughts) == 0 {
 				continue
 			}

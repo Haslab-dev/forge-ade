@@ -1252,13 +1252,27 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 		header := ui.Row(c).Gap(8).AlignItems(ui.Center)
 		header.Children(func() {
 			ui.Icon(c, icons.TablerChecklist).Width(14).Height(14).TextColor(tc.IconMuted)
-			goal := tm.Goal
-			if goal == "" {
-				goal = "Active Goal"
-			}
-			ui.Text(c, goal).FontSize(13).FontWeight(600).Grow(1).SingleLine()
+			ui.Column(c).Gap(1).Grow(1).Children(func() {
+				goal := tm.Goal
+				ui.Text(c, "Runtime & Tasks").FontSize(13).FontWeight(600).SingleLine()
+				if goal != "" {
+					ui.Text(c, goal).FontSize(11).TextColor(tc.TextMuted).SingleLine()
+				}
+			})
 			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600).TextColor(tc.Accent)
-			ui.Icon(c, icons.TablerChevronUp).Width(13).Height(13).TextColor(tc.IconMuted)
+			menuBtn := ui.Row(c).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			menuBtn.Children(func() {
+				ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
+			})
+			if menuBtn.Hovered() {
+				menuBtn.Background(tc.Text.Alpha(0.06))
+			}
+			menuBtn.ContextMenu(func(m *ui.Menu) {
+				if m.Item("Clear tasks").Danger().Chosen() {
+					tm.Clear()
+				}
+			})
+			ui.Icon(c, icons.TablerMinimize).Width(13).Height(13).TextColor(tc.IconMuted)
 		})
 		if header.Hovered() {
 			header.Background(tc.Text.Alpha(0.04)).Radius(6)
@@ -1288,7 +1302,7 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 					if isDone {
 						ui.Icon(c, icons.TablerCircleCheck).Width(14).Height(14).TextColor(tc.TextMuted)
 					} else if isCurrent {
-						ui.Spinner(c).Size(13, 13).Label("current task")
+						ui.Icon(c, icons.TablerArrowRight).Width(14).Height(14).TextColor(tc.Accent)
 					} else {
 						ui.Icon(c, icons.TablerCircle).Width(14).Height(14).TextColor(tc.IconMuted)
 					}
