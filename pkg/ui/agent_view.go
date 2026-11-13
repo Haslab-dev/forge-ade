@@ -17,6 +17,12 @@ import (
 
 // renderAgentSurface renders the center chat viewport, collapsible terminal & right drawer.
 func (a *AppUI) renderAgentSurface(c *ui.Context) {
+	// The agent area hosts three main views, as forge-ade's AgentContainer:
+	// the chat, the Workflow Board, and the Git Client.
+	if a.AgentViewMode == AgentViewBoard || a.AgentViewMode == AgentViewGit {
+		a.renderAgentView(c)
+		return
+	}
 	tc := a.ThemeMgr.Colors()
 
 	// Center Column: Main Chat Container (or CLI surface) + Collapsible Bottom Terminal

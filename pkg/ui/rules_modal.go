@@ -20,6 +20,7 @@ var supportedRuleFiles = []string{
 	"AGENTS.md",
 	".cursorrules",
 	"CLAUDE.md",
+	".forge/rules.md",
 	".github/copilot-instructions.md",
 }
 
@@ -213,10 +214,11 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 						}
 					})
 
-					// Editor Text Area
+					// Editor Text Area (multiline, mono)
 					ui.Column(c).Grow(1).Padding(12, 16).Children(func() {
 						placeholder := fmt.Sprintf("# Rules for %s\n\nEnter guidelines, tech stack constraints, and coding standards here...", a.SelectedRulePath)
-						ui.TextInput(c, &a.RuleEditorContent).Placeholder(placeholder).Grow(1).FillHeight()
+						ui.TextAreaBase(c, &a.RuleEditorContent).Lines(1, 40).
+							Placeholder(placeholder).Grow(1).FillHeight()
 					})
 				})
 			})

@@ -20,14 +20,13 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 
 	if c.Shortcut(0, ui.KeyEscape) {
 		sm.IsOpen = false
+		a.Mode = ModeAgent
 		return
 	}
 
-	ui.Modal(c, &sm.IsOpen, func() {
-		// Full framed settings modal: 860px width, 580px height
-		ui.Column(c).Width(860).Height(580).Radius(16).
-			Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
-			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.6)).Children(func() {
+	// ForgeADE's settings is a full-screen surface with its own nav.
+	{
+		ui.Column(c).Fill().Background(tc.SurfaceOverlay).Children(func() {
 
 			// 1. Header Bar: Back Button, Breadcrumb, Search Bar, Close Button
 			ui.Row(c).Height(48).Padding(0, 16).Gap(12).AlignItems(ui.Center).
@@ -37,10 +36,11 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
 				backBtn.Children(func() {
 					ui.Icon(c, icons.TablerArrowLeft).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, "Back").FontSize(12).FontWeight(500)
+					ui.Text(c, "Back to workspace").FontSize(12).FontWeight(500)
 				})
 				if backBtn.Clicked() {
 					sm.IsOpen = false
+					a.Mode = ModeAgent
 				}
 
 				// Breadcrumb
@@ -127,7 +127,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 				})
 			})
 		})
-	})
+	}
 }
 
 func settingsSectionTitle(tab int) string {

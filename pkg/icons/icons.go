@@ -118,6 +118,8 @@ var (
 	TablerServer          = tablerSVG(`<path d="M3 4m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z"/><path d="M3 12m0 3a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v2a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3z"/><path d="M7 8l0 .01"/><path d="M7 16l0 .01"/>`)
 	TablerHelp            = tablerSVG(`<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M12 17l0 .01"/><path d="M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -2"/>`)
 	TablerChartBar        = tablerSVG(`<path d="M3 12m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M9 8m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v10a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M15 4m0 1a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v14a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1z"/><path d="M4 20l14 0"/>`)
+	TablerUser            = tablerSVG(`<path d="M6 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2"/><path d="M12 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/>`)
+	TablerList            = tablerSVG(`<path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/><path d="M8 5l13 0"/><path d="M8 12l13 0"/><path d="M8 19l13 0"/>`)
 	TablerLayoutKanban    = tablerSVG(`<path d="M4 4l0 16"/><path d="M7 6h4v11h-4z"/><path d="M15 6h4v6h-4z"/>`)
 	TablerBook            = tablerSVG(`<path d="M3 19a9 9 0 0 1 9 0a9 9 0 0 1 9 0"/><path d="M3 6a9 9 0 0 1 9 0a9 9 0 0 1 9 0"/><path d="M3 6l0 13"/><path d="M12 6l0 13"/><path d="M21 6l0 13"/>`)
 	TablerBot             = tablerSVG(`<path d="M7 7h10a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-8a2 2 0 0 1 2 -2z"/><path d="M9 11v.01"/><path d="M15 11v.01"/><path d="M9.5 15a3.5 3.5 0 0 0 5 0"/><path d="M12 7v-4"/><path d="M10 3h4"/>`)

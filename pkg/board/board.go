@@ -20,8 +20,9 @@ var BoardColumnDefs = []struct {
 
 // BoardColumn represents one kanban lane with its tasks.
 type BoardColumn struct {
-	Name  string
-	Tasks []*internalboard.Task
+	Name   string
+	Status string
+	Tasks  []*internalboard.Task
 }
 
 // BoardData holds all loaded columns in display order.

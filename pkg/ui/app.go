@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -24,8 +26,9 @@ import (
 
 // Application surface modes
 const (
-	ModeAgent  = 0
-	ModeEditor = 1
+	ModeAgent    = 0
+	ModeEditor   = 1
+	ModeSettings = 2
 )
 
 // Agent sidebar view modes
@@ -157,6 +160,12 @@ type AppUI struct {
 	SelectedRulePath        string
 	RuleEditorContent       string
 	BoardSearchQuery        string
+	BoardViewMode           string // "" = board, "list"
+	ShowBoardTaskModal      bool
+	BoardTaskStatus         string
+	BoardTaskTitle          string
+	AgentViewMode           string // AgentViewChat / AgentViewBoard / AgentViewGit
+	GitRemoteURL            string
 	ShowNewBoardTaskModal   bool
 	NewBoardTaskTitle       string
 	NewBoardTaskDesc        string
@@ -393,6 +402,19 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 	}
 }
 
+// loadGitRemoteURL reads the origin remote URL for the Git Client badge.
+func (a *AppUI) loadGitRemoteURL() {
+	if a.Engine == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", a.Workspace.RootDir, "config", "--get", "remote.origin.url").Output()
+	if err == nil {
+		a.GitRemoteURL = strings.TrimSpace(string(out))
+	}
+}
+
 // RefreshBoard reloads the workflow board from .forge/board_tasks.json.
 func (a *AppUI) RefreshBoard() {
 	if a.Board == nil {
@@ -476,7 +498,10 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
 	}
 	if cmdOrCtrl(ui.KeyComma) {
-		a.Settings.Toggle()
+		a.Mode = ModeSettings
+		if a.Settings != nil {
+			a.Settings.IsOpen = true
+		}
 	}
 	if cmdOrCtrl(ui.KeyB) {
 		a.ShowLeftSidebar = !a.ShowLeftSidebar
@@ -671,10 +696,13 @@ func (a *AppUI) renderMainColumn(c *ui.Context) {
 		a.renderWorkspaceHeader(c)
 
 		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-			if a.Mode == ModeAgent {
-				a.renderAgentSurface(c)
-			} else {
+			switch a.Mode {
+			case ModeSettings:
+				a.renderSettingsScreen(c)
+			case ModeEditor:
 				a.renderEditorSurface(c)
+			default:
+				a.renderAgentSurface(c)
 			}
 		})
 

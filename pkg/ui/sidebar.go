@@ -369,21 +369,18 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 					a.ShowRightDrawer = true
 					a.RightDrawerTab = RightTabTasks
 				})
-				dockBtn(icons.TablerLayoutKanban, a.RightDrawerTab == RightTabBoard && a.ShowRightDrawer, func() {
-					a.ShowRightDrawer = true
-					a.RightDrawerTab = RightTabBoard
+				dockBtn(icons.TablerLayoutKanban, a.Mode == ModeAgent && a.AgentViewMode == AgentViewBoard, func() {
+					a.openBoardSurface()
 				})
-				dockBtn(icons.TablerGitBranch, a.RightDrawerTab == RightTabGit && a.ShowRightDrawer, func() {
-					a.ShowRightDrawer = true
-					a.RightDrawerTab = RightTabGit
+				dockBtn(icons.TablerGitBranch, a.Mode == ModeAgent && a.AgentViewMode == AgentViewGit, func() {
+					a.openGitClientSurface()
+					a.loadGitRemoteURL()
 				})
-				dockBtn(icons.TablerBook, false, func() {
-					a.ShowNewFileModal = true
-					a.NewFileName = "AGENTS.md"
-				})
-				dockBtn(icons.TablerSettings, a.Settings != nil && a.Settings.IsOpen, func() {
+				dockBtn(icons.TablerBook, false, func() { a.OpenRulesModal() })
+				dockBtn(icons.TablerSettings, a.Mode == ModeSettings, func() {
+					a.Mode = ModeSettings
 					if a.Settings != nil {
-						a.Settings.Toggle()
+						a.Settings.IsOpen = true
 					}
 				})
 				ui.Box(c).Grow(1)

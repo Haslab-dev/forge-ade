@@ -161,6 +161,36 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 }
 
 // OpenPatchDiff parses and caches a patch diff view for the given file.
+// OpenPatchDiffKeyed builds or returns the cached diff for an arbitrary key
+// (commit hash + path), so multiple commit diffs coexist.
+func (em *EditorManager) OpenPatchDiffKeyed(key, patch string, tm *theme.ThemeManager) *mygoeditor.DiffState {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if tm != nil {
+		em.Theme = tm
+	}
+	if d, ok := em.patchDiffs[key]; ok {
+		return d
+	}
+	files, err := mygoeditor.ParsePatch(patch)
+	if err != nil || len(files) == 0 {
+		return nil
+	}
+	d := &mygoeditor.DiffState{
+		Layout:        mygoeditor.DiffLayout(em.DiffLayout),
+		HunkActions:   true,
+		LineSelection: true,
+	}
+	d.SetPatch(files[0])
+	if em.Theme != nil {
+		d.Theme = em.Theme.EditorTheme()
+	}
+	d.Font = em.EditorFont()
+	d.LineHeight = 1.65
+	em.patchDiffs[key] = d
+	return d
+}
+
 func (em *EditorManager) OpenPatchDiff(relPath, patch string, tm *theme.ThemeManager) *mygoeditor.DiffState {
 	em.mu.Lock()
 	defer em.mu.Unlock()

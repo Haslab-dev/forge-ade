@@ -47,10 +47,6 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				{RightTabChanges, "Changes", icons.TablerFileDiff},
 				{RightTabTerminal, "Terminal", icons.TablerTerminal},
 				{RightTabChat, "Chat", icons.TablerMessage},
-				{RightTabTasks, "Tasks", icons.TablerChecklist},
-				{RightTabBoard, "Board", icons.TablerLayoutKanban},
-				{RightTabGit, "Git", icons.TablerGitBranch},
-				{RightTabDatabase, "DB", icons.TablerDatabase},
 				{RightTabFiles, "Files", icons.TablerFolder},
 			}
 
@@ -102,16 +98,6 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				}
 			case RightTabChat:
 				a.renderSideChatPane(c)
-			case RightTabTasks:
-				if a.Agent != nil && a.Agent.TaskManager != nil {
-					a.renderTaskChecklist(c)
-				}
-			case RightTabBoard:
-				a.renderBoardPane(c)
-			case RightTabGit:
-				a.renderGitPane(c)
-			case RightTabDatabase:
-				a.renderDatabasePane(c)
 			case RightTabFiles:
 				a.renderFilesPane(c)
 			}

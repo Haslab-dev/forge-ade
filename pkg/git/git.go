@@ -20,31 +20,46 @@ const (
 
 // GitManager manages repository status, staging, unstaging, AI commits, and branches.
 type GitManager struct {
-	mu                 sync.RWMutex
-	engine             *engine.Engine
-	RootDir            string
-	DiscardPendingPath string // file awaiting discard confirmation
-	Branch             string
-	ActiveTab          int
-	Staged             []internalgit.FileStatus
-	Unstaged           []internalgit.FileStatus
-	Untracked          []internalgit.FileStatus
-	Conflicts          []internalgit.FileStatus
-	Commits            []internalgit.CommitNode
-	Branches           []string
-	CommitMsg          string
-	CommitSummary      string
-	CommitDesc         string
-	NewBranchName      string
-	StatusMsg          string
-	IsGeneratingAI     bool
-	IsFetching         bool
-	IsPulling          bool
-	IsPushing          bool
-	SelectedCommitHash string
-	SelectedCommitDiff string
-	OnFileSelect       func(path string, showDiff bool)
-	OnNeedRedraw       func()
+	mu                    sync.RWMutex
+	engine                *engine.Engine
+	RootDir               string
+	DiscardPendingPath    string // file awaiting discard confirmation
+	Branch                string
+	ActiveTab             int
+	Staged                []internalgit.FileStatus
+	Unstaged              []internalgit.FileStatus
+	Untracked             []internalgit.FileStatus
+	Conflicts             []internalgit.FileStatus
+	Commits               []internalgit.CommitNode
+	Branches              []string
+	CommitMsg             string
+	CommitSummary         string
+	CommitDesc            string
+	NewBranchName         string
+	StatusMsg             string
+	IsGeneratingAI        bool
+	IsFetching            bool
+	IsPulling             bool
+	IsPushing             bool
+	SelectedCommitHash    string
+	SelectedCommitDiff    string
+	SelectedCommitMessage string
+	SelectedCommitAuthor  string
+	SelectedCommitFiles   []CommitFileDiff
+	SearchQuery           string
+	DiffStarted           bool
+
+	OnFileSelect func(path string, showDiff bool)
+	OnNeedRedraw func()
+}
+
+// CommitFileDiff is one file's patch within the selected commit.
+type CommitFileDiff struct {
+	Path      string
+	Additions int
+	Deletions int
+	Patch     string
+	Diff      interface{} `json:"-"` // *mygoeditor.DiffState, built lazily by the UI
 }
 
 // NewGitManager creates an initialized GitManager for the repository.
@@ -254,24 +269,80 @@ func (gm *GitManager) Push() error {
 }
 
 // SelectCommit loads diff for the designated commit hash.
+// SelectCommit loads a commit's diff and splits it into per-file patches
+// with +/- counts, for the Git Client's detail pane.
 func (gm *GitManager) SelectCommit(hash string) {
 	if gm.engine == nil {
 		return
 	}
 	gm.mu.Lock()
 	gm.SelectedCommitHash = hash
+	for _, cm := range gm.Commits {
+		if cm.Hash == hash {
+			gm.SelectedCommitMessage = cm.Message
+			gm.SelectedCommitAuthor = cm.AuthorName
+			break
+		}
+	}
 	gm.mu.Unlock()
 	go func() {
 		diff := gm.engine.GetCommitDiff(gm.RootDir, hash)
+		files := splitCommitDiff(diff)
 		gm.mu.Lock()
 		if gm.SelectedCommitHash == hash {
 			gm.SelectedCommitDiff = diff
+			gm.SelectedCommitFiles = files
 		}
 		gm.mu.Unlock()
 		if gm.OnNeedRedraw != nil {
 			gm.OnNeedRedraw()
 		}
 	}()
+}
+
+// splitCommitDiff breaks a full commit patch into per-file patches with
+// +/- counts counted from the hunks.
+func splitCommitDiff(diff string) []CommitFileDiff {
+	if diff == "" {
+		return nil
+	}
+	var out []CommitFileDiff
+	var cur *CommitFileDiff
+	var curBuf strings.Builder
+	flush := func() {
+		if cur != nil {
+			cur.Patch = curBuf.String()
+			for _, line := range strings.Split(cur.Patch, "\n") {
+				if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+					cur.Additions++
+				} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+					cur.Deletions++
+				}
+			}
+			out = append(out, *cur)
+		}
+		cur = nil
+		curBuf.Reset()
+	}
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+			cur = &CommitFileDiff{}
+			// "diff --git a/pkg/x.go b/pkg/x.go"
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				cur.Path = strings.TrimPrefix(parts[len(parts)-1], "b/")
+			}
+			curBuf.WriteString(line + "\n")
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		curBuf.WriteString(line + "\n")
+	}
+	flush()
+	return out
 }
 
 // Commit creates a new commit with the provided commit message.

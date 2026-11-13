@@ -24,27 +24,6 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 	if a.Engine != nil {
 		quotaData = a.Engine.GetAgentQuota("agent-agy")
 	}
-	quotaStr := func(group, key string) string {
-		g, _ := quotaData[group].(map[string]interface{})
-		if g == nil {
-			return ""
-		}
-		v, _ := g[key].(string)
-		return v
-	}
-	quotaPct := func(group, key string) float64 {
-		g, _ := quotaData[group].(map[string]interface{})
-		if g == nil {
-			return 100
-		}
-		v, _ := g[key].(float64)
-		if v <= 0 {
-			return 100
-		}
-		return v
-	}
-	weeklyPct := quotaPct("weekly", "remainingPercent")
-	fiveHourPct := quotaPct("fiveHour", "remainingPercent")
 	account := ""
 	if v, ok := quotaData["account"].(string); ok {
 		account = v
@@ -58,6 +37,31 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 			return ui.Hex("#fbbf24")
 		}
 		return tc.Error
+	}
+	str_ := func(v interface{}) string {
+		s, _ := v.(string)
+		return s
+	}
+	mapOf := func(v interface{}) map[string]interface{} {
+		m, _ := v.(map[string]interface{})
+		return m
+	}
+	pctOf := func(m map[string]interface{}, def float64) float64 {
+		if m == nil {
+			return def
+		}
+		v, _ := m["remainingPercent"].(float64)
+		if v <= 0 {
+			return def
+		}
+		return v
+	}
+	strOf := func(m map[string]interface{}, key string) string {
+		if m == nil {
+			return ""
+		}
+		s, _ := m[key].(string)
+		return s
 	}
 	quotaBar := func(label string, pct float64, resetsIn string) {
 		color := pctColor(pct)
@@ -138,37 +142,66 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 
 			// Body
 			ui.Column(c).Padding(16, 20).Gap(14).Children(func() {
-				// Card 1: Agent Provider Tier & Quotas
-				activeModel := "gemini-3.8-flash-high"
-				if as != nil && as.ActiveModel != "" {
-					activeModel = as.ActiveModel
+				// Model groups from forge-ade's quota engine (Gemini,
+				// Claude & GPT, ...), each with weekly + five-hour windows.
+				type quotaGroup struct {
+					Label  string
+					Models string
+					Weekly map[string]interface{}
+					Five   map[string]interface{}
+				}
+				groups := []quotaGroup{{
+					Label:  str_(quotaData["modelGroup"]),
+					Models: str_(quotaData["models"]),
+					Weekly: mapOf(quotaData["weekly"]),
+					Five:   mapOf(quotaData["fiveHour"]),
+				}}
+				if extras, ok := quotaData["extraGroups"].([]interface{}); ok {
+					for _, eg := range extras {
+						em, _ := eg.(map[string]interface{})
+						if em == nil {
+							continue
+						}
+						groups = append(groups, quotaGroup{
+							Label:  str_(em["modelGroup"]),
+							Models: str_(em["models"]),
+							Weekly: mapOf(em["weekly"]),
+							Five:   mapOf(em["fiveHour"]),
+						})
+					}
 				}
 
-				ui.Column(c).Padding(14).Radius(12).Background(tc.SurfaceRaised.Alpha(0.5)).
-					BorderWidth(1).BorderColor(tc.Border.Alpha(0.7)).Gap(10).Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Column(c).Children(func() {
-							ui.Text(c, "MODELS & QUOTA").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-							accountLabel := "Account: Antigravity ACP Local"
-							if account != "" {
-								accountLabel = "Account: " + account
+				renderQuotaCard := func(g quotaGroup) {
+					ui.Column(c).Padding(14).Radius(12).Background(tc.SurfaceRaised.Alpha(0.5)).
+						BorderWidth(1).BorderColor(tc.Border.Alpha(0.7)).Gap(10).Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Children(func() {
+							ui.Column(c).Gap(2).Children(func() {
+								ui.Text(c, "MODELS & QUOTA").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+								accountLabel := "Account: Antigravity ACP Local"
+								if account != "" {
+									accountLabel = "Account: " + account
+								}
+								ui.Text(c, accountLabel).FontSize(11).FontWeight(600).TextColor(tc.Success)
+							})
+							ui.Box(c).Grow(1)
+							if g.Label != "" {
+								badge := ui.Row(c).Radius(4).Padding(2, 8).Background(tc.Accent.Alpha(0.15)).
+									BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+								badge.Children(func() {
+									ui.Text(c, g.Label).FontSize(10).FontWeight(700).TextColor(tc.Accent)
+								})
 							}
-							ui.Text(c, accountLabel).FontSize(11).FontWeight(600).TextColor(tc.Success)
 						})
-						ui.Box(c).Grow(1)
-						ui.Row(c).Radius(4).Padding(2, 8).Background(ui.RGBA(14, 165, 233, 0.15)).
-							BorderWidth(1).BorderColor(ui.RGBA(14, 165, 233, 0.3)).Children(func() {
-							ui.Text(c, "GEMINI & CLAUDE").FontSize(10).FontWeight(700).TextColor(ui.RGBA(56, 189, 248, 1.0))
-						})
+						if g.Models != "" {
+							ui.Text(c, "Models within group: "+g.Models).FontSize(11).TextColor(tc.TextMuted)
+						}
+						quotaBar("Weekly Limit Remaining", pctOf(g.Weekly, 100), strOf(g.Weekly, "refreshesIn"))
+						quotaBar("Five Hour Limit Remaining", pctOf(g.Five, 100), strOf(g.Five, "refreshesIn"))
 					})
-
-					ui.Text(c, fmt.Sprintf("Active model: %s (also supports Gemini Pro, Claude 3.7 Sonnet)", activeModel)).
-						FontSize(11).TextColor(tc.TextMuted)
-
-					// Live quota windows from forge-ade's quota engine
-					quotaBar("Weekly Limit Remaining", weeklyPct, quotaStr("weekly", "refreshesIn"))
-					quotaBar("Five Hour Limit Remaining", fiveHourPct, quotaStr("fiveHour", "refreshesIn"))
-				})
+				}
+				for _, g := range groups {
+					renderQuotaCard(g)
+				}
 
 				// Card 2: Session Context Window Gauge
 				usedTokens := 0
