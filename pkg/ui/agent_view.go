@@ -787,19 +787,37 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			})
 		}
 
-		// 2. Multiline TextInput Area
+		// 2. Growing multiline prompt: one line at rest, up to eight as the
+		// message wraps or a long text is pasted, as forge-ade's composer does.
 		ui.Row(c).Padding(12, 16, 6, 16).Children(func() {
 			placeholder := "Ask anything, @ threads or files, $ skills, or / commands"
 			if as.IsStreaming {
 				placeholder = "Keep typing to queue follow-up changes..."
 			}
-			in := ui.TextInput(c, &as.InputText).Placeholder(placeholder).Grow(1)
+			in := ui.TextAreaBase(c, &as.InputText).Lines(1, 8).Placeholder(placeholder).Grow(1)
 			if isHome {
 				in.AutoFocus()
 			}
-			if in.Submitted() {
-				as.SubmitMessage()
-			}
+			in.OnTextKey(func(k ui.TextKey) bool {
+				if k.Key == ui.KeyEnter && k.Mods == 0 {
+					as.SubmitMessage()
+					k.SetText("")
+					return true
+				}
+				return false // Shift+Enter breaks the line
+			})
+			in.OnPaste(func(text string) bool {
+				if strings.TrimSpace(text) == "" {
+					if png := mygo.Clipboard.ReadImage(); len(png) > 0 {
+						if path, err := as.SavePastedImage(png); err == nil {
+							as.AttachFile(path)
+							c.AddToast(ui.Toast{Title: "Image Attached", Description: filepath.Base(path), Type: "success"})
+							return true
+						}
+					}
+				}
+				return false
+			})
 		})
 
 		// 3. Bottom Controls Tray

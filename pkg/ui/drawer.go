@@ -424,15 +424,24 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 
 	ui.Row(c).Padding(8, 10).Gap(6).AlignItems(ui.Center).
 		BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
-		ui.TextInput(c, &a.SideChatInput).Placeholder("Ask side chat...").Grow(1)
+		side := ui.TextAreaBase(c, &a.SideChatInput).Lines(1, 5).Placeholder("Ask side chat...").Grow(1)
+		side.OnTextKey(func(k ui.TextKey) bool {
+			if k.Key == ui.KeyEnter && k.Mods == 0 {
+				if strings.TrimSpace(a.SideChatInput) != "" {
+					text := strings.TrimSpace(a.SideChatInput)
+					a.SideChatInput = ""
+					a.sendSideChat(text)
+				}
+				return true
+			}
+			return false
+		})
 		sendBtn := ui.Row(c).Size(28, 28).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
 			Background(tc.MessageAction)
 		sendBtn.Children(func() {
 			ui.Icon(c, icons.TablerSend).Width(13).Height(13).TextColor(tc.MessageActionForeground)
 		})
-		pressed := sendBtn.Clicked()
-		in := a.SideChatInput
-		if strings.TrimSpace(in) != "" && (pressed || in == "\n") {
+		if sendBtn.Clicked() && strings.TrimSpace(a.SideChatInput) != "" {
 			text := strings.TrimSpace(a.SideChatInput)
 			a.SideChatInput = ""
 			a.sendSideChat(text)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -617,6 +618,23 @@ func (as *AgentState) AttachFile(path string) {
 		}
 	}
 	as.AttachedFiles = append(as.AttachedFiles, path)
+}
+
+// SavePastedImage writes a clipboard PNG into the workspace's attachments
+// folder (where forge-ade's prompt enrichment looks) and returns its path.
+func (as *AgentState) SavePastedImage(png []byte) (string, error) {
+	if len(png) == 0 {
+		return "", fmt.Errorf("empty image")
+	}
+	dir := filepath.Join(as.workspacePath, ".forge", "attachments")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("pasted-%d.png", time.Now().UnixMilli()))
+	if err := os.WriteFile(path, png, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // RemoveAttachedFile deletes an attachment by index.
