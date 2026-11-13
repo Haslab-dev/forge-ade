@@ -156,6 +156,8 @@ type AppUI struct {
 	SSHIsChangingDir        bool
 	SSHNewDirPath           string
 	ShowUsageModal          bool
+	QuotaData               map[string]interface{}
+	QuotaFetching           bool
 	ShowRulesModal          bool
 	SelectedRulePath        string
 	RuleEditorContent       string
@@ -400,6 +402,34 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			a.DisconnectSSH()
 		}},
 	}
+}
+
+// openUsageModal shows the usage modal and refreshes quota data
+// asynchronously — never on the render path, where a network call would
+// freeze the frame.
+func (a *AppUI) openUsageModal() {
+	a.ShowUsageModal = true
+	a.refreshQuotaAsync()
+}
+
+// refreshQuotaAsync fetches quota/usage data off the render path.
+func (a *AppUI) refreshQuotaAsync() {
+	if a.QuotaFetching || a.Engine == nil {
+		return
+	}
+	a.QuotaFetching = true
+	go func() {
+		defer func() {
+			a.QuotaFetching = false
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		}()
+		data := a.Engine.GetAgentQuota("agent-agy")
+		if data != nil {
+			a.QuotaData = data
+		}
+	}()
 }
 
 // loadGitRemoteURL reads the origin remote URL for the Git Client badge.

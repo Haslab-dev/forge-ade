@@ -124,19 +124,6 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 				a.RefreshBoard()
 			}
 
-			// Back to chat, as the Git Client's close button
-			closeBtn := ui.Row(c).Size(30, 30).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-			closeBtn.Children(func() {
-				ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
-			})
-			if closeBtn.Hovered() {
-				closeBtn.Background(tc.Text.Alpha(0.05))
-			}
-			if closeBtn.Clicked() {
-				a.AgentViewMode = AgentViewChat
-			}
-
 			ui.Box(c).Grow(1)
 
 			newBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).Gap(5).AlignItems(ui.Center).Justify(ui.Center).
@@ -150,6 +137,19 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 			}
 			if newBtn.Clicked() {
 				a.OpenNewTaskModal()
+			}
+
+			// Close (X), always the last control of the toolbar
+			closeBtn := ui.Row(c).Size(30, 30).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+			closeBtn.Children(func() {
+				ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
+			})
+			if closeBtn.Hovered() {
+				closeBtn.Background(tc.Text.Alpha(0.05))
+			}
+			if closeBtn.Clicked() {
+				a.AgentViewMode = AgentViewChat
 			}
 		})
 

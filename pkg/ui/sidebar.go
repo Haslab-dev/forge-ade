@@ -287,7 +287,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnPin:       func() { a.Agent.TogglePin(s.ID) },
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
-										OnOpen:      func() { a.ActiveTaskKind = "agent"; a.Agent.SelectSession(s.ID) },
+										OnOpen: func() {
+											a.ActiveTaskKind = "agent"
+											a.AgentViewMode = AgentViewChat
+											a.Agent.SelectSession(s.ID)
+										},
 									})
 								}
 								if !a.ExpandedProjectGroups[expandKey] && len(group.Sessions) > 6 {
@@ -315,7 +319,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										Active:      isActive,
 										AgentID:     "agent-agy",
 										UpdatedTime: time.Now(),
-										OnOpen:      func() { a.ActiveTaskKind = "cli"; a.CLIMgr.ActiveID = cs.ID },
+										OnOpen: func() {
+											a.ActiveTaskKind = "cli"
+											a.AgentViewMode = AgentViewChat
+											a.CLIMgr.ActiveID = cs.ID
+										},
 									})
 								}
 							})
@@ -365,10 +373,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			Background(tc.Chrome.Alpha(0.4)).
 			Children(func() {
 				dockBtn(icons.TablerHelp, false, func() { mygo.Shell.OpenExternal("https://github.com/hasdev/forge-ade") })
-				dockBtn(icons.TablerChartBar, false, func() {
-					a.ShowRightDrawer = true
-					a.RightDrawerTab = RightTabTasks
-				})
+				dockBtn(icons.TablerChartBar, a.ShowUsageModal, func() { a.openUsageModal() })
 				dockBtn(icons.TablerLayoutKanban, a.Mode == ModeAgent && a.AgentViewMode == AgentViewBoard, func() {
 					a.openBoardSurface()
 				})

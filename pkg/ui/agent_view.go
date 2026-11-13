@@ -965,7 +965,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				gaugeBtn.Background(tc.Text.Alpha(0.04))
 			}
 			if gaugeBtn.Clicked() {
-				a.ShowUsageModal = true
+				a.openUsageModal()
 			}
 
 			// Send / Steer / Queue / Stop controls

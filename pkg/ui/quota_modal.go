@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/forge-ade-native/pkg/agent"
@@ -19,10 +20,12 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 	as := a.Agent
 
 	// Real quota data (account, weekly/five-hour windows) from forge-ade's
-	// quota engine, falling back to ACP usage totals.
-	quotaData := map[string]interface{}{}
-	if a.Engine != nil {
-		quotaData = a.Engine.GetAgentQuota("agent-agy")
+	// quota engine, fetched once when the modal opens and refreshed async —
+	// a network call here would block the render frame.
+	quotaData := a.QuotaData
+	if quotaData == nil {
+		a.refreshQuotaAsync()
+		quotaData = map[string]interface{}{}
 	}
 	account := ""
 	if v, ok := quotaData["account"].(string); ok {
@@ -75,7 +78,7 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 				ui.Box(c).WidthPercent(float32(pct)).Height(6).Radius(3).Background(color)
 			})
 			resetText := "Quota available"
-			if resetsIn != "" {
+			if resetsIn != "" && !strings.HasPrefix(resetsIn, "Quota") {
 				resetText = "Quota available · Resets in " + resetsIn
 			}
 			ui.Text(c, resetText).FontSize(10).TextColor(color)
