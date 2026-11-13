@@ -143,6 +143,7 @@ type AppUI struct {
 	InlineAICancel       chan struct{}
 	SideFilePreviewImage string
 	SideFilePreviewMd    string
+	SideFileDiffMode     map[string]bool
 
 	// Right-drawer browser viewer tab (native web view) + subagent pane.
 	BrowserWebView    *mygo.WebView
@@ -285,6 +286,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SideChatMessages:        make([]*agent.ChatMessage, 0),
 		QuestionDrafts:          make(map[string]*string),
 		InlineAI:                editor.NewInlineAI(),
+		SideFileDiffMode:        make(map[string]bool),
 	}
 
 	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {

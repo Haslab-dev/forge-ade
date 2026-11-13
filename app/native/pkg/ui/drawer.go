@@ -1020,6 +1020,35 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 				} else {
 					txt.TextColor(tc.TextMuted)
 				}
+				// Right-click: close / close others / close to the right,
+				// as AgentRightSidebar's tab context menu.
+				tab.ContextMenu(func(m *ui.Menu) {
+					if m.Item("Close").Chosen() {
+						a.closeSideFile(thisPath)
+					}
+					if m.Item("Close Others").Chosen() {
+						a.SideFileTabs = []string{thisPath}
+						a.ActiveSideFile = thisPath
+					}
+					if m.Item("Close to the Right").Chosen() {
+						for i, t := range a.SideFileTabs {
+							if t == thisPath {
+								a.SideFileTabs = a.SideFileTabs[:i+1]
+								break
+							}
+						}
+						found := false
+						for _, t := range a.SideFileTabs {
+							if t == a.ActiveSideFile {
+								found = true
+								break
+							}
+						}
+						if !found {
+							a.ActiveSideFile = thisPath
+						}
+					}
+				})
 				closeBtn := ui.Row(c.Key("sidefile-x-"+thisPath)).Size(14, 14).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 				closeBtn.Children(func() {
 					ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.IconMuted)
@@ -1066,14 +1095,40 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		})
 		return
 	}
+	// Diff mode: show the file's git working-tree diff instead of the
+	// content, as forge-ade's sideFileDiffMode toggle does.
+	diffMode := a.SideFileDiffMode[a.ActiveSideFile]
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		mygoeditor.View(c, doc.Editor).Grow(1).FillWidth()
+		if diffMode {
+			patch := ""
+			if a.Engine != nil {
+				patch = a.Engine.GetGitDiff(a.Workspace.RootDir, a.ActiveSideFile)
+			}
+			if patch == "" {
+				ui.Column(c).Grow(1).Center().Children(func() {
+					ui.Text(c, "No uncommitted changes").FontSize(12).TextColor(tc.TextMuted)
+				})
+			} else if d := a.Editor.OpenPatchDiff(a.ActiveSideFile, patch, a.ThemeMgr); d != nil {
+				mygoeditor.DiffView(c, d).Grow(1).FillWidth()
+			}
+		} else {
+			mygoeditor.View(c, doc.Editor).Grow(1).FillWidth()
+		}
 		// Keep the drawer preview in sync with the editor-mode active tab.
 		ui.Row(c).Height(26).Padding(0, 12).Gap(6).AlignItems(ui.Center).
 			BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 			ui.Text(c, a.ActiveSideFile).FontSize(10).TextColor(tc.TextMuted).SingleLine()
 			ui.Box(c).Grow(1)
-			if ui.Text(c, "Open in Editor").FontSize(10).TextColor(tc.Accent).Clicked() {
+			diffToggle := ui.Text(c, "Diff")
+			if diffMode {
+				diffToggle.FontWeight(600).TextColor(tc.Accent)
+			} else {
+				diffToggle.FontSize(10).TextColor(tc.TextMuted)
+			}
+			if diffToggle.Clicked() {
+				a.SideFileDiffMode[a.ActiveSideFile] = !diffMode
+			}
+			if ui.Text(c, "Open in Editor").FontSize(10).TextColor(tc.Accent).Padding(0, 0, 0, 10).Clicked() {
 				_, _ = a.Editor.OpenFile(full, a.ActiveSideFile)
 				a.Mode = ModeEditor
 			}
