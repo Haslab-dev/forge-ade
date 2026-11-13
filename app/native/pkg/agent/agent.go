@@ -1291,6 +1291,46 @@ func (as *AgentState) ForkSession(sess *AgentSession) *AgentSession {
 	return forked
 }
 
+// ForkSessionByID forks the session with the given id (sidebar fork action).
+func (as *AgentState) ForkSessionByID(sessionID string) {
+	as.mu.Lock()
+	var target *AgentSession
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			target = s
+			break
+		}
+	}
+	as.mu.Unlock()
+	if target != nil {
+		as.ForkSession(target)
+	}
+}
+
+// SessionDiffStats sums every turn's file-change counts, powering the +n/−n
+// badge the sidebar TaskRow shows, as forge-ade's diff-stats chip does.
+func (as *AgentState) SessionDiffStats(sessionID string) (added, removed int) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for _, m := range s.Messages {
+			for _, ch := range m.Changes {
+				if ch.Additions > 0 {
+					added += ch.Additions
+				}
+				if ch.Deletions > 0 {
+					removed += ch.Deletions
+				}
+			}
+		}
+		break
+	}
+	return added, removed
+}
+
 // CreateSessionWithInitialPrompt creates a new session with an initial user prompt and starts the turn.
 func (as *AgentState) CreateSessionWithInitialPrompt(prompt, agentID string) *AgentSession {
 	now := time.Now()
@@ -1640,8 +1680,43 @@ func (as *AgentState) SubmitMessage() {
 		as.AttachedFiles = nil
 	}
 
-	// Mid-turn steering: if already streaming, queue prompt
+	// Mid-turn steering: internal sessions steer the running RakitKode loop
+	// directly (SteerAgentMessage parity); other harnesses queue the prompt
+	// for the next turn.
 	if as.IsStreaming {
+		as.mu.Lock()
+		var steerSess *AgentSession
+		for _, s := range as.Sessions {
+			if s.ID == as.ActiveSessionID {
+				steerSess = s
+				break
+			}
+		}
+		canSteer := steerSess != nil && steerSess.AgentType == "internal" && steerSess.RemoteSessionID != ""
+		steerID := as.ActiveSessionID
+		as.mu.Unlock()
+
+		if canSteer {
+			if err := as.SteerInternal(steerID, text); err == nil {
+				as.mu.Lock()
+				userMsg := &ChatMessage{
+					ID:        len(steerSess.Messages) + 1,
+					Role:      "user",
+					Text:      text,
+					Done:      true,
+					Timestamp: time.Now(),
+				}
+				steerSess.Messages = append(steerSess.Messages, userMsg)
+				as.Messages = steerSess.Messages
+				as.InputText = ""
+				as.mu.Unlock()
+				if as.Invalidate != nil {
+					as.Invalidate()
+				}
+				return
+			}
+		}
+
 		as.mu.Lock()
 		as.SteerQueue = append(as.SteerQueue, text)
 		as.InputText = ""
@@ -1791,17 +1866,26 @@ func (as *AgentState) SubmitMessage() {
 }
 
 // CancelStreaming aborts the active turn: it interrupts the ACP agent
-// (process-group SIGINT for stream CLIs, protocol cancel for standard ACP)
-// and stops the internal LLM stream. HandleTurnDone finalizes the message
-// when the agent acknowledges the stop.
+// (process-group SIGINT for stream CLIs, protocol cancel for standard ACP),
+// stops the internal RakitKode agent turn, and stops any raw LLM stream.
+// HandleTurnDone finalizes the message when the agent acknowledges the stop.
 func (as *AgentState) CancelStreaming() {
 	as.mu.Lock()
 	as.IsStreaming = false
 	sessionID := as.ActiveSessionID
 	last := as.Messages
+	isInternal := false
+	for _, s := range as.Sessions {
+		if s.ID == sessionID && s.AgentType == "internal" && s.RemoteSessionID != "" {
+			isInternal = true
+			break
+		}
+	}
 	as.mu.Unlock()
 
-	if sessionID != "" && as.ACPMgr != nil {
+	if isInternal {
+		as.StopInternalTurn(sessionID)
+	} else if sessionID != "" && as.ACPMgr != nil {
 		_ = as.ACPMgr.Cancel(sessionID)
 	}
 
@@ -2037,7 +2121,35 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 		return
 	}
 
-	// 2. Execute via internal LLMClient
+	// 2. Execute via the RakitKode agent engine (tool loop, approvals, asks,
+	// subagents, schedules) — the same backend forge-ade's webview uses.
+	// Streaming arrives via bus events bridged into Handle*; HandleTurnDone
+	// finalizes. Falls back to the raw LLM stream when the engine is absent.
+	if as.engine != nil && as.engine.AgentMgr != nil {
+		go func() {
+			if err := as.TriggerInternalTurn(activeSess, prompt); err != nil {
+				as.mu.Lock()
+				assistantMsg.Done = true
+				assistantMsg.IsThinking = false
+				as.IsStreaming = false
+				if activeSess != nil {
+					activeSess.Status = "error"
+					activeSess.turnStartFiles = nil
+				}
+				assistantMsg.Text = fmt.Sprintf("**Agent engine error**: %v", err)
+				as.mu.Unlock()
+				if as.Invalidate != nil {
+					as.Invalidate()
+				}
+			}
+			// Success: events drive the UI from here (HandleTurnStart,
+			// HandleTokenChunk, HandleToolEvent, HandleTurnDone) exactly as
+			// they do for ACP turns.
+		}()
+		return
+	}
+
+	// 3. Fallback: raw LLMClient stream (no agent engine wired).
 	go func() {
 		defer func() {
 			as.mu.Lock()

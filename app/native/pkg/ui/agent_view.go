@@ -755,6 +755,19 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 	_ = as
 }
 
+// respondApproval routes an approval decision to the right backend: internal
+// sessions go through the RakitKode agent engine (RespondAgentApproval
+// parity), ACP harnesses through the ACP manager.
+func (a *AppUI) respondApproval(sessionID, requestID string, approve, autoApproveAll bool) {
+	if a.Agent != nil && a.Agent.IsInternalSession(sessionID) {
+		_ = a.Agent.RespondInternalApproval(sessionID, approve, autoApproveAll)
+		return
+	}
+	if a.ACPMgr != nil {
+		_ = a.ACPMgr.RespondPermission(sessionID, requestID, approve)
+	}
+}
+
 func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
 	appr := m.PendingApproval
 	if appr == nil {
@@ -780,9 +793,7 @@ func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.
 			if allow.Clicked() {
 				appr.Resolved = true
 				appr.Approved = true
-				if a.ACPMgr != nil {
-					_ = a.ACPMgr.RespondPermission(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, true)
-				}
+				a.respondApproval(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, true, false)
 			}
 			always := composerControlChip(c, tc, icons.TablerShieldCheck, "Always Allow", "", false)
 			if always.Clicked() {
@@ -791,17 +802,13 @@ func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.
 				if a.Agent != nil {
 					a.Agent.ExecutionMode = agent.ModeBypass
 				}
-				if a.ACPMgr != nil {
-					_ = a.ACPMgr.RespondPermission(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, true)
-				}
+				a.respondApproval(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, true, true)
 			}
 			deny := composerControlChip(c, tc, icons.TablerX, "Deny", "", true)
 			if deny.Clicked() {
 				appr.Resolved = true
 				appr.Approved = false
-				if a.ACPMgr != nil {
-					_ = a.ACPMgr.RespondPermission(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, false)
-				}
+				a.respondApproval(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, false, false)
 			}
 		})
 	})

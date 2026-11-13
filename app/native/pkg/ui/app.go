@@ -248,18 +248,34 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	})
 	appUI.Agent.ACPMgr = appUI.ACPMgr
 
-	appUI.ACPMgr.OnTokenChunk = appUI.Agent.HandleTokenChunk
-	appUI.ACPMgr.OnThoughtChunk = appUI.Agent.HandleThoughtChunk
-	appUI.ACPMgr.OnToolEvent = appUI.Agent.HandleToolEvent
-	appUI.ACPMgr.OnTurnStart = appUI.Agent.HandleTurnStart
+	// Bus events carry the RakitKode manager UUID for internal sessions; map
+	// them to the native session IDs the UI state is keyed on.
+	appUI.ACPMgr.OnTokenChunk = func(sessionID, text string) {
+		appUI.Agent.HandleTokenChunk(appUI.Agent.MapInternalSession(sessionID), text)
+	}
+	appUI.ACPMgr.OnThoughtChunk = func(sessionID, text string) {
+		appUI.Agent.HandleThoughtChunk(appUI.Agent.MapInternalSession(sessionID), text)
+	}
+	appUI.ACPMgr.OnToolEvent = func(ev agent.ToolEvent) {
+		ev.SessionID = appUI.Agent.MapInternalSession(ev.SessionID)
+		appUI.Agent.HandleToolEvent(ev)
+	}
+	appUI.ACPMgr.OnTurnStart = func(sessionID, prompt string) {
+		appUI.Agent.HandleTurnStart(appUI.Agent.MapInternalSession(sessionID), prompt)
+	}
 	appUI.ACPMgr.OnAsk = appUI.Agent.HandleAsk
-	appUI.ACPMgr.OnUsage = appUI.Agent.HandleUsage
-	appUI.ACPMgr.OnCommands = appUI.Agent.HandleCommands
+	appUI.ACPMgr.OnUsage = func(sessionID string, usage agent.UsageInfo) {
+		appUI.Agent.HandleUsage(appUI.Agent.MapInternalSession(sessionID), usage)
+	}
+	appUI.ACPMgr.OnCommands = func(sessionID string, commands []string) {
+		appUI.Agent.HandleCommands(appUI.Agent.MapInternalSession(sessionID), commands)
+	}
 
 	appUI.ACPMgr.OnTurnDone = func(sessionID string, info agent.TurnEndInfo) {
 		// Finalizes the message, maps the status, records turn changes, and
 		// returns the next queued steer prompt to run.
-		if next := appUI.Agent.HandleTurnDone(sessionID, info); next != "" {
+		nativeID := appUI.Agent.MapInternalSession(sessionID)
+		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
 			go appUI.Agent.TriggerTurn(next)
 		}
 	}

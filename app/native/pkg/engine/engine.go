@@ -8,13 +8,22 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/agent"
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/Haslab-dev/RakitKode/mcp"
+	"github.com/Haslab-dev/RakitKode/memory"
+	"github.com/Haslab-dev/RakitKode/plugins"
+	"github.com/Haslab-dev/RakitKode/search"
+	"github.com/Haslab-dev/RakitKode/skills"
+	"github.com/Haslab-dev/RakitKode/tools"
 	"github.com/hasdev/forge-ade/core/acp"
+	"github.com/hasdev/forge-ade/core/automations"
 	"github.com/hasdev/forge-ade/core/commitmsg"
 	"github.com/hasdev/forge-ade/core/git"
 	"github.com/hasdev/forge-ade/core/quota"
 	"github.com/hasdev/forge-ade/core/remotefs"
+	"github.com/hasdev/forge-ade/core/terminal"
 	"github.com/hasdev/forge-ade/core/watcher"
 )
 
@@ -28,6 +37,18 @@ type Engine struct {
 	RemoteFS        *remotefs.Manager
 	Bus             *events.Bus
 	DataDir         string
+
+	// RakitKode managers shared with the webview app (search, tools, skills,
+	// plugins, memory, MCP, PTY shells, and the full agent engine).
+	SearchMgr *search.SearchManager
+	ToolReg   *tools.Registry
+	SkillMgr  *skills.Manager
+	PluginMgr *plugins.Manager
+	MemoryMgr *memory.Manager
+	MCPMgr    *mcp.Manager
+	ShellMgr  *terminal.Manager
+	AgentMgr  *agent.Manager
+	AutoMgr   *automations.Manager
 }
 
 // NewEngine creates and initializes the native backend subsystems.
@@ -59,6 +80,12 @@ func NewEngine(dataDir string) *Engine {
 
 	w, _ := watcher.New(bus)
 
+	mgrs := wireManagers(dataDir, bus, llmClient)
+	autoMgr, err := automations.NewManager(dataDir)
+	if err != nil {
+		autoMgr = nil
+	}
+
 	return &Engine{
 		GitEngine:       gitEngine,
 		LLMClient:       llmClient,
@@ -68,6 +95,15 @@ func NewEngine(dataDir string) *Engine {
 		RemoteFS:        remoteMgr,
 		Bus:             bus,
 		DataDir:         dataDir,
+		SearchMgr:       mgrs.Search,
+		ToolReg:         mgrs.Tools,
+		SkillMgr:        mgrs.Skills,
+		PluginMgr:       mgrs.Plugin,
+		MemoryMgr:       mgrs.Memory,
+		MCPMgr:          mgrs.MCP,
+		ShellMgr:        mgrs.Shells,
+		AgentMgr:        mgrs.Agent,
+		AutoMgr:         autoMgr,
 	}
 }
 
