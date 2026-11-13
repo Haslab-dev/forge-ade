@@ -292,6 +292,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SideChatMessages:        make([]*agent.ChatMessage, 0),
 		QuestionDrafts:          make(map[string]*string),
 		InlineAI:                editor.NewInlineAI(),
+		FileSearchMode:          "files",
 		SideFileDiffMode:        make(map[string]bool),
 	}
 

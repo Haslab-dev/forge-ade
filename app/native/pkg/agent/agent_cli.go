@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/Haslab-dev/RakitKode/agentclirc"
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
+	"github.com/hasdev/forge-ade/core/agentsession"
 )
 
 // AgentCLIDefinition describes an agent CLI known to ForgeADE.
@@ -145,7 +145,9 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 func (mgr *AgentCLIManager) RefreshConfigs() {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
-	mgr.Configs = agentclirc.List()
+	// Same enrichment the webview applies: per-CLI path fixes (opencode,
+	// pi, omp) and the commandcode discovery fallback.
+	mgr.Configs = agentsession.EnrichAllAgentRuntimeConfigs(agentclirc.List())
 }
 
 // InstalledConfigs returns the subset of agent CLIs that are currently installed on the host.
@@ -159,7 +161,7 @@ func (mgr *AgentCLIManager) InstalledConfigs() []agentclirc.RuntimeConfig {
 			installed = append(installed, c)
 			continue
 		}
-		if _, err := exec.LookPath(c.Executable); err == nil {
+		if _, err := lookPathEnriched(c.Executable); err == nil {
 			c.Installed = true
 			installed = append(installed, c)
 		}
@@ -175,11 +177,12 @@ func (mgr *AgentCLIManager) GetAgentCLIs() []AgentCLIDefinition {
 	var result []AgentCLIDefinition
 	seen := make(map[string]bool)
 
-	// Check standard defaults
+	// Check standard defaults — enriched PATH so GUI launches detect CLIs.
 	for _, def := range DefaultAgentCLIs {
 		d := def
-		if _, err := exec.LookPath(d.Executable); err == nil {
+		if resolved, err := lookPathEnriched(d.Executable); err == nil {
 			d.Available = true
+			d.Executable = resolved
 		}
 		result = append(result, d)
 		seen[d.ID] = true
@@ -192,14 +195,19 @@ func (mgr *AgentCLIManager) GetAgentCLIs() []AgentCLIDefinition {
 		}
 		avail := c.Installed
 		if !avail {
-			if _, err := exec.LookPath(c.Executable); err == nil {
+			if _, err := lookPathEnriched(c.Executable); err == nil {
 				avail = true
 			}
+		}
+		executable := c.Executable
+		if resolved, err := lookPathEnriched(c.Executable); err == nil {
+			executable = resolved
+			avail = true
 		}
 		result = append(result, AgentCLIDefinition{
 			ID:          c.ID,
 			Name:        c.Name,
-			Executable:  c.Executable,
+			Executable:  executable,
 			Description: fmt.Sprintf("%s runtime CLI", c.Name),
 			Available:   avail,
 		})

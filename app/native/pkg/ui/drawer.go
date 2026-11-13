@@ -95,14 +95,36 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					if pill.Clicked() {
 						a.RightDrawerTab = tTab.Tab
 					}
+					// Active pill shows the tab close ×, as ZCode's panel
+					// tabs do: dynamic tabs close themselves, fixed tabs
+					// close the drawer.
+					if active {
+						tabX := ui.Row(c.Key("rtab-x-"+tTab.Name)).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+						tabX.Children(func() {
+							ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+						})
+						if tabX.Hovered() {
+							tabX.Background(tc.Text.Alpha(0.1))
+						}
+						if tabX.Clicked() {
+							switch tTab.Tab {
+							case RightTabSideFile:
+								a.closeSideFile(a.ActiveSideFile)
+							case RightTabBrowser:
+								a.closeBrowserTab()
+							default:
+								a.ShowRightDrawer = false
+							}
+						}
+					}
 				}
 			})
 
-			ui.Box(c).Width(4)
+			ui.Box(c).Width(4).Shrink(0)
 
 			// "+" tab menu — AgentRightSidebar's plus menu: new terminal,
 			// browser viewer, changes, new conversation, child agents.
-			plus := IconButton(c, tc, icons.TablerPlus, 13)
+			plus := IconButton(c, tc, icons.TablerPlus, 13).Shrink(0)
 			plus.ContextMenu(func(m *ui.Menu) {
 				if m.Item("New Terminal").Chosen() {
 					a.RightDrawerTab = RightTabTerminal
@@ -128,7 +150,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.RightDrawerTab = RightTabSubagent
 			}
 
-			if IconButton(c, tc, icons.TablerX, 13).Clicked() {
+			if IconButton(c, tc, icons.TablerX, 13).Shrink(0).Clicked() {
 				a.ShowRightDrawer = false
 			}
 		})

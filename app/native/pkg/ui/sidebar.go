@@ -728,6 +728,9 @@ func buildFileTree(files []workspace.WorkspaceFile, rootDir string) []*FileTreeN
 		}
 
 		if len(parts) == 1 {
+			if _, exists := rootMap[parts[0]]; exists {
+				continue // duplicate entry (e.g. dir + captured file)
+			}
 			node := &FileTreeNode{
 				Name:         parts[0],
 				RelativePath: f.RelativePath,
@@ -779,15 +782,26 @@ func buildFileTree(files []workspace.WorkspaceFile, rootDir string) []*FileTreeN
 			curNode = nextNode
 		}
 
-		// Leaf file node
+		// Leaf file node — skip when a folder node of the same name already
+		// exists (a lazily-listed directory entry colliding with a captured
+		// child file would otherwise create two identically-keyed rows).
 		fileName := parts[len(parts)-1]
-		fileNode := &FileTreeNode{
-			Name:         fileName,
-			RelativePath: f.RelativePath,
-			FullPath:     f.FullPath,
-			IsDir:        f.IsDir,
+		dup := false
+		for _, child := range curNode.Children {
+			if child.Name == fileName {
+				dup = true
+				break
+			}
 		}
-		curNode.Children = append(curNode.Children, fileNode)
+		if !dup {
+			fileNode := &FileTreeNode{
+				Name:         fileName,
+				RelativePath: f.RelativePath,
+				FullPath:     f.FullPath,
+				IsDir:        f.IsDir,
+			}
+			curNode.Children = append(curNode.Children, fileNode)
+		}
 	}
 
 	// Sort nodes: folders first (alphabetical), then files (alphabetical)

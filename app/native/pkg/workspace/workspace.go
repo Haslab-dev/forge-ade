@@ -52,6 +52,7 @@ type WorkspaceState struct {
 	GitDirty     bool
 	FilterQuery  string
 	RemoteFS     *remotefs.Manager
+	loadedDirs   map[string]bool // folders already listed lazily
 }
 
 // NewWorkspaceState creates and initializes a new workspace state for rootDir.
@@ -62,7 +63,8 @@ func NewWorkspaceState(rootDir string) *WorkspaceState {
 		rootDir = ""
 	}
 	ws := &WorkspaceState{
-		RootDir: rootDir,
+		RootDir:    rootDir,
+		loadedDirs: map[string]bool{"": true},
 	}
 	ws.Refresh()
 	return ws
@@ -82,7 +84,8 @@ func (ws *WorkspaceState) Refresh() {
 	defer ws.mu.Unlock()
 
 	var files []WorkspaceFile
-	maxFiles := 300
+	maxFiles := 1200
+	ws.loadedDirs = map[string]bool{"": true}
 	count := 0
 
 	// No workspace opened yet — nothing to scan.
@@ -132,46 +135,63 @@ func (ws *WorkspaceState) Refresh() {
 		return
 	}
 
-	_ = filepath.Walk(ws.RootDir, func(path string, info os.FileInfo, err error) error {
-		// Bound the walk: once the file cap is reached stop descending —
-		// returning nil here would keep walking every remaining directory
-		// (disaster on a home-dir "General" workspace).
-		if count >= maxFiles {
-			return filepath.SkipAll
+	// Breadth-first walk so the budget spreads across the whole tree: a
+	// depth-first cap would let the first big subtree (e.g. app/webview/…)
+	// swallow the budget and leave the rest of the repo invisible.
+	type dirEntry struct {
+		path  string
+		depth int
+	}
+	queue := []dirEntry{{path: ws.RootDir, depth: 0}}
+	const (
+		maxDepth  = 6
+		perDirCap = 120
+	)
+	for len(queue) > 0 && count < maxFiles {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur.depth > maxDepth {
+			continue
 		}
+		entries, err := os.ReadDir(cur.path)
 		if err != nil {
-			return nil
+			continue
 		}
-		name := info.Name()
-		if info.IsDir() {
-			if IgnoredDirectoryNames[name] || (strings.HasPrefix(name, ".") && name != ".") {
-				return filepath.SkipDir
+		added := 0
+		for _, e := range entries {
+			if count >= maxFiles || added >= perDirCap {
+				break
 			}
-			return nil
+			name := e.Name()
+			if e.IsDir() {
+				if IgnoredDirectoryNames[name] || (strings.HasPrefix(name, ".") && name != ".") {
+					continue
+				}
+				queue = append(queue, dirEntry{path: filepath.Join(cur.path, name), depth: cur.depth + 1})
+				continue
+			}
+			if strings.HasPrefix(name, ".") || binarySuffix(name) {
+				continue
+			}
+			rel, err := filepath.Rel(ws.RootDir, filepath.Join(cur.path, name))
+			if err != nil {
+				rel = name
+			}
+			info, err := e.Info()
+			size := int64(0)
+			if err == nil {
+				size = info.Size()
+			}
+			files = append(files, WorkspaceFile{
+				RelativePath: rel,
+				FullPath:     filepath.Join(cur.path, name),
+				IsDir:        false,
+				Size:         size,
+			})
+			count++
+			added++
 		}
-
-		// Skip common binary and hidden files
-		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".png") ||
-			strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".exe") ||
-			strings.HasSuffix(name, ".so") || strings.HasSuffix(name, ".dylib") ||
-			strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip") {
-			return nil
-		}
-
-		rel, err := filepath.Rel(ws.RootDir, path)
-		if err != nil {
-			rel = name
-		}
-
-		files = append(files, WorkspaceFile{
-			RelativePath: rel,
-			FullPath:     path,
-			IsDir:        false,
-			Size:         info.Size(),
-		})
-		count++
-		return nil
-	})
+	}
 
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].RelativePath < files[j].RelativePath
@@ -181,6 +201,93 @@ func (ws *WorkspaceState) Refresh() {
 	if ws.SelectedPath == "" && len(files) > 0 {
 		ws.SelectedPath = files[0].RelativePath
 	}
+}
+
+// binarySuffix reports whether a filename looks like a binary asset the
+// explorer should skip.
+func binarySuffix(name string) bool {
+	for _, suf := range []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+		".exe", ".so", ".dylib", ".dll", ".bin", ".tar.gz", ".zip", ".icns",
+		".woff", ".woff2", ".ttf", ".otf", ".mp4", ".mov", ".mp3", ".pdf"} {
+		if strings.HasSuffix(name, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// loadedDirs remembers which folders have been lazily listed.
+// LoadDir lists ONE directory live (webview GetDirectoryTree parity,
+// ~0.2ms) and merges it into the cached file index so expanding a folder
+// in the explorer always shows its real children, even when the initial
+// snapshot budget never reached that depth.
+func (ws *WorkspaceState) LoadDir(rel string) {
+	ws.mu.Lock()
+	if ws.loadedDirs == nil {
+		ws.loadedDirs = map[string]bool{}
+	}
+	if ws.loadedDirs[rel] {
+		ws.mu.Unlock()
+		return
+	}
+	ws.loadedDirs[rel] = true
+
+	root := ws.RootDir
+	dir := rel
+	if rel == "." || rel == "" {
+		dir = ""
+	}
+	full := root
+	if dir != "" {
+		full = filepath.Join(root, dir)
+	}
+	entries, err := os.ReadDir(full)
+	if err != nil {
+		ws.mu.Unlock()
+		return
+	}
+	known := map[string]bool{}
+	for _, f := range ws.Files {
+		known[f.RelativePath] = true
+	}
+	for _, e := range entries {
+		name := e.Name()
+		childRel := name
+		if dir != "" {
+			childRel = dir + "/" + name
+		}
+		if e.IsDir() {
+			if IgnoredDirectoryNames[name] || (strings.HasPrefix(name, ".") && name != ".") {
+				continue
+			}
+			if !known[childRel] {
+				ws.Files = append(ws.Files, WorkspaceFile{RelativePath: childRel, FullPath: filepath.Join(full, name), IsDir: true})
+			}
+			continue
+		}
+		if strings.HasPrefix(name, ".") || binarySuffix(name) {
+			continue
+		}
+		if known[childRel] {
+			continue
+		}
+		size := int64(0)
+		if info, err := e.Info(); err == nil {
+			size = info.Size()
+		}
+		ws.Files = append(ws.Files, WorkspaceFile{RelativePath: childRel, FullPath: filepath.Join(full, name), Size: size})
+	}
+	ws.mu.Unlock()
+}
+
+// NeedsLoad reports whether an expanded folder's children were never listed.
+func (ws *WorkspaceState) NeedsLoad(rel string) bool {
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+	if ws.loadedDirs == nil {
+		return true
+	}
+	return !ws.loadedDirs[rel]
 }
 
 // FilteredFiles returns files matching the current filter query.

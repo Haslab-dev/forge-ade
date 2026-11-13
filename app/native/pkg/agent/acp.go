@@ -3,7 +3,9 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/Haslab-dev/RakitKode/events"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 	"github.com/hasdev/forge-ade/core/acp"
+	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
 // ACPAgentDefinition defines metadata and CLI execution parameters for an ACP coding agent.
@@ -295,8 +298,13 @@ func (mgr *ACPManager) RefreshAvailability() {
 			continue
 		}
 		if mgr.Agents[i].Command != "" {
-			_, err := exec.LookPath(mgr.Agents[i].Command)
-			mgr.Agents[i].Available = (err == nil)
+			if resolved, err := lookPathEnriched(mgr.Agents[i].Command); err == nil {
+				mgr.Agents[i].Available = true
+				// Absolute path so spawning works in the GUI environment.
+				mgr.Agents[i].Command = resolved
+			} else {
+				mgr.Agents[i].Available = false
+			}
 		}
 	}
 }
@@ -746,4 +754,38 @@ func (mgr *ACPManager) deliverUsage(sessionID string, u map[string]interface{}, 
 	if mgr.OnUsage != nil {
 		mgr.OnUsage(sessionID, usage)
 	}
+}
+
+// lookPathEnriched finds an executable on the ENRICHED PATH (Homebrew,
+// ~/.local/bin, go/bin, cargo, nix, ...). GUI-launched apps on macOS don't
+// inherit the shell PATH, so a plain exec.LookPath marks installed ACP
+// harnesses and agent CLIs as unavailable — the webview app avoids this
+// with the same enrichment (git.EnrichedPath).
+func lookPathEnriched(exe string) (string, error) {
+	if exe == "" {
+		return "", exec.ErrNotFound
+	}
+	if strings.ContainsRune(exe, os.PathSeparator) {
+		if st, err := os.Stat(exe); err == nil && !st.IsDir() {
+			return exe, nil
+		}
+	}
+	dirs := filepath.SplitList(internalgit.EnrichedPath())
+	// Version-manager bins (nvm/volta) that GUI apps never inherit.
+	if home, err := os.UserHomeDir(); err == nil {
+		if matches, _ := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); len(matches) > 0 {
+			dirs = append(dirs, matches...)
+		}
+		dirs = append(dirs, filepath.Join(home, ".volta", "bin"), filepath.Join(home, ".deno", "bin"))
+	}
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		cand := filepath.Join(dir, exe)
+		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			return cand, nil
+		}
+	}
+	return exec.LookPath(exe)
 }

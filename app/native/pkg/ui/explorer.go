@@ -18,8 +18,38 @@ import (
 // renderExplorerTree renders the hierarchical workspace tree with context
 // menus, shared by the sidebar Files view and the drawer Files pane.
 func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
+	// Lazy per-directory loading (webview GetDirectoryTree parity): when an
+	// expanded folder was never listed, read it live before building the
+	// tree so expanding always reveals real children.
+	var ensureLoaded func(nodes []*FileTreeNode)
+	if a.Workspace.FilterQuery == "" {
+		ensureLoaded = func(nodes []*FileTreeNode) {
+			for _, n := range nodes {
+				if !n.IsDir {
+					continue
+				}
+				if a.isFolderExpanded(n.RelativePath, 0) || a.isFolderExpanded(n.RelativePath, 1) {
+					if a.Workspace.NeedsLoad(n.RelativePath) {
+						a.Workspace.LoadDir(n.RelativePath)
+					}
+				}
+				ensureLoaded(n.Children)
+			}
+		}
+	} else {
+		ensureLoaded = func(nodes []*FileTreeNode) {}
+	}
 	filtered := a.Workspace.FilteredFiles()
 	treeNodes := buildFileTree(filtered, a.Workspace.RootDir)
+	for pass := 0; pass < 3; pass++ {
+		before := len(filtered)
+		ensureLoaded(treeNodes)
+		filtered = a.Workspace.FilteredFiles()
+		treeNodes = buildFileTree(filtered, a.Workspace.RootDir)
+		if len(filtered) == before {
+			break
+		}
+	}
 
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Padding(2, 6).Gap(0).Children(func() {

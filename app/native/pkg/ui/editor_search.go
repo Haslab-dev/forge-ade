@@ -43,7 +43,11 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 		}
 	})
 
-	// Mode segmented control: Files | Content.
+	// Mode segmented control: Files | Content. Empty/legacy state acts as
+	// Files so the pane always has an active mode.
+	if a.FileSearchMode == "" {
+		a.FileSearchMode = "files"
+	}
 	ui.Row(c).Padding(6, 10, 2, 10).Gap(4).AlignItems(ui.Center).Children(func() {
 		for _, m := range []struct{ id, label string }{{"files", "Files"}, {"content", "Content"}} {
 			m := m
@@ -59,6 +63,8 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 			}
 			if b.Clicked() {
 				a.FileSearchMode = m.id
+				a.ContentHitsAt = "" // re-run under the new mode
+				a.runEditorSearch()
 			}
 		}
 	})
