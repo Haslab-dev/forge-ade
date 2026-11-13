@@ -205,33 +205,36 @@ type AppUI struct {
 	SSHAuthType             string // "key_file", "password", "agent"
 	SSHKeyPath              string
 	SSHUploadStatus         string
-	SSHKeyPassphrase        string
-	SSHPassword             string
-	SSHRemotePath           string
-	SSHIsConnecting         bool
-	SSHErrorMsg             string
-	SSHSavedConfigs         []remotefs.SSHConfig
-	SSHSelectedConfigID     string
-	SSHIsChangingDir        bool
-	SSHNewDirPath           string
-	ShowUsageModal          bool
-	QuotaData               map[string]interface{}
-	QuotaFetching           bool
-	ShowRulesModal          bool
-	SelectedRulePath        string
-	RuleEditorContent       string
-	BoardSearchQuery        string
-	BoardViewMode           string // "" = board, "list"
-	ShowBoardTaskModal      bool
-	BoardTaskStatus         string
-	BoardTaskTitle          string
-	AgentViewMode           string // AgentViewChat / AgentViewBoard / AgentViewGit
-	GitRemoteURL            string
-	ShowNewBoardTaskModal   bool
-	NewBoardTaskTitle       string
-	NewBoardTaskDesc        string
-	NewBoardTaskPriority    string
-	NewBoardTaskStatus      string
+
+	// Follow Agent: auto-jump the editor to files the agent edits.
+	FollowAgent           bool
+	SSHKeyPassphrase      string
+	SSHPassword           string
+	SSHRemotePath         string
+	SSHIsConnecting       bool
+	SSHErrorMsg           string
+	SSHSavedConfigs       []remotefs.SSHConfig
+	SSHSelectedConfigID   string
+	SSHIsChangingDir      bool
+	SSHNewDirPath         string
+	ShowUsageModal        bool
+	QuotaData             map[string]interface{}
+	QuotaFetching         bool
+	ShowRulesModal        bool
+	SelectedRulePath      string
+	RuleEditorContent     string
+	BoardSearchQuery      string
+	BoardViewMode         string // "" = board, "list"
+	ShowBoardTaskModal    bool
+	BoardTaskStatus       string
+	BoardTaskTitle        string
+	AgentViewMode         string // AgentViewChat / AgentViewBoard / AgentViewGit
+	GitRemoteURL          string
+	ShowNewBoardTaskModal bool
+	NewBoardTaskTitle     string
+	NewBoardTaskDesc      string
+	NewBoardTaskPriority  string
+	NewBoardTaskStatus    string
 }
 
 // NewAppUI constructs the complete AppUI state tree.
@@ -338,6 +341,19 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		nativeID := appUI.Agent.MapInternalSession(sessionID)
 		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
 			go appUI.Agent.TriggerTurn(next)
+		}
+		// Follow Agent: jump the editor to the file the turn edited
+		// (layoutStore.isFollowAgentMode parity).
+		if appUI.FollowAgent {
+			if changed, ok := appUI.Agent.LastTurnChangedFile(nativeID); ok {
+				full := appUI.Workspace.ResolveFullPath(changed)
+				if _, err := appUI.Editor.OpenFile(full, changed); err == nil {
+					appUI.Mode = ModeEditor
+				}
+				if appUI.Window != nil {
+					appUI.Window.Invalidate()
+				}
+			}
 		}
 	}
 

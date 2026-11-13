@@ -10,6 +10,7 @@ import (
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 // renderEditorSurface renders the Editor mode layout: ActivityBar + Sidebar, Editor Tabs & Buffers, Bottom Terminal, Right Drawer.
@@ -161,14 +162,23 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			isActive := (path == em.ActivePath)
 			isModified := doc.Editor.Buffer.Modified()
 			baseName := filepath.Base(doc.RelativePath)
+			isPinned := em.IsPinned(path)
+			isReadOnly := em.IsReadOnly(path)
 
 			tab := ui.Row(c.Key("tab-"+path)).Height(EditorTabBarHeight).Padding(0, 10).Gap(6).
 				AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
 			tab.Children(func() {
 				ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+				if isPinned {
+					ui.Icon(c, icons.TablerPinFilled).Width(9).Height(9).TextColor(tc.Accent)
+				}
 				label := ui.Text(c, baseName).FontSize(12)
 				if isActive {
 					label.FontWeight(500)
+				}
+				if isReadOnly {
+					// Read-only tabs render an italic title, as forge-ade does.
+					label.Italic().TextColor(tc.TextMuted)
 				}
 				closeBtn := ui.Row(c.Key("tab-close-"+path)).Size(16, 16).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
 				closeBtn.Children(func() {
@@ -193,9 +203,36 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			if tab.Clicked() {
 				em.ActivePath = path
 			}
+			// Drag-to-reorder: while dragging horizontally, shift the tab in
+			// the strip, as the webview's onMoveTab does.
+			if _, dx, dragging := tab.Dragged(); dragging && dx != 0 {
+				idx := em.TabIndex(path)
+				if idx >= 0 {
+					if dx > 24 && idx < len(em.OpenTabPaths)-1 {
+						em.MoveTab(idx, idx+1)
+					} else if dx < -24 && idx > 0 {
+						em.MoveTab(idx, idx-1)
+					}
+				}
+			}
 
 			// Zed-style tab context menu, as forge-ade's tab bar has.
 			tab.ContextMenu(func(m *ui.Menu) {
+				pinLabel := "Pin Tab"
+				if isPinned {
+					pinLabel = "Unpin Tab"
+				}
+				if m.Item(pinLabel).Chosen() {
+					em.TogglePin(path)
+				}
+				roLabel := "Set Read-Only"
+				if isReadOnly {
+					roLabel = "Set Editable"
+				}
+				if m.Item(roLabel).Chosen() {
+					em.ToggleReadOnly(path)
+				}
+				m.Separator()
 				if m.Item("Close").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
 					em.CloseTab(path)
 				}
@@ -263,10 +300,18 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 		}
 
 		splitLabel := "Split"
-		if em.IsSplit {
+		if len(em.Panes) > 1 {
 			splitLabel = "Single"
 		}
-		actionBtn(icons.TablerColumns, splitLabel, false, func() { em.IsSplit = !em.IsSplit })
+		actionBtn(icons.TablerColumns, splitLabel, false, func() {
+			if len(em.Panes) > 1 {
+				em.Panes = nil
+				em.PaneWeights = nil
+				em.IsSplit = false
+			} else {
+				em.SplitRight()
+			}
+		})
 		actionBtn(icons.TablerGitCompare, "Diff", em.IsDiffView, func() { em.IsDiffView = !em.IsDiffView })
 		actionBtn(icons.TablerRefresh, "Wrap", em.SoftWrap, func() { em.SoftWrap = !em.SoftWrap })
 		actionBtn(icons.TablerWand, "Format", false, func() { a.formatActiveDocument(c) })
@@ -282,6 +327,7 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 		return
 	}
 	t := c.Theme()
+	tc := a.ThemeMgr.Colors()
 
 	ui.Column(c).Fill().Children(func() {
 		a.renderEditorTabBar(c)
@@ -291,33 +337,46 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 			return
 		}
 
-		if em.IsSplit && len(em.OpenTabPaths) >= 2 {
+		// Multi-pane layout (EditorPaneState parity): N weighted panes with
+		// 3px drag handles between them; the active pane keeps breadcrumbs,
+		// minimap and the inline AI bar.
+		em.EnsurePanes()
+		if panes := em.PaneDocs(); panes != nil {
 			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-				ui.Column(c).Grow(1).FillHeight().Children(func() {
-					a.renderEditorSingle(c)
-				})
-
-				ui.Box(c).Width(3).FillHeight().Background(t.Border)
-
-				var secondaryPath string
-				for _, p := range em.OpenTabPaths {
-					if p != em.ActivePath {
-						secondaryPath = p
-						break
+				for i, panePath := range panes {
+					if i > 0 {
+						ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(3).FillHeight().Background(t.Border)
 					}
-				}
-				secondaryDoc := em.GetDoc(secondaryPath)
-				ui.Column(c).Grow(1).FillHeight().Children(func() {
-					if secondaryDoc != nil {
-						secondaryDoc.Editor.SoftWrap = em.SoftWrap
-						em.ApplyTheme(secondaryDoc.Editor)
-						ui.Row(c).Height(28).Padding(0, 12).AlignItems(ui.Center).
+					panePath, paneIdx := panePath, i
+					ui.Column(c).FillHeight().Children(func() {
+						paneDoc := em.GetDoc(panePath)
+						if paneDoc == nil {
+							ui.Column(c).Grow(1).Center().Children(func() {
+								ui.Text(c, "No file").FontSize(12).TextColor(tc.TextMuted)
+							})
+							return
+						}
+						paneDoc.Editor.SoftWrap = em.SoftWrap
+						em.ApplyTheme(paneDoc.Editor)
+						ui.Row(c).Height(28).Padding(0, 12).Gap(6).AlignItems(ui.Center).
 							BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-							ui.Text(c, secondaryDoc.RelativePath).FontSize(12).FontWeight(500)
+							if panePath == em.ActivePath {
+								ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+							}
+							ui.Text(c, paneDoc.RelativePath).FontSize(12).FontWeight(500).Grow(1).SingleLine()
+							if IconButton(c, tc, icons.TablerX, 11).Clicked() {
+								em.ClosePane(paneIdx)
+							}
 						})
-						mygoeditor.View(c, secondaryDoc.Editor).Grow(1).FillWidth()
-					}
-				})
+						if panePath == em.ActivePath {
+							a.renderEditorSingle(c)
+						} else {
+							ui.Row(c).Grow(1).Children(func() {
+								mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
+							})
+						}
+					})
+				}
 			})
 			return
 		}
@@ -437,9 +496,14 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 
 		// Virtualized Code Editor View
 		ui.Box(c).Fill().Children(func() {
-			mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
-			// Inline AI edit bar floats over the buffer (⌘I, InlineAiBar).
-			a.renderInlineAiBar(c, tc)
+			ui.Row(c).Grow(1).Children(func() {
+				ui.Box(c).Grow(1).Children(func() {
+					mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+					// Inline AI edit bar floats over the buffer (⌘I).
+					a.renderInlineAiBar(c, tc)
+				})
+				a.renderMinimap(c, tc, doc)
+			})
 		})
 	})
 	_ = tc
@@ -620,6 +684,26 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 		}
 		ui.Box(c).Grow(1)
 
+		// Follow Agent toggle: auto-jump the editor to the files the agent
+		// edits during a turn (layoutStore.isFollowAgentMode parity).
+		followChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center)
+		if a.FollowAgent {
+			followChip.Background(tc.Accent.Alpha(0.14))
+		}
+		followChip.Children(func() {
+			eyeColor := tc.TextMuted
+			labelColor := tc.TextMuted
+			if a.FollowAgent {
+				eyeColor = tc.Accent
+				labelColor = tc.Accent
+			}
+			ui.Icon(c, icons.TablerEye).Width(12).Height(12).TextColor(eyeColor)
+			ui.Text(c, "Follow Agent").FontSize(11).TextColor(labelColor)
+		})
+		if followChip.Clicked() {
+			a.FollowAgent = !a.FollowAgent
+		}
+
 		statusText(lineCol)
 		statusText(fmt.Sprintf("%d lines · %s", lineCount, langLabel))
 		statusText("UTF-8")
@@ -671,3 +755,65 @@ func FormatLineCol(line, col int) string {
 
 // renderFileSearch renders forge-ade's project search: a query over all
 // workspace files with per-line hits that open the file at the match.
+
+// renderMinimap draws the compact content map beside the buffer: one bar per
+// line sized to its length, the visible viewport highlighted, click jumps —
+// the webview CodeEditorPane's minimap.
+func (a *AppUI) renderMinimap(c *ui.Context, tc theme.ThemeColors, doc *editor.OpenDocument) {
+	_ = tc
+	if doc == nil {
+		return
+	}
+	const (
+		minimapWidth  = float32(64)
+		linePitch     = float32(2)
+		maxRenderRows = 900
+	)
+
+	buf := doc.Editor.Buffer
+	first, last := doc.Editor.VisibleLines()
+
+	rail := ui.Column(c.Key("minimap")).Width(minimapWidth).FillHeight().
+		Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).
+		Padding(2, 2).Gap(0).Clip()
+	rail.Children(func() {
+		text := buf.String()
+		lines := strings.Split(text, "\n")
+		rows := len(lines)
+		if rows > maxRenderRows {
+			rows = maxRenderRows
+		}
+		// Scale bars to the widest visible line so the map stays legible.
+		maxLen := 1
+		for i := 0; i < rows; i++ {
+			if l := len(lines[i]); l > maxLen {
+				maxLen = l
+			}
+		}
+		for i := 0; i < rows; i++ {
+			i := i
+			ln := len(lines[i])
+			w := minimapWidth * float32(ln) / float32(maxLen)
+			if w < 1 && ln > 0 {
+				w = 1
+			}
+			inView := i >= first && i <= last
+			bar := ui.Row(c.Key(fmt.Sprintf("mm-%d", i))).Height(linePitch).AlignItems(ui.Center)
+			bar.Children(func() {
+				color := tc.Text.Alpha(0.18)
+				if inView {
+					color = tc.Text.Alpha(0.4)
+				}
+				ui.Box(c).Width(w).Height(1).Background(color)
+			})
+			if bar.Clicked() {
+				doc.Editor.GoTo(editorPosAtLine(doc, i))
+			}
+		}
+	})
+}
+
+// editorPosAtLine builds a mygoeditor Pos for a 0-based line.
+func editorPosAtLine(doc *editor.OpenDocument, line int) mygoeditor.Pos {
+	return mygoeditor.Pos{Line: line, Col: 0}
+}

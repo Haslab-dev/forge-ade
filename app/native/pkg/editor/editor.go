@@ -33,12 +33,20 @@ type EditorManager struct {
 	ActivePath   string
 	SoftWrap     bool
 	IsSplit      bool
-	IsDiffView   bool
-	DiffLayout   int    // 0: Split, 1: Unified
-	DiffInline   string // "Words", "Characters", "Off"
-	StatusMsg    string
-	Theme        *theme.ThemeManager
-	RemoteFS     *remotefs.Manager
+	// PinnedTabs survive bulk close actions; ReadOnlyTabs render an italic
+	// title and a non-editable buffer (CodeEditorPane parity).
+	PinnedTabs   map[string]bool
+	ReadOnlyTabs map[string]bool
+	// Panes holds each split pane's document path (EditorPaneState parity);
+	// PaneWeights are per-pane flex weights for the drag handles.
+	Panes       []string
+	PaneWeights []float32
+	IsDiffView  bool
+	DiffLayout  int    // 0: Split, 1: Unified
+	DiffInline  string // "Words", "Characters", "Off"
+	StatusMsg   string
+	Theme       *theme.ThemeManager
+	RemoteFS    *remotefs.Manager
 }
 
 // NewEditorManager creates and initializes an EditorManager.
@@ -49,6 +57,8 @@ func NewEditorManager() *EditorManager {
 		OpenTabPaths: make([]string, 0),
 		SoftWrap:     false,
 		IsSplit:      false,
+		PinnedTabs:   make(map[string]bool),
+		ReadOnlyTabs: make(map[string]bool),
 		IsDiffView:   false,
 		DiffLayout:   0,
 		DiffInline:   "Words",
@@ -243,10 +253,32 @@ func (em *EditorManager) CloseTab(fullPath string) {
 func (em *EditorManager) CloseAll() {
 	em.mu.Lock()
 	defer em.mu.Unlock()
-	em.OpenTabPaths = nil
-	em.docs = make(map[string]*OpenDocument)
-	em.patchDiffs = make(map[string]*mygoeditor.DiffState)
-	em.ActivePath = ""
+	kept := make([]string, 0, len(em.OpenTabPaths))
+	for _, p := range em.OpenTabPaths {
+		if em.PinnedTabs[p] {
+			kept = append(kept, p) // pinned tabs survive Close All
+			continue
+		}
+		delete(em.docs, p)
+		delete(em.patchDiffs, p)
+	}
+	em.OpenTabPaths = kept
+	if !em.containsPath(em.ActivePath) {
+		if len(em.OpenTabPaths) > 0 {
+			em.ActivePath = em.OpenTabPaths[len(em.OpenTabPaths)-1]
+		} else {
+			em.ActivePath = ""
+		}
+	}
+}
+
+func (em *EditorManager) containsPath(p string) bool {
+	for _, t := range em.OpenTabPaths {
+		if t == p {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseOthers closes all tabs except keepPath.
@@ -254,18 +286,18 @@ func (em *EditorManager) CloseOthers(keepPath string) {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 
+	kept := make([]string, 0, len(em.OpenTabPaths))
 	for _, p := range em.OpenTabPaths {
-		if p != keepPath {
-			delete(em.docs, p)
-			delete(em.patchDiffs, p)
+		if p == keepPath || em.PinnedTabs[p] {
+			kept = append(kept, p) // keepPath + pinned tabs stay
+			continue
 		}
+		delete(em.docs, p)
+		delete(em.patchDiffs, p)
 	}
-	if _, ok := em.docs[keepPath]; ok {
-		em.OpenTabPaths = []string{keepPath}
+	em.OpenTabPaths = kept
+	if !em.containsPath(em.ActivePath) {
 		em.ActivePath = keepPath
-	} else {
-		em.OpenTabPaths = nil
-		em.ActivePath = ""
 	}
 }
 
@@ -285,13 +317,19 @@ func (em *EditorManager) CloseToRight(basePath string) {
 		return
 	}
 
-	for i := idx + 1; i < len(em.OpenTabPaths); i++ {
-		p := em.OpenTabPaths[i]
+	kept := make([]string, 0, len(em.OpenTabPaths))
+	for i, p := range em.OpenTabPaths {
+		if i <= idx || em.PinnedTabs[p] {
+			kept = append(kept, p)
+			continue
+		}
 		delete(em.docs, p)
 		delete(em.patchDiffs, p)
 	}
-	em.OpenTabPaths = em.OpenTabPaths[:idx+1]
-	em.ActivePath = basePath
+	em.OpenTabPaths = kept
+	if !em.containsPath(em.ActivePath) {
+		em.ActivePath = basePath
+	}
 }
 
 // CycleTab moves tab focus left or right.

@@ -2365,3 +2365,23 @@ func plural(n int) string {
 	}
 	return "s"
 }
+
+// LastTurnChangedFile returns the first file the session's last turn changed
+// (Follow Agent auto-jump source).
+func (as *AgentState) LastTurnChangedFile(sessionID string) (string, bool) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			m := s.Messages[i]
+			if m.Role == "assistant" && len(m.Changes) > 0 {
+				return m.Changes[0].Path, true
+			}
+		}
+		break
+	}
+	return "", false
+}
