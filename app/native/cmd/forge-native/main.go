@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	nativeui "github.com/hasdev/forge-ade/app/native/pkg/ui"
 )
 
@@ -48,6 +49,10 @@ func main() {
 			{Role: mygo.RoleViewMenu},
 			{Role: mygo.RoleWindowMenu},
 		}))
+
+		// Show the ForgeADE icon in the Dock even when launched as a bare
+		// binary (the .app bundle carries the icns itself).
+		_ = mygo.App.Dock.SetIcon(theme.AppIconPNG)
 
 		appUI := nativeui.NewAppUI(eng, targetDir)
 

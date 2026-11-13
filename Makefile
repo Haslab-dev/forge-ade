@@ -50,6 +50,7 @@ native-app: native ## Build the signed macOS .app bundle
 	@mkdir -p $(NATIVE_APP)/Contents/MacOS $(NATIVE_APP)/Contents/Resources
 	cp $(NATIVE_BIN) $(NATIVE_APP)/Contents/MacOS/forge-native
 	cp $(NATIVE_DIR)/packaging/Info.plist $(NATIVE_APP)/Contents/Info.plist
+	cp $(NATIVE_DIR)/packaging/AppIcon.icns $(NATIVE_APP)/Contents/Resources/AppIcon.icns
 	codesign --force -s - $(NATIVE_APP) 2>/dev/null || true
 	@echo "bundle: $(NATIVE_APP)"
 

@@ -27,3 +27,9 @@ func init() {
 	_ = ui.RegisterFont(geistFont, FontSans)
 	_ = ui.RegisterFont(geistMonoFont, FontMono)
 }
+
+// AppIconPNG is the ForgeADE app icon (512px PNG) used for the runtime Dock
+// icon when the app is launched as a bare binary instead of the .app bundle.
+//
+//go:embed assets/appicon.png
+var AppIconPNG []byte
