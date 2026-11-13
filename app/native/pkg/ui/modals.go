@@ -67,6 +67,7 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowNewBoardTaskModal {
 		a.renderNewBoardTaskModal(c)
 	}
+	a.renderQuestionModal(c)
 }
 
 func (a *AppUI) renderPaletteModal(c *ui.Context) {

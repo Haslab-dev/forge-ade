@@ -13,6 +13,44 @@ import (
 	"github.com/Haslab-dev/RakitKode/agent"
 )
 
+// AgentQuestion is one structured question of an agent:ask payload
+// (tools.AskQuestion parity): single- or multi-select chips with an optional
+// recommended option and a free-form custom answer.
+type AgentQuestion struct {
+	ID          string   `json:"id"`
+	Question    string   `json:"question"`
+	Header      string   `json:"header,omitempty"`
+	Options     []string `json:"options"`
+	Multi       bool     `json:"multi,omitempty"`
+	Recommended int      `json:"recommended,omitempty"` // index into Options, -1 = none
+
+	// UI selection state (not part of the wire payload).
+	Selected []string `json:"selected,omitempty"`
+	Custom   string   `json:"custom,omitempty"`
+}
+
+// AnswersMap builds the RespondAgentAsk answers payload: question id →
+// selection(s), including the custom free-text answer when present.
+func (q *AgentQuestion) AnswersMap() map[string]any {
+	var answer any
+	switch {
+	case len(q.Selected) > 0 && q.Custom != "":
+		picks := append([]string(nil), q.Selected...)
+		answer = append(picks, q.Custom)
+	case len(q.Selected) > 0:
+		if q.Multi {
+			answer = append([]string(nil), q.Selected...)
+		} else {
+			answer = q.Selected[0]
+		}
+	case q.Custom != "":
+		answer = q.Custom
+	default:
+		return nil
+	}
+	return map[string]any{q.ID: answer}
+}
+
 // ensureInternalManagerSession returns the RakitKode agent session backing a
 // native internal session, creating it on the first turn (and re-linking
 // restored sessions whose manager session no longer exists).
@@ -129,6 +167,113 @@ func (as *AgentState) RespondInternalApproval(sessionID string, approve, autoApp
 		return nil
 	}
 	return as.engine.AgentMgr.RespondApproval(context.Background(), mgrID, approve, autoApproveAll)
+}
+
+// HandleQuestions surfaces a structured agent:ask (ask tool payload) on the
+// streaming message and flips the session to awaiting-input.
+func (as *AgentState) HandleQuestions(sessionID string, questions []AgentQuestion) {
+	if len(questions) == 0 {
+		return
+	}
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		s.Status = "awaiting-approval"
+		msg := as.ensureStreamingMessage(s)
+		msg.PendingQuestions = questions
+		as.Messages = s.Messages
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// PendingQuestions returns the live questions of a session's streaming
+// message, if any.
+func (as *AgentState) PendingQuestions(sessionID string) []AgentQuestion {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			if len(s.Messages[i].PendingQuestions) > 0 {
+				return s.Messages[i].PendingQuestions
+			}
+		}
+		break
+	}
+	return nil
+}
+
+// UpdateQuestion mutates one question's UI selection state, addressed by the
+// message-local index.
+func (as *AgentState) UpdateQuestion(sessionID string, qIndex int, fn func(q *AgentQuestion)) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			msg := s.Messages[i]
+			if len(msg.PendingQuestions) == 0 {
+				continue
+			}
+			if qIndex >= 0 && qIndex < len(msg.PendingQuestions) {
+				fn(&msg.PendingQuestions[qIndex])
+			}
+			break
+		}
+		break
+	}
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// SubmitQuestionAnswers collects every question's selection into the
+// RespondAgentAsk payload, clears the cards, and resumes the turn.
+func (as *AgentState) SubmitQuestionAnswers(sessionID string) error {
+	qs := as.PendingQuestions(sessionID)
+	if len(qs) == 0 {
+		return nil
+	}
+	answers := map[string]any{}
+	for _, q := range qs {
+		if m := q.AnswersMap(); m != nil {
+			for k, v := range m {
+				answers[k] = v
+			}
+		}
+	}
+	// Clear the pending cards first so the UI returns to streaming state.
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			if len(s.Messages[i].PendingQuestions) > 0 {
+				s.Messages[i].PendingQuestions = nil
+				break
+			}
+		}
+		if s.Status == "awaiting-approval" {
+			s.Status = "running"
+		}
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+	return as.RespondInternalAsk(sessionID, answers)
 }
 
 // RespondInternalAsk answers a structured agent question with option answers

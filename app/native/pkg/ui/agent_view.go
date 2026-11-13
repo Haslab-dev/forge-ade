@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -204,6 +205,12 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						// Pending Approval Bar
 						if m.PendingApproval != nil && !m.PendingApproval.Resolved {
 							a.renderApprovalBar(c, tc, m)
+						}
+
+						// Structured Questions Card (ask tool) — option chips,
+						// custom answers, open-in-dialog.
+						if len(m.PendingQuestions) > 0 {
+							a.renderPendingQuestionsCard(c, tc, sess.ID, m)
 						}
 
 						// Response Markdown body
@@ -914,6 +921,24 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 	}
 
 	card.Children(func() {
+		// Autocomplete panels float above the input: "/" opens the slash
+		// catalog, a trailing "@token" opens the file mention menu —
+		// AgentTaskInputBar.tsx parity.
+		slashItems, slashActive := a.composerSlashState(as)
+		if slashActive {
+			if a.SlashSelected >= len(slashItems) {
+				a.SlashSelected = 0
+			}
+			a.renderComposerMenu(c, tc, slashItems, a.SlashSelected, "slash")
+		}
+		mentionItems, _, mentionActive := a.composerMentionState(as)
+		if mentionActive {
+			if a.MentionSelected >= len(mentionItems) {
+				a.MentionSelected = 0
+			}
+			a.renderComposerMenu(c, tc, mentionItems, a.MentionSelected, "mention")
+		}
+
 		// 1. Attached Files Strip (if any files attached)
 		if len(as.AttachedFiles) > 0 {
 			ui.Row(c).Padding(10, 14, 2, 14).Gap(6).Wrap().Children(func() {
@@ -950,6 +975,46 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				in.AutoFocus()
 			}
 			in.OnTextKey(func(k ui.TextKey) bool {
+				// Autocomplete navigation consumes Up/Down/Enter/Esc while a
+				// menu is active, as the webview slash / mention menus do.
+				if slashActive && len(slashItems) > 0 {
+					switch k.Key {
+					case ui.KeyDown:
+						a.SlashSelected = (a.SlashSelected + 1) % len(slashItems)
+						return true
+					case ui.KeyUp:
+						a.SlashSelected = (a.SlashSelected - 1 + len(slashItems)) % len(slashItems)
+						return true
+					case ui.KeyEnter:
+						if k.Mods == 0 {
+							a.applyComposerSuggestion(slashItems[a.SlashSelected])
+							k.SetText(a.Agent.InputText)
+							return true
+						}
+					case ui.KeyEscape:
+						a.SlashDismissedAt = a.Agent.InputText
+						return true
+					}
+				}
+				if mentionActive && len(mentionItems) > 0 {
+					switch k.Key {
+					case ui.KeyDown:
+						a.MentionSelected = (a.MentionSelected + 1) % len(mentionItems)
+						return true
+					case ui.KeyUp:
+						a.MentionSelected = (a.MentionSelected - 1 + len(mentionItems)) % len(mentionItems)
+						return true
+					case ui.KeyEnter:
+						if k.Mods == 0 {
+							a.applyComposerSuggestion(mentionItems[a.MentionSelected])
+							k.SetText(a.Agent.InputText)
+							return true
+						}
+					case ui.KeyEscape:
+						a.MentionDismissedAt = a.Agent.InputText
+						return true
+					}
+				}
 				if k.Key == ui.KeyEnter && k.Mods == 0 {
 					as.SubmitMessage()
 					k.SetText("")
@@ -1917,4 +1982,209 @@ func extractShellCommand(raw, fallback string) string {
 		return first
 	}
 	return candidate
+}
+
+// ── Structured questions (ask tool) ────────────────────────────────────────
+// Port of PendingQuestionsCard / AgentQuestionModal: per-question option
+// chips (single/multi select, "(Recommended)" badge), custom free-text
+// answers (drafted in AppUI.QuestionDrafts), submit back through
+// RespondAgentAsk, plus an "Open dialog" affordance.
+
+// questionDraftKey is the composer-draft key of one question's custom answer.
+func questionDraftKey(sessionID string, qi int, inDialog bool) string {
+	return fmt.Sprintf("q:%s:%d:%v", sessionID, qi, inDialog)
+}
+
+func (a *AppUI) renderPendingQuestionsCard(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
+	card := ui.Column(c.Key("qcard-" + sessionID)).Radius(12).Padding(14).Gap(10).
+		Background(tc.Accent.Alpha(0.05)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+	card.Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.TablerHelp).Width(16).Height(16).TextColor(tc.Accent)
+			ui.Text(c, "Agent has questions").FontSize(13).FontWeight(600)
+			ui.Box(c).Grow(1)
+			openDlg := composerControlChip(c, tc, icons.TablerExternalLink, "Open dialog", "", false)
+			if openDlg.Clicked() {
+				a.ShowQuestionModal = true
+			}
+		})
+
+		for qi := range m.PendingQuestions {
+			a.renderQuestionBlock(c, tc, sessionID, qi, false)
+		}
+
+		actions := ui.Row(c).Gap(6).Justify(ui.End).AlignItems(ui.Center)
+		actions.Children(func() {
+			submit := ui.Row(c).Height(28).Radius(8).Padding(0, 14).Gap(6).AlignItems(ui.Center).Background(tc.Accent)
+			submit.Children(func() {
+				ui.Text(c, "Submit answers").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
+			})
+			if submit.Clicked() {
+				session := sessionID
+				go func() {
+					_ = a.Agent.SubmitQuestionAnswers(session)
+					a.clearQuestionDrafts(session)
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
+				}()
+			}
+		})
+	})
+}
+
+// renderQuestionBlock draws one question: header chip, prompt, option chips
+// with recommended badge, multi-select hint, and the custom answer input.
+func (a *AppUI) renderQuestionBlock(c *ui.Context, tc theme.ThemeColors, sessionID string, qi int, inDialog bool) {
+	qs := a.Agent.PendingQuestions(sessionID)
+	if qi >= len(qs) {
+		return
+	}
+	q := qs[qi]
+	draftKey := questionDraftKey(sessionID, qi, inDialog)
+	draft, ok := a.QuestionDrafts[draftKey]
+	if !ok || draft == nil {
+		draft = new(string)
+		a.QuestionDrafts[draftKey] = draft
+	}
+
+	block := ui.Column(c.Key(fmt.Sprintf("q-%d-%v", qi, inDialog))).Padding(8, 10).Radius(10).Gap(8).
+		Background(tc.Surface.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+	block.Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			if q.Header != "" {
+				hdr := ui.Row(c).Height(18).Radius(5).Padding(0, 6).AlignItems(ui.Center).Background(tc.Accent.Alpha(0.14))
+				hdr.Children(func() {
+					ui.Text(c, strings.ToUpper(q.Header)).FontSize(9).FontWeight(700).TextColor(tc.Accent)
+				})
+			}
+			ui.Text(c, q.Question).FontSize(12).FontWeight(500).Grow(1)
+			if q.Multi {
+				ui.Text(c, "multi-select").FontSize(10).TextColor(tc.SecondaryLabel)
+			}
+		})
+
+		// Option chips: click toggles; single-select clears the others.
+		ui.Row(c).Gap(6).Wrap().Children(func() {
+			for oi, opt := range q.Options {
+				oi, opt := oi, opt
+				selected := slices.Contains(q.Selected, opt)
+				chip := ui.Row(c.Key(fmt.Sprintf("qopt-%d-%d-%v", qi, oi, inDialog))).Height(26).Radius(8).Padding(0, 10).Gap(5).AlignItems(ui.Center)
+				chip.Children(func() {
+					if selected {
+						ui.Icon(c, icons.TablerCheck).Width(12).Height(12).TextColor(tc.Accent)
+					}
+					ui.Text(c, opt).FontSize(12)
+					if oi == q.Recommended {
+						badge := ui.Row(c).Height(15).Radius(4).Padding(0, 5).AlignItems(ui.Center).Background(tc.Success.Alpha(0.16))
+						badge.Children(func() {
+							ui.Text(c, "(Recommended)").FontSize(9).FontWeight(600).TextColor(tc.Success)
+						})
+					}
+				})
+				if selected {
+					chip.Background(tc.Accent.Alpha(0.16)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.5))
+				} else {
+					chip.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				}
+				if chip.Clicked() {
+					a.Agent.UpdateQuestion(sessionID, qi, func(qu *agent.AgentQuestion) {
+						if qu.Multi {
+							if slices.Contains(qu.Selected, opt) {
+								qu.Selected = slices.DeleteFunc(qu.Selected, func(s string) bool { return s == opt })
+							} else {
+								qu.Selected = append(qu.Selected, opt)
+							}
+						} else if selected {
+							qu.Selected = nil
+						} else {
+							qu.Selected = []string{opt}
+						}
+					})
+				}
+			}
+		})
+
+		// Custom free-text answer, drafted in AppUI state so the input owns
+		// live text between frames.
+		customRow := ui.Row(c).Gap(6).AlignItems(ui.Center)
+		customRow.Children(func() {
+			ui.Text(c, "Other:").FontSize(11).TextColor(tc.TextMuted)
+			ui.TextInput(c, draft).Placeholder("Type a custom answer…").Grow(1)
+		})
+	})
+
+	// The draft feeds the live question on each frame; SubmitQuestionAnswers
+	// reads from the live questions.
+	a.Agent.UpdateQuestion(sessionID, qi, func(qu *agent.AgentQuestion) {
+		qu.Custom = strings.TrimSpace(*draft)
+	})
+}
+
+// clearQuestionDrafts drops the custom-answer drafts of a session.
+func (a *AppUI) clearQuestionDrafts(sessionID string) {
+	for k := range a.QuestionDrafts {
+		if strings.HasPrefix(k, "q:"+sessionID+":") {
+			delete(a.QuestionDrafts, k)
+		}
+	}
+}
+
+// renderQuestionModal is the full AgentQuestionModal dialog: roomier blocks
+// with dedicated custom-answer inputs per question.
+func (a *AppUI) renderQuestionModal(c *ui.Context) {
+	if a.Agent == nil || !a.ShowQuestionModal {
+		return
+	}
+	tc := a.ThemeMgr.Colors()
+	sessionID := a.Agent.ActiveSessionID
+
+	ui.Modal(c, &a.ShowQuestionModal, func() {
+		panel := ui.Column(c).Width(520).MaxHeight(560).Radius(16).Background(tc.SurfaceOverlay).
+			BorderWidth(1).BorderColor(tc.Border).Padding(18).Gap(12).Clip().
+			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55))
+		panel.Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerHelp).Width(18).Height(18).TextColor(tc.Accent)
+				ui.Text(c, "Agent Questions").FontSize(15).FontWeight(600)
+				ui.Box(c).Grow(1)
+				if IconButton(c, tc, icons.TablerX, 14).Clicked() {
+					a.ShowQuestionModal = false
+				}
+			})
+
+			scroll := ui.Scroll(c)
+			scroll.Children(func() {
+				col := ui.Column(c).Gap(10)
+				qs := a.Agent.PendingQuestions(sessionID)
+				col.Children(func() {
+					for qi := range qs {
+						a.renderQuestionBlock(c, tc, sessionID, qi, true)
+					}
+				})
+			}).Grow(1).MaxHeight(380)
+
+			actions := ui.Row(c).Gap(8).Justify(ui.End)
+			actions.Children(func() {
+				cancel := composerControlChip(c, tc, icons.TablerX, "Cancel", "", false)
+				if cancel.Clicked() {
+					a.ShowQuestionModal = false
+				}
+				submit := ui.Row(c).Height(30).Radius(8).Padding(0, 16).Gap(6).AlignItems(ui.Center).Background(tc.Accent)
+				submit.Children(func() {
+					ui.Text(c, "Submit").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
+				})
+				if submit.Clicked() {
+					a.ShowQuestionModal = false
+					go func() {
+						_ = a.Agent.SubmitQuestionAnswers(sessionID)
+						a.clearQuestionDrafts(sessionID)
+						if a.Window != nil {
+							a.Window.Invalidate()
+						}
+					}()
+				}
+			})
+		})
+	})
 }

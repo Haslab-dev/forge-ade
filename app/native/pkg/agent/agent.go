@@ -104,8 +104,11 @@ type ChatMessage struct {
 	ShowTools       bool
 	Changes         []*FileChange
 	PendingApproval *PendingApproval
-	TotalSteps      int       // steps reported by agent:turn_end
-	TurnStartedAt   time.Time `json:"-"` // live elapsed while streaming
+	// PendingQuestions carries a structured agent:ask (ask tool) with option
+	// chips and custom answers — PendingQuestionsCard / AgentQuestionModal.
+	PendingQuestions []AgentQuestion
+	TotalSteps       int       // steps reported by agent:turn_end
+	TurnStartedAt    time.Time `json:"-"` // live elapsed while streaming
 }
 
 // AgentSession represents a single task session in the ForgeADE agent workspace.

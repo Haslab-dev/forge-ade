@@ -70,43 +70,57 @@ const (
 
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
 type AppUI struct {
-	Engine                  *engine.Engine
-	Window                  *mygo.Window
-	Workspace               *workspace.WorkspaceState
-	Editor                  *editor.EditorManager
-	Terminal                *terminal.TerminalState
-	Agent                   *agent.AgentState
-	Git                     *git.GitManager
-	Database                *database.DatabaseManager
-	Palette                 *palette.PaletteManager
-	Settings                *settings.SettingsManager
-	ThemeMgr                *theme.ThemeManager
-	ACPMgr                  *agent.ACPManager
-	CLIMgr                  *agent.AgentCLIManager
-	Board                   *board.BoardManager
-	Mode                    int      // ModeAgent or ModeEditor
-	ActiveTaskKind          string   // "agent" or "cli"
-	ShowLeftSidebar         bool     // Left sidebar visibility
-	LeftSidebarView         string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
-	SideFileTabs            []string // files opened in the right sidebar from the explorer
-	ActiveSideFile          string
-	ShowBottomTerminal      bool    // Collapsible bottom terminal drawer
-	BottomTerminalHeight    float32 // Resizable terminal height
-	ShowRightDrawer         bool    // Collapsible right side pane
-	RightDrawerWidth        float32 // Resizable right pane width
-	LeftSidebarWidth        float32 // Resizable left sidebar width
-	RightDrawerTab          int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
-	EditorActivity          int     // ActivityExplorer, ActivityGit, ActivityDatabase
-	SelectedFile            string
-	FileSearchQuery         string
-	FileSearchHits          []workspace.FileSearchHit
-	SelectedDiffPath        string
-	SideChatMessages        []*agent.ChatMessage
-	SideChatInput           string
-	SideChatModel           string
-	SideChatMode            string // "full", "ask", "plan"
-	SideChatStreaming       bool
-	SideChatMd              markdown.Options
+	Engine               *engine.Engine
+	Window               *mygo.Window
+	Workspace            *workspace.WorkspaceState
+	Editor               *editor.EditorManager
+	Terminal             *terminal.TerminalState
+	Agent                *agent.AgentState
+	Git                  *git.GitManager
+	Database             *database.DatabaseManager
+	Palette              *palette.PaletteManager
+	Settings             *settings.SettingsManager
+	ThemeMgr             *theme.ThemeManager
+	ACPMgr               *agent.ACPManager
+	CLIMgr               *agent.AgentCLIManager
+	Board                *board.BoardManager
+	Mode                 int      // ModeAgent or ModeEditor
+	ActiveTaskKind       string   // "agent" or "cli"
+	ShowLeftSidebar      bool     // Left sidebar visibility
+	LeftSidebarView      string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	SideFileTabs         []string // files opened in the right sidebar from the explorer
+	ActiveSideFile       string
+	ShowBottomTerminal   bool    // Collapsible bottom terminal drawer
+	BottomTerminalHeight float32 // Resizable terminal height
+	ShowRightDrawer      bool    // Collapsible right side pane
+	RightDrawerWidth     float32 // Resizable right pane width
+	LeftSidebarWidth     float32 // Resizable left sidebar width
+	RightDrawerTab       int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
+	EditorActivity       int     // ActivityExplorer, ActivityGit, ActivityDatabase
+	SelectedFile         string
+	FileSearchQuery      string
+	FileSearchHits       []workspace.FileSearchHit
+	SelectedDiffPath     string
+	SideChatMessages     []*agent.ChatMessage
+	SideChatInput        string
+	SideChatModel        string
+	SideChatMode         string // "full", "ask", "plan"
+	SideChatStreaming    bool
+	SideChatMd           markdown.Options
+
+	// Composer autocomplete state (slash commands / @-mentions): visibility
+	// derives from the composer text each frame; the dismissal latches hold
+	// the text at Esc time so editing re-opens the menu.
+	SlashSelected      int
+	SlashDismissedAt   string
+	MentionSelected    int
+	MentionDismissedAt string
+
+	// Structured agent questions (ask tool): modal flag + custom-answer
+	// drafts keyed by questionDraftKey.
+	ShowQuestionModal bool
+	QuestionDrafts    map[string]*string
+
 	ShowNewFileModal        bool
 	NewFileName             string
 	ShowNewFolderModal      bool
@@ -232,6 +246,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SideChatModel:           "Claude 3.7 Sonnet",
 		SideChatMode:            "full",
 		SideChatMessages:        make([]*agent.ChatMessage, 0),
+		QuestionDrafts:          make(map[string]*string),
 	}
 
 	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {
@@ -263,7 +278,13 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI.ACPMgr.OnTurnStart = func(sessionID, prompt string) {
 		appUI.Agent.HandleTurnStart(appUI.Agent.MapInternalSession(sessionID), prompt)
 	}
-	appUI.ACPMgr.OnAsk = appUI.Agent.HandleAsk
+	appUI.ACPMgr.OnAsk = func(req *agent.PermissionRequest) {
+		req.SessionID = appUI.Agent.MapInternalSession(req.SessionID)
+		appUI.Agent.HandleAsk(req)
+	}
+	appUI.ACPMgr.OnQuestions = func(sessionID string, questions []agent.AgentQuestion) {
+		appUI.Agent.HandleQuestions(appUI.Agent.MapInternalSession(sessionID), questions)
+	}
 	appUI.ACPMgr.OnUsage = func(sessionID string, usage agent.UsageInfo) {
 		appUI.Agent.HandleUsage(appUI.Agent.MapInternalSession(sessionID), usage)
 	}

@@ -91,6 +91,7 @@ type ACPManager struct {
 	OnTurnStart    func(sessionID, prompt string)
 	OnTurnDone     func(sessionID string, info TurnEndInfo)
 	OnAsk          func(*PermissionRequest)
+	OnQuestions    func(sessionID string, questions []AgentQuestion)
 	OnUsage        func(sessionID string, usage UsageInfo)
 	OnCommands     func(sessionID string, commands []string)
 	OnNeedRedraw   func()
@@ -603,10 +604,49 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 	})
 
 	// Permission prompts: forge-ade emits "agent:ask" in supervised mode with
-	// {requestId, title, desc, tool, arguments, options}.
+	// {requestId, title, desc, tool, arguments, options}. The internal agent
+	// engine instead emits {questions: [...]} for structured ask-tool
+	// questions (no requestId) — routed to OnQuestions.
 	askHandler := func(e events.Event) {
 		if e.Data == nil {
 			return
+		}
+		sessionID := sessionKey(e.Data)
+		if rawQs, ok := e.Data["questions"].([]interface{}); ok && len(rawQs) > 0 {
+			var questions []AgentQuestion
+			for _, rq := range rawQs {
+				qm, ok := rq.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				q := AgentQuestion{
+					ID:          str(qm, "id"),
+					Question:    str(qm, "question"),
+					Header:      str(qm, "header"),
+					Multi:       boolOf(qm["multi"]),
+					Recommended: -1,
+				}
+				if rec, ok := qm["recommended"].(float64); ok {
+					q.Recommended = int(rec)
+				}
+				if opts, ok := qm["options"].([]interface{}); ok {
+					for _, o := range opts {
+						if s, ok := o.(string); ok {
+							q.Options = append(q.Options, s)
+						}
+					}
+				}
+				if q.ID != "" && q.Question != "" {
+					questions = append(questions, q)
+				}
+			}
+			if len(questions) > 0 && sessionID != "" && mgr.OnQuestions != nil {
+				mgr.OnQuestions(sessionID, questions)
+				if mgr.OnNeedRedraw != nil {
+					mgr.OnNeedRedraw()
+				}
+				return
+			}
 		}
 		reqID := str(e.Data, "requestId", "request_id")
 		if reqID == "" {
