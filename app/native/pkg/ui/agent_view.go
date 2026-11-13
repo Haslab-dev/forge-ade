@@ -109,8 +109,9 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	leftInset, _ := a.chatLaneInset(c)
 
 	// The chat fills a box so the floating task tracker can overlay it at
-	// the top-right, as forge-ade's FloatingTaskTracker does.
-	ui.Box(c).Fill().Children(func() {
+	// the top-right, as forge-ade's FloatingTaskTracker does. Clip contains
+	// any overflow: nothing may paint over the workspace header.
+	ui.Box(c).Fill().Clip().Children(func() {
 		ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
 			// Session header: title, status pill, model, Fork
 			ui.Row(c).Height(44).Gap(10).Padding(0, leftInset+8, 0, leftInset+8).AlignItems(ui.Center).
@@ -164,6 +165,9 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			}
 
 			// Turn scrubber + chat lane, as forge-ade's left minimap rail.
+			// The row takes the column's remaining height; the List bounds
+			// itself to that height (FillHeight + Clip) so the transcript
+			// virtualizes and scrolls instead of overflowing the header.
 			ui.Row(c).Grow(1).Children(func() {
 				a.renderTurnScrubber(c, tc, as)
 				ui.List(c, &as.ListState, len(as.Messages), func(i int) {
@@ -250,7 +254,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 							}
 						})
 					}
-				}).Grow(1).Padding(16, 0, 16, 0).Gap(14).Justify(ui.End)
+				}).Grow(1).FillHeight().Padding(16, 0, 16, 0).Gap(14).Justify(ui.End).Clip()
 			})
 
 			// Mid-turn Steering Queue Tray
