@@ -284,10 +284,11 @@ func (a *AppUI) renderGitPRsSurface(c *ui.Context, tc theme.ThemeColors, gm *git
 		})
 	}
 
-	// Two-pane: list + detail.
+	// Two-pane: list + detail. Columns inside a Row need an explicit
+	// FillHeight cross-size, or their Scroll grows to content height.
 	ui.Row(c).Grow(1).Children(func() {
 		// List column
-		listCol := ui.Column(c).Width(380).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
+		listCol := ui.Column(c).Width(380).FillHeight().BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
 		listCol.Children(func() {
 			scroll := ui.Scroll(c)
 			scroll.Children(func() {
@@ -338,7 +339,7 @@ func (a *AppUI) renderGitPRsSurface(c *ui.Context, tc theme.ThemeColors, gm *git
 		})
 
 		// Detail column
-		detailCol := ui.Column(c).Grow(1)
+		detailCol := ui.Column(c).Grow(1).FillHeight()
 		detailCol.Children(func() {
 			if pp.Selected < 0 || pp.Items == nil || pp.Selected >= len(pp.Items) {
 				ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
