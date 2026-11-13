@@ -365,6 +365,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								for _, sess := range visible {
 									s := sess
 									isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
+									added, removed := a.Agent.SessionDiffStats(s.ID)
 									renderTaskRow(c, tc, taskRowData{
 										Key:         "sess-" + s.ID,
 										Title:       s.Title,
@@ -375,7 +376,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										Snoozed:     s.Snoozed,
 										AgentID:     s.AgentID,
 										UpdatedTime: s.UpdatedAt,
+										DiffAdded:   added,
+										DiffRemoved: removed,
 										OnPin:       func() { a.Agent.TogglePin(s.ID) },
+										OnFork:      func() { a.Agent.ForkSessionByID(s.ID) },
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
 										OnOpen: func() {

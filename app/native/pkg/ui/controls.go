@@ -206,7 +206,10 @@ type taskRowData struct {
 	Snoozed     bool
 	AgentID     string
 	UpdatedTime time.Time
+	DiffAdded   int // cumulative +n/−n badge, as forge-ade's diff-stats chip
+	DiffRemoved int
 	OnPin       func()
+	OnFork      func() // fork the conversation, as forge-ade's GitFork action
 	OnSnooze    func()
 	OnStop      func() // terminal sessions: stop while running
 	OnRestart   func() // terminal sessions: relaunch when stopped
@@ -289,6 +292,20 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			}
 		})
 
+		// "Approval" chip while a tool permission is pending, as forge-ade's
+		// amber badge on awaiting rows.
+		if isAwaiting {
+			approvalChip := ui.Row(c).Height(16).Radius(5).Padding(0, 5).AlignItems(ui.Center).Background(tc.Warning.Alpha(0.18))
+			approvalChip.Children(func() {
+				ui.Text(c, "Approval").FontSize(9).FontWeight(600).TextColor(tc.Warning)
+			})
+		}
+
+		// Diff-stats badge (+n −n) when the session has recorded turn changes.
+		if d.DiffAdded > 0 || d.DiffRemoved > 0 {
+			DiffStatText(c, tc, d.DiffAdded, d.DiffRemoved)
+		}
+
 		// Time (with running pulse dot), hidden while the hover actions show.
 		if !row.Hovered() {
 			timeRow := ui.Row(c).Gap(4).AlignItems(ui.Center)
@@ -344,6 +361,18 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			}
 			if pinBtn.Clicked() {
 				d.OnPin()
+			}
+		}
+		if showActions && d.OnFork != nil {
+			forkBtn := ui.Row(c.Key("ract-fork-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+			forkBtn.Children(func() {
+				ui.Icon(c, icons.TablerGitFork).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+			})
+			if forkBtn.Hovered() {
+				forkBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if forkBtn.Clicked() {
+				d.OnFork()
 			}
 		}
 		if showActions && d.OnSnooze != nil {
