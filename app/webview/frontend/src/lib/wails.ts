@@ -1,0 +1,810 @@
+import { Events as RuntimeEvents, Clipboard as RuntimeClipboard } from "@wailsio/runtime";
+import { Effect } from "effect";
+import * as App from "../../bindings/github.com/hasdev/forge-ade/app/webview/internal/app/app";
+import { WailsBridgeError } from "../effect/errors";
+
+// Wails v3 bridge. The generated bindings module (frontend/bindings) exposes
+// one named function per App method, each returning a promise. Outside the
+// Wails webview (plain vite dev in a browser) `window._wails` is absent, so
+// getApp() returns an empty object and every optional-chained call falls back
+// to its default — the same graceful degradation as before.
+
+const getApp = (): any => {
+  return typeof (window as any)?._wails !== "undefined" ? App : {};
+};
+
+const call = (fnName: string, fallback: any, ...args: any[]): Promise<any> => {
+  const fn = getApp()[fnName];
+  if (typeof fn !== "function") return Promise.resolve(fallback);
+  return Promise.resolve(fn(...args));
+};
+
+export const callWailsEffect = <T>(fnName: string, fallback: T, ...args: any[]): Effect.Effect<T, WailsBridgeError> => {
+  return Effect.tryPromise({
+    try: () => call(fnName, fallback, ...args),
+    catch: (err: unknown) =>
+      new WailsBridgeError({
+        method: fnName,
+        message: err instanceof Error ? err.message : String(err),
+        cause: err,
+      }),
+  });
+};
+
+export const ClipboardGetText = (): Promise<string> => {
+  try {
+    return RuntimeClipboard.Text();
+  } catch {
+    return Promise.resolve("");
+  }
+};
+
+export const ClipboardSetText = (text: string): Promise<void> => {
+  try {
+    return RuntimeClipboard.SetText(text);
+  } catch {
+    return Promise.resolve();
+  }
+};
+
+// Global hook for native Wails v3 drag-and-drop
+if (typeof window !== "undefined") {
+  const w = window as any;
+  w._wails = w._wails || {};
+  let currentHandler = w._wails.handlePlatformFileDrop;
+
+  const dispatchDrop = (filenames: string[], x: number, y: number) => {
+    const el = document.elementFromPoint(x, y);
+    const event = new CustomEvent("forge:file-drop", {
+      bubbles: true,
+      cancelable: true,
+      detail: { files: filenames, x, y, target: el },
+    });
+    if (el) {
+      el.dispatchEvent(event);
+    } else {
+      window.dispatchEvent(event);
+    }
+    if (typeof currentHandler === "function" && currentHandler !== wrappedHandler) {
+      try {
+        currentHandler(filenames, x, y);
+      } catch {}
+    }
+  };
+
+  const wrappedHandler = (filenames: string[], x: number, y: number) => {
+    dispatchDrop(filenames, x, y);
+  };
+
+  try {
+    Object.defineProperty(w._wails, "handlePlatformFileDrop", {
+      get() {
+        return wrappedHandler;
+      },
+      set(newHandler) {
+        currentHandler = newHandler;
+      },
+      configurable: true,
+      enumerable: true,
+    });
+  } catch {
+    w._wails.handlePlatformFileDrop = wrappedHandler;
+  }
+}
+
+export const EventsOn = (eventName: string, callback: (data: any) => void): (() => void) => {
+  return RuntimeEvents.On(eventName, (ev: any) => callback(ev?.data ?? ev));
+};
+
+// ── Workspace ───────────────────────────────────────────────────────────────
+export const GetRecentProjects = (): Promise<any[]> => call("GetRecentProjects", []);
+export const OpenFolder = (path: string): Promise<any> => call("OpenFolder", {}, path);
+export const OpenWorkspace = (path: string): Promise<any> => call("OpenWorkspace", {}, path);
+export const AddFolderToWorkspace = (path: string): Promise<any> => call("AddFolderToWorkspace", undefined, path);
+export const CloseWorkspace = (): Promise<void> => call("CloseWorkspace", undefined);
+export const GetCurrentWorkspace = (): Promise<any> => call("GetCurrentWorkspace", null);
+export const SaveWorkspace = (): Promise<void> => call("SaveWorkspace", undefined);
+export const SaveWorkspaceAs = (path: string): Promise<void> => call("SaveWorkspaceAs", undefined, path);
+export const SaveWorkspaceDialog = (): Promise<string> => call("SaveWorkspaceDialog", "");
+export const PinRecent = (path: string, pinned: boolean): Promise<void> => call("PinRecent", undefined, path, pinned);
+export const RemoveRecent = (path: string): Promise<void> => call("RemoveRecent", undefined, path);
+export const OpenFolderDialog = (): Promise<string> => call("OpenFolderDialog", "");
+export const OpenWorkspaceDialog = (): Promise<string> => call("OpenWorkspaceDialog", "");
+export const OpenFileDialog = (): Promise<string> => call("OpenFileDialog", "");
+export const OpenNewWindow = (url: string): Promise<void> => call("OpenNewWindow", undefined, url);
+export const OpenDetachedWindow = (title: string, urlPath: string, width = 960, height = 700): Promise<string> =>
+  call("OpenDetachedWindow", "", title, urlPath, width, height);
+export const GetHomeDir = (): Promise<string> => call("GetHomeDir", "");
+export const OpenInFinder = (path: string): Promise<void> => call("OpenInFinder", undefined, path);
+export const OpenInTerminal = (path: string): Promise<void> => call("OpenInTerminal", undefined, path);
+export const BrowserOpenURL = (url: string): Promise<void> => call("BrowserOpenURL", undefined, url);
+export const IsDir = (path: string): Promise<boolean> => call("IsDir", false, path);
+export const ResolvePath = (path: string): Promise<string> => call("ResolvePath", path, path);
+export const GetSandboxDir = (projectPath: string): Promise<string> => call("GetSandboxDir", "", projectPath);
+export const GetComputerUseStatus = (): Promise<any> => call("GetComputerUseStatus", null);
+export const OpenComputerUsePermissions = (): Promise<void> => call("OpenComputerUsePermissions", undefined);
+export const ClearSandbox = (projectPath: string): Promise<void> => call("ClearSandbox", undefined, projectPath);
+
+// ── Workflow Task Board ───────────────────────────────────────────────────
+export const ListBoardTasks = (ws: string): Promise<any[]> => call("ListBoardTasks", [], ws);
+export const GetBoardTask = (ws: string, idOrKey: string): Promise<any> => call("GetBoardTask", null, ws, idOrKey);
+export const SaveBoardTask = (ws: string, task: any): Promise<any> => call("SaveBoardTask", task, ws, task);
+export const DeleteBoardTask = (ws: string, idOrKey: string): Promise<void> => call("DeleteBoardTask", undefined, ws, idOrKey);
+export const MoveBoardTaskStatus = (ws: string, idOrKey: string, status: string): Promise<any> =>
+  call("MoveBoardTaskStatus", null, ws, idOrKey, status);
+
+// Compatibility aliases
+export const ListJiraTasks = ListBoardTasks;
+export const GetJiraTask = GetBoardTask;
+export const SaveJiraTask = SaveBoardTask;
+export const DeleteJiraTask = DeleteBoardTask;
+export const MoveJiraTaskStatus = MoveBoardTaskStatus;
+
+// ── Sessions (shells + external AI CLIs) ────────────────────────────────────
+export const ListSessions = (): Promise<any[]> => call("ListSessions", []);
+export const ListShells = (): Promise<any[]> => call("ListShells", []);
+export const ListAIAgents = (): Promise<any[]> => call("ListAIAgents", []);
+export const CreateAIAgent = (name: string, provider: string, folder: string): Promise<any> =>
+  call("CreateAIAgent", {}, name, provider, folder);
+export const StopSession = (id: string): Promise<void> => call("StopSession", undefined, id);
+export const RenameSession = (id: string, name: string): Promise<void> => call("RenameSession", undefined, id, name);
+export const RenameAgentSession = (id: string, name: string): Promise<void> =>
+  call("UpdateAgentSession", undefined, id, name, "", "", "");
+export const CreateShell = (name: string, cwd: string): Promise<any> => call("CreateShell", {}, name, cwd);
+export const WriteSession = (id: string, data: string): Promise<void> => call("WriteSession", undefined, id, data);
+export const ResizeSession = (id: string, rows: number, cols: number): Promise<void> =>
+  call("ResizeSession", undefined, id, rows, cols);
+
+// ── Terminal Session mode (agent CLI sessions, configs, app settings) ──────
+export const GetAppSettings = (): Promise<any> =>
+  call("GetAppSettings", { defaultMode: "terminal", terminal: {} });
+export const SaveAppSettings = (settings: any): Promise<any> => call("SaveAppSettings", settings, settings);
+export const ListAgentCLIConfigs = (): Promise<any[]> => call("ListAgentCLIConfigs", []);
+export const SaveAgentCLIConfig = (cfg: any): Promise<any> => call("SaveAgentCLIConfig", cfg, cfg);
+export const ResetAgentCLIConfig = (id: string): Promise<any> => call("ResetAgentCLIConfig", null, id);
+export const DetectAgentExecutable = (executable: string): Promise<boolean> =>
+  call("DetectAgentExecutable", false, executable);
+
+export const CheckAgentsAvailability = (
+  queries: Array<{ id: string; kind: string; executable: string }>
+): Promise<Array<{ id: string; kind: string; executable: string; available: boolean; path?: string }>> =>
+  call("CheckAgentsAvailability", [], queries);
+
+export const ListAvailableAgentCLIConfigs = (): Promise<any[]> =>
+  call("ListAvailableAgentCLIConfigs", []);
+
+export const ListAgentCliRuntimeConfigs = (): Promise<any[]> =>
+  call("ListAgentCliRuntimeConfigs", []);
+
+export const EnsureAgentCliPath = (path: string, isDir: boolean): Promise<boolean> =>
+  call("EnsureAgentCliPath", false, path, isDir);
+
+export const FormatConfigContent = (path: string, content: string): Promise<string> =>
+  call("FormatConfigContent", "", path, content);
+export const CreateAgentTerminalSession = (agentId: string, workspacePath: string, title: string): Promise<any> =>
+  call("CreateAgentTerminalSession", {}, agentId, workspacePath, title);
+export const ListAgentTerminalSessions = (): Promise<any[]> => call("ListAgentTerminalSessions", []);
+export const GetAgentTerminalSessionOutput = (id: string): Promise<string> =>
+  call("GetAgentTerminalSessionOutput", "", id);
+export const RestartAgentTerminalSession = (id: string): Promise<any> =>
+  call("RestartAgentTerminalSession", {}, id);
+export const DeleteAgentTerminalSession = (id: string): Promise<void> =>
+  call("DeleteAgentTerminalSession", undefined, id);
+
+// ── Files ───────────────────────────────────────────────────────────────────
+export const ReadFile = (path: string): Promise<string> => call("ReadFile", "", path);
+export const ReadFileBase64 = (path: string): Promise<string> => call("ReadFileBase64", "", path);
+export const GetFileSize = (path: string): Promise<number> => call("GetFileSize", -1, path);
+export const GetProcessRSS = (): Promise<number> => call("GetProcessRSS", -1);
+
+// ── Browser Use (in-app browser + agent tools) ─────────────────────────────
+export const BrowserUseStatus = (): Promise<any> => call("BrowserUseStatus", { running: false });
+export const BrowserUseEngine = (): Promise<string> => call("BrowserUseEngine", "none");
+export const BrowserUseSetRect = (x: number, y: number, w: number, h: number, visible: boolean): Promise<void> => {
+  if (!visible) {
+    const caller = new Error().stack?.split('\n')[2]?.trim() || '';
+    console.log(`[BrowserUseSetRect] HIDING: [${x},${y},${w},${h}] caller=${caller}`);
+  }
+  return call("BrowserUseSetRect", undefined, x, y, w, h, visible);
+};
+export const BrowserUseStart = (): Promise<void> => call("BrowserUseStart", undefined);
+export const BrowserUseStop = (): Promise<void> => call("BrowserUseStop", undefined);
+export const BrowserUseNavigate = (url: string): Promise<any> => call("BrowserUseNavigate", {}, url);
+export const BrowserUseHistory = (action: 'back' | 'forward' | 'reload'): Promise<any> =>
+  call("BrowserUseHistory", {}, action);
+export const BrowserUseScreenshot = (): Promise<string> => call("BrowserUseScreenshot", "");
+export const BrowserUsePickElement = (): Promise<any> => call("BrowserUsePickElement", {});
+export const BrowserUseCancelPick = (): Promise<void> => call("BrowserUseCancelPick", undefined);
+export const BrowserUseSetZoom = (zoom: number): Promise<void> => call("BrowserUseSetZoom", undefined, zoom);
+export const BrowserUseClickAt = (x: number, y: number): Promise<any> => call("BrowserUseClickAt", {}, x, y);
+export const CheckSyntax = (path: string, content: string): Promise<any[]> => call("CheckSyntax", [], path, content);
+export const FormatCode = (path: string, content: string): Promise<string> =>
+  call("FormatCode", content, path, content);
+export const WriteFile = (path: string, content: string): Promise<void> =>
+  call("WriteFile", undefined, path, content);
+export const WriteFileBase64 = (path: string, base64Content: string): Promise<void> =>
+  call("WriteFileBase64", undefined, path, base64Content);
+export const SaveAttachment = (filename: string, base64Content: string): Promise<string> =>
+  call("SaveAttachment", "", filename, base64Content);
+export const CreateFile = (path: string): Promise<void> => call("CreateFile", undefined, path);
+export const CreateFolder = (path: string): Promise<void> => call("CreateFolder", undefined, path);
+export const DeleteFile = (path: string): Promise<void> => call("DeleteFile", undefined, path);
+export const RenameFile = (oldPath: string, newPath: string): Promise<void> =>
+  call("RenameFile", undefined, oldPath, newPath);
+export const CopyFile = (src: string, dst: string): Promise<void> => call("CopyFile", undefined, src, dst);
+export const CopyPath = (src: string, dst: string): Promise<void> => call("CopyPath", undefined, src, dst);
+export const GetClipboardFiles = (): Promise<string[]> => call("GetClipboardFiles", []);
+export const MoveFile = (src: string, dst: string): Promise<void> => call("MoveFile", undefined, src, dst);
+export const GetFileTree = (depth: number): Promise<any> => call("GetFileTree", "[]", depth);
+export const GetDirectoryTree = (dirPath: string, depth: number): Promise<any> => call("GetDirectoryTree", "[]", dirPath, depth);
+export const ListDirectory = (dirPath: string): Promise<any> => call("ListDirectory", "[]", dirPath);
+export const ExpandPath = (targetPath: string): Promise<any> => call("ExpandPath", "[]", targetPath);
+export const ToggleHiddenFiles = (): Promise<boolean> => call("ToggleHiddenFiles", true);
+
+// ── Git ─────────────────────────────────────────────────────────────────────
+export const GetGitStatus = (repoPath: string): Promise<any> => call("GetGitStatus", null, repoPath);
+export const GetGitCommitGraph = (repoPath: string, offset: number, limit: number, branch: string): Promise<any> =>
+  call("GetGitCommitGraph", null, repoPath, offset, limit, branch);
+export const GetGitBranches = (repoPath: string): Promise<string[]> => call("GetGitBranches", [], repoPath);
+export const GitCheckout = (repoPath: string, branch: string): Promise<void> =>
+  call("GitCheckout", undefined, repoPath, branch);
+export const GitCheckoutNewBranch = (repoPath: string, name: string): Promise<void> =>
+  call("GitCheckoutNewBranch", undefined, repoPath, name);
+
+// ── Automations (saved prompt workflows with run history) ──
+export interface AutomationRun {
+  id: string;
+  sessionId?: string;
+  workspace?: string;
+  startedAt: string;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  workspace?: string;
+  cronExpr?: string;      // 5-field cron (local time); empty = manual-only
+  enabled?: boolean;      // scheduled automations can be paused
+  nextRunAt?: string;
+  lastRunAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  runs?: AutomationRun[];
+}
+
+export interface AutomationSaveInput {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  workspace?: string;
+  cronExpr?: string;
+  enabled: boolean;
+}
+
+export const ListAutomations = (): Promise<Automation[]> => call("ListAutomations", null);
+export const SaveAutomation = (automation: AutomationSaveInput): Promise<Automation> =>
+  call("SaveAutomation", null, automation);
+export const DeleteAutomation = (id: string): Promise<void> => call("DeleteAutomation", undefined, id);
+export const RecordAutomationRun = (id: string, sessionId: string, workspace: string): Promise<Automation> =>
+  call("RecordAutomationRun", null, id, sessionId, workspace);
+export const ClaimAutomationFire = (id: string, token: string): Promise<boolean> =>
+  call("ClaimAutomationFire", false, id, token);
+export const SetAutomationEnabled = (id: string, enabled: boolean): Promise<Automation> =>
+  call("SetAutomationEnabled", null, id, enabled);
+export const GetGitCommitDiff = (repoPath: string, hash: string): Promise<string> =>
+  call("GetGitCommitDiff", "", repoPath, hash);
+export const GetGitCommitBody = (repoPath: string, hash: string): Promise<string> =>
+  call("GetGitCommitBody", "", repoPath, hash);
+export const GetGitFileDiff = (repoPath: string, path: string): Promise<string> =>
+  call("GetGitFileDiff", "", repoPath, path);
+export const GetGitCommitFileDiff = (repoPath: string, hash: string, path: string): Promise<string> =>
+  call("GetGitCommitFileDiff", "", repoPath, hash, path);
+export const GetGitFileContentAtCommit = (repoPath: string, hash: string, path: string): Promise<string> =>
+  call("GetGitFileContentAtCommit", "", repoPath, hash, path);
+export const GitStage = (repoPath: string, paths: string[]): Promise<void> =>
+  call("GitStage", undefined, repoPath, paths);
+export const GitUnstage = (repoPath: string, paths: string[]): Promise<void> =>
+  call("GitUnstage", undefined, repoPath, paths);
+export const GitDiscard = (repoPath: string, paths: string[]): Promise<void> =>
+  call("GitDiscard", undefined, repoPath, paths);
+export const GitCheckIgnored = (repoPath: string, paths: string[]): Promise<string[]> =>
+  call("GitCheckIgnored", [], repoPath, paths);
+export const GetGitFileDiffHunks = (repoPath: string, path: string): Promise<any[]> =>
+  call("GetGitFileDiffHunks", [], repoPath, path);
+export const RevertGitHunk = (repoPath: string, path: string, hunkIndex: number): Promise<void> =>
+  call("RevertGitHunk", undefined, repoPath, path, hunkIndex);
+export const GetGitConflictStageContent = (repoPath: string, path: string, stage: number): Promise<string> =>
+  call("GetGitConflictStageContent", "", repoPath, path, stage);
+export const GitResolveConflict = (repoPath: string, path: string, action: string): Promise<void> =>
+  call("GitResolveConflict", undefined, repoPath, path, action);
+export const GitCommit = (repoPath: string, message: string): Promise<void> =>
+  call("GitCommit", undefined, repoPath, message);
+export const GitPush = (repoPath: string): Promise<void> => call("GitPush", undefined, repoPath);
+export const GitPull = (repoPath: string): Promise<string> => call("GitPull", "", repoPath);
+export const GitFetch = (repoPath: string): Promise<string> => call("GitFetch", "", repoPath);
+export const GitMerge = (repoPath: string, source: string, noFF: boolean, squash: boolean): Promise<string> =>
+  call("GitMerge", "", repoPath, source, noFF, squash);
+export const GenerateAICommitMessage = (repoPath: string, providerId: string, model: string, instruction?: string): Promise<string> =>
+  call("GenerateAICommitMessage", "", repoPath, providerId, model, instruction || "");
+
+// ── Pull Requests / Merge Requests ─────────────────────────────────────────
+export interface GitRemoteSource {
+  provider: 'github' | 'gitlab' | 'generic';
+  remoteName: string;
+  remoteUrl: string;
+  host: string;
+  owner: string;
+  repo: string;
+  webUrl: string;
+  pullsUrl: string;
+  isGitHub: boolean;
+  isGitLab: boolean;
+  ghPath?: string;
+  glabPath?: string;
+}
+
+export const GetGitRemoteSource = (repoPath: string): Promise<GitRemoteSource | null> =>
+  call("GetGitRemoteSource", null, repoPath);
+
+export const GetPullRequests = (repoPath: string, state?: string): Promise<any[]> =>
+  call("GetPullRequests", [], repoPath, state || "all");
+export const GetPullRequestDetail = (repoPath: string, prNumber: number): Promise<any> =>
+  call("GetPullRequestDetail", null, repoPath, prNumber);
+export const GetPullRequestDiff = (repoPath: string, prNumber: number): Promise<string> =>
+  call("GetPullRequestDiff", "", repoPath, prNumber);
+export const CreatePullRequestComment = (repoPath: string, prNumber: number, body: string): Promise<void> =>
+  call("CreatePullRequestComment", undefined, repoPath, prNumber, body);
+export const ReviewPullRequest = (repoPath: string, prNumber: number, action: string, body?: string): Promise<void> =>
+  call("ReviewPullRequest", undefined, repoPath, prNumber, action, body || "");
+export const MergePullRequest = (repoPath: string, prNumber: number, method: string): Promise<string> =>
+  call("MergePullRequest", "", repoPath, prNumber, method);
+export const ClosePullRequest = (repoPath: string, prNumber: number): Promise<void> =>
+  call("ClosePullRequest", undefined, repoPath, prNumber);
+export const ReopenPullRequest = (repoPath: string, prNumber: number): Promise<void> =>
+  call("ReopenPullRequest", undefined, repoPath, prNumber);
+export const CheckoutPullRequest = (repoPath: string, prNumber: number): Promise<string> =>
+  call("CheckoutPullRequest", "", repoPath, prNumber);
+export const CreatePullRequest = (repoPath: string, title: string, body: string, base?: string, head?: string, draft?: boolean): Promise<any> =>
+  call("CreatePullRequest", null, repoPath, title, body, base || "", head || "", !!draft);
+
+// ── Git Worktrees ──────────────────────────────────────────────────────────
+export interface GitWorktreeInfo {
+  path: string;
+  head: string;
+  branch: string;
+  isBare: boolean;
+  isDetached: boolean;
+  isLocked: boolean;
+  lockReason?: string;
+  prunable?: string;
+}
+
+export const GetGitWorktrees = (repoPath: string): Promise<GitWorktreeInfo[]> =>
+  call("GetGitWorktrees", [], repoPath);
+export const CreateGitWorktree = (repoPath: string, targetPath: string, branch: string, createBranch = false): Promise<void> =>
+  call("CreateGitWorktree", undefined, repoPath, targetPath, branch, createBranch);
+export const RemoveGitWorktree = (repoPath: string, targetPath: string, force = false): Promise<void> =>
+  call("RemoveGitWorktree", undefined, repoPath, targetPath, force);
+export const PruneGitWorktrees = (repoPath: string): Promise<void> =>
+  call("PruneGitWorktrees", undefined, repoPath);
+
+// ── Checkpoints ─────────────────────────────────────────────────────────────
+export interface CheckpointRecord {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  description: string;
+  createdAt: number;
+  commitHash?: string;
+  files?: string[];
+}
+
+export const CreateSessionCheckpoint = (
+  workspacePath: string,
+  sessionId: string,
+  turnId: string,
+  description: string
+): Promise<CheckpointRecord | null> =>
+  call("CreateSessionCheckpoint", null, workspacePath, sessionId, turnId, description);
+
+export const RestoreSessionCheckpoint = (
+  workspacePath: string,
+  sessionId: string,
+  turnId: string
+): Promise<void> =>
+  call("RestoreSessionCheckpoint", undefined, workspacePath, sessionId, turnId);
+
+export const ListSessionCheckpoints = (
+  workspacePath: string,
+  sessionId: string
+): Promise<CheckpointRecord[]> =>
+  call("ListSessionCheckpoints", [], workspacePath, sessionId);
+
+// ── Workspace Rules ─────────────────────────────────────────────────────────
+export interface WorkspaceRuleFile {
+  path: string;
+  format: string;
+  exists: boolean;
+  content: string;
+  updatedAt: number;
+}
+
+export interface WorkspaceRulesResult {
+  activeRules: WorkspaceRuleFile[];
+  effectivePrompt: string;
+}
+
+export const GetWorkspaceRules = (workspacePath: string): Promise<WorkspaceRulesResult> =>
+  call("GetWorkspaceRules", { activeRules: [], effectivePrompt: "" }, workspacePath);
+
+export const SaveWorkspaceRule = (
+  workspacePath: string,
+  rulePath: string,
+  content: string
+): Promise<void> =>
+  call("SaveWorkspaceRule", undefined, workspacePath, rulePath, content);
+
+export const SyncWorkspaceRule = (
+  workspacePath: string,
+  sourcePath: string,
+  targetPath: string
+): Promise<void> =>
+  call("SyncWorkspaceRule", undefined, workspacePath, sourcePath, targetPath);
+
+// ── Agent ───────────────────────────────────────────────────────────────────
+export const ListAgentSessions = (): Promise<any[]> => call("ListAgentSessions", []);
+export const ListAgentSessionsForFolder = (folder: string): Promise<any[]> =>
+  call("ListAgentSessionsForFolder", [], folder);
+export const GetAgentSession = (id: string): Promise<any> => call("GetAgentSession", null, id);
+export const CreateAgentSession = (name: string, role: string, projectFolder: string): Promise<any> =>
+  call("CreateAgentSession", {}, name, role, projectFolder);
+export const CreateAgentSessionFromDefinition = (defId: string, projectFolder: string): Promise<any> =>
+  call("CreateAgentSessionFromDefinition", {}, defId, projectFolder);
+export const SendAgentMessage = (id: string, message: string, files: string[]): Promise<void> =>
+  call("SendAgentMessage", undefined, id, message, files);
+export const SteerAgentMessage = (id: string, message: string): Promise<void> =>
+  call("SteerAgentMessage", undefined, id, message);
+export const RespondAgentApproval = (id: string, approve: boolean, autoAll: boolean): Promise<void> =>
+  call("RespondAgentApproval", undefined, id, approve, autoAll);
+export const RespondAgentAsk = (id: string, answers: any): Promise<void> =>
+  call("RespondAgentAsk", undefined, id, answers);
+export const SetAgentAutoApprove = (id: string, enabled: boolean): Promise<void> =>
+  call("SetAgentAutoApprove", undefined, id, enabled);
+export const ApplyAgentDefinitionToSession = (id: string, defId: string): Promise<void> =>
+  call("ApplyAgentDefinitionToSession", undefined, id, defId);
+export const StopAgentTurn = (id: string): Promise<void> => call("StopAgentTurn", undefined, id);
+export const SetAgentDialect = (id: string, dialect: string): Promise<void> =>
+  call("SetAgentDialect", undefined, id, dialect);
+export const SetAgentSessionModel = (id: string, model: string): Promise<void> =>
+  call("SetAgentSessionModel", undefined, id, model);
+export const ToggleAgentTask = (id: string, taskId: string, active: boolean): Promise<void> =>
+  call("ToggleAgentTask", undefined, id, taskId, active);
+export const ClearAgentTasks = (id: string): Promise<void> =>
+  call("ClearAgentTasks", undefined, id);
+export const GetSubagents = (parentId: string): Promise<any[]> =>
+  call("GetSubagents", [], parentId);
+export const DeleteAgentSession = (id: string): Promise<void> => call("DeleteAgentSession", undefined, id);
+export const CompactAgentSession = (id: string): Promise<any> => call("CompactAgentSession", null, id);
+export const ListAgentDefinitions = (): Promise<any[]> => call("ListAgentDefinitions", []);
+export const SaveAgentDefinition = (def: any): Promise<any> => call("SaveAgentDefinition", def, def);
+export const DeleteAgentDefinition = (id: string): Promise<void> => call("DeleteAgentDefinition", undefined, id);
+export const GetUsageSummary = (): Promise<any> => call("GetUsageSummary", null);
+export const GetAgentQuota = (agentId: string): Promise<any> => call("GetAgentQuota", null, agentId);
+export const GetJevStats = (): Promise<any> => call("GetJevStats", null);
+export const GetJevStatus = (): Promise<any> => call("GetJevStatus", { enabled: false, active: false, has_key: false, local_fallback: true });
+export const SetJevAPIKey = (key: string): Promise<void> => call("SetJevAPIKey", undefined, key);
+export const SetJevEnabled = (enabled: boolean): Promise<void> => call("SetJevEnabled", undefined, enabled);
+export const DecideAgentRole = (task: string): Promise<{ role: string; reason: string; confidence: number; source: string }> =>
+  call("DecideAgentRole", { role: "coding", reason: "Default coding role", confidence: 0.8, source: "default" }, task);
+export const ListBackgroundTasks = (sessionId?: string): Promise<any[]> =>
+  call("ListBackgroundTasks", [], sessionId || "");
+export const StopBackgroundTask = (taskId: string): Promise<boolean> =>
+  call("StopBackgroundTask", false, taskId);
+export const GetBackgroundTaskOutput = (taskId: string): Promise<any> =>
+  call("GetBackgroundTaskOutput", null, taskId);
+export const ListAgentSchedules = (sessionId?: string): Promise<any[]> =>
+  call("ListAgentSchedules", [], sessionId || "");
+export const CancelAgentSchedule = (scheduleId: string): Promise<boolean> =>
+  call("CancelAgentSchedule", false, scheduleId);
+
+// ── Search / Index ──────────────────────────────────────────────────────────
+export const SearchFilename = (query: string, limit: number): Promise<any[]> =>
+  call("SearchFilename", [], query, limit);
+export const SearchFilenameWithOptions = (opts: any): Promise<any[]> => call("SearchFilenameWithOptions", [], opts);
+export const SearchContent = (query: string, limit: number): Promise<any[]> => call("SearchContent", [], query, limit);
+export const SearchContentWithOptions = (opts: any): Promise<any[]> => call("SearchContentWithOptions", [], opts);
+export const SearchSymbols = (query: string, limit: number): Promise<any[]> =>
+  call("SearchSymbols", [], query, limit);
+export const SearchSymbolsWithOptions = (opts: any): Promise<any[]> => call("SearchSymbolsWithOptions", [], opts);
+export const SearchIndexSymbols = (query: string): Promise<any[]> => call("SearchIndexSymbols", [], query);
+export const SearchReplaceAll = (opts: any): Promise<any> =>
+  call("SearchReplaceAll", { filesChanged: 0, totalReplacements: 0, files: [] }, opts);
+export const GetCompletion = (prefix: string, path: string): Promise<any> => call("GetCompletion", null, prefix, path);
+export const GetMembers = (instance: string, path: string): Promise<any> => call("GetMembers", null, instance, path);
+export const GetOutline = (file: string): Promise<any> => call("GetOutline", null, file);
+export const GetSymbols = (): Promise<any[]> => call("GetSymbols", []);
+export const FindSymbol = (name: string): Promise<any[]> => call("FindSymbol", [], name);
+export const FindDeclaration = (name: string): Promise<any[]> => call("FindDeclaration", [], name);
+export const FindTypeDefinition = (name: string): Promise<any[]> => call("FindTypeDefinition", [], name);
+export const FindImplementation = (name: string): Promise<any[]> => call("FindImplementation", [], name);
+export interface DefinitionLocation {
+  file: string;
+  line: number;
+  column: number;
+  snippet?: string;
+  kind?: string;
+}
+export const ResolveDefinition = (currentFile: string, query: string): Promise<DefinitionLocation | null> =>
+  call("ResolveDefinition", null, currentFile, query);
+export const ResolveImportPath = (currentFile: string, importPath: string): Promise<string> =>
+  call("ResolveImportPath", "", currentFile, importPath);
+export const GetImports = (file: string): Promise<any> => call("GetImports", null, file);
+export const GetExports = (file: string): Promise<any> => call("GetExports", null, file);
+export const IndexStatus = (): Promise<any> => call("IndexStatus", null);
+export const ReindexWorkspace = (): Promise<any> => call("ReindexWorkspace", { built: false });
+
+// ── LLM / Providers ─────────────────────────────────────────────────────────
+export const GetProviderProfiles = (): Promise<any[]> => call("GetProviderProfiles", []);
+export const SaveProviderProfiles = (profiles: any[]): Promise<void> =>
+  call("SaveProviderProfiles", undefined, profiles);
+export const DeleteProviderProfile = (id: string): Promise<void> =>
+  call("DeleteProviderProfile", undefined, id);
+export const SyncAgentProviders = (profiles: any[]): Promise<any[]> =>
+  call("SyncAgentProviders", [], profiles);
+export const FetchProviderModels = (apiKey: string, baseURL: string): Promise<string[]> =>
+  call("FetchProviderModels", [], apiKey, baseURL);
+export const SetActiveModel = (providerId: string, model: string): Promise<void> =>
+  call("SetActiveModel", undefined, providerId, model);
+export const SetActiveReasoningEffort = (effort: string): Promise<void> =>
+  call("SetActiveReasoningEffort", undefined, effort);
+export const SaveLLMProfile = (providerId: string, apiKey: string, baseURL: string, model: string): Promise<void> =>
+  call("SaveLLMProfile", undefined, providerId, apiKey, baseURL, model);
+export const GetLLMConfig = (): Promise<any> => call("GetLLMConfig", null);
+export const ListLLMProviders = (): Promise<any[]> => call("ListLLMProviders", []);
+
+export interface LocalLLMService {
+  id: string;
+  name: string;
+  baseUrl: string;
+  running: boolean;
+  models: string[];
+  error?: string;
+}
+export const DiscoverLocalLLMs = (): Promise<LocalLLMService[]> => call("DiscoverLocalLLMs", []);
+
+// ── MCP ─────────────────────────────────────────────────────────────────────
+export const ListMCPServers = (): Promise<any[]> => call("ListMCPServers", []);
+export const SaveMCPServer = (server: any): Promise<any> => call("SaveMCPServer", server, server);
+export const DeleteMCPServer = (name: string): Promise<void> => call("DeleteMCPServer", undefined, name);
+export const ListMCPTools = (): Promise<any[]> => call("ListMCPTools", []);
+export const ListConnectedMCPTools = (): Promise<any[]> => call("ListConnectedMCPTools", []);
+export const ReconnectMCP = (): Promise<void> => call("ReconnectMCP", undefined);
+export const ListMCPPresets = (): Promise<any[]> => call("ListMCPPresets", []);
+export const DiscoverMCPServers = (): Promise<any[]> => call("DiscoverMCPServers", []);
+export const ImportDiscoveredMCPServers = (names: string[]): Promise<void> =>
+  call("ImportDiscoveredMCPServers", undefined, names);
+
+// ── Skills ──────────────────────────────────────────────────────────────────
+export const ListSkills = (): Promise<any[]> => call("ListSkills", []);
+export const DiscoverSkills = (): Promise<any[]> => call("DiscoverSkills", []);
+export const ImportDiscoveredSkills = (names: string[]): Promise<void> =>
+  call("ImportDiscoveredSkills", undefined, names);
+export const CreateSkill = (req: any): Promise<any> => call("CreateSkill", null, req);
+export const ReloadSkills = (): Promise<any[]> => call("ReloadSkills", []);
+export const DeleteSkill = (name: string): Promise<void> => call("DeleteSkill", undefined, name);
+
+// ── Plugins ─────────────────────────────────────────────────────────────────
+export const ListPlugins = (): Promise<any[]> => call("ListPlugins", []);
+export const GetPlugin = (id: string): Promise<any> => call("GetPlugin", null, id);
+export const CreatePlugin = (req: any): Promise<any> => call("CreatePlugin", null, req);
+export const TogglePlugin = (id: string, enabled: boolean): Promise<void> => call("TogglePlugin", undefined, id, enabled);
+export const DeletePlugin = (id: string): Promise<void> => call("DeletePlugin", undefined, id);
+export const ReloadPlugins = (): Promise<any[]> => call("ReloadPlugins", []);
+
+// ── Agent Session Persistence ────────────────────────────────────────────────
+export const SaveAgentSessionDisk = (sessionJson: string, workspacePath: string): Promise<void> =>
+  call("SaveAgentSessionDisk", undefined, sessionJson, workspacePath);
+export const LoadAgentSessionsDisk = (workspacePath: string): Promise<string[]> =>
+  call("LoadAgentSessionsDisk", [], workspacePath);
+export const DeleteAgentSessionDisk = (sessionId: string, workspacePath: string): Promise<void> =>
+  call("DeleteAgentSessionDisk", undefined, sessionId, workspacePath);
+
+// ── Agent Memory ─────────────────────────────────────────────────────────────
+export const ListMemories = (): Promise<any[]> => call("ListMemories", []);
+export const SaveMemory = (entry: any): Promise<void> => call("SaveMemory", undefined, entry);
+export const DeleteMemory = (id: string): Promise<void> => call("DeleteMemory", undefined, id);
+export const ReloadMemories = (): Promise<any[]> => call("ReloadMemories", []);
+
+export interface CommandResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+export const ExecuteCommandSync = (command: string, cwd: string): Promise<CommandResult> =>
+  call("ExecuteCommandSync", { stdout: "", stderr: "", exitCode: 1 }, command, cwd);
+
+// ── SSH / Remote SFTP ───────────────────────────────────────────────────────
+export interface SSHConfig {
+  id?: string;
+  label?: string;
+  host: string;
+  port: number;
+  user: string;
+  authType: 'password' | 'key_file' | 'agent';
+  password?: string;
+  keyPath?: string;
+  keyPassphrase?: string;
+  remotePath: string;
+}
+
+export interface SSHConnectionStatus {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  user: string;
+  remotePath: string;
+  connected: boolean;
+  connectedAt: string;
+  error?: string;
+}
+
+export const ConnectSSH = (cfg: SSHConfig): Promise<SSHConnectionStatus | null> => call("ConnectSSH", null, cfg);
+export const DisconnectSSH = (connId: string): Promise<void> => call("DisconnectSSH", undefined, connId);
+export const ListSSHConnections = (): Promise<SSHConnectionStatus[]> => call("ListSSHConnections", []);
+export const OpenSSHWorkspace = (cfg: SSHConfig): Promise<SSHConnectionStatus | null> => call("OpenSSHWorkspace", null, cfg);
+export const UploadFileToRemote = (localPath: string, remoteURI: string): Promise<void> => call("UploadFileToRemote", undefined, localPath, remoteURI);
+export const UploadFilesToRemote = (localPaths: string[], remoteDirURI: string): Promise<string[]> => call("UploadFilesToRemote", [], localPaths, remoteDirURI);
+export const DownloadRemoteFile = (remoteURI: string, defaultFilename: string): Promise<void> => call("DownloadRemoteFile", undefined, remoteURI, defaultFilename);
+export const OpenUploadFileDialog = (): Promise<string[]> => call("OpenUploadFileDialog", []);
+export const OpenUploadFolderDialog = (): Promise<string> => call("OpenUploadFolderDialog", "");
+
+
+// ── Database Viewer (SQLite, DuckDB, RocksDB) ──────────────────────────────
+export const InspectDatabase = (path: string): Promise<any> => call("InspectDatabase", null, path);
+export const GetDatabaseTableRows = (
+  path: string,
+  table: string,
+  limit: number,
+  offset: number,
+  sortCol: string,
+  sortAsc: boolean,
+  filterCol: string,
+  filterVal: string
+): Promise<any> => call("GetDatabaseTableRows", null, path, table, limit, offset, sortCol, sortAsc, filterCol, filterVal);
+export const ExecuteDatabaseQuery = (path: string, sqlQuery: string, limit: number): Promise<any> =>
+  call("ExecuteDatabaseQuery", null, path, sqlQuery, limit);
+
+// ── ACP (Agent Client Protocol) ───────────────────────────────────────────
+export interface ACPSessionOpts {
+  sessionId?: string;
+  resumeSessionId?: string;
+  title?: string;
+  agentId: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  model?: string;
+  permissionMode?: 'supervised' | 'auto' | 'auto_edits' | 'full';
+}
+
+export interface ACPSession {
+  id: string;
+  title?: string;
+  agentId: string;
+  cwd: string;
+  model: string;
+  permissionMode: string;
+  status: string;
+  remoteSessionId?: string;
+  threadId?: string;
+  createdAt: number;
+  updatedAt: number;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    costUsd: number;
+  };
+  pendingPerms?: Array<{
+    requestId: string;
+    title: string;
+    description?: string;
+    tool?: string;
+    arguments?: Record<string, any>;
+    createdAt: number;
+  }>;
+  availableCommands?: Array<{
+    name: string;
+    description?: string;
+    input?: { hint?: string };
+  }>;
+}
+
+export const ACPStartSession = (opts: ACPSessionOpts): Promise<ACPSession | null> =>
+  call("ACPStartSession", null, opts);
+export const ACPPrompt = (sessionId: string, prompt: string): Promise<void> =>
+  call("ACPPrompt", undefined, sessionId, prompt);
+export const ACPCancel = (sessionId: string): Promise<void> =>
+  call("ACPCancel", undefined, sessionId);
+export const ACPRespondPermission = (sessionId: string, requestId: string, allow: boolean): Promise<void> =>
+  call("ACPRespondPermission", undefined, sessionId, requestId, allow);
+export const ACPRespondPermissionOption = (sessionId: string, requestId: string, allow: boolean, optionId: string): Promise<void> =>
+  call("ACPRespondPermissionOption", undefined, sessionId, requestId, allow, optionId);
+export const ACPCloseSession = (sessionId: string): Promise<void> =>
+  call("ACPCloseSession", undefined, sessionId);
+export const ACPListSessions = (): Promise<ACPSession[]> =>
+  call("ACPListSessions", []);
+export const ACPGetAvailableCommands = (sessionId: string): Promise<Array<{ name: string; description?: string; input?: { hint?: string } }>> =>
+  call("ACPGetAvailableCommands", [], sessionId);
+
+export interface ForgeMCPStatus {
+  enabled: boolean;
+  port: number;
+  sseUrl: string;
+  command: string;
+  args: string[];
+  availableTools: string[];
+}
+
+export const GetForgeMCPStatus = (): Promise<ForgeMCPStatus> =>
+  call("GetForgeMCPStatus", {
+    enabled: false,
+    port: 42110,
+    sseUrl: "http://127.0.0.1:42110/sse",
+    command: "forge-ade",
+    args: ["mcp"],
+    availableTools: []
+  });
+
+export interface AgentMCPInstallStatus {
+  agentId: string;
+  agentName: string;
+  executable: string;
+  configPath: string;
+  found: boolean;
+  installed: boolean;
+  serverName: string;
+}
+
+export interface AgentMCPInstallResult {
+  agentId: string;
+  agentName: string;
+  configPath: string;
+  success: boolean;
+  message: string;
+}
+
+export const GetAgentMCPInstallStatuses = (): Promise<AgentMCPInstallStatus[]> =>
+  call("GetAgentMCPInstallStatuses", []);
+
+export const InstallForgeMCPToAgent = (agentId: string): Promise<AgentMCPInstallResult> =>
+  call("InstallForgeMCPToAgent", {
+    agentId,
+    agentName: agentId,
+    configPath: '',
+    success: false,
+    message: ''
+  }, agentId);
+
+export const UninstallForgeMCPFromAgent = (agentId: string): Promise<AgentMCPInstallResult> =>
+  call("UninstallForgeMCPFromAgent", {
+    agentId,
+    agentName: agentId,
+    configPath: '',
+    success: false,
+    message: ''
+  }, agentId);
+
+export const InstallForgeMCPToAllAgents = (): Promise<AgentMCPInstallResult[]> =>
+  call("InstallForgeMCPToAllAgents", []);
+
+
+
+
+
+
