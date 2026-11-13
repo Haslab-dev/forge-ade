@@ -91,7 +91,7 @@ type ThemeColors struct {
 	DiffDeletion           ui.Color
 	DiffAdditionForeground ui.Color
 	DiffDeletionForeground ui.Color
-	FullAccess             ui.Color // --full-access-accent #f97316
+	FullAccess             ui.Color     // --full-access-accent #f97316
 	GraphColors            [10]ui.Color // --graph-c0..c9 commit-graph lanes
 }
 
