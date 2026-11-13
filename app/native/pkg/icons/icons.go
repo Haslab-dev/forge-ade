@@ -222,3 +222,10 @@ func FileIconSVG(path string) *ui.SVG {
 		return TablerFile
 	}
 }
+
+// Browser viewer icons (right-drawer browser tab).
+var (
+	TablerWorld   = tablerSVG(`<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M3.6 9l16.8 0"/><path d="M3.6 15l16.8 0"/><path d="M12 3a9 9 0 0 1 0 18"/><path d="M12 3a9 9 0 0 0 0 18"/>`)
+	TablerZoomIn  = tablerSVG(`<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M7 10l6 0"/><path d="M10 7l0 6"/><path d="M21 21l-6 -6"/>`)
+	TablerZoomOut = tablerSVG(`<path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M7 10l6 0"/><path d="M21 21l-6 -6"/>`)
+)

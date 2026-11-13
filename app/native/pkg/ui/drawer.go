@@ -54,6 +54,18 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					Icon *ui.SVG
 				}{RightTabSideFile, filepath.Base(a.ActiveSideFile), icons.TablerEye})
 			}
+			if a.BrowserWebView != nil && !a.BrowserWebView.IsDestroyed() {
+				tabs = append(tabs, struct {
+					Tab  int
+					Name string
+					Icon *ui.SVG
+				}{RightTabBrowser, "Browser", icons.TablerWorld})
+			}
+			tabs = append(tabs, struct {
+				Tab  int
+				Name string
+				Icon *ui.SVG
+			}{RightTabSubagent, "Agents", icons.TablerBot})
 
 			ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
 				for _, tab := range tabs {
@@ -87,6 +99,34 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 
 			ui.Box(c).Width(4)
 
+			// "+" tab menu — AgentRightSidebar's plus menu: new terminal,
+			// browser viewer, changes, new conversation, child agents.
+			plus := IconButton(c, tc, icons.TablerPlus, 13)
+			plus.ContextMenu(func(m *ui.Menu) {
+				if m.Item("New Terminal").Chosen() {
+					a.RightDrawerTab = RightTabTerminal
+					a.ShowRightDrawer = true
+				}
+				if m.Item("Browser Viewer").Chosen() {
+					a.openBrowserTab("")
+				}
+				if m.Item("Changes").Chosen() {
+					a.RightDrawerTab = RightTabChanges
+					a.ShowRightDrawer = true
+				}
+				if m.Item("New Conversation").Chosen() {
+					a.RightDrawerTab = RightTabChat
+					a.ShowRightDrawer = true
+				}
+				if m.Item("Child Agents").Chosen() {
+					a.RightDrawerTab = RightTabSubagent
+					a.ShowRightDrawer = true
+				}
+			})
+			if plus.Clicked() {
+				a.RightDrawerTab = RightTabSubagent
+			}
+
 			if IconButton(c, tc, icons.TablerX, 13).Clicked() {
 				a.ShowRightDrawer = false
 			}
@@ -107,6 +147,10 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderFilesPane(c)
 			case RightTabSideFile:
 				a.renderSideFilePane(c)
+			case RightTabBrowser:
+				a.renderBrowserPane(c)
+			case RightTabSubagent:
+				a.renderSubagentPane(c)
 			}
 		})
 	})

@@ -121,6 +121,12 @@ type AppUI struct {
 	ShowQuestionModal bool
 	QuestionDrafts    map[string]*string
 
+	// Right-drawer browser viewer tab (native web view) + subagent pane.
+	BrowserWebView    *mygo.WebView
+	BrowserURLInput   string
+	BrowserURLCurrent string
+	BrowserZoom       float64
+
 	// Thread find bar (⌘F) state — ThreadFindBar parity.
 	ShowThreadFind    bool
 	ThreadFindQuery   string
