@@ -407,6 +407,22 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Mode = ModeEditor
 	})
 	appUI.Palette.SetCommands(appUI.paletteCommands())
+	// Workspace symbol backend for the "@" go-to-symbol palette mode.
+	appUI.Palette.SetSymbolSearch(func(query string, limit int) ([]palette.SymbolHit, error) {
+		if engine.SearchMgr == nil {
+			return nil, fmt.Errorf("search manager unavailable")
+		}
+		engine.SearchMgr.SetDirectories([]string{appUI.Workspace.RootDir})
+		hits, err := engine.SearchMgr.SearchSymbols(query, limit)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]palette.SymbolHit, 0, len(hits))
+		for _, h := range hits {
+			out = append(out, palette.SymbolHit{Path: h.Path, Line: h.Line, Content: h.Content})
+		}
+		return out, nil
+	})
 
 	if len(appUI.Workspace.Files) > 0 {
 		first := appUI.Workspace.Files[0]
@@ -632,6 +648,12 @@ func (a *AppUI) View(c *ui.Context) {
 		a.Mode = ModeEditor
 		a.ShowLeftSidebar = true
 		a.EditorActivity = ActivityExplorer
+	}
+	if cmdOrCtrlShift(ui.KeyO) {
+		// Go to symbol (⌘⇧O) — the "@" palette mode.
+		a.Mode = ModeEditor
+		a.Palette.OpenSymbols()
+		a.Palette.Query = "@"
 	}
 	if cmdOrCtrlShift(ui.KeyG) {
 		a.Mode = ModeEditor

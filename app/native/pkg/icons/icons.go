@@ -236,3 +236,9 @@ var (
 	TablerGitPullRequestDraft  = tablerSVG(`<path d="M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 8v8"/><path d="M11 6h4a2 2 0 0 1 2 2v8"/><path d="M14 9l-3 -3l3 -3" stroke-dasharray="2 2"/>`)
 	TablerGitMerge             = tablerSVG(`<path d="M12 7m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 16v-5a3 3 0 0 1 3 -3h1"/><path d="M12 9v1a3 3 0 0 0 3 3h1"/>`)
 )
+
+// Palette mode icons.
+var (
+	TablerSymbol = tablerSVG(`<path d="M9 6l6 6l-6 6"/><circle cx="15" cy="12" r="1" fill="currentColor"/>`)
+	TablerHash   = tablerSVG(`<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3l-2 18"/><path d="M16 3l-2 18"/>`)
+)

@@ -2,6 +2,7 @@ package palette
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -13,6 +14,8 @@ import (
 const (
 	PaletteFiles    = 0
 	PaletteCommands = 1
+	PaletteSymbols  = 2 // "@" go-to-symbol (CommandPaletteModal parity)
+	PaletteLine     = 3 // ":" jump to line[:col] in the active editor
 )
 
 // PaletteCommand is one entry of the commands mode.
@@ -39,7 +42,21 @@ type PaletteManager struct {
 	SelectedIndex int
 	Workspace     *workspace.WorkspaceState
 	OnFileSelect  func(path string)
+	OnLineJump    func(line, col int)
 	Commands      []PaletteCommand
+
+	Symbols      []SymbolHit
+	SymbolsQuery string
+	// SearchSymbols runs a workspace symbol search; injected by the app
+	// (RakitKode search manager).
+	SearchSymbols func(query string, limit int) ([]SymbolHit, error)
+}
+
+// SymbolHit is one workspace symbol result (go-to-symbol palette mode).
+type SymbolHit struct {
+	Path    string
+	Line    int
+	Content string
 }
 
 // NewPaletteManager creates a new Quick Open palette manager.
@@ -171,4 +188,62 @@ func (pm *PaletteManager) FilteredCommands() []PaletteCommand {
 		results = append(results, m.cmd)
 	}
 	return results
+}
+
+// SetSymbolSearch wires the workspace symbol backend.
+func (pm *PaletteManager) SetSymbolSearch(fn func(query string, limit int) ([]SymbolHit, error)) {
+	pm.mu.Lock()
+	pm.SearchSymbols = fn
+	pm.mu.Unlock()
+}
+
+// OpenSymbols switches the palette to go-to-symbol mode ("@" prefix).
+func (pm *PaletteManager) OpenSymbols() {
+	pm.mu.Lock()
+	pm.IsOpen = true
+	pm.Mode = PaletteSymbols
+	pm.SelectedIndex = 0
+	pm.mu.Unlock()
+}
+
+// FilteredSymbols returns the symbol hits for the current query.
+func (pm *PaletteManager) FilteredSymbols() []SymbolHit {
+	pm.mu.Lock()
+	query := strings.TrimPrefix(strings.TrimSpace(pm.Query), "@")
+	if pm.SearchSymbols == nil || query == "" {
+		pm.mu.Unlock()
+		return pm.Symbols
+	}
+	pm.mu.Unlock()
+
+	hits, err := pm.SearchSymbols(query, 15)
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if err != nil {
+		return pm.Symbols
+	}
+	pm.Symbols = hits
+	pm.SymbolsQuery = query
+	return pm.Symbols
+}
+
+// LineJumpSpec parses a ":" palette query like "42" or "42:7"; ok=false when
+// the query is not a line jump.
+func LineJumpSpec(query string) (line, col int, ok bool) {
+	if !strings.HasPrefix(query, ":") {
+		return 0, 0, false
+	}
+	spec := strings.TrimPrefix(query, ":")
+	parts := strings.SplitN(spec, ":", 2)
+	n, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || n <= 0 {
+		return 0, 0, false
+	}
+	line = n
+	if len(parts) == 2 {
+		if c, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil && c > 0 {
+			col = c
+		}
+	}
+	return line, col, true
 }

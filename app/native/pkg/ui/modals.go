@@ -9,6 +9,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
+	"github.com/hasdev/forge-ade/app/native/pkg/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/palette"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
@@ -86,10 +87,25 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 
 	matches := pm.FilteredFiles()
 	commands := pm.FilteredCommands()
+	symbols := pm.FilteredSymbols()
 	mode := pm.Mode
 
+	// The query prefix picks the mode dynamically, as CommandPaletteModal
+	// does with its > / @ / : prefixes.
+	if strings.HasPrefix(pm.Query, "@") && mode != palette.PaletteSymbols {
+		pm.Mode = palette.PaletteSymbols
+		mode = palette.PaletteSymbols
+	} else if strings.HasPrefix(pm.Query, ":") && mode != palette.PaletteLine {
+		pm.Mode = palette.PaletteLine
+		mode = palette.PaletteLine
+	} else if !strings.HasPrefix(pm.Query, "@") && !strings.HasPrefix(pm.Query, ":") && mode == palette.PaletteSymbols {
+		pm.Mode = palette.PaletteFiles
+		mode = palette.PaletteFiles
+	}
+
 	activate := func() {
-		if mode == palette.PaletteFiles {
+		switch mode {
+		case palette.PaletteFiles:
 			if pm.SelectedIndex < len(matches) {
 				selected := matches[pm.SelectedIndex].File.RelativePath
 				pm.Close()
@@ -98,7 +114,23 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 				a.SelectedFile = selected
 				a.Mode = ModeEditor
 			}
-		} else {
+		case palette.PaletteSymbols:
+			if pm.SelectedIndex < len(symbols) {
+				hit := symbols[pm.SelectedIndex]
+				pm.Close()
+				full := a.Workspace.ResolveFullPath(hit.Path)
+				if doc, err := a.Editor.OpenFile(full, hit.Path); err == nil && doc != nil {
+					a.jumpDocumentToLine(doc, hit.Line, 0)
+				}
+				a.SelectedFile = hit.Path
+				a.Mode = ModeEditor
+			}
+		case palette.PaletteLine:
+			if line, col, ok := palette.LineJumpSpec(pm.Query); ok {
+				pm.Close()
+				a.jumpActiveDocumentToLine(line, col)
+			}
+		default:
 			if pm.SelectedIndex < len(commands) {
 				cmd := commands[pm.SelectedIndex]
 				pm.Close()
@@ -119,11 +151,19 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 				icon := icons.TablerSearch
 				if mode == palette.PaletteCommands {
 					icon = icons.TablerChevronRight
+				} else if mode == palette.PaletteSymbols {
+					icon = icons.TablerSymbol
+				} else if mode == palette.PaletteLine {
+					icon = icons.TablerHash
 				}
 				ui.Icon(c, icon).Width(15).Height(15).TextColor(tc.IconMuted)
 				placeholder := "Search files by name..."
 				if mode == palette.PaletteCommands {
 					placeholder = "Type a command..."
+				} else if mode == palette.PaletteSymbols {
+					placeholder = "Go to symbol... (@ prefix)"
+				} else if mode == palette.PaletteLine {
+					placeholder = "Go to line :42 or :42:7"
 				}
 				in := ui.TextInput(c, &pm.Query).Placeholder(placeholder).Grow(1).AutoFocus()
 				if in.Submitted() {
@@ -1597,4 +1637,40 @@ func (a *AppUI) renderNewBoardTaskModal(c *ui.Context) {
 			})
 		})
 	})
+}
+
+// jumpDocumentToLine scrolls an open document to a 1-based line:column.
+func (a *AppUI) jumpDocumentToLine(doc *editor.OpenDocument, line, col int) {
+	if doc == nil || line <= 0 {
+		return
+	}
+	text := doc.Editor.Buffer.String()
+	offset := 0
+	lines := strings.Split(text, "\n")
+	if line-1 < len(lines) {
+		for i := 0; i < line-1; i++ {
+			offset += len(lines[i]) + 1
+		}
+	}
+	length := 0
+	if col > 0 && line-1 < len(lines) && col-1 <= len(lines[line-1]) {
+		offset += col - 1
+		length = 1
+	}
+	n := doc.Editor.Buffer.Len()
+	if offset > n {
+		offset = n
+	}
+	doc.Editor.Select(offset, offset+length)
+	doc.Editor.GoTo(doc.Editor.CursorPos())
+}
+
+// jumpActiveDocumentToLine jumps the active editor to line:col.
+func (a *AppUI) jumpActiveDocumentToLine(line, col int) {
+	doc := a.Editor.ActiveDoc()
+	if doc == nil {
+		return
+	}
+	a.jumpDocumentToLine(doc, line, col)
+	a.Mode = ModeEditor
 }
