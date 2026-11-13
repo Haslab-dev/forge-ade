@@ -208,6 +208,7 @@ type AppUI struct {
 
 	// Follow Agent: auto-jump the editor to files the agent edits.
 	FollowAgent           bool
+	GitHistoryWidth       float32
 	SSHKeyPassphrase      string
 	SSHPassword           string
 	SSHRemotePath         string

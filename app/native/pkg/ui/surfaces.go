@@ -561,9 +561,12 @@ func (a *AppUI) renderGitBranchesSurface(c *ui.Context, tc theme.ThemeColors, gm
 // renderGitHistorySurface renders the two-pane history: commit list with
 // search on the left, selected commit detail with per-file diffs on the right.
 func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager) {
+	if a.GitHistoryWidth == 0 {
+		a.GitHistoryWidth = 420
+	}
 	ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-		// Left: search + commit list
-		ui.Column(c).Width(420).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
+		// Left: search + commit list (drag-resizable, GitClientView parity)
+		ui.Column(c).Width(a.GitHistoryWidth).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
 			ui.Row(c).Padding(10, 12).Children(func() {
 				ui.Row(c).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Grow(1).Children(func() {
@@ -610,6 +613,24 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 				})
 			})
 		})
+
+		// Drag resizer between the commit list and the detail pane, as
+		// GitClientView's history split does.
+		handle := ui.Box(c.Key("git-history-resizer")).Width(3).FillHeight().Background(tc.Border)
+		if handle.Hovered() {
+			handle.Background(tc.Accent.Alpha(0.6))
+		}
+		if _, dx, dragging := handle.Dragged(); dragging {
+			a.GitHistoryWidth += dx
+			if winW, _ := c.Size(); winW > 0 {
+				if max := winW * 0.6; a.GitHistoryWidth > max {
+					a.GitHistoryWidth = max
+				}
+			}
+			if a.GitHistoryWidth < 280 {
+				a.GitHistoryWidth = 280
+			}
+		}
 
 		// Right: commit detail
 		ui.Column(c).Grow(1).Children(func() {
