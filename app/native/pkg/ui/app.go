@@ -121,6 +121,13 @@ type AppUI struct {
 	ShowQuestionModal bool
 	QuestionDrafts    map[string]*string
 
+	// Thread find bar (⌘F) state — ThreadFindBar parity.
+	ShowThreadFind    bool
+	ThreadFindQuery   string
+	ThreadFindQueryAt string
+	ThreadFindMatches []int
+	ThreadFindIdx     int
+
 	ShowNewFileModal        bool
 	NewFileName             string
 	ShowNewFolderModal      bool
@@ -574,6 +581,14 @@ func (a *AppUI) View(c *ui.Context) {
 		a.AgentViewMode = AgentViewChat
 		a.ShowLeftSidebar = true
 		a.EditorActivity = ActivitySearch
+	}
+	if cmdOrCtrl(ui.KeyF) && a.Mode == ModeAgent && a.Agent != nil && a.Agent.ActiveSession() != nil {
+		// Find-in-thread, as forge-ade's ⌘F ThreadFindBar in the chat surface.
+		a.ShowThreadFind = !a.ShowThreadFind
+		if !a.ShowThreadFind {
+			a.ThreadFindQuery = ""
+			a.ThreadFindMatches = nil
+		}
 	}
 	if cmdOrCtrlShift(ui.KeyE) {
 		a.Mode = ModeEditor

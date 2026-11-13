@@ -158,72 +158,80 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 				}
 			})
 
-			// Message list: the chat lane
-			ui.List(c, &as.ListState, len(as.Messages), func(i int) {
-				if i >= len(as.Messages) {
-					return
-				}
-				m := as.Messages[i]
-				if m.Role == "user" {
-					// User bubble: right-aligned inside the centered lane
-					// (Padding is CSS order top,right,bottom,left — the lane
-					// inset belongs on BOTH sides).
-					ui.Row(c.Key("urow")).Padding(8, leftInset, 8, leftInset).Justify(ui.End).Children(func() {
-						bubble := ui.Column(c).Padding(10, 14).Radius(18).
-							Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
-							MaxWidth(600)
-						bubble.Children(func() {
-							ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
-						})
-						bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
-					})
-				} else {
-					// Agent message: full lane width (centered via the insets),
-					// work blocks and markdown spanning the lane like forge-ade.
-					ui.Column(c.Key("arow")).Padding(8, leftInset, 8, leftInset).Gap(6).Children(func() {
-						// "Working / Worked for Ns" pill
-						hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
-						if hasWork {
-							a.renderWorkPill(c, tc, m)
-							work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
-								BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
-							work.Children(func() {
-								if m.Thinking != "" || m.IsThinking {
-									a.renderThinkingBlock(c, tc, m)
-								}
-								if len(m.Tools) > 0 {
-									a.renderFoldedToolTraces(c, tc, m)
-								}
+			// Find-in-thread bar (⌘F), ThreadFindBar parity.
+			if a.ShowThreadFind {
+				a.renderThreadFindBar(c, tc, as)
+			}
+
+			// Turn scrubber + chat lane, as forge-ade's left minimap rail.
+			ui.Row(c).Grow(1).Children(func() {
+				a.renderTurnScrubber(c, tc, as)
+				ui.List(c, &as.ListState, len(as.Messages), func(i int) {
+					if i >= len(as.Messages) {
+						return
+					}
+					m := as.Messages[i]
+					if m.Role == "user" {
+						// User bubble: right-aligned inside the centered lane
+						// (Padding is CSS order top,right,bottom,left — the lane
+						// inset belongs on BOTH sides).
+						ui.Row(c.Key("urow")).Padding(8, leftInset, 8, leftInset).Justify(ui.End).Children(func() {
+							bubble := ui.Column(c).Padding(10, 14).Radius(18).
+								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
+								MaxWidth(600)
+							bubble.Children(func() {
+								ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
 							})
-						}
-
-						// Turn Changes Card
-						if len(m.Changes) > 0 {
-							a.renderTurnChangesCard(c, tc, m)
-						}
-
-						// Pending Approval Bar
-						if m.PendingApproval != nil && !m.PendingApproval.Resolved {
-							a.renderApprovalBar(c, tc, m)
-						}
-
-						// Structured Questions Card (ask tool) — option chips,
-						// custom answers, open-in-dialog.
-						if len(m.PendingQuestions) > 0 {
-							a.renderPendingQuestionsCard(c, tc, sess.ID, m)
-						}
-
-						// Response Markdown body
-						if m.Text != "" {
-							if m.Done {
-								markdown.View(c, m.Text, &as.MdOpts)
-							} else {
-								markdown.Stream(c, m.Text, &as.MdOpts)
+							bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
+						})
+					} else {
+						// Agent message: full lane width (centered via the insets),
+						// work blocks and markdown spanning the lane like forge-ade.
+						ui.Column(c.Key("arow")).Padding(8, leftInset, 8, leftInset).Gap(6).Children(func() {
+							// "Working / Worked for Ns" pill
+							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+							if hasWork {
+								a.renderWorkPill(c, tc, m)
+								work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+									BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+								work.Children(func() {
+									if m.Thinking != "" || m.IsThinking {
+										a.renderThinkingBlock(c, tc, m)
+									}
+									if len(m.Tools) > 0 {
+										a.renderFoldedToolTraces(c, tc, m)
+									}
+								})
 							}
-						}
-					})
-				}
-			}).Grow(1).Padding(16, 0, 16, 0).Gap(14).Justify(ui.End)
+
+							// Turn Changes Card
+							if len(m.Changes) > 0 {
+								a.renderTurnChangesCard(c, tc, m)
+							}
+
+							// Pending Approval Bar
+							if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+								a.renderApprovalBar(c, tc, m)
+							}
+
+							// Structured Questions Card (ask tool) — option chips,
+							// custom answers, open-in-dialog.
+							if len(m.PendingQuestions) > 0 {
+								a.renderPendingQuestionsCard(c, tc, sess.ID, m)
+							}
+
+							// Response Markdown body
+							if m.Text != "" {
+								if m.Done {
+									markdown.View(c, m.Text, &as.MdOpts)
+								} else {
+									markdown.Stream(c, m.Text, &as.MdOpts)
+								}
+							}
+						})
+					}
+				}).Grow(1).Padding(16, 0, 16, 0).Gap(14).Justify(ui.End)
+			})
 
 			// Mid-turn Steering Queue Tray
 			if len(as.SteerQueue) > 0 {
@@ -1014,6 +1022,21 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						a.MentionDismissedAt = a.Agent.InputText
 						return true
 					}
+				}
+				// Prompt history: up/down while the composer is single-line
+				// and no autocomplete menu is active (promptHistoryStore).
+				if k.Key == ui.KeyUp || k.Key == ui.KeyDown {
+					if !strings.Contains(as.InputText, "\n") && strings.TrimSpace(as.InputText) != "" || (k.Key == ui.KeyDown && as.PromptHistoryIdx != -1) {
+						delta := -1
+						if k.Key == ui.KeyDown {
+							delta = 1
+						}
+						if text, ok := as.PromptHistoryStep(delta, as.InputText); ok {
+							k.SetText(text)
+							return true
+						}
+					}
+					return false
 				}
 				if k.Key == ui.KeyEnter && k.Mods == 0 {
 					as.SubmitMessage()

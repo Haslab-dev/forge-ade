@@ -155,16 +155,22 @@ type AgentState struct {
 	SteerQueue      []string
 	AttachedFiles   []string
 	StashedPrompts  []string
-	ShowModelPicker bool
-	AvailableModels []string
-	NextID          int
-	IsStreaming     bool
-	TaskManager     *TaskManager
-	Theme           *theme.ThemeManager
-	ACPMgr          *ACPManager
-	statsPending    map[string]bool
-	Messages        []*ChatMessage // alias for active session messages
-	Invalidate      func()
+
+	// Prompt history (up/down at the composer), persisted like forge-ade's
+	// promptHistoryStore (last 100 prompts).
+	PromptHistory      []string
+	PromptHistoryIdx   int    // -1 = not browsing
+	PromptHistoryDraft string // in-progress text saved when history starts
+	ShowModelPicker    bool
+	AvailableModels    []string
+	NextID             int
+	IsStreaming        bool
+	TaskManager        *TaskManager
+	Theme              *theme.ThemeManager
+	ACPMgr             *ACPManager
+	statsPending       map[string]bool
+	Messages           []*ChatMessage // alias for active session messages
+	Invalidate         func()
 }
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
@@ -229,6 +235,7 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 
 	// Load real sessions from ~/.forge/sessions/ and ~/.forge-ade/sessions/
 	as.LoadSessionsFromDisk(workspacePath)
+	as.LoadPromptHistory()
 
 	return as
 }
@@ -1800,6 +1807,7 @@ func (as *AgentState) SubmitMessage() {
 	if activeSess != nil {
 		as.SaveSessionToDisk(activeSess)
 	}
+	as.AppendPromptHistory(text)
 
 	// Slash commands: /clear and /help are native; every other command goes
 	// to the agent, exactly as forge-ade sends them.
