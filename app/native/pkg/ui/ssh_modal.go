@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/core/remotefs"
@@ -766,6 +767,11 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 					a.OpenSSHModal()
 				})
 
+				actionItem(icons.TablerUpload, "Upload Files to Remote", "Pick local files and upload them over SFTP", "", false, func() {
+					a.ShowSSHQuickMenu = false
+					a.uploadFilesToRemote(c, remotePath)
+				})
+
 				actionItem(icons.TablerUnplug, "Disconnect SSH Remote", "Close remote workspace and return to local files", "", true, func() {
 					a.DisconnectSSH()
 				})
@@ -779,4 +785,39 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 			})
 		})
 	})
+}
+
+// uploadFilesToRemote opens a multi-file dialog and SFTP-uploads the picked
+// files to the active remote workspace (RemoteFileUploaderModal parity).
+// Progress surfaces through SSHUploadStatus on the quick menu header.
+func (a *AppUI) uploadFilesToRemote(c *ui.Context, remoteDir string) {
+	if a.Window == nil || a.Engine == nil || a.Engine.RemoteFS == nil {
+		return
+	}
+	win := a.Window
+	_, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
+	if !isRemote {
+		remotePath = remoteDir
+	}
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:   win,
+			Title:    "Upload Files to Remote",
+			Multiple: true,
+		})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		a.SSHUploadStatus = fmt.Sprintf("Uploading %d files…", len(paths))
+		win.Invalidate()
+
+		uploaded, uerr := a.Engine.RemoteFS.UploadFilesToRemote(paths, remotePath)
+		if uerr != nil {
+			a.SSHUploadStatus = "Upload failed: " + uerr.Error()
+		} else {
+			a.SSHUploadStatus = fmt.Sprintf("Uploaded %d files", len(uploaded))
+			a.Workspace.Refresh()
+		}
+		win.Invalidate()
+	}()
 }

@@ -203,6 +203,7 @@ type AppUI struct {
 	SSHUser                 string
 	SSHAuthType             string // "key_file", "password", "agent"
 	SSHKeyPath              string
+	SSHUploadStatus         string
 	SSHKeyPassphrase        string
 	SSHPassword             string
 	SSHRemotePath           string
@@ -627,6 +628,14 @@ func (a *AppUI) View(c *ui.Context) {
 		a.AgentViewMode = AgentViewChat
 		a.ShowLeftSidebar = true
 		a.EditorActivity = ActivitySearch
+	}
+	if cmdOrCtrl(ui.KeyY) && a.Agent != nil && a.Agent.ActiveSession() != nil {
+		// Approve the pending permission (⌘Y, AgentApprovalBar parity).
+		if as := a.Agent.ActiveSession(); as != nil && len(as.Messages) > 0 {
+			if last := as.Messages[len(as.Messages)-1]; last.PendingApproval != nil && !last.PendingApproval.Resolved {
+				a.respondApproval(last.PendingApproval.SessionID, last.PendingApproval.ToolCallID, true, false)
+			}
+		}
 	}
 	if cmdOrCtrl(ui.KeyI) && a.Mode == ModeEditor {
 		// Edit with AI over the selection (CodeEditorPane's Mod-i).
