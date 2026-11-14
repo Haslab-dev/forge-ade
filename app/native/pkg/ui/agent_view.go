@@ -178,7 +178,19 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						// User bubble: right-aligned inside the centered lane
 						// (Padding is CSS order top,right,bottom,left — the lane
 						// inset belongs on BOTH sides).
-						ui.Row(c.Key("urow")).Padding(8, leftInset, 8, leftInset).Justify(ui.End).Children(func() {
+						ui.Row(c.Key("urow")).Padding(8, leftInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center).Children(func() {
+							copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Height(24).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
+							copyBtn.Children(func() {
+								ui.Icon(c, icons.TablerCopy).Width(12).Height(12).TextColor(tc.TextMuted)
+								ui.Text(c, "Copy").FontSize(11).TextColor(tc.TextMuted)
+							})
+							if copyBtn.Hovered() {
+								copyBtn.Background(tc.Text.Alpha(0.06))
+							}
+							if copyBtn.Clicked() {
+								mygo.Clipboard.WriteText(m.Text)
+								c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
+							}
 							bubble := ui.Column(c).Padding(10, 14).Radius(18).
 								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
 								MaxWidth(600)
@@ -211,6 +223,24 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						// Agent message: full lane width (centered via the insets),
 						// work blocks and markdown spanning the lane like forge-ade.
 						ui.Column(c.Key("arow")).Padding(8, leftInset, 8, leftInset).Gap(6).Children(func() {
+							// Hover copy action for the whole message (ZCode parity).
+							if m.Done && (m.Text != "" || len(m.Tools) > 0) {
+								ui.Row(c).Justify(ui.End).Children(func() {
+									acopy := ui.Row(c.Key("acopy-"+fmt.Sprint(m.ID))).Height(22).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
+									acopy.Children(func() {
+										ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.TextMuted)
+										ui.Text(c, "Copy").FontSize(11).TextColor(tc.TextMuted)
+									})
+									if acopy.Hovered() {
+										acopy.Background(tc.Text.Alpha(0.06))
+									}
+									if acopy.Clicked() {
+										mygo.Clipboard.WriteText(messagePlainText(m))
+										c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
+									}
+								})
+							}
+
 							// "Working / Worked for Ns" pill
 							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
 							if hasWork {
@@ -2360,4 +2390,21 @@ func (a *AppUI) chatColumnWidth(c *ui.Context) float32 {
 		w = 320
 	}
 	return w
+}
+
+// messagePlainText flattens a message for the clipboard: text + thinking
+// label + per-tool lines, as forge-ade's copy-message action does.
+func messagePlainText(m *agent.ChatMessage) string {
+	var b strings.Builder
+	b.WriteString(m.Text)
+	for _, t := range m.Tools {
+		b.WriteString("\n[" + t.ToolName + "]")
+		if cmd := strings.TrimSpace(t.Command); cmd != "" {
+			b.WriteString(" " + strings.ReplaceAll(cmd, "\n", " ⏎ "))
+		}
+		if out := strings.TrimSpace(t.Output); out != "" {
+			b.WriteString("\n" + out)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }

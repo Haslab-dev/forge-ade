@@ -408,6 +408,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										Archived:    s.Archived,
 										Snoozed:     s.Snoozed,
 										AgentID:     s.AgentID,
+										Model:       s.Model,
 										UpdatedTime: s.UpdatedAt,
 										DiffAdded:   added,
 										DiffRemoved: removed,

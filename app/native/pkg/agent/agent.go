@@ -279,7 +279,10 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 			continue
 		}
 		msg := as.ensureStreamingMessage(s)
-		if isHarnessDumpDelta(text, msg.Text) {
+		combined := msg.Text + text
+		if isHarnessDumpDelta(text, msg.Text) ||
+			(len(strings.TrimSpace(msg.Text)) < 256 && harnessDumpSignature(combined) &&
+				strings.HasPrefix(strings.TrimSpace(combined), "{")) {
 			msg.SkipHarnessDumps = true
 		}
 		if msg.SkipHarnessDumps {
@@ -318,10 +321,11 @@ func isHarnessDumpDelta(delta, current string) bool {
 		return false // a real reply already started
 	}
 	trimmed := strings.TrimSpace(delta)
+	// Dumps arrive either as raw JSON ({...) or string-encoded JSON ("{...
 	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, `"{`) {
 		return false
 	}
-	return harnessDumpSignature(trimmed)
+	return harnessDumpSignature(trimmed) || (len(trimmed) > 400 && strings.Contains(trimmed, "\\n"))
 }
 
 // cleanHarnessDumps removes protocol-state JSON lines from a finalized
@@ -1092,7 +1096,7 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 			}
 			// Clean raw tool tags and echoed task JSON, as forge-ade does
 			// for loaded sessions.
-			txt := cleanTaskJSONBlocks(cleanRawToolTags(extractMessageText(m)))
+			txt := cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(extractMessageText(m))))
 			if txt == "" && len(m.ToolExecutions) == 0 && len(m.Thoughts) == 0 {
 				continue
 			}

@@ -205,6 +205,7 @@ type taskRowData struct {
 	Archived    bool
 	Snoozed     bool
 	AgentID     string
+	Model       string // provider/model used, drives the brand icon lookup
 	UpdatedTime time.Time
 	DiffAdded   int // cumulative +n/−n badge, as forge-ade's diff-stats chip
 	DiffRemoved int
@@ -271,8 +272,14 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 		// to the ForgeADE brand glyph, so the slot always renders.
 		g := ui.Box(c).Size(16, 16).AlignItems(ui.Center).Justify(ui.Center)
 		g.Children(func() {
-			if glyph, color, ok := providerGlyph(d.AgentID); ok {
+			// Real provider brand icon (claude/openai/gemini/...), matched by
+			// agent id + model like forge-ade's ProviderIcon.
+			lookup := d.AgentID + " " + d.Model
+			if glyph, color, ok := providerGlyph(d.AgentID); ok && d.Model == "" {
 				ui.Text(c, string(glyph)).FontSize(10).TextColor(color)
+			} else if d.Model != "" || d.AgentID != "" {
+				pSvg, pcolor := icons.ProviderSVG(lookup)
+				ui.Icon(c, pSvg).Width(14).Height(14).TextColor(pcolor)
 			} else {
 				ui.Icon(c, icons.ForgeSparkSVG).Width(12).Height(12).TextColor(tc.Accent)
 			}
