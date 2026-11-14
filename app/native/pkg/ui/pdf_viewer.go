@@ -23,6 +23,13 @@ func (a *AppUI) openPdfViewer(fullPath string) {
 		a.PDFWebView = nil
 	}
 	a.PDFCurrentPath = fullPath
+	if fi, err := os.Stat(fullPath); err == nil {
+		a.PDFFileSize = fi.Size()
+		a.PDFFileSizePath = fullPath
+	} else {
+		a.PDFFileSize = 0
+		a.PDFFileSizePath = ""
+	}
 	if a.Window != nil && mygo.WebViewAvailable() {
 		wv, err := a.Window.NewWebView(mygo.WebViewOptions{URL: "file://" + fullPath})
 		if err == nil {
@@ -41,6 +48,8 @@ func (a *AppUI) closePdfViewer() {
 	}
 	a.PDFWebView = nil
 	a.PDFCurrentPath = ""
+	a.PDFFileSize = 0
+	a.PDFFileSizePath = ""
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}
@@ -48,13 +57,13 @@ func (a *AppUI) closePdfViewer() {
 
 // renderPdfViewerPane renders the PDF Document viewer with toolbar, system integration, and native WKWebView PDF preview.
 func (a *AppUI) renderPdfViewerPane(c *ui.Context, tc theme.ThemeColors, fullPath, fileName string) {
-	if a.PDFCurrentPath != fullPath {
+	if a.PDFCurrentPath != fullPath || a.PDFFileSizePath != fullPath {
 		a.openPdfViewer(fullPath)
 	}
 
 	var fileSizeStr string
-	if fi, err := os.Stat(fullPath); err == nil {
-		sz := fi.Size()
+	if a.PDFFileSizePath == fullPath && a.PDFFileSize > 0 {
+		sz := a.PDFFileSize
 		switch {
 		case sz < 1024:
 			fileSizeStr = fmt.Sprintf("%d B", sz)

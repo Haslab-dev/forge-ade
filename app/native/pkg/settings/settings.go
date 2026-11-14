@@ -144,6 +144,10 @@ type SettingsManager struct {
 
 	// Custom provider profiles state
 	SelectedProviderID      string
+	EditingProfileID        string
+	EditProfileName         string
+	EditBaseURL             string
+	EditAPIKey              string
 	IsAddingProvider        bool
 	NewProviderProtocol     string // "openai" or "anthropic"
 	NewProviderName         string

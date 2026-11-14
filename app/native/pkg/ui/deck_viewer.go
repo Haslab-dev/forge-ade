@@ -78,6 +78,8 @@ func (a *AppUI) scanWorkspaceDecks() []string {
 func (a *AppUI) openDeckViewer(fullPath string) {
 	if fullPath == "" {
 		decks := a.scanWorkspaceDecks()
+		a.DeckFiles = decks
+		a.DeckFilesScanned = true
 		if len(decks) > 0 {
 			fullPath = decks[0]
 		} else if a.Workspace.RootDir != "" {
@@ -120,14 +122,16 @@ func (a *AppUI) closeDeckViewer() {
 	}
 	a.DeckWebView = nil
 	a.DeckCurrentPath = ""
+	a.DeckFilesScanned = false
 }
 
 // renderDeckPane renders the full Presentation & Motion Deck viewer tab.
 func (a *AppUI) renderDeckPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	if a.DeckFiles == nil || len(a.DeckFiles) == 0 {
+	if !a.DeckFilesScanned {
 		a.DeckFiles = a.scanWorkspaceDecks()
+		a.DeckFilesScanned = true
 	}
 
 	if a.DeckCurrentPath == "" && len(a.DeckFiles) > 0 {
@@ -290,6 +294,7 @@ func (a *AppUI) renderDeckPane(c *ui.Context) {
 				})
 				if scanBtn.Clicked() {
 					a.DeckFiles = a.scanWorkspaceDecks()
+					a.DeckFilesScanned = true
 					if len(a.DeckFiles) > 0 {
 						a.openDeckViewer(a.DeckFiles[0])
 					} else {

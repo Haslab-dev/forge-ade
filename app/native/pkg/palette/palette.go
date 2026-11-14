@@ -45,8 +45,9 @@ type PaletteManager struct {
 	OnLineJump    func(line, col int)
 	Commands      []PaletteCommand
 
-	Symbols      []SymbolHit
-	SymbolsQuery string
+	Symbols       []SymbolHit
+	SymbolsQuery  string
+	SymbolsLoaded bool
 	// SearchSymbols runs a workspace symbol search; injected by the app
 	// (RakitKode search manager).
 	SearchSymbols func(query string, limit int) ([]SymbolHit, error)
@@ -82,6 +83,7 @@ func (pm *PaletteManager) OpenCommands() {
 	pm.Mode = PaletteCommands
 	pm.Query = ""
 	pm.SelectedIndex = 0
+	pm.SymbolsLoaded = false
 }
 
 // Toggle flips palette visibility in files mode.
@@ -93,6 +95,7 @@ func (pm *PaletteManager) Toggle() {
 		pm.Mode = PaletteFiles
 		pm.Query = ""
 		pm.SelectedIndex = 0
+		pm.SymbolsLoaded = false
 	}
 }
 
@@ -101,19 +104,50 @@ func (pm *PaletteManager) Close() {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.IsOpen = false
+	pm.SymbolsLoaded = false
+}
+
+// EffectiveMode returns the active palette mode, honoring query prefixes (> / @ / :).
+func (pm *PaletteManager) EffectiveMode() int {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	return pm.effectiveModeLocked()
+}
+
+func (pm *PaletteManager) effectiveModeLocked() int {
+	if strings.HasPrefix(pm.Query, "@") {
+		return PaletteSymbols
+	}
+	if strings.HasPrefix(pm.Query, ">") {
+		return PaletteCommands
+	}
+	if strings.HasPrefix(pm.Query, ":") {
+		return PaletteLine
+	}
+	return pm.Mode
 }
 
 // MoveSelection steps the highlighted row, clamped to the current mode's
 // results (arrow-key navigation).
 func (pm *PaletteManager) MoveSelection(dir int) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+	pm.mu.RLock()
+	mode := pm.effectiveModeLocked()
+	pm.mu.RUnlock()
+
 	limit := 0
-	if pm.Mode == PaletteFiles {
+	switch mode {
+	case PaletteFiles:
 		limit = len(pm.FilteredFiles())
-	} else {
+	case PaletteSymbols:
+		limit = len(pm.FilteredSymbols())
+	case PaletteLine:
+		limit = 0
+	default:
 		limit = len(pm.FilteredCommands())
 	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	if limit == 0 {
 		pm.SelectedIndex = 0
 		return
@@ -167,9 +201,9 @@ func (pm *PaletteManager) FilteredCommands() []PaletteCommand {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
-	q := pm.Query
+	q := strings.TrimSpace(strings.TrimPrefix(pm.Query, ">"))
 	var results []PaletteCommand
-	if strings.TrimSpace(q) == "" {
+	if q == "" {
 		return pm.Commands
 	}
 
@@ -211,19 +245,29 @@ func (pm *PaletteManager) FilteredSymbols() []SymbolHit {
 	pm.mu.Lock()
 	query := strings.TrimPrefix(strings.TrimSpace(pm.Query), "@")
 	if pm.SearchSymbols == nil || query == "" {
+		pm.Symbols = nil
+		pm.SymbolsQuery = ""
+		pm.SymbolsLoaded = true
 		pm.mu.Unlock()
-		return pm.Symbols
+		return nil
 	}
+	if pm.SymbolsLoaded && query == pm.SymbolsQuery {
+		hits := pm.Symbols
+		pm.mu.Unlock()
+		return hits
+	}
+	searchFn := pm.SearchSymbols
 	pm.mu.Unlock()
 
-	hits, err := pm.SearchSymbols(query, 15)
+	hits, err := searchFn(query, 15)
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
+	pm.SymbolsQuery = query
+	pm.SymbolsLoaded = true
 	if err != nil {
 		return pm.Symbols
 	}
 	pm.Symbols = hits
-	pm.SymbolsQuery = query
 	return pm.Symbols
 }
 

@@ -55,13 +55,18 @@ func (a *AppUI) renderThreadFindBar(c *ui.Context, tc theme.ThemeColors, as *age
 	bar.Children(func() {
 		searchBox := ui.Row(c).Height(28).Radius(8).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Focus.Alpha(0.5)).Grow(1).MaxWidth(360)
+		var findIn ui.Element
 		searchBox.Children(func() {
 			ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.TextMuted)
-			ui.TextInput(c, &a.ThreadFindQuery).Placeholder("Find in thread…").Grow(1)
+			findIn = ui.TextInput(c, &a.ThreadFindQuery).Placeholder("Find in thread…").Grow(1)
 		})
-		// Recompute matches whenever the query changed (immediate mode).
-		if a.ThreadFindQueryAt != a.ThreadFindQuery {
+		// Recompute matches whenever the query, active session, or message count changed.
+		if a.ThreadFindQueryAt != a.ThreadFindQuery ||
+			a.ThreadFindSessionID != as.ActiveSessionID ||
+			a.ThreadFindMsgCount != len(as.Messages) {
 			a.ThreadFindQueryAt = a.ThreadFindQuery
+			a.ThreadFindSessionID = as.ActiveSessionID
+			a.ThreadFindMsgCount = len(as.Messages)
 			a.ThreadFindMatches = threadFindMatches(as, a.ThreadFindQuery)
 			a.ThreadFindIdx = 0
 			if len(a.ThreadFindMatches) > 0 {
@@ -70,6 +75,20 @@ func (a *AppUI) renderThreadFindBar(c *ui.Context, tc theme.ThemeColors, as *age
 			}
 		}
 		total := len(a.ThreadFindMatches)
+		if total > 0 && a.ThreadFindIdx >= total {
+			a.ThreadFindIdx = 0
+		}
+		if findIn.Submitted() && total > 0 {
+			a.ThreadFindIdx = (a.ThreadFindIdx + 1) % total
+			as.ListState.ScrollIntoView(a.ThreadFindMatches[a.ThreadFindIdx])
+			as.ListState.FollowEnd = false
+		}
+		if c.Shortcut(0, ui.KeyEscape) {
+			a.ShowThreadFind = false
+			a.ThreadFindQuery = ""
+			a.ThreadFindQueryAt = ""
+			a.ThreadFindMatches = nil
+		}
 		if total > 0 {
 			ui.Text(c, fmt.Sprintf("%d of %d", a.ThreadFindIdx+1, total)).FontSize(11).TextColor(tc.TextMuted)
 		} else if strings.TrimSpace(a.ThreadFindQuery) != "" {
@@ -91,6 +110,7 @@ func (a *AppUI) renderThreadFindBar(c *ui.Context, tc theme.ThemeColors, as *age
 		if closeBtn.Clicked() {
 			a.ShowThreadFind = false
 			a.ThreadFindQuery = ""
+			a.ThreadFindQueryAt = ""
 			a.ThreadFindMatches = nil
 		}
 	})
@@ -135,8 +155,8 @@ func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agen
 				preview := ""
 				if m := as.Messages[msgIdx]; m != nil {
 					preview = m.Text
-					if len(preview) > 60 {
-						preview = preview[:60] + "…"
+					if runes := []rune(preview); len(runes) > 60 {
+						preview = string(runes[:60]) + "…"
 					}
 					preview = strings.ReplaceAll(preview, "\n", " ")
 				}

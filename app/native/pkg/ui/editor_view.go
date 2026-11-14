@@ -122,9 +122,7 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			}
 
 			activityButton(icons.TablerSettings, -1, 0, func() {
-				if a.Settings != nil {
-					a.Settings.Toggle()
-				}
+				a.openSettings()
 			})
 		})
 
@@ -186,144 +184,148 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 
 	ui.Row(c).Height(EditorTabBarHeight).Padding(0, 8).AlignItems(ui.Center).
 		Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-		for _, tabPath := range em.OpenTabs() {
-			path := tabPath
-			doc := em.GetDoc(path)
-			if doc == nil {
-				continue
-			}
-
-			isActive := (path == em.ActivePath)
-			isModified := doc.Editor.Buffer.Modified()
-			baseName := filepath.Base(doc.RelativePath)
-			isPinned := em.IsPinned(path)
-			isReadOnly := em.IsReadOnly(path)
-
-			tab := ui.Row(c.Key("tab-"+path)).Height(EditorTabBarHeight).Padding(0, 10).Gap(6).
-				AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
-			tab.Children(func() {
-				ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
-				if isPinned {
-					ui.Icon(c, icons.TablerPinFilled).Width(9).Height(9).TextColor(tc.Accent)
-				}
-				label := ui.Text(c, baseName).FontSize(12)
-				if isActive {
-					label.FontWeight(500)
-				}
-				if isReadOnly {
-					// Read-only tabs render an italic title, as forge-ade does.
-					label.Italic().TextColor(tc.TextMuted)
-				}
-				closeBtn := ui.Row(c.Key("tab-close-"+path)).Size(16, 16).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
-				closeBtn.Children(func() {
-					if isModified && !tab.Hovered() {
-						ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
-					} else {
-						ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.IconMuted)
+		ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
+			ui.Row(c).Height(EditorTabBarHeight).AlignItems(ui.Center).Children(func() {
+				for _, tabPath := range em.OpenTabs() {
+					path := tabPath
+					doc := em.GetDoc(path)
+					if doc == nil {
+						continue
 					}
-				})
-				if closeBtn.Hovered() {
-					closeBtn.Background(tc.Text.Alpha(0.12))
-				}
-				if closeBtn.Clicked() {
-					em.CloseTab(path)
-				}
-			})
-			if isActive {
-				tab.Background(tc.SurfaceOverlay)
-			} else if tab.Hovered() {
-				tab.Background(tc.Text.Alpha(0.04))
-			}
-			if tab.Clicked() {
-				em.ActivePath = path
-			}
-			// Drag-to-reorder: while dragging horizontally, shift the tab in
-			// the strip, as the webview's onMoveTab does.
-			if _, dx, dragging := tab.Dragged(); dragging && dx != 0 {
-				idx := em.TabIndex(path)
-				if idx >= 0 {
-					if dx > 24 && idx < len(em.OpenTabPaths)-1 {
-						em.MoveTab(idx, idx+1)
-					} else if dx < -24 && idx > 0 {
-						em.MoveTab(idx, idx-1)
-					}
-				}
-			}
 
-			// Zed-style tab context menu, as forge-ade's tab bar has.
-			tab.ContextMenu(func(m *ui.Menu) {
-				pinLabel := "Pin Tab"
-				if isPinned {
-					pinLabel = "Unpin Tab"
-				}
-				if m.Item(pinLabel).Chosen() {
-					em.TogglePin(path)
-				}
-				roLabel := "Set Read-Only"
-				if isReadOnly {
-					roLabel = "Set Editable"
-				}
-				if m.Item(roLabel).Chosen() {
-					em.ToggleReadOnly(path)
-				}
-				m.Separator()
-				if m.Item("Close").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
-					em.CloseTab(path)
-				}
-				if m.Item("Close Others").Chosen() {
-					em.CloseOthers(path)
-				}
-				if m.Item("Close to the Left").Chosen() {
-					seen := false
-					for _, p := range em.OpenTabs() {
-						if p == path {
-							seen = true
-							continue
+					isActive := (path == em.ActivePath)
+					isModified := doc.Editor.Buffer.Modified()
+					baseName := filepath.Base(doc.RelativePath)
+					isPinned := em.IsPinned(path)
+					isReadOnly := em.IsReadOnly(path)
+					closedThisTab := false
+
+					tab := ui.Row(c.Key("tab-"+path)).Height(EditorTabBarHeight).Padding(0, 10).Gap(6).
+						AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
+					tab.Children(func() {
+						ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+						if isPinned {
+							ui.Icon(c, icons.TablerPinFilled).Width(9).Height(9).TextColor(tc.Accent)
 						}
-						if !seen {
-							em.CloseTab(p)
+						label := ui.Text(c, baseName).FontSize(12)
+						if isActive {
+							label.FontWeight(500)
+						}
+						if isReadOnly {
+							// Read-only tabs render an italic title, as forge-ade does.
+							label.Italic().TextColor(tc.TextMuted)
+						}
+						closeBtn := ui.Row(c.Key("tab-close-"+path)).Size(16, 16).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
+						closeBtn.Children(func() {
+							if isModified && !tab.Hovered() {
+								ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
+							} else {
+								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.IconMuted)
+							}
+						})
+						if closeBtn.Hovered() {
+							closeBtn.Background(tc.Text.Alpha(0.12))
+						}
+						if closeBtn.Clicked() {
+							closedThisTab = true
+							em.CloseTab(path)
+						}
+					})
+					if isActive {
+						tab.Background(tc.SurfaceOverlay)
+					} else if tab.Hovered() {
+						tab.Background(tc.Text.Alpha(0.04))
+					}
+					if !closedThisTab && tab.Clicked() {
+						em.ActivePath = path
+					}
+					// Drag-to-reorder: while dragging horizontally, shift the tab in
+					// the strip, as the webview's onMoveTab does.
+					if _, dx, dragging := tab.Dragged(); dragging && dx != 0 {
+						idx := em.TabIndex(path)
+						if idx >= 0 {
+							if dx > 24 && idx < len(em.OpenTabPaths)-1 {
+								em.MoveTab(idx, idx+1)
+							} else if dx < -24 && idx > 0 {
+								em.MoveTab(idx, idx-1)
+							}
 						}
 					}
+
+					// Zed-style tab context menu, as forge-ade's tab bar has.
+					tab.ContextMenu(func(m *ui.Menu) {
+						pinLabel := "Pin Tab"
+						if isPinned {
+							pinLabel = "Unpin Tab"
+						}
+						if m.Item(pinLabel).Chosen() {
+							em.TogglePin(path)
+						}
+						roLabel := "Set Read-Only"
+						if isReadOnly {
+							roLabel = "Set Editable"
+						}
+						if m.Item(roLabel).Chosen() {
+							em.ToggleReadOnly(path)
+						}
+						m.Separator()
+						if m.Item("Close").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
+							em.CloseTab(path)
+						}
+						if m.Item("Close Others").Chosen() {
+							em.CloseOthers(path)
+						}
+						if m.Item("Close to the Left").Chosen() {
+							seen := false
+							for _, p := range em.OpenTabs() {
+								if p == path {
+									seen = true
+									continue
+								}
+								if !seen && !em.IsPinned(p) {
+									em.CloseTab(p)
+								}
+							}
+						}
+						if m.Item("Close to the Right").Chosen() {
+							em.CloseToRight(path)
+						}
+						if m.Item("Close All").Chosen() {
+							em.CloseAll()
+						}
+						m.Separator()
+						if len(em.Panes) > 1 {
+							if m.Item("Move to Right Pane").Chosen() {
+								em.MoveTabToPane(path, 1)
+							}
+							if m.Item("Move to Left Pane").Chosen() {
+								em.MoveTabToPane(path, 0)
+							}
+						} else {
+							if m.Item("Split Editor Right").Chosen() {
+								em.SplitRight()
+							}
+						}
+						m.Separator()
+						if m.Item("Copy Path").Chosen() {
+							mygo.Clipboard.WriteText(path)
+						}
+						if m.Item("Copy Relative Path").Chosen() {
+							mygo.Clipboard.WriteText(doc.RelativePath)
+						}
+						if !strings.HasPrefix(path, "ssh://") {
+							if m.Item("Reveal in Finder").Chosen() {
+								mygo.Shell.ShowItemInFolder(path)
+							}
+						}
+					})
 				}
-				if m.Item("Close to the Right").Chosen() {
-					em.CloseToRight(path)
-				}
-				if m.Item("Close All").Chosen() {
-					em.CloseAll()
-				}
-				m.Separator()
-				if len(em.Panes) > 1 {
-					if m.Item("Move to Right Pane").Chosen() {
-						em.MoveTabToPane(path, 1)
-					}
-					if m.Item("Move to Left Pane").Chosen() {
-						em.MoveTabToPane(path, 0)
-					}
-				} else {
-					if m.Item("Split Editor Right").Chosen() {
-						em.SplitRight()
-					}
-				}
-				m.Separator()
-				if m.Item("Copy Path").Chosen() {
-					mygo.Clipboard.WriteText(path)
-				}
-				if m.Item("Copy Relative Path").Chosen() {
-					mygo.Clipboard.WriteText(doc.RelativePath)
-				}
-				if !strings.HasPrefix(path, "ssh://") {
-					if m.Item("Reveal in Finder").Chosen() {
-						mygo.Shell.ShowItemInFolder(path)
-					}
+
+				if len(em.OpenTabPaths) == 0 {
+					ui.Text(c, "No open files").FontSize(12).TextColor(tc.TextMuted)
 				}
 			})
-		}
-
-		if len(em.OpenTabPaths) == 0 {
-			ui.Text(c, "No open files").FontSize(12).TextColor(tc.TextMuted)
-		}
-
-		ui.Box(c).Grow(1)
+		})
 
 		actionBtn := func(icon *ui.SVG, label string, active bool, onPick func()) {
 			btn := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center)
@@ -405,11 +407,27 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 		if panes := em.PaneDocs(); panes != nil {
 			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 				for i, panePath := range panes {
-					if i > 0 {
-						ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(3).FillHeight().Background(t.Border)
-					}
 					panePath, paneIdx := panePath, i
-					ui.Column(c).FillHeight().Children(func() {
+					if i > 0 {
+						handle := ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(4).FillHeight().Cursor(ui.CursorResizeEW)
+						dx, _, held := handle.Dragged()
+						if handle.DoubleClicked() {
+							eq := 1.0 / float32(len(panes))
+							for k := range panes {
+								em.SetPaneWeight(k, eq)
+							}
+						} else if held && dx != 0 {
+							delta := dx / 600.0
+							em.SetPaneWeight(paneIdx-1, em.PaneWeight(paneIdx-1)+delta)
+							em.SetPaneWeight(paneIdx, em.PaneWeight(paneIdx)-delta)
+						}
+						if held || handle.Hovered() {
+							handle.Background(tc.Accent)
+						} else {
+							handle.Background(t.Border)
+						}
+					}
+					ui.Column(c).Grow(em.PaneWeight(paneIdx)).FillHeight().Children(func() {
 						paneDoc := em.GetDoc(panePath)
 						if paneDoc == nil {
 							ui.Column(c).Grow(1).Center().Children(func() {
@@ -419,20 +437,27 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 						}
 						paneDoc.Editor.SoftWrap = em.SoftWrap
 						em.ApplyTheme(paneDoc.Editor)
-						ui.Row(c).Height(28).Padding(0, 12).Gap(6).AlignItems(ui.Center).
-							BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+						closedPane := false
+						paneHdr := ui.Row(c.Key(fmt.Sprintf("pane-hdr-%d", paneIdx))).Height(28).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+							BorderWidth(0, 0, 1, 0).BorderColor(t.Border)
+						paneHdr.Children(func() {
 							if panePath == em.ActivePath {
 								ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
 							}
 							ui.Text(c, paneDoc.RelativePath).FontSize(12).FontWeight(500).Grow(1).SingleLine()
 							if IconButton(c, tc, icons.TablerX, 11).Clicked() {
+								closedPane = true
 								em.ClosePane(paneIdx)
 							}
 						})
+						if !closedPane && paneHdr.Clicked() {
+							em.ActivePane = paneIdx
+							em.ActivePath = panePath
+						}
 						if panePath == em.ActivePath {
 							a.renderEditorSingle(c)
 						} else {
-							ui.Row(c).Grow(1).Children(func() {
+							ui.Column(c).Grow(1).FillWidth().Children(func() {
 								mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
 							})
 						}
@@ -556,15 +581,13 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 		a.renderBreadcrumbs(c, doc)
 
 		// Virtualized Code Editor View
-		ui.Box(c).Fill().Children(func() {
-			ui.Row(c).Grow(1).Children(func() {
-				ui.Box(c).Grow(1).Children(func() {
-					mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
-					// Inline AI edit bar floats over the buffer (⌘I).
-					a.renderInlineAiBar(c, tc)
-				})
-				a.renderMinimap(c, tc, doc)
+		ui.Row(c).Grow(1).FillWidth().Children(func() {
+			ui.Column(c).Grow(1).FillHeight().Children(func() {
+				mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+				// Inline AI edit bar floats over the buffer (⌘I).
+				a.renderInlineAiBar(c, tc)
 			})
+			a.renderMinimap(c, tc, doc)
 		})
 	})
 	_ = tc
@@ -685,7 +708,7 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 	}
 	ui.Row(c).Height(StatusBarHeight).Gap(12).Padding(0, 12).AlignItems(ui.Center).
 		Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
-		// Remote SSH indicator
+		// Remote SSH or Local folder indicator
 		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
 			_, _, displayHost, folderName := parseSSHWorkspaceURI(a.Workspace.RootDir)
 			remoteChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center).
@@ -703,37 +726,32 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 				a.ShowSSHQuickMenu = true
 			}
 		} else {
-			// Local workspace indicator: folder name (General when empty).
-			folderLabel := filepath.Base(a.Workspace.RootDir)
-			if a.Workspace.RootDir == "" {
-				folderLabel = "General"
-			}
-			remoteChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
-			remoteChip.Children(func() {
+			folderChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
+			folderChip.Children(func() {
 				ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
-				statusText(folderLabel)
+				statusText(projectName)
 			})
-			if remoteChip.Hovered() {
-				remoteChip.Background(tc.Text.Alpha(0.06))
+			if folderChip.Hovered() {
+				folderChip.Background(tc.Text.Alpha(0.06))
 			}
-			if remoteChip.Clicked() {
-				a.OpenSSHModal()
+			if folderChip.Clicked() {
+				a.ShowLeftSidebar = true
+				a.EditorActivity = ActivityExplorer
+				if a.Workspace != nil && a.Workspace.RootDir != "" {
+					_ = mygo.Shell.OpenExternal("file://" + a.Workspace.RootDir)
+				}
 			}
-		}
 
-		folderChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
-		folderChip.Children(func() {
-			ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
-			statusText(projectName)
-		})
-		if folderChip.Hovered() {
-			folderChip.Background(tc.Text.Alpha(0.06))
-		}
-		if folderChip.Clicked() {
-			a.ShowLeftSidebar = true
-			a.EditorActivity = ActivityExplorer
-			if a.Workspace != nil && a.Workspace.RootDir != "" {
-				_ = mygo.Shell.OpenExternal("file://" + a.Workspace.RootDir)
+			sshChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
+			sshChip.Children(func() {
+				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.IconMuted)
+				statusText("SSH")
+			})
+			if sshChip.Hovered() {
+				sshChip.Background(tc.Text.Alpha(0.06))
+			}
+			if sshChip.Clicked() {
+				a.OpenSSHModal()
 			}
 		}
 
@@ -744,6 +762,26 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 			})
 		}
 		ui.Box(c).Grow(1)
+
+		// Ask Agent bridge: attach active file context and pivot straight to Agent Mode.
+		askChip := ui.Row(c.Key("ed-ask-agent")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+			Background(tc.Accent.Alpha(0.12))
+		askChip.Children(func() {
+			ui.Icon(c, icons.TablerSparkles).Width(11).Height(11).TextColor(tc.Accent)
+			ui.Text(c, "Ask Agent").FontSize(11).FontWeight(500).TextColor(tc.Accent)
+		})
+		if askChip.Hovered() {
+			askChip.Background(tc.Accent.Alpha(0.22))
+		}
+		if askChip.Clicked() {
+			if a.Agent != nil && curPath != "" {
+				a.Agent.AttachFile(curPath)
+			}
+			a.Mode = ModeAgent
+			a.IsGitClientOpen = false
+			a.AgentViewMode = AgentViewChat
+			a.ActiveTaskKind = "agent"
+		}
 
 		// Follow Agent toggle: auto-jump the editor to the files the agent
 		// edits during a turn (layoutStore.isFollowAgentMode parity).
@@ -821,54 +859,60 @@ func FormatLineCol(line, col int) string {
 // line sized to its length, the visible viewport highlighted, click jumps —
 // the webview CodeEditorPane's minimap.
 func (a *AppUI) renderMinimap(c *ui.Context, tc theme.ThemeColors, doc *editor.OpenDocument) {
-	_ = tc
 	if doc == nil {
 		return
 	}
 	const (
-		minimapWidth  = float32(64)
-		linePitch     = float32(2)
-		maxRenderRows = 900
+		minimapWidth = float32(64)
+		linePitch    = float32(2)
+		maxBuckets   = 180
 	)
 
-	buf := doc.Editor.Buffer
+	buckets := doc.MinimapSummary(maxBuckets)
+	totalLines := doc.Editor.Buffer.LineCount()
+	if totalLines < 1 {
+		totalLines = 1
+	}
 	first, last := doc.Editor.VisibleLines()
 
 	rail := ui.Column(c.Key("minimap")).Width(minimapWidth).FillHeight().
 		Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).
 		Padding(2, 2).Gap(0).Clip()
 	rail.Children(func() {
-		text := buf.String()
-		lines := strings.Split(text, "\n")
-		rows := len(lines)
-		if rows > maxRenderRows {
-			rows = maxRenderRows
-		}
-		// Scale bars to the widest visible line so the map stays legible.
-		maxLen := 1
-		for i := 0; i < rows; i++ {
-			if l := len(lines[i]); l > maxLen {
-				maxLen = l
-			}
-		}
-		for i := 0; i < rows; i++ {
+		n := len(buckets)
+		for i, b := range buckets {
 			i := i
-			ln := len(lines[i])
-			w := minimapWidth * float32(ln) / float32(maxLen)
-			if w < 1 && ln > 0 {
+			startLine := (i * totalLines) / n
+			endLine := ((i + 1) * totalLines) / n
+			inView := endLine >= first && startLine <= last
+
+			indent := (minimapWidth - 4) * b.IndentRatio * 0.4
+			w := (minimapWidth - 4) * b.LengthRatio
+			if w < 1 && b.LengthRatio > 0 {
 				w = 1
 			}
-			inView := i >= first && i <= last
+			if indent+w > minimapWidth-4 {
+				w = minimapWidth - 4 - indent
+				if w < 0 {
+					w = 0
+				}
+			}
+
 			bar := ui.Row(c.Key(fmt.Sprintf("mm-%d", i))).Height(linePitch).AlignItems(ui.Center)
 			bar.Children(func() {
-				color := tc.Text.Alpha(0.18)
-				if inView {
-					color = tc.Text.Alpha(0.4)
+				if indent > 0 {
+					ui.Box(c).Width(indent).Height(1)
 				}
-				ui.Box(c).Width(w).Height(1).Background(color)
+				if w > 0 {
+					color := tc.Text.Alpha(0.18)
+					if inView {
+						color = tc.Text.Alpha(0.45)
+					}
+					ui.Box(c).Width(w).Height(1).Background(color)
+				}
 			})
 			if bar.Clicked() {
-				doc.Editor.GoTo(editorPosAtLine(doc, i))
+				doc.Editor.GoTo(editorPosAtLine(doc, startLine))
 			}
 		}
 	})

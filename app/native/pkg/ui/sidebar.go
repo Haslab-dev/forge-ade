@@ -57,11 +57,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				}
 				autos := SidebarActionButton(c, tc, icons.TablerClock, "Automations", "", false)
 				if autos.Clicked() {
-					a.Mode = ModeSettings
-					if a.Settings != nil {
-						a.Settings.IsOpen = true
-						a.Settings.ActiveTab = settings.SettingsTabAutos
-					}
+					a.openSettings(settings.SettingsTabAutos)
 				}
 			})
 
@@ -386,9 +382,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
 										OnOpen: func() {
-											a.ActiveTaskKind = "agent"
-											a.AgentViewMode = AgentViewChat
-											a.Agent.SelectSession(s.ID)
+											a.selectAgentSession(s)
 										},
 									})
 								} else {
@@ -418,9 +412,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
 										OnDelete:    func() { a.CLIMgr.DeleteSession(cs.ID) },
 										OnOpen: func() {
-											a.ActiveTaskKind = "cli"
-											a.AgentViewMode = AgentViewChat
-											a.CLIMgr.ActiveID = cs.ID
+											a.selectCLISession(cs)
 										},
 									})
 								}
@@ -567,9 +559,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
 										OnOpen: func() {
-											a.ActiveTaskKind = "agent"
-											a.AgentViewMode = AgentViewChat
-											a.Agent.SelectSession(s.ID)
+											a.selectAgentSession(s)
 										},
 									})
 								}
@@ -613,9 +603,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
 										OnDelete:    func() { a.CLIMgr.DeleteSession(cs.ID) },
 										OnOpen: func() {
-											a.ActiveTaskKind = "cli"
-											a.AgentViewMode = AgentViewChat
-											a.CLIMgr.ActiveID = cs.ID
+											a.selectCLISession(cs)
 										},
 									})
 								}
@@ -632,21 +620,13 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				SectionLabel(c, tc, "BOTS")
 				ui.Box(c).Grow(1)
 				if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-					a.Mode = ModeSettings
-					if a.Settings != nil {
-						a.Settings.IsOpen = true
-						a.Settings.ActiveTab = settings.SettingsTabAutos
-					}
+					a.openSettings(settings.SettingsTabAutos)
 				}
 			})
 			botRow := SidebarActionButton(c, tc, icons.TablerBot, "Add a bot or schedule", "", false)
 			if botRow.Clicked() {
 				// Automations manager, as forge-ade's AutomationsModal entry.
-				a.Mode = ModeSettings
-				if a.Settings != nil {
-					a.Settings.IsOpen = true
-					a.Settings.ActiveTab = settings.SettingsTabAutos
-				}
+				a.openSettings(settings.SettingsTabAutos)
 			}
 		})
 
@@ -676,19 +656,9 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			Children(func() {
 				dockBtn(icons.TablerHelp, false, func() { mygo.Shell.OpenExternal("https://github.com/hasdev/forge-ade") })
 				dockBtn(icons.TablerChartBar, a.ShowUsageModal, func() { a.openUsageModal() })
-				dockBtn(icons.TablerLayoutKanban, a.Mode == ModeAgent && a.AgentViewMode == AgentViewBoard, func() {
-					a.openBoardSurface()
-				})
-				dockBtn(icons.TablerGitBranch, a.Mode == ModeAgent && a.AgentViewMode == AgentViewGit, func() {
-					a.openGitClientSurface()
-					a.loadGitRemoteURL()
-				})
 				dockBtn(icons.TablerBook, false, func() { a.OpenRulesModal() })
 				dockBtn(icons.TablerSettings, a.Mode == ModeSettings, func() {
-					a.Mode = ModeSettings
-					if a.Settings != nil {
-						a.Settings.IsOpen = true
-					}
+					a.openSettings()
 				})
 				ui.Box(c).Grow(1)
 				if a.ThemeMgr.Appearance == "dark" {
@@ -739,9 +709,7 @@ func (a *AppUI) renderSidebarFileExplorer(c *ui.Context, tc theme.ThemeColors) {
 		}
 		ui.Box(c).Grow(1)
 		if IconButton(c, tc, icons.TablerChevronsDownUp, 12).Clicked() {
-			for k := range a.ExpandedFileTreeFolders {
-				a.ExpandedFileTreeFolders[k] = false
-			}
+			a.collapseAllExplorerFolders()
 		}
 		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() {
 			a.Workspace.Refresh()
@@ -1021,6 +989,9 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 			a.ShowNewFolderModal = true
 			a.NewFolderName = ""
 		})
+		treeBtn(icons.TablerChevronsDownUp, func() {
+			a.collapseAllExplorerFolders()
+		})
 		treeBtn(icons.TablerRefresh, func() {
 			a.Workspace.Refresh()
 			if a.Git != nil {
@@ -1043,6 +1014,11 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 				a.DisconnectSSH()
 			}
 		}
+	})
+
+	// Filter input
+	ui.Row(c).Padding(6, 10).Children(func() {
+		ui.TextInput(c, &a.Workspace.FilterQuery).Placeholder("Filter files...").Grow(1)
 	})
 
 	// Shared hierarchical explorer with context menus (also rendered by the

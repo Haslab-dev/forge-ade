@@ -12,16 +12,13 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/palette"
-	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 // renderModals orchestrates all popup modals and overlay dialogs.
 func (a *AppUI) renderModals(c *ui.Context) {
 	if a.Palette != nil && a.Palette.IsOpen {
 		a.renderPaletteModal(c)
-	}
-	if a.Settings != nil && a.Settings.IsOpen {
-		a.renderSettingsScreen(c)
 	}
 	if a.ThemeMgr != nil && a.ThemeMgr.IsOpen {
 		a.renderThemePickerModal(c)
@@ -98,41 +95,30 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 	matches := pm.FilteredFiles()
 	commands := pm.FilteredCommands()
 	symbols := pm.FilteredSymbols()
-	mode := pm.Mode
-
-	// The query prefix picks the mode dynamically, as CommandPaletteModal
-	// does with its > / @ / : prefixes.
-	if strings.HasPrefix(pm.Query, "@") && mode != palette.PaletteSymbols {
-		pm.Mode = palette.PaletteSymbols
-		mode = palette.PaletteSymbols
-	} else if strings.HasPrefix(pm.Query, ":") && mode != palette.PaletteLine {
-		pm.Mode = palette.PaletteLine
-		mode = palette.PaletteLine
-	} else if !strings.HasPrefix(pm.Query, "@") && !strings.HasPrefix(pm.Query, ":") && mode == palette.PaletteSymbols {
-		pm.Mode = palette.PaletteFiles
-		mode = palette.PaletteFiles
-	}
+	mode := pm.EffectiveMode()
 
 	activate := func() {
 		switch mode {
 		case palette.PaletteFiles:
-			if pm.SelectedIndex < len(matches) {
+			if pm.SelectedIndex >= 0 && pm.SelectedIndex < len(matches) {
 				selected := matches[pm.SelectedIndex].File.RelativePath
 				pm.Close()
 				full := a.Workspace.ResolveFullPath(selected)
 				_, _ = a.Editor.OpenFile(full, selected)
 				a.SelectedFile = selected
+				a.IsGitClientOpen = false
 				a.Mode = ModeEditor
 			}
 		case palette.PaletteSymbols:
-			if pm.SelectedIndex < len(symbols) {
+			if pm.SelectedIndex >= 0 && pm.SelectedIndex < len(symbols) {
 				hit := symbols[pm.SelectedIndex]
 				pm.Close()
 				full := a.Workspace.ResolveFullPath(hit.Path)
-				if doc, err := a.Editor.OpenFile(full, hit.Path); err == nil && doc != nil {
+				if doc, err := a.Editor.OpenFile(full, hit.Path); err == nil && doc != nil && hit.Line > 0 {
 					a.jumpDocumentToLine(doc, hit.Line, 0)
 				}
 				a.SelectedFile = hit.Path
+				a.IsGitClientOpen = false
 				a.Mode = ModeEditor
 			}
 		case palette.PaletteLine:
@@ -188,13 +174,12 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 			// Result list
 			ui.Scroll(c).MaxHeight(320).Children(func() {
 				ui.Column(c).Padding(6).Gap(2).Children(func() {
-					if mode == palette.PaletteFiles && len(matches) == 0 {
-						ui.Text(c, "No matching files").FontSize(13).TextColor(tc.TextMuted).Padding(8, 0)
-					}
-					if mode == palette.PaletteCommands && len(commands) == 0 {
-						ui.Text(c, "No matching commands").FontSize(13).TextColor(tc.TextMuted).Padding(8, 0)
-					}
-					if mode == palette.PaletteFiles {
+					switch mode {
+					case palette.PaletteFiles:
+						if len(matches) == 0 {
+							ui.Text(c, "No matching files").FontSize(13).TextColor(tc.TextMuted).Padding(8, 12)
+							break
+						}
 						for i, m := range matches {
 							i, path := i, m.File.RelativePath
 							selected := (i == pm.SelectedIndex)
@@ -216,7 +201,68 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 								activate()
 							}
 						}
-					} else {
+					case palette.PaletteSymbols:
+						if len(symbols) == 0 {
+							msg := "No matching symbols"
+							if strings.TrimSpace(strings.TrimPrefix(pm.Query, "@")) == "" {
+								msg = "Type a symbol name to search workspace..."
+							}
+							ui.Text(c, msg).FontSize(13).TextColor(tc.TextMuted).Padding(8, 12)
+							break
+						}
+						for i, sym := range symbols {
+							i, hit := i, sym
+							selected := (i == pm.SelectedIndex)
+							row := ui.Row(c.Key(fmt.Sprintf("palsym-%d-%s-%d", i, hit.Path, hit.Line))).
+								Radius(10).Padding(8, 12).Gap(8).AlignItems(ui.Center)
+							row.Children(func() {
+								ui.Icon(c, icons.TablerSymbol).Width(13).Height(13).TextColor(tc.Accent)
+								ui.Column(c).Grow(1).Gap(1).Children(func() {
+									preview := strings.TrimSpace(hit.Content)
+									if preview == "" {
+										preview = filepath.Base(hit.Path)
+									}
+									ui.Text(c, preview).FontSize(12).FontWeight(500).SingleLine()
+									ui.Text(c, fmt.Sprintf("%s:%d", hit.Path, hit.Line)).FontSize(10).TextColor(tc.TextMuted).SingleLine()
+								})
+								if selected {
+									ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.Accent)
+								}
+							})
+							if selected {
+								row.Background(tc.Accent.Alpha(0.12))
+							} else if row.Hovered() {
+								row.Background(tc.Text.Alpha(0.04))
+							}
+							if row.Clicked() {
+								pm.SelectedIndex = i
+								activate()
+							}
+						}
+					case palette.PaletteLine:
+						if line, col, ok := palette.LineJumpSpec(pm.Query); ok {
+							label := fmt.Sprintf("Go to line %d", line)
+							if col > 0 {
+								label = fmt.Sprintf("Go to line %d, column %d", line, col)
+							}
+							row := ui.Row(c.Key("pal-line-go")).Radius(10).Padding(8, 12).Gap(8).AlignItems(ui.Center).
+								Background(tc.Accent.Alpha(0.12))
+							row.Children(func() {
+								ui.Icon(c, icons.TablerHash).Width(13).Height(13).TextColor(tc.Accent)
+								ui.Text(c, label).FontSize(13).FontWeight(500).Grow(1)
+								ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.Accent)
+							})
+							if row.Clicked() {
+								activate()
+							}
+						} else {
+							ui.Text(c, "Type :line or :line:col (e.g. :42 or :42:7)").FontSize(13).TextColor(tc.TextMuted).Padding(8, 12)
+						}
+					default:
+						if len(commands) == 0 {
+							ui.Text(c, "No matching commands").FontSize(13).TextColor(tc.TextMuted).Padding(8, 12)
+							break
+						}
 						for i, cmd := range commands {
 							i, thisCmd := i, cmd
 							selected := (i == pm.SelectedIndex)
@@ -242,11 +288,11 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 			})
 
 			// Footer: mode switches + hints
-			ui.Row(c).Padding(8, 12).Gap(8).AlignItems(ui.Center).
+			ui.Row(c).Padding(8, 12).Gap(6).AlignItems(ui.Center).
 				BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 				modeBtn := func(label string, m int) {
 					active := mode == m
-					btn := ui.Row(c).Radius(4).Padding(2, 8).AlignItems(ui.Center)
+					btn := ui.Row(c.Key("palmode-"+label)).Radius(4).Padding(2, 8).AlignItems(ui.Center)
 					btn.Children(func() {
 						txt := ui.Text(c, label).FontSize(12)
 						if active {
@@ -262,161 +308,17 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 					}
 					if btn.Clicked() {
 						pm.Mode = m
+						pm.Query = strings.TrimLeft(pm.Query, "@>:")
 						pm.SelectedIndex = 0
 					}
 				}
 				modeBtn("Files", palette.PaletteFiles)
 				modeBtn("Commands", palette.PaletteCommands)
+				modeBtn("Symbols", palette.PaletteSymbols)
+				modeBtn("Line", palette.PaletteLine)
 				ui.Box(c).Grow(1)
 				ui.Text(c, "↑↓ navigate · ↵ open").FontSize(12).TextColor(tc.TextMuted)
 			})
-		})
-	})
-}
-
-func (a *AppUI) renderSettingsModal(c *ui.Context) {
-	sm := a.Settings
-	if sm == nil {
-		return
-	}
-	t := c.Theme()
-	tc := a.ThemeMgr.Colors()
-
-	ui.Modal(c, &sm.IsOpen, func() {
-		ui.Column(c).Width(640).Radius(12).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Padding(16, 20).Gap(12).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, icons.TablerSettings, 16)
-					ui.Text(c, "Settings & Preferences").Bold().FontSize(15)
-				})
-				ui.Box(c).Grow(1)
-				closeBtn := ui.Button(c, "")
-				closeBtn.Children(func() {
-					TablerIcon(c, icons.TablerX, 13)
-				})
-				if closeBtn.Clicked() {
-					sm.IsOpen = false
-				}
-			})
-
-			// Navigation Tabs
-			ui.Row(c).Gap(6).Children(func() {
-				tabs := []struct {
-					Idx   int
-					Label string
-					Icon  *ui.SVG
-				}{
-					{settings.SettingsTabModels, "Models & Providers", icons.TablerBrain},
-					{settings.SettingsTabAppearance, "Appearance", icons.TablerPalette},
-					{settings.SettingsTabAgents, "ACP Agents", icons.TablerPlug},
-					{settings.SettingsTabShortcuts, "Shortcuts", icons.TablerKeyboard},
-				}
-				for _, tab := range tabs {
-					thisTab := tab
-					var btn ui.Element
-					if sm.ActiveTab == thisTab.Idx {
-						btn = ui.PrimaryButton(c, "")
-					} else {
-						btn = ui.Button(c, "")
-					}
-					btn.Children(func() {
-						ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-							TablerIcon(c, thisTab.Icon, 12)
-							ui.Text(c, thisTab.Label).FontSize(11).Bold()
-						})
-					})
-					if btn.Clicked() {
-						sm.ActiveTab = thisTab.Idx
-					}
-				}
-			})
-
-			// Tab 0: Models
-			if sm.ActiveTab == settings.SettingsTabModels {
-				ui.Column(c).Gap(10).Children(func() {
-					ui.Text(c, "Provider").Bold().FontSize(12)
-					ui.Select(c, &sm.Provider, settings.SupportedLLMProviders)
-					ui.Text(c, "Model Name").Bold().FontSize(12)
-					ui.TextInput(c, &sm.Model).Placeholder("e.g. claude-3-5-sonnet, gpt-4o, gemini-2.5-pro").Grow(1)
-					ui.Text(c, "API Key").Bold().FontSize(12)
-					ui.TextInput(c, &sm.APIKey).Placeholder("Enter provider API Key...").Password().Grow(1)
-
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						ui.Box(c).Grow(1)
-						if ui.PrimaryButton(c, "Save Credentials").Clicked() {
-							_ = sm.Save()
-						}
-					})
-				})
-			}
-
-			// Tab 1: Appearance
-			if sm.ActiveTab == settings.SettingsTabAppearance {
-				ui.Column(c).Gap(10).Children(func() {
-					ui.Text(c, "Color Theme").Bold().FontSize(12)
-					ui.Row(c).Gap(8).Children(func() {
-						for _, p := range a.ThemeMgr.AvailablePalettes() {
-							thisP := p
-							btn := ui.Button(c, thisP.Name)
-							if btn.Clicked() {
-								a.ThemeMgr.PaletteID = thisP.ID
-							}
-						}
-					})
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "Dark Mode").FontSize(12)
-						if ui.Button(c, "Toggle Dark/Light").Clicked() {
-							a.toggleAppearance()
-						}
-					})
-				})
-			}
-
-			// Tab 2: ACP Agents
-			if sm.ActiveTab == settings.SettingsTabAgents && a.ACPMgr != nil {
-				ui.Scroll(c).MaxHeight(280).Children(func() {
-					ui.Column(c).Gap(6).Children(func() {
-						for _, ag := range a.ACPMgr.Agents {
-							ui.Row(c).Padding(6, 8).Radius(6).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-								ui.Column(c).Grow(1).Children(func() {
-									ui.Text(c, ag.Name).Bold().FontSize(12)
-									ui.Text(c, ag.Description).FontSize(11).TextColor(tc.TextMuted)
-								})
-								if ag.Available {
-									Badge(c, tc, "AVAILABLE", tc.Success)
-								} else {
-									Badge(c, tc, "OFFLINE", tc.TextMuted)
-								}
-							})
-						}
-					})
-				})
-			}
-
-			// Tab 3: Shortcuts
-			if sm.ActiveTab == settings.SettingsTabShortcuts {
-				shortcuts := []struct{ Key, Desc string }{
-					{"⌘S", "Save current buffer to disk"},
-					{"⌘P", "Quick open file by fuzzy name"},
-					{"⇧⌘P", "Command palette"},
-					{"⌘B", "Toggle left sidebar"},
-					{"⌘J", "Toggle bottom terminal"},
-					{"⌘1", "Switch to Agent mode"},
-					{"⌘2", "Switch to Editor mode"},
-					{"⌘N", "New task or session"},
-					{"⌘W", "Close active tab"},
-				}
-				ui.Scroll(c).MaxHeight(280).Children(func() {
-					ui.Column(c).Gap(4).Children(func() {
-						for _, sc := range shortcuts {
-							ui.Row(c).Padding(4, 8).AlignItems(ui.Center).Children(func() {
-								ui.Text(c, sc.Key).Bold().FontSize(12).Width(80).TextColor(tc.Accent)
-								ui.Text(c, sc.Desc).FontSize(12)
-							})
-						}
-					})
-				})
-			}
 		})
 	})
 }
@@ -429,7 +331,7 @@ func (a *AppUI) renderThemePickerModal(c *ui.Context) {
 	tc := tm.Colors()
 
 	ui.Modal(c, &tm.IsOpen, func() {
-		ui.Column(c).Width(400).Radius(14).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16).Gap(10).
+		ui.Column(c).Width(420).Radius(14).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16).Gap(12).
 			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -442,26 +344,130 @@ func (a *AppUI) renderThemePickerModal(c *ui.Context) {
 				}
 			})
 
-			for _, p := range tm.AvailablePalettes() {
-				thisP := p
-				isSel := (tm.PaletteID == thisP.ID)
-				row := ui.Row(c.Key("pal-pick-"+thisP.ID)).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center)
-				row.Children(func() {
-					ui.Text(c, thisP.Name).FontSize(13).FontWeight(500).Grow(1)
-					if isSel {
-						ui.Icon(c, icons.TablerCheck).Width(14).Height(14).TextColor(tc.Accent)
+			// Appearance (Dark / Light)
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "APPEARANCE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(6).Children(func() {
+					for _, opt := range []struct{ ID, Label string }{
+						{"dark", "Dark"},
+						{"light", "Light"},
+					} {
+						thisOpt := opt
+						sel := tm.Appearance == thisOpt.ID || (thisOpt.ID == "dark" && tm.Appearance == "")
+						pill := ui.Row(c.Key("th-app-"+thisOpt.ID)).Height(28).Radius(6).Padding(0, 12).Grow(1).
+							AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+						pill.Children(func() {
+							ui.Text(c, thisOpt.Label).FontSize(12).FontWeight(500)
+						})
+						if sel {
+							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+						} else {
+							pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+							if pill.Hovered() {
+								pill.Background(tc.Text.Alpha(0.05))
+							}
+						}
+						if pill.Clicked() {
+							tm.Appearance = thisOpt.ID
+						}
 					}
 				})
-				if isSel {
-					row.Background(tc.Accent.Alpha(0.12))
-				} else if row.Hovered() {
-					row.Background(tc.Text.Alpha(0.04))
-				}
-				if row.Clicked() {
-					tm.PaletteID = thisP.ID
+			})
+
+			// Palette list with color swatches
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "COLOR PALETTE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+				ui.Column(c).Gap(3).Children(func() {
+					for _, p := range tm.AvailablePalettes() {
+						thisP := p
+						isSel := (tm.PaletteID == thisP.ID)
+						row := ui.Row(c.Key("pal-pick-"+thisP.ID)).Radius(8).Padding(7, 10).Gap(8).
+							AlignItems(ui.Center).Cursor(ui.CursorPointer)
+						row.Children(func() {
+							ui.Box(c).Size(12, 12).Radius(6).Background(theme.SwatchColor(thisP.SwatchHex))
+							ui.Text(c, thisP.Name).FontSize(12).FontWeight(500).Grow(1)
+							if isSel {
+								ui.Icon(c, icons.TablerCheck).Width(14).Height(14).TextColor(tc.Accent)
+							}
+						})
+						if isSel {
+							row.Background(tc.Accent.Alpha(0.12))
+						} else if row.Hovered() {
+							row.Background(tc.Text.Alpha(0.04))
+						}
+						if row.Clicked() {
+							tm.PaletteID = thisP.ID
+						}
+					}
+				})
+			})
+
+			// Content Width
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "CHAT LANE WIDTH").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(6).Children(func() {
+					for _, opt := range []struct{ ID, Label string }{
+						{"comfortable", "Comfortable"},
+						{"wide", "Wide"},
+						{"full", "Full"},
+					} {
+						thisOpt := opt
+						sel := tm.ChatWidth == thisOpt.ID
+						pill := ui.Row(c.Key("th-w-"+thisOpt.ID)).Height(26).Radius(6).Padding(0, 10).Grow(1).
+							AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+						pill.Children(func() {
+							ui.Text(c, thisOpt.Label).FontSize(11).FontWeight(500)
+						})
+						if sel {
+							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+						} else {
+							pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+							if pill.Hovered() {
+								pill.Background(tc.Text.Alpha(0.05))
+							}
+						}
+						if pill.Clicked() {
+							tm.ChatWidth = thisOpt.ID
+						}
+					}
+				})
+			})
+
+			// Diff Scheme
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "DIFF SCHEME").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(6).Children(func() {
+					for _, opt := range []struct{ ID, Label string }{
+						{"classic", "Classic (Green/Red)"},
+						{"modern", "Modern (Blue/Orange)"},
+					} {
+						thisOpt := opt
+						sel := tm.DiffScheme == thisOpt.ID
+						pill := ui.Row(c.Key("th-diff-"+thisOpt.ID)).Height(26).Radius(6).Padding(0, 10).Grow(1).
+							AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+						pill.Children(func() {
+							ui.Text(c, thisOpt.Label).FontSize(11).FontWeight(500)
+						})
+						if sel {
+							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+						} else {
+							pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+							if pill.Hovered() {
+								pill.Background(tc.Text.Alpha(0.05))
+							}
+						}
+						if pill.Clicked() {
+							tm.DiffScheme = thisOpt.ID
+						}
+					}
+				})
+			})
+
+			ui.Row(c).Justify(ui.End).Children(func() {
+				if ui.PrimaryButton(c, "Done").FontSize(12).Clicked() {
 					tm.IsOpen = false
 				}
-			}
+			})
 		})
 	})
 }
@@ -520,14 +526,21 @@ func (a *AppUI) renderNewFileModal(c *ui.Context) {
 				ui.Text(c, "Create New File").FontSize(14).FontWeight(600)
 				in := ui.TextInput(c, &a.NewFileName).Placeholder("filename.go (or path/to/file.ext)...").Grow(1).AutoFocus()
 				create := func() {
-					if a.NewFileName == "" {
+					name := strings.TrimSpace(a.NewFileName)
+					if name == "" {
 						return
 					}
-					_ = a.Workspace.CreateFile(a.NewFileName)
+					if err := a.Workspace.CreateFile(name); err != nil {
+						c.AddToast(ui.Toast{Title: "Create File Failed", Description: err.Error(), Type: "error"})
+						return
+					}
 					a.ShowNewFileModal = false
-					full := a.Workspace.ResolveFullPath(a.NewFileName)
-					_, _ = a.Editor.OpenFile(full, a.NewFileName)
-					a.SelectedFile = a.NewFileName
+					full := a.Workspace.ResolveFullPath(name)
+					if _, err := a.Editor.OpenFile(full, name); err != nil {
+						c.AddToast(ui.Toast{Title: "Open File Failed", Description: err.Error(), Type: "error"})
+						return
+					}
+					a.SelectedFile = name
 					a.Mode = ModeEditor
 				}
 				if in.Submitted() {
@@ -554,18 +567,27 @@ func (a *AppUI) renderNewFolderModal(c *ui.Context) {
 			Children(func() {
 				ui.Text(c, "Create New Folder").FontSize(14).FontWeight(600)
 				in := ui.TextInput(c, &a.NewFolderName).Placeholder("folder_name (or path/to/folder)...").Grow(1).AutoFocus()
-				if in.Submitted() && a.NewFolderName != "" {
-					_ = a.Workspace.CreateFolder(a.NewFolderName)
+				createFolder := func() {
+					name := strings.TrimSpace(a.NewFolderName)
+					if name == "" {
+						return
+					}
+					if err := a.Workspace.CreateFolder(name); err != nil {
+						c.AddToast(ui.Toast{Title: "Create Folder Failed", Description: err.Error(), Type: "error"})
+						return
+					}
 					a.ShowNewFolderModal = false
+				}
+				if in.Submitted() {
+					createFolder()
 				}
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					ui.Box(c).Grow(1)
 					if ui.Button(c, "Cancel").Clicked() {
 						a.ShowNewFolderModal = false
 					}
-					if ui.PrimaryButton(c, "Create").Clicked() && a.NewFolderName != "" {
-						_ = a.Workspace.CreateFolder(a.NewFolderName)
-						a.ShowNewFolderModal = false
+					if ui.PrimaryButton(c, "Create").Clicked() {
+						createFolder()
 					}
 				})
 			})
@@ -723,27 +745,14 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 							if wsPath == "" {
 								wsPath = a.Workspace.RootDir
 							}
-							if wsPath != "" && wsPath != a.Workspace.RootDir {
-								a.switchWorkspace(wsPath)
-							}
 							if len(filteredAvailACP) > 0 {
 								first := filteredAvailACP[0]
-								if first.ID == "agent-internal" || first.Type == "internal" {
-									a.NewAgentTask(wsPath)
-									return
-								}
-								a.SelectedAgentID = first.ID
-								a.SelectedHarnessID = first.ID
-								if a.Agent != nil {
-									a.Agent.ActiveAgentID = first.ID
-									a.Agent.ActiveAgentType = "acp"
-									a.Agent.ActiveSessionID = ""
-								}
-								a.ActiveTaskKind = "agent"
-								a.Mode = ModeAgent
-								a.AgentViewMode = AgentViewChat
-								a.ShowNewTaskModal = false
+								a.selectACPAgentForNewTask(first.ID, wsPath)
+								return
 							} else if len(filteredAvailCLI) > 0 {
+								if wsPath != "" && wsPath != a.Workspace.RootDir {
+									a.switchWorkspace(wsPath)
+								}
 								first := filteredAvailCLI[0]
 								if a.CLIMgr != nil {
 									a.CLIMgr.CreateSessionWithTitle(first.ID, first.Name, first.Executable, first.Args, wsPath, fmt.Sprintf("%s Task", first.Name))
@@ -864,27 +873,7 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 										if wsPath == "" {
 											wsPath = a.Workspace.RootDir
 										}
-										if wsPath != "" && wsPath != a.Workspace.RootDir {
-											a.switchWorkspace(wsPath)
-										}
-										if thisAg.ID == "agent-internal" || thisAg.Type == "internal" {
-											a.NewAgentTask(wsPath)
-											return
-										}
-										a.SelectedAgentID = thisAg.ID
-										a.SelectedHarnessID = thisAg.ID
-										if a.Agent != nil {
-											a.Agent.ActiveAgentID = thisAg.ID
-											a.Agent.ActiveAgentType = "acp"
-											a.Agent.ActiveSessionID = ""
-										}
-										a.ActiveTaskKind = "agent"
-										a.Mode = ModeAgent
-										a.AgentViewMode = AgentViewChat
-										a.ShowNewTaskModal = false
-										if a.Window != nil {
-											a.Window.Invalidate()
-										}
+										a.selectACPAgentForNewTask(thisAg.ID, wsPath)
 									}
 								}
 
@@ -1411,7 +1400,7 @@ func (a *AppUI) renderNewBoardTaskModal(c *ui.Context) {
 				// Status column selector
 				ui.Column(c).Gap(4).Children(func() {
 					ui.Text(c, "COLUMN").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-					ui.Row(c).Gap(6).Children(func() {
+					ui.Row(c).Gap(5).Children(func() {
 						statuses := []struct {
 							id    string
 							label string
@@ -1419,6 +1408,7 @@ func (a *AppUI) renderNewBoardTaskModal(c *ui.Context) {
 							{"todo", "To Do"},
 							{"in_progress", "In Progress"},
 							{"in_review", "In Review"},
+							{"in_testing", "Testing"},
 							{"done", "Done"},
 						}
 						if a.NewBoardTaskStatus == "" {
@@ -1427,7 +1417,7 @@ func (a *AppUI) renderNewBoardTaskModal(c *ui.Context) {
 						for _, s := range statuses {
 							thisS := s
 							isSel := a.NewBoardTaskStatus == thisS.id
-							pill := ui.Row(c.Key("col-"+thisS.id)).Height(28).Radius(6).Padding(0, 10).AlignItems(ui.Center)
+							pill := ui.Row(c.Key("col-"+thisS.id)).Height(28).Radius(6).Padding(0, 8).AlignItems(ui.Center)
 							pill.Children(func() {
 								ui.Text(c, thisS.label).FontSize(11).FontWeight(500)
 							})
@@ -1538,7 +1528,7 @@ func (a *AppUI) renderPeekModal(c *ui.Context) {
 		return
 	}
 
-	ui.Column(c).Fill().Background(ui.RGBA(0, 0, 0, 0.45)).Center().Children(func() {
+	ui.Modal(c, &a.ShowPeekModal, func() {
 		modal := ui.Column(c).Width(600).MaxHeight(420).Radius(12).
 			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 16, 40, -10, ui.RGBA(0, 0, 0, 0.6)).Clip()
@@ -1562,7 +1552,7 @@ func (a *AppUI) renderPeekModal(c *ui.Context) {
 			})
 
 			// Results list
-			ui.Scroll(c).Grow(1).Children(func() {
+			ui.Scroll(c).MaxHeight(340).Children(func() {
 				ui.Column(c).Padding(8, 12).Gap(4).Children(func() {
 					for i, m := range a.PeekResults {
 						thisM := m

@@ -134,7 +134,15 @@ func (ia *InlineAI) Accept() {
 	if !ia.HasProposal || ia.ApplyRange == nil {
 		return
 	}
-	ia.ApplyRange(ia.SelStart, ia.SelEnd, ia.Proposed)
+	start, end := ia.SelStart, ia.SelEnd
+	if end <= start {
+		start = 0
+		end = len(ia.OrigText)
+		if ia.GetText != nil {
+			end = len(ia.GetText())
+		}
+	}
+	ia.ApplyRange(start, end, ia.Proposed)
 	ia.Open = false
 	ia.HasProposal = false
 }

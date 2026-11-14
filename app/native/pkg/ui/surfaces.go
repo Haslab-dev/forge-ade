@@ -141,7 +141,11 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 				newBtn.Background(tc.MessageActionHover)
 			}
 			if newBtn.Clicked() {
-				a.OpenNewTaskModal()
+				a.NewBoardTaskTitle = ""
+				a.NewBoardTaskDesc = ""
+				a.NewBoardTaskPriority = "medium"
+				a.NewBoardTaskStatus = "todo"
+				a.ShowNewBoardTaskModal = true
 			}
 
 			// Close (X), always the last control of the toolbar
@@ -164,6 +168,18 @@ func (a *AppUI) renderBoardSurface(c *ui.Context) {
 				ui.Icon(c, icons.TablerLayoutKanban).Width(36).Height(36).TextColor(tc.IconMuted)
 				ui.Text(c, "No board tasks").FontSize(14).FontWeight(600).TextColor(tc.TextMuted)
 				ui.Text(c, "Tasks in .forge/board_tasks.json appear here.").FontSize(12).TextColor(tc.TextMuted)
+				emptyNewBtn := ui.Row(c).Padding(6, 12).Radius(6).Background(tc.Accent).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				emptyNewBtn.Children(func() {
+					ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.AccentForeground)
+					ui.Text(c, "New Task").FontSize(12).FontWeight(500).TextColor(tc.AccentForeground)
+				})
+				if emptyNewBtn.Clicked() {
+					a.NewBoardTaskTitle = ""
+					a.NewBoardTaskDesc = ""
+					a.NewBoardTaskPriority = "medium"
+					a.NewBoardTaskStatus = "todo"
+					a.ShowNewBoardTaskModal = true
+				}
 			})
 			return
 		}
@@ -204,11 +220,11 @@ func (a *AppUI) renderBoardColumns(c *ui.Context, tc theme.ThemeColors) {
 					colColor := tc.TextMuted
 					switch ci {
 					case 1:
-						colIcon, colColor = icons.TablerClock, ui.Hex("#f59e0b")
+						colIcon, colColor = icons.TablerClock, tc.Warning
 					case 2:
-						colIcon, colColor = icons.TablerEye, ui.Hex("#8b5cf6")
+						colIcon, colColor = icons.TablerEye, tc.Accent
 					case 3:
-						colIcon, colColor = icons.TablerFlask, ui.Hex("#ec4899")
+						colIcon, colColor = icons.TablerFlask, tc.Error
 					case 4:
 						colIcon, colColor = icons.TablerCircleCheck, tc.Success
 					}
@@ -588,6 +604,13 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 					ui.TextInput(c, &gm.SearchQuery).Placeholder("Search commits by message, author, SHA...").Grow(1)
 				})
 			})
+			if len(gm.Commits) == 0 {
+				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+					ui.Icon(c, icons.TablerGitCommit).Width(28).Height(28).TextColor(tc.IconMuted)
+					ui.Text(c, "No commits yet").FontSize(12).TextColor(tc.TextMuted)
+				})
+				return
+			}
 			ui.Scroll(c).Grow(1).Children(func() {
 				ui.Column(c).Padding(4, 8).Gap(2).Children(func() {
 					query := strings.ToLower(strings.TrimSpace(gm.SearchQuery))
@@ -683,16 +706,23 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 			})
 
 			// Per-file diffs
+			if gm.LoadingCommitDiff {
+				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+					ui.Spinner(c).Size(16, 16).Label("Loading commit diff...")
+				})
+				return
+			}
 			if len(gm.SelectedCommitFiles) == 0 {
-				ui.Column(c).Grow(1).Center().Children(func() {
-					ui.Text(c, "Loading commit diff...").FontSize(12).TextColor(tc.TextMuted)
+				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+					ui.Icon(c, icons.TablerGitCommit).Width(26).Height(26).TextColor(tc.IconMuted)
+					ui.Text(c, "No file changes in this commit").FontSize(12).TextColor(tc.TextMuted)
 				})
 				return
 			}
 			ui.Scroll(c).Grow(1).Padding(12, 16).Children(func() {
 				ui.Column(c).Gap(12).Children(func() {
-					for _, f := range gm.SelectedCommitFiles {
-						f := f
+					for i := range gm.SelectedCommitFiles {
+						f := &gm.SelectedCommitFiles[i]
 						ui.Column(c).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Gap(0).Clip().Children(func() {
 							ui.Row(c).Height(34).Padding(0, 12).Gap(8).AlignItems(ui.Center).
 								BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
@@ -733,24 +763,19 @@ func renderGraphLanes(c *ui.Context, tc theme.ThemeColors, prefix string) {
 		return
 	}
 	runes := []rune(prefix)
-	laneIdx := 0
 	ui.Row(c).Gap(1).AlignItems(ui.Center).Children(func() {
-		for _, r := range runes {
+		for col, r := range runes {
 			r := r
 			if r == ' ' {
-				ui.Box(c).Width(4)
+				ui.Box(c).Width(6)
 				continue
 			}
-			color := tc.GraphColors[laneIdx%len(tc.GraphColors)]
+			color := tc.GraphColors[col%len(tc.GraphColors)]
 			if r == '│' || r == '|' || r == '/' || r == '\\' {
 				ui.Text(c, string(r)).FontSize(10).Font("monospace").TextColor(color.Alpha(0.8))
 				continue
 			}
-			// Node glyphs (●, *, ○) advance the lane for the next branch.
-			if r != '│' {
-				ui.Text(c, string(r)).FontSize(10).Font("monospace").TextColor(color)
-				laneIdx++
-			}
+			ui.Text(c, string(r)).FontSize(10).Font("monospace").TextColor(color)
 		}
 	})
 }

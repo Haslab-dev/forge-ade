@@ -3,6 +3,7 @@ package fuzzy
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // VS Code-style fuzzy matcher, ported from ForgeADE's frontend/src/lib/fuzzy.ts.
@@ -14,7 +15,7 @@ type FuzzyMatch struct {
 	Positions []int
 }
 
-var fuzzySeparators = map[byte]bool{
+var fuzzySeparators = map[rune]bool{
 	'/': true, '\\': true, '_': true, '-': true, '.': true,
 	' ': true, '@': true, ':': true, '$': true, '#': true,
 }
@@ -30,13 +31,13 @@ const (
 	fuzzyBaseScore         = 16
 )
 
-func isCamelHump(target string, idx int) bool {
-	if idx == 0 {
+func isCamelHump(target []rune, idx int) bool {
+	if idx <= 0 || idx >= len(target) {
 		return false
 	}
-	prev := rune(target[idx-1])
-	cur := rune(target[idx])
-	return unicode.ToLower(prev) == prev && unicode.ToLower(cur) != cur
+	prev := target[idx-1]
+	cur := target[idx]
+	return (unicode.IsLower(prev) || unicode.IsDigit(prev)) && unicode.IsUpper(cur)
 }
 
 // fuzzyMatchIn greedily matches query against target in order.
@@ -70,7 +71,7 @@ func fuzzyMatchIn(query, target string) *FuzzyMatch {
 			}
 			score -= float64(gap) * fuzzyLeadingGapPenalty
 		}
-		if idx == 0 || (idx > 0 && fuzzySeparators[byte(t[idx-1])]) || isCamelHump(target, idx) {
+		if idx == 0 || (idx > 0 && fuzzySeparators[t[idx-1]]) || isCamelHump(t, idx) {
 			score += fuzzyBoundaryBonus
 		}
 
@@ -94,8 +95,9 @@ func ScoreFilePath(query, filePath string) *FuzzyMatch {
 	if sep >= 0 {
 		base := fuzzyMatchIn(q, filePath[sep+1:])
 		if base != nil {
+			prefixRunes := utf8.RuneCountInString(filePath[:sep+1])
 			for i, p := range base.Positions {
-				base.Positions[i] = p + sep + 1
+				base.Positions[i] = p + prefixRunes
 			}
 			base.Score += fuzzyBasenameBonus
 			return base

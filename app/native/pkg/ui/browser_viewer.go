@@ -383,6 +383,7 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *rakitagent.Session) {
 
 						txt := strings.TrimSpace(msg.Text())
 						if txt != "" {
+							a.SideChatMd.Theme = a.ThemeMgr.MarkdownTheme()
 							markdown.View(c, txt, &a.SideChatMd)
 						}
 
@@ -409,8 +410,15 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *rakitagent.Session) {
 					return
 				}
 				a.SubagentChatInput = ""
+				working := sub.State == "running" || sub.State == "working"
 				go func() {
-					_ = a.Engine.AgentMgr.SendMessage(context.Background(), sub.ID, text, nil)
+					if working {
+						if err := a.Engine.AgentMgr.SteerMessage(sub.ID, text); err != nil {
+							_ = a.Engine.AgentMgr.SendMessage(context.Background(), sub.ID, text, nil)
+						}
+					} else {
+						_ = a.Engine.AgentMgr.SendMessage(context.Background(), sub.ID, text, nil)
+					}
 					if a.Window != nil {
 						a.Window.Invalidate()
 					}

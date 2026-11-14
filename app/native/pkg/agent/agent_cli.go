@@ -49,6 +49,7 @@ type AgentCLISession struct {
 	Status     string // "running", "completed", "error"
 	ExitCode   int
 	StartedAt  time.Time
+	EndedAt    time.Time
 	Terminal   *terminal.TerminalState
 	ResumeHint []string
 }
@@ -128,6 +129,11 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 			status = "completed"
 		}
 
+		var ended time.Time
+		if r.EndedAt > 0 {
+			ended = time.UnixMilli(r.EndedAt)
+		}
+
 		mgr.Sessions[r.ID] = &AgentCLISession{
 			ID:         r.ID,
 			AgentID:    r.AgentID,
@@ -138,12 +144,69 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 			Cwd:        r.WorkingDirectory,
 			Status:     status,
 			StartedAt:  started,
+			EndedAt:    ended,
 			Terminal:   term,
 			ResumeHint: r.ResumeHint,
 		}
 		if mgr.ActiveID == "" && status == "running" {
 			mgr.ActiveID = r.ID
 		}
+	}
+}
+
+type agentCLIDiskRecord struct {
+	ID               string   `json:"id"`
+	AgentID          string   `json:"agentId"`
+	AgentName        string   `json:"agentName"`
+	Title            string   `json:"title"`
+	Executable       string   `json:"executable"`
+	Args             []string `json:"args"`
+	WorkingDirectory string   `json:"workingDirectory"`
+	Status           string   `json:"status"`
+	CreatedAt        int64    `json:"createdAt"`
+	StartedAt        int64    `json:"startedAt"`
+	EndedAt          int64    `json:"endedAt,omitempty"`
+	ResumeHint       []string `json:"resumeHint,omitempty"`
+}
+
+// SaveSessionsToDisk persists CLI sessions to ~/.forge-ade/agentsessions/index.json.
+func (mgr *AgentCLIManager) SaveSessionsToDisk() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	mgr.mu.RLock()
+	records := make([]agentCLIDiskRecord, 0, len(mgr.Sessions))
+	for _, s := range mgr.Sessions {
+		if s == nil {
+			continue
+		}
+		startedMs := s.StartedAt.UnixMilli()
+		var endedMs int64
+		if !s.EndedAt.IsZero() {
+			endedMs = s.EndedAt.UnixMilli()
+		}
+		records = append(records, agentCLIDiskRecord{
+			ID:               s.ID,
+			AgentID:          s.AgentID,
+			AgentName:        s.AgentName,
+			Title:            s.Title,
+			Executable:       s.Command,
+			Args:             append([]string(nil), s.Args...),
+			WorkingDirectory: s.Cwd,
+			Status:           s.Status,
+			CreatedAt:        startedMs,
+			StartedAt:        startedMs,
+			EndedAt:          endedMs,
+			ResumeHint:       append([]string(nil), s.ResumeHint...),
+		})
+	}
+	mgr.mu.RUnlock()
+
+	dir := filepath.Join(home, ".forge-ade", "agentsessions")
+	_ = os.MkdirAll(dir, 0o755)
+	if data, err := json.MarshalIndent(records, "", "  "); err == nil {
+		_ = os.WriteFile(filepath.Join(dir, "index.json"), data, 0o644)
 	}
 }
 
@@ -237,7 +300,6 @@ func (mgr *AgentCLIManager) CreateSessionWithTitle(agentID, agentName, command s
 // shell, so its escape sequences never leak into a shell prompt.
 func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, args []string, cwd string) *AgentCLISession {
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
 
 	if cwd == "" {
 		cwd = mgr.RootDir
@@ -273,7 +335,9 @@ func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, ar
 
 	mgr.Sessions[sessionID] = sess
 	mgr.ActiveID = sessionID
+	mgr.mu.Unlock()
 
+	mgr.SaveSessionsToDisk()
 	return sess
 }
 
@@ -309,8 +373,10 @@ func (mgr *AgentCLIManager) StopSession(sessionID string) {
 	mgr.mu.Lock()
 	if sess, ok := mgr.Sessions[sessionID]; ok {
 		sess.Status = "completed"
+		sess.EndedAt = time.Now()
 	}
 	mgr.mu.Unlock()
+	mgr.SaveSessionsToDisk()
 }
 
 // getResumeArgs finds continuation flags for an agent CLI on restart.
@@ -337,10 +403,10 @@ func (mgr *AgentCLIManager) getResumeArgs(agentID, command string) []string {
 // ResumeArgs (e.g. --continue) or captured ResumeHint so the conversation carries over in the same workspace.
 func (mgr *AgentCLIManager) RestartSession(sessionID string) {
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
 
 	sess := mgr.Sessions[sessionID]
 	if sess == nil || strings.TrimSpace(sess.Command) == "" {
+		mgr.mu.Unlock()
 		return
 	}
 	if sess.Terminal != nil {
@@ -369,11 +435,16 @@ func (mgr *AgentCLIManager) RestartSession(sessionID string) {
 
 	if err := sess.Terminal.Restart(); err != nil {
 		sess.Status = "error"
+		mgr.mu.Unlock()
+		mgr.SaveSessionsToDisk()
 		return
 	}
 	sess.Status = "running"
 	sess.ExitCode = 0
+	sess.EndedAt = time.Time{}
 	sess.StartedAt = time.Now()
+	mgr.mu.Unlock()
+	mgr.SaveSessionsToDisk()
 }
 
 // DeleteSession removes a CLI session and terminates its process.
@@ -397,13 +468,14 @@ func (mgr *AgentCLIManager) DeleteSession(sessionID string) {
 	if term != nil {
 		term.Close()
 	}
+	mgr.SaveSessionsToDisk()
 }
 
 // SyncExitStatus flips a running session to completed once its PTY process
 // has exited, so the UI reflects the real lifecycle.
 func (mgr *AgentCLIManager) SyncExitStatus() {
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
+	changed := false
 	for _, sess := range mgr.Sessions {
 		if sess.Status != "running" || sess.Terminal == nil {
 			continue
@@ -411,6 +483,12 @@ func (mgr *AgentCLIManager) SyncExitStatus() {
 		if sess.Terminal.IsExited() {
 			sess.Status = "completed"
 			sess.ExitCode = sess.Terminal.ExitStatus()
+			sess.EndedAt = time.Now()
+			changed = true
 		}
+	}
+	mgr.mu.Unlock()
+	if changed {
+		mgr.SaveSessionsToDisk()
 	}
 }

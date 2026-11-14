@@ -8,6 +8,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,31 +23,34 @@ import (
 
 // prPaneState holds the PRs tab's data and busy flags (GitPullRequestsPane).
 type prPaneState struct {
-	Loaded      bool
-	Loading     bool
-	State       string // "open" | "closed" | "all"
-	Items       []internalgit.PullRequestItem
-	Selected    int // index into Items, -1 = none
-	Detail      *internalgit.PullRequestDetail
-	DetailDiff  string
-	LoadingDiff bool
-	Merging     bool
-	Reviewing   bool
-	CreateOpen  bool
-	CreateTitle string
-	CreateBody  string
-	CreateBase  string
-	CreateHead  string
-	CreateDraft bool
-	Creating    bool
-	ReviewBody  string
-	MergeMethod string // "merge" | "squash" | "rebase"
-	SearchQuery string
-	Error       string
+	Loaded           bool
+	Loading          bool
+	State            string // "open" | "closed" | "all"
+	Items            []internalgit.PullRequestItem
+	Selected         int // index into Items, -1 = none
+	Detail           *internalgit.PullRequestDetail
+	DetailDiff       string
+	DetailFiles      []mygoeditor.FilePatch
+	DetailDiffParsed string
+	LoadingDiff      bool
+	Merging          bool
+	Reviewing        bool
+	CreateOpen       bool
+	CreateTitle      string
+	CreateBody       string
+	CreateBase       string
+	CreateHead       string
+	CreateDraft      bool
+	Creating         bool
+	ReviewBody       string
+	MergeMethod      string // "merge" | "squash" | "rebase"
+	SearchQuery      string
+	Error            string
 }
 
 // worktreePaneState holds the Worktrees tab state (GitWorktreesPane).
 type worktreePaneState struct {
+	Loaded      bool
 	Loading     bool
 	Items       []internalgit.GitWorktreeInfo
 	CreateOpen  bool
@@ -96,6 +100,9 @@ func (a *AppUI) loadPRs(state string) {
 			pp.Loaded = true
 			pp.Selected = -1
 			pp.Detail = nil
+			pp.DetailDiff = ""
+			pp.DetailFiles = nil
+			pp.DetailDiffParsed = ""
 		}
 		if a.Window != nil {
 			a.Window.Invalidate()
@@ -113,6 +120,8 @@ func (a *AppUI) selectPR(index int) {
 	pp.Selected = index
 	pp.Detail = nil
 	pp.DetailDiff = ""
+	pp.DetailFiles = nil
+	pp.DetailDiffParsed = ""
 	pp.LoadingDiff = true
 	pr := pp.Items[index]
 	if a.Window != nil {
@@ -139,10 +148,9 @@ func (a *AppUI) selectPR(index int) {
 func (a *AppUI) prAction(label string, run func(ctx context.Context) error) {
 	pp := a.prPane()
 	gm := a.Git
-	if gm == nil {
+	if gm == nil || pp.Selected < 0 || pp.Selected >= len(pp.Items) {
 		return
 	}
-	pr := pp.Items[pp.Selected]
 	pp.Merging = true
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -156,11 +164,14 @@ func (a *AppUI) prAction(label string, run func(ctx context.Context) error) {
 			pp.Error = err.Error()
 		} else {
 			pp.Error = ""
+			a.loadPRs(pp.State)
+			if label == "Checkout" {
+				gm.Refresh()
+			}
 		}
 		if a.Window != nil {
 			a.Window.Invalidate()
 		}
-		_ = pr
 	}()
 }
 
@@ -382,26 +393,39 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 			ui.Box(c).Grow(1)
 			// Review + lifecycle actions
 			methods := a.prPane()
-			mergeRow := ui.Row(c).Height(26).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-				Background(tc.Success.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
-			mergeRow.Children(func() {
-				ui.Text(c, "Merge ("+methods.MergeMethod+")").FontSize(11).FontWeight(600).TextColor(tc.Success)
-			})
-			mergeRow.Menu(func(m *ui.Menu) {
-				for _, mm := range []string{"merge", "squash", "rebase"} {
-					if m.Item(mm).Chosen() {
-						methods.MergeMethod = mm
-					}
-				}
-			})
-			if mergeRow.Clicked() {
-				num := pr.Number
-				method := methods.MergeMethod
-				a.prAction("Merge", func(ctx context.Context) error {
-					_, err := gm.Engine().GitEngine.MergePullRequest(ctx, gm.RootDir, num, method)
-					return err
+			ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
+				mergeBtn := ui.Row(c.Key("pr-merge-btn")).Height(26).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+					Background(tc.Success.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35)).Cursor(ui.CursorPointer)
+				mergeBtn.Children(func() {
+					ui.Text(c, "Merge ("+methods.MergeMethod+")").FontSize(11).FontWeight(600).TextColor(tc.Success)
 				})
-			}
+				if mergeBtn.Hovered() {
+					mergeBtn.Background(tc.Success.Alpha(0.22))
+				}
+				if mergeBtn.Clicked() {
+					num := pr.Number
+					method := methods.MergeMethod
+					a.prAction("Merge", func(ctx context.Context) error {
+						_, err := gm.Engine().GitEngine.MergePullRequest(ctx, gm.RootDir, num, method)
+						return err
+					})
+				}
+				mergeMenuBtn := ui.Row(c.Key("pr-merge-method")).Height(26).Radius(6).Padding(0, 6).AlignItems(ui.Center).
+					Background(tc.Success.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35)).Cursor(ui.CursorPointer)
+				mergeMenuBtn.Children(func() {
+					ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.Success)
+				})
+				if mergeMenuBtn.Hovered() {
+					mergeMenuBtn.Background(tc.Success.Alpha(0.22))
+				}
+				mergeMenuBtn.Menu(func(m *ui.Menu) {
+					for _, mm := range []string{"merge", "squash", "rebase"} {
+						if m.Item(mm).Chosen() {
+							methods.MergeMethod = mm
+						}
+					}
+				})
+			})
 			if uiButton(c, tc, "Approve", tc.Success).Clicked() {
 				num := pr.Number
 				body := a.prPane().ReviewBody
@@ -464,10 +488,20 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 					})
 				}
 			}
-			if a.prPane().DetailDiff != "" {
+			pp := a.prPane()
+			if pp.DetailDiff != "" {
 				ui.Text(c, "Diff").FontSize(12).FontWeight(600)
-				files, err := mygoeditor.ParsePatch(a.prPane().DetailDiff)
-				if err == nil && len(files) > 0 {
+				if pp.DetailDiffParsed != pp.DetailDiff {
+					files, err := mygoeditor.ParsePatch(pp.DetailDiff)
+					if err == nil {
+						pp.DetailFiles = files
+					} else {
+						pp.DetailFiles = nil
+					}
+					pp.DetailDiffParsed = pp.DetailDiff
+				}
+				files := pp.DetailFiles
+				if len(files) > 0 {
 					for idx, fp := range files {
 						fp := fp
 						fileName := fp.NewName
@@ -485,7 +519,7 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 						})
 					}
 				} else {
-					renderToolOutputBox(c, tc, a.prPane().DetailDiff, false)
+					renderToolOutputBox(c, tc, pp.DetailDiff, false)
 				}
 			}
 			// Comments
@@ -530,7 +564,7 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 // renderGitWorktreesSurface is the Worktrees management tab.
 func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager) {
 	wt := a.wtPane()
-	if len(wt.Items) == 0 && !wt.Loading {
+	if !wt.Loaded && !wt.Loading && wt.Error == "" {
 		wt.Loading = true
 		go func() {
 			items, err := gm.ListWorktrees()
@@ -539,6 +573,7 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 				wt.Error = err.Error()
 			} else {
 				wt.Items = items
+				wt.Loaded = true
 				wt.Error = ""
 			}
 			if a.Window != nil {
@@ -552,11 +587,36 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 		ui.Text(c, "Worktrees").FontSize(12).FontWeight(600)
 		ui.Text(c, "Linked checkouts sharing one repository").FontSize(11).TextColor(tc.TextMuted)
 		ui.Box(c).Grow(1)
-		if wt.Loading {
-			ui.Spinner(c).Size(12, 12).Label("Loading")
+		if wt.Loading || wt.Busy {
+			ui.Spinner(c).Size(12, 12).Label("Working")
+		}
+		pruneBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).
+			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+		pruneBtn.Children(func() {
+			ui.Text(c, "Prune").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+		})
+		if pruneBtn.Hovered() {
+			pruneBtn.Background(tc.MessageActionHover)
+		}
+		if pruneBtn.Clicked() && !wt.Busy {
+			wt.Busy = true
+			go func() {
+				err := gm.PruneWorktrees()
+				wt.Busy = false
+				if err != nil {
+					wt.Error = err.Error()
+				} else {
+					wt.Error = ""
+					wt.Items = nil
+					wt.Loaded = false
+				}
+				if a.Window != nil {
+					a.Window.Invalidate()
+				}
+			}()
 		}
 		newBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).
-			Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+			Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35)).Cursor(ui.CursorPointer)
 		newBtn.Children(func() {
 			ui.Text(c, "New Worktree").FontSize(11).FontWeight(600).TextColor(tc.Accent)
 		})
@@ -565,6 +625,8 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 		}
 		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() {
 			wt.Items = nil
+			wt.Loaded = false
+			wt.Error = ""
 		}
 	})
 
@@ -601,7 +663,8 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 						} else {
 							wt.CreateOpen = false
 							wt.CreatePath, wt.CreateBr = "", ""
-							wt.Items = nil // reload
+							wt.Items = nil
+							wt.Loaded = false
 						}
 						if a.Window != nil {
 							a.Window.Invalidate()
@@ -612,12 +675,16 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 		})
 	}
 
+	rootClean := filepath.Clean(gm.RootDir)
 	scroll := ui.Scroll(c)
 	scroll.Children(func() {
 		col := ui.Column(c).Gap(4).Padding(10)
 		col.Children(func() {
-			for _, w := range wt.Items {
+			for i, w := range wt.Items {
 				w := w
+				wClean := filepath.Clean(w.Path)
+				isCurrent := wClean == rootClean
+				isMain := i == 0 || isCurrent
 				row := ui.Row(c.Key("wt-"+w.Path)).Radius(8).Padding(8, 10).Gap(8).AlignItems(ui.Center).
 					Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
 				row.Children(func() {
@@ -628,44 +695,66 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 						ui.Text(c, w.Branch).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
 					})
 					ui.Box(c).Grow(1)
-					del := IconButton(c, tc, icons.TablerTrash, 12)
-					if del.Clicked() {
-						wt.Busy = true
-						path := w.Path
-						go func() {
-							err := gm.RemoveWorktree(path, false)
-							wt.Busy = false
-							if err != nil {
-								wt.Error = err.Error()
-							} else {
-								wt.Items = nil
-							}
-							if a.Window != nil {
-								a.Window.Invalidate()
-							}
-						}()
+					if isCurrent {
+						Badge(c, tc, "Current", tc.Accent)
+					} else if isMain {
+						Badge(c, tc, "Main", tc.TextMuted)
 					}
-					del.ContextMenu(func(m *ui.Menu) {
-						if m.Item("Remove worktree (force)").Danger().Chosen() {
+					if !isCurrent {
+						openBtn := ui.Row(c.Key("wt-open-"+w.Path)).Height(24).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3)).Cursor(ui.CursorPointer)
+						openBtn.Children(func() {
+							ui.Text(c, "Open").FontSize(11).FontWeight(500).TextColor(tc.Accent)
+						})
+						if openBtn.Hovered() {
+							openBtn.Background(tc.Accent.Alpha(0.2))
+						}
+						if openBtn.Clicked() {
+							a.switchWorkspace(w.Path)
+						}
+					}
+					if !isMain {
+						del := IconButton(c, tc, icons.TablerTrash, 12)
+						if del.Clicked() && !wt.Busy {
 							wt.Busy = true
 							path := w.Path
 							go func() {
-								err := gm.RemoveWorktree(path, true)
+								err := gm.RemoveWorktree(path, false)
 								wt.Busy = false
 								if err != nil {
 									wt.Error = err.Error()
 								} else {
 									wt.Items = nil
+									wt.Loaded = false
 								}
 								if a.Window != nil {
 									a.Window.Invalidate()
 								}
 							}()
 						}
-					})
+						del.ContextMenu(func(m *ui.Menu) {
+							if m.Item("Remove worktree (force)").Danger().Chosen() && !wt.Busy {
+								wt.Busy = true
+								path := w.Path
+								go func() {
+									err := gm.RemoveWorktree(path, true)
+									wt.Busy = false
+									if err != nil {
+										wt.Error = err.Error()
+									} else {
+										wt.Items = nil
+										wt.Loaded = false
+									}
+									if a.Window != nil {
+										a.Window.Invalidate()
+									}
+								}()
+							}
+						})
+					}
 				})
 			}
-			if len(wt.Items) == 0 && !wt.Loading {
+			if wt.Loaded && len(wt.Items) == 0 && !wt.Loading {
 				ui.Column(c).Center().Padding(24).Gap(6).Children(func() {
 					ui.Icon(c, icons.TablerFolder).Width(26).Height(26).TextColor(tc.IconMuted)
 					ui.Text(c, "No linked worktrees").FontSize(12).TextColor(tc.TextMuted)

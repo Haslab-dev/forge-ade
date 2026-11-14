@@ -88,6 +88,7 @@ type ACPManager struct {
 	bus            *events.Bus
 	Agents         []ACPAgentDefinition
 	ActiveReq      *PermissionRequest
+	activeReqs     map[string]*PermissionRequest
 	OnTokenChunk   func(sessionID, text string)
 	OnThoughtChunk func(sessionID, text string)
 	OnToolEvent    func(ToolEvent)
@@ -105,6 +106,7 @@ func NewACPManager(engine *engine.Engine, onRedraw func()) *ACPManager {
 	mgr := &ACPManager{
 		manager:      engine.ACPMgr,
 		bus:          engine.Bus,
+		activeReqs:   make(map[string]*PermissionRequest),
 		OnNeedRedraw: onRedraw,
 		Agents:       defaultACPAgentDefinitions(),
 	}
@@ -287,6 +289,164 @@ func defaultACPAgentDefinitions() []ACPAgentDefinition {
 	}
 }
 
+func normalizeACPAgentLookupID(agentID string) string {
+	switch strings.ToLower(strings.TrimSpace(agentID)) {
+	case "agy", "antigravity", "agent-agy":
+		return "agent-agy"
+	case "claude", "claude-code", "agent-claude":
+		return "agent-claude"
+	case "codex", "agent-codex":
+		return "agent-codex"
+	case "opencode", "agent-opencode":
+		return "agent-opencode"
+	case "commandcode", "cmd", "agent-commandcode":
+		return "agent-commandcode"
+	case "pi", "pi-acp", "agent-pi":
+		return "agent-pi"
+	case "omp", "ohmypi", "agent-ohmypi":
+		return "agent-ohmypi"
+	case "gemini", "agent-gemini":
+		return "agent-gemini"
+	default:
+		return strings.TrimSpace(agentID)
+	}
+}
+
+func findAgentInCatalog(agents []ACPAgentDefinition, agentID string) *ACPAgentDefinition {
+	norm := normalizeACPAgentLookupID(agentID)
+	for i := range agents {
+		if strings.EqualFold(agents[i].ID, agentID) || strings.EqualFold(agents[i].ID, norm) || strings.EqualFold(agents[i].Type, norm) {
+			cp := agents[i]
+			cp.Args = append([]string(nil), agents[i].Args...)
+			cp.SupportedModels = append([]string(nil), agents[i].SupportedModels...)
+			cp.SupportedEfforts = append([]string(nil), agents[i].SupportedEfforts...)
+			return &cp
+		}
+	}
+	return nil
+}
+
+func parseEffortLevel(s string) ReasoningEffort {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "off", "minimal":
+		return EffortOff
+	case "low":
+		return EffortLow
+	case "medium", "med":
+		return EffortMedium
+	case "high", "xhigh":
+		return EffortHigh
+	case "max":
+		return EffortMax
+	default:
+		return ""
+	}
+}
+
+func resolveAgentDefaults(ag *ACPAgentDefinition, agentID string) (model string, agentType string, effort ReasoningEffort) {
+	if ag != nil {
+		model = ag.Model
+		if model == "" && len(ag.SupportedModels) > 0 {
+			model = ag.SupportedModels[0]
+		}
+		agentType = ag.Type
+		if agentType == "" {
+			if ag.ID == "agent-internal" {
+				agentType = "internal"
+			} else {
+				agentType = "acp"
+			}
+		}
+		effort = parseEffortLevel(ag.DefaultEffort)
+		return model, agentType, effort
+	}
+	switch strings.ToLower(strings.TrimSpace(agentID)) {
+	case "agent-kimi", "kimi":
+		return "kimi-k2", "acp", EffortMedium
+	case "agent-qwen", "qwen":
+		return "qwen3-coder-plus", "acp", EffortMedium
+	}
+	return "", "", ""
+}
+
+// FindAgent returns a copy of the ACPAgentDefinition matching agentID, or nil.
+func (mgr *ACPManager) FindAgent(agentID string) *ACPAgentDefinition {
+	if mgr == nil {
+		return nil
+	}
+	mgr.mu.RLock()
+	defer mgr.mu.RUnlock()
+	return findAgentInCatalog(mgr.Agents, agentID)
+}
+
+// ResolveDefaultModel returns the default model, agentType, and default effort for an agentID.
+func (mgr *ACPManager) ResolveDefaultModel(agentID string) (model string, agentType string, effort ReasoningEffort) {
+	if mgr != nil {
+		if ag := mgr.FindAgent(agentID); ag != nil {
+			return resolveAgentDefaults(ag, agentID)
+		}
+	}
+	return DefaultModelForACPAgentWithType(agentID)
+}
+
+// EnsureValidModel returns currentModel if supported by agentID, or agentID's default model otherwise.
+func (mgr *ACPManager) EnsureValidModel(agentID, currentModel string) string {
+	ag := (*ACPAgentDefinition)(nil)
+	if mgr != nil {
+		ag = mgr.FindAgent(agentID)
+	}
+	if ag == nil {
+		ag = findAgentInCatalog(defaultACPAgentDefinitions(), agentID)
+	}
+	return ensureModelForDefinition(ag, agentID, currentModel)
+}
+
+// DefaultModelForACPAgentWithType resolves the default model, agent type, and reasoning effort
+// from the static ACP catalog.
+func DefaultModelForACPAgentWithType(agentID string) (model string, agentType string, effort ReasoningEffort) {
+	ag := findAgentInCatalog(defaultACPAgentDefinitions(), agentID)
+	return resolveAgentDefaults(ag, agentID)
+}
+
+// DefaultModelForACPAgent resolves the default model and reasoning effort for an ACP agent ID.
+func DefaultModelForACPAgent(agentID string) (model string, effort ReasoningEffort) {
+	m, _, ef := DefaultModelForACPAgentWithType(agentID)
+	return m, ef
+}
+
+// EnsureValidModelForACPAgent returns currentModel if supported by agentID in the default ACP
+// catalog, or the agent's default model otherwise.
+func EnsureValidModelForACPAgent(agentID, currentModel string) string {
+	ag := findAgentInCatalog(defaultACPAgentDefinitions(), agentID)
+	return ensureModelForDefinition(ag, agentID, currentModel)
+}
+
+func ensureModelForDefinition(ag *ACPAgentDefinition, agentID, currentModel string) string {
+	cur := strings.TrimSpace(currentModel)
+	if ag == nil {
+		if cur != "" {
+			return cur
+		}
+		def, _ := DefaultModelForACPAgent(agentID)
+		return def
+	}
+	if ag.ID == "agent-internal" || ag.Type == "internal" {
+		return cur
+	}
+	if cur != "" {
+		for _, sm := range ag.SupportedModels {
+			if strings.EqualFold(sm, cur) {
+				return sm
+			}
+		}
+	}
+	def, _, _ := resolveAgentDefaults(ag, agentID)
+	if def != "" {
+		return def
+	}
+	return cur
+}
+
 // RefreshAvailability detects which agent CLIs are installed and on the user's PATH.
 func (mgr *ACPManager) RefreshAvailability() {
 	mgr.mu.Lock()
@@ -422,7 +582,17 @@ func (mgr *ACPManager) Cancel(sessionID string) error {
 // the best allow option of the request, as forge-ade's UI does.
 func (mgr *ACPManager) RespondPermission(sessionID, requestID string, allow bool) error {
 	mgr.mu.Lock()
-	mgr.ActiveReq = nil
+	var req *PermissionRequest
+	if mgr.activeReqs != nil {
+		req = mgr.activeReqs[requestID]
+		delete(mgr.activeReqs, requestID)
+	}
+	if req == nil {
+		req = mgr.ActiveReq
+	}
+	if mgr.ActiveReq != nil && (mgr.ActiveReq.RequestID == requestID || len(mgr.activeReqs) == 0) {
+		mgr.ActiveReq = nil
+	}
 	mgr.mu.Unlock()
 
 	if mgr.manager == nil {
@@ -433,8 +603,6 @@ func (mgr *ACPManager) RespondPermission(sessionID, requestID string, allow bool
 	}
 	// Pick the first allow-kind option; the manager falls back sanely when
 	// given an empty option id.
-	mgr.mu.RLock()
-	req := mgr.ActiveReq
 	optionID := ""
 	if req != nil && req.RequestID == requestID {
 		for _, opt := range req.Options {
@@ -446,7 +614,6 @@ func (mgr *ACPManager) RespondPermission(sessionID, requestID string, allow bool
 			}
 		}
 	}
-	mgr.mu.RUnlock()
 	if optionID != "" {
 		return mgr.manager.RespondPermissionOption(sessionID, requestID, true, optionID)
 	}
@@ -457,7 +624,12 @@ func (mgr *ACPManager) RespondPermission(sessionID, requestID string, allow bool
 // option id ("allow"/"deny"/a specific ACP option).
 func (mgr *ACPManager) RespondPermissionOption(sessionID, requestID, optionID string) error {
 	mgr.mu.Lock()
-	mgr.ActiveReq = nil
+	if mgr.activeReqs != nil {
+		delete(mgr.activeReqs, requestID)
+	}
+	if mgr.ActiveReq != nil && (mgr.ActiveReq.RequestID == requestID || len(mgr.activeReqs) == 0) {
+		mgr.ActiveReq = nil
+	}
 	mgr.mu.Unlock()
 	if mgr.manager != nil {
 		return mgr.manager.RespondPermissionOption(sessionID, requestID, true, optionID)
@@ -699,6 +871,10 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		}
 		mgr.mu.Lock()
 		mgr.ActiveReq = req
+		if mgr.activeReqs == nil {
+			mgr.activeReqs = make(map[string]*PermissionRequest)
+		}
+		mgr.activeReqs[req.RequestID] = req
 		mgr.mu.Unlock()
 		if mgr.OnAsk != nil {
 			mgr.OnAsk(req)

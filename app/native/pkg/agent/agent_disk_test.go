@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 )
@@ -60,5 +61,63 @@ func TestDiskSessionPersistence(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected session %s to be reloaded from disk", sess.ID)
+	}
+}
+
+func TestSteerQueuePersistenceAndTurnDrain(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "steer-queue-test-*")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	eng := engine.NewEngine(tempDir)
+	as1 := NewAgentState(eng, tempDir, nil)
+	sess := as1.NewSession("Steer Test")
+	defer as1.DeleteSession(sess.ID)
+	as1.SaveSessionToDisk(sess)
+
+	// Mutate under Lock/Unlock and persist outside the lock without deadlocking.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		as1.Lock()
+		as1.SteerQueue = []string{"first steer", "second steer", "third steer"}
+		// Remove middle item as tray delete does.
+		as1.SteerQueue = append(as1.SteerQueue[:1], as1.SteerQueue[2:]...)
+		as1.Unlock()
+		as1.SaveSteerQueues()
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("steer queue mutation + SaveSteerQueues deadlocked")
+	}
+
+	// Verify reload onto a fresh AgentState.
+	as2 := NewAgentState(eng, tempDir, nil)
+	if len(as2.SteerQueue) != 2 || as2.SteerQueue[0] != "first steer" || as2.SteerQueue[1] != "third steer" {
+		t.Fatalf("expected restored SteerQueue [first steer, third steer], got %v", as2.SteerQueue)
+	}
+
+	// Verify HandleTurnDone drains one steer item cleanly without deadlocking.
+	as2.Lock()
+	as2.ActiveSessionID = sess.ID
+	as2.Unlock()
+	drainCh := make(chan string, 1)
+	go func() {
+		drainCh <- as2.HandleTurnDone(sess.ID, TurnEndInfo{Status: "completed"})
+	}()
+	select {
+	case next := <-drainCh:
+		if next != "first steer" {
+			t.Fatalf("expected next steer 'first steer', got %q", next)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("HandleTurnDone deadlocked draining steer queue")
+	}
+
+	if len(as2.SteerQueue) != 1 || as2.SteerQueue[0] != "third steer" {
+		t.Fatalf("expected remaining SteerQueue [third steer], got %v", as2.SteerQueue)
 	}
 }

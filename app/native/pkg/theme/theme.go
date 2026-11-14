@@ -7,7 +7,6 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
-	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
 // Workspace Surface Modes (ForgeADE Dual-Surface architecture)
@@ -131,6 +130,10 @@ type ThemeManager struct {
 	ChatWidth  string  // "comfortable" (736px), "wide" (928px), "full" (100%)
 	DiffScheme string  // "classic" (Green/Red), "modern" (Blue/Orange)
 	IsOpen     bool
+
+	cacheKey      string
+	cachedEdTheme *editor.Theme
+	cachedMdTheme *markdown.Theme
 }
 
 // DefaultFontSize is ForgeADE's default interface font size
@@ -210,18 +213,43 @@ func (tm *ThemeManager) ActiveTheme() *ui.Theme {
 	return t
 }
 
-// EditorTheme builds the code editor theme (cmSetup.ts parity).
-func (tm *ThemeManager) EditorTheme() *editor.Theme {
-	return ForgeEditorTheme(tm.Colors(), tm.IsDark(), tm.DiffScheme)
+func (tm *ThemeManager) themeCacheKey() string {
+	return fmt.Sprintf("%s|%s|%g|%s|%s", tm.Appearance, tm.PaletteID, tm.FontSize, tm.FontFamily, tm.DiffScheme)
 }
 
-// MarkdownTheme builds the chat Markdown theme (MarkdownRenderer.tsx parity).
-func (tm *ThemeManager) MarkdownTheme() *markdown.Theme {
+func (tm *ThemeManager) ensureCachedThemes() {
+	key := tm.themeCacheKey()
+	if tm.cacheKey == key && tm.cachedEdTheme != nil && tm.cachedMdTheme != nil {
+		return
+	}
+	tc := tm.Colors()
+	dark := tm.IsDark()
+	edTheme := ForgeEditorTheme(tc, dark, tm.DiffScheme)
 	family := tm.FontFamily
 	if family == "" {
 		family = FontSans
 	}
-	return ForgeMarkdownTheme(tm.Colors(), tm.IsDark(), tm.EditorTheme(), EditorCodeFontSize, family, monoFor(family))
+	mdTheme := ForgeMarkdownTheme(tc, dark, edTheme, EditorCodeFontSize, family, monoFor(family))
+	tm.cachedEdTheme = edTheme
+	tm.cachedMdTheme = mdTheme
+	tm.cacheKey = key
+}
+
+// EditorTheme returns the cached code editor theme, rebuilding only when theme parameters change.
+func (tm *ThemeManager) EditorTheme() *editor.Theme {
+	tm.ensureCachedThemes()
+	return tm.cachedEdTheme
+}
+
+// MarkdownTheme returns the cached chat Markdown theme, rebuilding only when theme parameters change.
+func (tm *ThemeManager) MarkdownTheme() *markdown.Theme {
+	tm.ensureCachedThemes()
+	return tm.cachedMdTheme
+}
+
+// SwatchColor resolves a palette swatch hex string into a semantic UI color token.
+func SwatchColor(hex string) ui.Color {
+	return ui.Hex(hex)
 }
 
 // MonoFor pairs the interface family with the mono family, as --font-mono does in the original.
@@ -247,161 +275,6 @@ func (tm *ThemeManager) ChatLaneWidth() float32 {
 	default:
 		return 736 // 46rem
 	}
-}
-
-// RenderThemePicker renders ForgeADE's ThemePicker modal.
-func (tm *ThemeManager) RenderThemePicker(c *ui.Context) {
-	t := c.Theme()
-	tc := tm.Colors()
-
-	ui.Modal(c, &tm.IsOpen, func() {
-		ui.Column(c).Width(480).Radius(16).Background(tc.SurfaceOverlay).BorderWidth(1).
-			BorderColor(tc.Border).Padding(16, 20).Gap(14).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
-			Children(func() {
-				// Header
-				ui.Row(c).AlignItems(ui.Center).Children(func() {
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						icons.TablerIcon(c, icons.TablerPalette, 16)
-						ui.Text(c, "Theme & Appearance").Bold().FontSize(15)
-					})
-					ui.Box(c).Grow(1)
-					closeBtn := ui.Button(c, "")
-					closeBtn.Children(func() {
-						icons.TablerIcon(c, icons.TablerX, 13)
-					})
-					if closeBtn.Clicked() {
-						tm.IsOpen = false
-					}
-				})
-
-				// 1. Appearance Switcher (Dark / Light)
-				ui.Column(c).Gap(6).Children(func() {
-					ui.Text(c, "APPEARANCE").FontSize(10).Bold().TextColor(t.TextMuted)
-					ui.Row(c).Gap(8).Children(func() {
-						var darkBtn ui.Element
-						if tm.Appearance == "dark" {
-							darkBtn = ui.PrimaryButton(c, "")
-						} else {
-							darkBtn = ui.Button(c, "")
-						}
-						darkBtn.Children(func() {
-							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-								icons.TablerIcon(c, icons.TablerMoon, 13)
-								ui.Text(c, "Dark").FontSize(11).Bold()
-							})
-						})
-						if darkBtn.Clicked() {
-							tm.Appearance = "dark"
-						}
-
-						var lightBtn ui.Element
-						if tm.Appearance == "light" {
-							lightBtn = ui.PrimaryButton(c, "")
-						} else {
-							lightBtn = ui.Button(c, "")
-						}
-						lightBtn.Children(func() {
-							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-								icons.TablerIcon(c, icons.TablerSun, 13)
-								ui.Text(c, "Light").FontSize(11).Bold()
-							})
-						})
-						if lightBtn.Clicked() {
-							tm.Appearance = "light"
-						}
-					})
-				})
-
-				// 2. Palette Gallery (6 ForgeADE color themes)
-				ui.Column(c).Gap(6).Children(func() {
-					ui.Text(c, "COLOR PALETTE").FontSize(10).Bold().TextColor(t.TextMuted)
-					ui.Row(c).Gap(6).Wrap().Children(func() {
-						for _, p := range tm.AvailablePalettes() {
-							thisID := p.ID
-							var btn ui.Element
-							if tm.PaletteID == thisID {
-								btn = ui.PrimaryButton(c, "").FontSize(11)
-							} else {
-								btn = ui.Button(c, p.Name).FontSize(11)
-							}
-							if tm.PaletteID == thisID {
-								btn.Children(func() {
-									ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-										ui.Box(c).Size(8, 8).Radius(4).Background(ui.Hex(p.SwatchHex))
-										ui.Text(c, p.Name).FontSize(11).Bold()
-									})
-								})
-							}
-							if btn.Clicked() {
-								tm.PaletteID = thisID
-							}
-						}
-					})
-				})
-
-				// 3. Chat Lane Width
-				ui.Column(c).Gap(6).Children(func() {
-					ui.Text(c, "CHAT WIDTH").FontSize(10).Bold().TextColor(t.TextMuted)
-					ui.Row(c).Gap(8).Children(func() {
-						widths := []struct {
-							id    string
-							label string
-						}{
-							{"comfortable", "Comfortable"},
-							{"wide", "Wide"},
-							{"full", "Full Width"},
-						}
-						for _, w := range widths {
-							thisW := w.id
-							var btn ui.Element
-							if tm.ChatWidth == thisW {
-								btn = ui.PrimaryButton(c, w.label).FontSize(11)
-							} else {
-								btn = ui.Button(c, w.label).FontSize(11)
-							}
-							if btn.Clicked() {
-								tm.ChatWidth = thisW
-							}
-						}
-					})
-				})
-
-				// 4. Diff Colors Scheme
-				ui.Column(c).Gap(6).Children(func() {
-					ui.Text(c, "DIFF COLOR SCHEME").FontSize(10).Bold().TextColor(t.TextMuted)
-					ui.Row(c).Gap(8).Children(func() {
-						schemes := []struct {
-							id    string
-							label string
-						}{
-							{"classic", "Classic (Green / Red)"},
-							{"modern", "Modern (Blue / Orange)"},
-						}
-						for _, s := range schemes {
-							thisS := s.id
-							var btn ui.Element
-							if tm.DiffScheme == thisS {
-								btn = ui.PrimaryButton(c, s.label).FontSize(11)
-							} else {
-								btn = ui.Button(c, s.label).FontSize(11)
-							}
-							if btn.Clicked() {
-								tm.DiffScheme = thisS
-							}
-						}
-					})
-				})
-
-				// Close action button
-				ui.Row(c).Padding(4, 0).AlignItems(ui.Center).Children(func() {
-					ui.Box(c).Grow(1)
-					if ui.PrimaryButton(c, "Apply & Done").Clicked() {
-						tm.IsOpen = false
-					}
-				})
-			})
-	})
 }
 
 // IsKnownPalette reports whether a palette id is one of the built-in packs.

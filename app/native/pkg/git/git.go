@@ -48,11 +48,19 @@ type GitManager struct {
 	SelectedCommitMessage string
 	SelectedCommitAuthor  string
 	SelectedCommitFiles   []CommitFileDiff
+	LoadingCommitDiff     bool
 	SearchQuery           string
 	DiffStarted           bool
 
 	OnFileSelect func(path string, showDiff bool)
 	OnNeedRedraw func()
+
+	fileDiffCache       map[string]string
+	fileDiffPending     map[string]bool
+	cachedRemoteSource  *internalgit.GitRemoteSource
+	remoteSourceLoaded  bool
+	remoteSourceLoading bool
+	cachedRootDir       string
 }
 
 // CommitFileDiff is one file's patch within the selected commit.
@@ -67,19 +75,89 @@ type CommitFileDiff struct {
 // NewGitManager creates an initialized GitManager for the repository.
 func NewGitManager(engine *engine.Engine, rootDir string, onFileSelect func(path string, showDiff bool)) *GitManager {
 	gm := &GitManager{
-		engine:       engine,
-		RootDir:      rootDir,
-		ActiveTab:    GitTabChanges,
-		OnFileSelect: onFileSelect,
+		engine:          engine,
+		RootDir:         rootDir,
+		ActiveTab:       GitTabChanges,
+		OnFileSelect:    onFileSelect,
+		fileDiffCache:   make(map[string]string),
+		fileDiffPending: make(map[string]bool),
+		cachedRootDir:   rootDir,
 	}
 	gm.Refresh()
 	return gm
+}
+
+func (gm *GitManager) redraw() {
+	if gm.OnNeedRedraw != nil {
+		gm.OnNeedRedraw()
+	}
+}
+
+// SetWorkspace updates the repository root, resets cached state, and refreshes.
+func (gm *GitManager) SetWorkspace(rootDir string) {
+	gm.mu.Lock()
+	gm.RootDir = rootDir
+	gm.cachedRootDir = rootDir
+	gm.fileDiffCache = make(map[string]string)
+	gm.fileDiffPending = make(map[string]bool)
+	gm.cachedRemoteSource = nil
+	gm.remoteSourceLoaded = false
+	gm.remoteSourceLoading = false
+	gm.mu.Unlock()
+	gm.Refresh()
+}
+
+// GetCachedFileDiff returns a cached working-tree unified diff for relPath if
+// ready, or queues a background fetch and redraw without blocking UI renders.
+func (gm *GitManager) GetCachedFileDiff(relPath string) (string, bool) {
+	gm.mu.Lock()
+	if gm.fileDiffCache == nil {
+		gm.fileDiffCache = make(map[string]string)
+	}
+	if gm.fileDiffPending == nil {
+		gm.fileDiffPending = make(map[string]bool)
+	}
+	if patch, ok := gm.fileDiffCache[relPath]; ok {
+		gm.mu.Unlock()
+		return patch, true
+	}
+	if !gm.fileDiffPending[relPath] && gm.engine != nil && gm.RootDir != "" && relPath != "" {
+		gm.fileDiffPending[relPath] = true
+		eng := gm.engine
+		root := gm.RootDir
+		gm.mu.Unlock()
+		go func() {
+			patch := eng.GetGitDiff(root, relPath)
+			gm.mu.Lock()
+			if gm.RootDir == root {
+				if gm.fileDiffCache == nil {
+					gm.fileDiffCache = make(map[string]string)
+				}
+				gm.fileDiffCache[relPath] = patch
+			}
+			delete(gm.fileDiffPending, relPath)
+			gm.mu.Unlock()
+			gm.redraw()
+		}()
+		return "", false
+	}
+	gm.mu.Unlock()
+	return "", false
 }
 
 // Refresh updates branch information, porcelain file status, history, and branches.
 func (gm *GitManager) Refresh() {
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
+
+	gm.fileDiffCache = make(map[string]string)
+	gm.fileDiffPending = make(map[string]bool)
+	if gm.RootDir != gm.cachedRootDir {
+		gm.cachedRemoteSource = nil
+		gm.remoteSourceLoaded = false
+		gm.remoteSourceLoading = false
+		gm.cachedRootDir = gm.RootDir
+	}
 
 	if gm.engine == nil {
 		return
@@ -98,30 +176,55 @@ func (gm *GitManager) Refresh() {
 	gm.Conflicts = st.Conflicts
 	gm.StatusMsg = fmt.Sprintf("Refreshed (Branch: %s)", st.Branch)
 
-	// Fetch history & branches in background
+	// Fetch history, branches & remote source in background
 	go gm.loadHistoryAndBranches()
 }
 
 func (gm *GitManager) loadHistoryAndBranches() {
-	if gm.engine == nil {
-		return
-	}
-
-	graph, err := gm.engine.GetGitCommitGraph(gm.RootDir, 30)
-	branches, bErr := gm.engine.GetGitBranches(gm.RootDir)
-
 	gm.mu.Lock()
-	if err == nil && graph != nil {
-		gm.Commits = graph.Commits
-	}
-	if bErr == nil {
-		gm.Branches = branches
+	eng := gm.engine
+	root := gm.RootDir
+	fetchRemote := eng != nil && eng.GitEngine != nil && root != "" && !gm.remoteSourceLoaded && !gm.remoteSourceLoading
+	if fetchRemote {
+		gm.remoteSourceLoading = true
 	}
 	gm.mu.Unlock()
 
-	if gm.OnNeedRedraw != nil {
-		gm.OnNeedRedraw()
+	if eng == nil {
+		return
 	}
+
+	graph, err := eng.GetGitCommitGraph(root, 30)
+	branches, bErr := eng.GetGitBranches(root)
+	var remoteSrc *internalgit.GitRemoteSource
+	if fetchRemote {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		src, rErr := eng.GitEngine.GetRemoteSource(ctx, root)
+		cancel()
+		if rErr == nil {
+			remoteSrc = src
+		}
+	}
+
+	gm.mu.Lock()
+	if gm.RootDir == root {
+		if err == nil && graph != nil {
+			gm.Commits = graph.Commits
+		}
+		if bErr == nil {
+			gm.Branches = branches
+		}
+		if fetchRemote {
+			gm.cachedRemoteSource = remoteSrc
+			gm.remoteSourceLoaded = true
+			gm.remoteSourceLoading = false
+		}
+	} else if fetchRemote {
+		gm.remoteSourceLoading = false
+	}
+	gm.mu.Unlock()
+
+	gm.redraw()
 }
 
 // Stage stages a single file.
@@ -279,6 +382,9 @@ func (gm *GitManager) SelectCommit(hash string) {
 	}
 	gm.mu.Lock()
 	gm.SelectedCommitHash = hash
+	gm.SelectedCommitDiff = ""
+	gm.SelectedCommitFiles = nil
+	gm.LoadingCommitDiff = true
 	for _, cm := range gm.Commits {
 		if cm.Hash == hash {
 			gm.SelectedCommitMessage = cm.Message
@@ -287,6 +393,7 @@ func (gm *GitManager) SelectCommit(hash string) {
 		}
 	}
 	gm.mu.Unlock()
+	gm.redraw()
 	go func() {
 		diff := gm.engine.GetCommitDiff(gm.RootDir, hash)
 		files := splitCommitDiff(diff)
@@ -294,11 +401,10 @@ func (gm *GitManager) SelectCommit(hash string) {
 		if gm.SelectedCommitHash == hash {
 			gm.SelectedCommitDiff = diff
 			gm.SelectedCommitFiles = files
+			gm.LoadingCommitDiff = false
 		}
 		gm.mu.Unlock()
-		if gm.OnNeedRedraw != nil {
-			gm.OnNeedRedraw()
-		}
+		gm.redraw()
 	}()
 }
 
@@ -362,6 +468,8 @@ func (gm *GitManager) Commit(msg string) error {
 		gm.StatusMsg = fmt.Sprintf("Commit error: %v", err)
 	} else {
 		gm.CommitMsg = ""
+		gm.CommitSummary = ""
+		gm.CommitDesc = ""
 		gm.StatusMsg = "Committed successfully"
 	}
 	gm.mu.Unlock()
@@ -421,10 +529,18 @@ func (gm *GitManager) GenerateAICommit(instruction string) {
 		msg, err := gm.engine.GenerateAICommit(ctx, gm.RootDir, instruction)
 		gm.mu.Lock()
 		gm.IsGeneratingAI = false
+		clean := strings.TrimSpace(msg)
 		if err != nil {
 			gm.StatusMsg = fmt.Sprintf("AI Commit error: %v", err)
-		} else if strings.TrimSpace(msg) != "" {
-			gm.CommitMsg = strings.TrimSpace(msg)
+		} else if clean != "" {
+			gm.CommitMsg = clean
+			if nl := strings.IndexByte(clean, '\n'); nl >= 0 {
+				gm.CommitSummary = strings.TrimSpace(clean[:nl])
+				gm.CommitDesc = strings.TrimSpace(clean[nl+1:])
+			} else {
+				gm.CommitSummary = clean
+				gm.CommitDesc = ""
+			}
 			gm.StatusMsg = "AI commit message generated"
 		}
 		gm.mu.Unlock()

@@ -123,7 +123,7 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 	if customProvider {
 		_ = as.engine.AgentMgr.SetDialect(mgrID, "xml")
 	}
-	mode := as.ExecutionMode.PermissionMode()
+	mode := as.ExecutionMode.InternalPermissionMode()
 	if mode != "" {
 		_ = as.engine.AgentMgr.SetPermissionMode(mgrID, mode)
 	}
@@ -133,14 +133,17 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 // TriggerInternalTurn sends a user prompt through the RakitKode agent engine.
 // Streaming events (agent:message_delta, agent:tool_*, agent:turn_end, ...)
 // arrive on the shared bus and are bridged into Handle* by ACPManager.
-func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string) error {
+func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string, attached ...string) error {
 	mgrID, err := as.ensureInternalManagerSession(sess)
 	if err != nil {
 		return err
 	}
 	as.mu.Lock()
 	as.syncInternalSessionState(mgrID, sess)
-	mentions := append([]string(nil), as.AttachedFiles...)
+	mentions := append([]string(nil), attached...)
+	if len(mentions) == 0 && len(as.AttachedFiles) > 0 {
+		mentions = append([]string(nil), as.AttachedFiles...)
+	}
 	as.mu.Unlock()
 
 	if as.engine == nil || as.engine.AgentMgr == nil {
@@ -238,7 +241,9 @@ func (as *AgentState) HandleQuestions(sessionID string, questions []AgentQuestio
 		s.Status = "awaiting-approval"
 		msg := as.ensureStreamingMessage(s)
 		msg.PendingQuestions = questions
-		as.Messages = s.Messages
+		if s.ID == as.ActiveSessionID {
+			as.Messages = s.Messages
+		}
 		break
 	}
 	as.mu.Unlock()
@@ -270,7 +275,6 @@ func (as *AgentState) PendingQuestions(sessionID string) []AgentQuestion {
 // message-local index.
 func (as *AgentState) UpdateQuestion(sessionID string, qIndex int, fn func(q *AgentQuestion)) {
 	as.mu.Lock()
-	defer as.mu.Unlock()
 	for _, s := range as.Sessions {
 		if s.ID != sessionID {
 			continue
@@ -287,6 +291,7 @@ func (as *AgentState) UpdateQuestion(sessionID string, qIndex int, fn func(q *Ag
 		}
 		break
 	}
+	as.mu.Unlock()
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}

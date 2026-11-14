@@ -52,7 +52,18 @@ type WorkspaceState struct {
 	GitDirty     bool
 	FilterQuery  string
 	RemoteFS     *remotefs.Manager
+	Version      uint64          // incremented whenever Files changes
 	loadedDirs   map[string]bool // folders already listed lazily
+}
+
+// SnapshotVersion returns the current monotonic file-index version thread-safely.
+func (ws *WorkspaceState) SnapshotVersion() uint64 {
+	if ws == nil {
+		return 0
+	}
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+	return ws.Version
 }
 
 // NewWorkspaceState creates and initializes a new workspace state for rootDir.
@@ -91,6 +102,7 @@ func (ws *WorkspaceState) Refresh() {
 	// No workspace opened yet — nothing to scan.
 	if ws.RootDir == "" {
 		ws.Files = nil
+		ws.Version++
 		return
 	}
 
@@ -132,6 +144,7 @@ func (ws *WorkspaceState) Refresh() {
 		}
 		walkRemote(ws.RootDir, 0)
 		ws.Files = files
+		ws.Version++
 		return
 	}
 
@@ -198,6 +211,7 @@ func (ws *WorkspaceState) Refresh() {
 	})
 
 	ws.Files = files
+	ws.Version++
 	if ws.SelectedPath == "" && len(files) > 0 {
 		ws.SelectedPath = files[0].RelativePath
 	}
@@ -223,6 +237,10 @@ func binarySuffix(name string) bool {
 // snapshot budget never reached that depth.
 func (ws *WorkspaceState) LoadDir(rel string) {
 	ws.mu.Lock()
+	if ws.RootDir == "" || strings.HasPrefix(ws.RootDir, "ssh://") {
+		ws.mu.Unlock()
+		return
+	}
 	if ws.loadedDirs == nil {
 		ws.loadedDirs = map[string]bool{}
 	}
@@ -250,6 +268,7 @@ func (ws *WorkspaceState) LoadDir(rel string) {
 	for _, f := range ws.Files {
 		known[f.RelativePath] = true
 	}
+	addedAny := false
 	for _, e := range entries {
 		name := e.Name()
 		childRel := name
@@ -262,6 +281,7 @@ func (ws *WorkspaceState) LoadDir(rel string) {
 			}
 			if !known[childRel] {
 				ws.Files = append(ws.Files, WorkspaceFile{RelativePath: childRel, FullPath: filepath.Join(full, name), IsDir: true})
+				addedAny = true
 			}
 			continue
 		}
@@ -276,6 +296,10 @@ func (ws *WorkspaceState) LoadDir(rel string) {
 			size = info.Size()
 		}
 		ws.Files = append(ws.Files, WorkspaceFile{RelativePath: childRel, FullPath: filepath.Join(full, name), Size: size})
+		addedAny = true
+	}
+	if addedAny {
+		ws.Version++
 	}
 	ws.mu.Unlock()
 }
@@ -368,7 +392,7 @@ func (ws *WorkspaceState) DeleteFile(relPath string) error {
 		ws.Refresh()
 		return err
 	}
-	if err := os.Remove(fullPath); err != nil {
+	if err := os.RemoveAll(fullPath); err != nil {
 		return err
 	}
 	ws.Refresh()

@@ -15,40 +15,68 @@ import (
 // right-drawer Files pane. The agent sidebar's Files view and the drawer pane
 // render the same tree, mirroring forge-ade's SidebarFileExplorer.
 
+func (a *AppUI) collapseAllExplorerFolders() {
+	for k := range a.ExpandedFileTreeFolders {
+		a.ExpandedFileTreeFolders[k] = false
+	}
+	for _, n := range a.explorerTreeCached {
+		if n.IsDir {
+			a.ExpandedFileTreeFolders[n.RelativePath] = false
+		}
+	}
+}
+
 // renderExplorerTree renders the hierarchical workspace tree with context
 // menus, shared by the sidebar Files view and the drawer Files pane.
 func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 	// Lazy per-directory loading (webview GetDirectoryTree parity): when an
 	// expanded folder was never listed, read it live before building the
 	// tree so expanding always reveals real children.
-	var ensureLoaded func(nodes []*FileTreeNode)
+	var ensureLoaded func(nodes []*FileTreeNode, depth int) bool
 	if a.Workspace.FilterQuery == "" {
-		ensureLoaded = func(nodes []*FileTreeNode) {
+		ensureLoaded = func(nodes []*FileTreeNode, depth int) bool {
+			loadedAny := false
 			for _, n := range nodes {
 				if !n.IsDir {
 					continue
 				}
-				if a.isFolderExpanded(n.RelativePath, 0) || a.isFolderExpanded(n.RelativePath, 1) {
-					if a.Workspace.NeedsLoad(n.RelativePath) {
+				if a.isFolderExpanded(n.RelativePath, depth) {
+					if len(n.Children) == 0 && a.Workspace.NeedsLoad(n.RelativePath) {
 						a.Workspace.LoadDir(n.RelativePath)
+						loadedAny = true
+					}
+					if ensureLoaded(n.Children, depth+1) {
+						loadedAny = true
 					}
 				}
-				ensureLoaded(n.Children)
 			}
+			return loadedAny
 		}
 	} else {
-		ensureLoaded = func(nodes []*FileTreeNode) {}
+		ensureLoaded = func(nodes []*FileTreeNode, depth int) bool { return false }
 	}
-	filtered := a.Workspace.FilteredFiles()
-	treeNodes := buildFileTree(filtered, a.Workspace.RootDir)
-	for pass := 0; pass < 3; pass++ {
-		before := len(filtered)
-		ensureLoaded(treeNodes)
-		filtered = a.Workspace.FilteredFiles()
+
+	wsVer := a.Workspace.SnapshotVersion()
+	var treeNodes []*FileTreeNode
+	if a.explorerTreeCached != nil &&
+		a.explorerTreeRoot == a.Workspace.RootDir &&
+		a.explorerTreeVersion == wsVer &&
+		a.explorerTreeQuery == a.Workspace.FilterQuery {
+		treeNodes = a.explorerTreeCached
+	} else {
+		filtered := a.Workspace.FilteredFiles()
 		treeNodes = buildFileTree(filtered, a.Workspace.RootDir)
-		if len(filtered) == before {
-			break
+		for pass := 0; pass < 3; pass++ {
+			if !ensureLoaded(treeNodes, 0) {
+				break
+			}
+			filtered = a.Workspace.FilteredFiles()
+			treeNodes = buildFileTree(filtered, a.Workspace.RootDir)
 		}
+		a.explorerTreeRoot = a.Workspace.RootDir
+		a.explorerTreeVersion = a.Workspace.SnapshotVersion()
+		a.explorerTreeQuery = a.Workspace.FilterQuery
+		a.explorerTreeCached = treeNodes
 	}
 
 	ui.Scroll(c).Grow(1).Children(func() {
@@ -92,6 +120,9 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 					}
 					if row.Clicked() {
 						a.ExpandedFileTreeFolders[node.RelativePath] = !isOpen
+						if !isOpen {
+							a.explorerTreeVersion = 0
+						}
 					}
 					a.attachExplorerMenu(c, row, node, tc)
 
@@ -178,8 +209,8 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 // the DB pane, everything else opens in the editor, as forge-ade does.
 func (a *AppUI) openExplorerNode(node *FileTreeNode) {
 	a.SelectedFile = node.RelativePath
-	ext := filepath.Ext(node.RelativePath)
-	if ext == ".sqlite" || ext == ".db" || ext == ".duckdb" {
+	ext := strings.ToLower(filepath.Ext(node.RelativePath))
+	if ext == ".sqlite" || ext == ".sqlite3" || ext == ".db" || ext == ".db3" || ext == ".duckdb" {
 		if a.Database != nil {
 			a.Database.Inspect(node.FullPath)
 			a.EditorActivity = ActivityDatabase
@@ -255,8 +286,7 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 					dir = filepath.Dir(dir)
 				}
 				a.ShowBottomTerminal = true
-				a.Terminal.Cwd = dir
-				_ = a.Terminal.Restart()
+				_ = a.Terminal.ResetShell(dir)
 			}
 			m.Separator()
 		}
@@ -312,7 +342,8 @@ func (a *AppUI) renderRenameFileModal(c *ui.Context) {
 						a.ShowRenameFileModal = false
 						return
 					}
-					oldDoc := a.Editor.GetDoc(a.Workspace.ResolveFullPath(a.RenameFileOldPath))
+					oldFull := a.Workspace.ResolveFullPath(a.RenameFileOldPath)
+					oldDoc := a.Editor.GetDoc(oldFull)
 					if err := a.Workspace.RenameFile(a.RenameFileOldPath, a.RenameFilePath); err != nil {
 						c.AddToast(ui.Toast{Title: "Rename Failed", Description: err.Error(), Type: "error"})
 						a.ShowRenameFileModal = false
@@ -320,9 +351,8 @@ func (a *AppUI) renderRenameFileModal(c *ui.Context) {
 					}
 					// Keep the editor tab following the file, as forge-ade does.
 					if oldDoc != nil {
-						fullPath := a.Workspace.ResolveFullPath(a.RenameFilePath)
-						_, _ = a.Editor.OpenFile(fullPath, a.RenameFilePath)
-						a.Editor.CloseTab(a.Workspace.ResolveFullPath(a.RenameFileOldPath))
+						newFull := a.Workspace.ResolveFullPath(a.RenameFilePath)
+						a.Editor.RenameOpenTab(oldFull, newFull, a.RenameFilePath)
 						a.SelectedFile = a.RenameFilePath
 					}
 					if a.Git != nil {
@@ -374,9 +404,7 @@ func (a *AppUI) renderFilesPane(c *ui.Context) {
 			}
 		}
 		if IconButton(c, tc, icons.TablerChevronDown, 12).Clicked() {
-			for k := range a.ExpandedFileTreeFolders {
-				a.ExpandedFileTreeFolders[k] = false
-			}
+			a.collapseAllExplorerFolders()
 		}
 	})
 

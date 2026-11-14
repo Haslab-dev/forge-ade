@@ -68,6 +68,13 @@ func (a *AppUI) openInlineAI() {
 	}
 }
 
+func (a *AppUI) cancelInlineAI() {
+	if a.InlineAICancel != nil {
+		close(a.InlineAICancel)
+		a.InlineAICancel = nil
+	}
+}
+
 // renderInlineAiBar draws the floating bar; call inside the editor pane
 // container so it overlays the buffer.
 func (a *AppUI) renderInlineAiBar(c *ui.Context, tc theme.ThemeColors) {
@@ -90,6 +97,7 @@ func (a *AppUI) renderInlineAiBar(c *ui.Context, tc theme.ThemeColors) {
 			ui.Text(c, title).FontSize(12).FontWeight(600).Grow(1)
 			ui.Text(c, ia.RelPath).FontSize(10).TextColor(tc.TextMuted)
 			if IconButton(c, tc, icons.TablerX, 12).Clicked() {
+				a.cancelInlineAI()
 				ia.Close()
 			}
 		})
@@ -102,9 +110,7 @@ func (a *AppUI) renderInlineAiBar(c *ui.Context, tc theme.ThemeColors) {
 				ui.Box(c).Grow(1)
 				stop := composerControlChip(c, tc, icons.TablerSquare, "Stop", "", true)
 				if stop.Clicked() {
-					if a.InlineAICancel != nil {
-						close(a.InlineAICancel)
-					}
+					a.cancelInlineAI()
 				}
 			})
 		}
@@ -179,9 +185,7 @@ func (a *AppUI) startInlineAIGenerate() {
 		return
 	}
 	// Close any previous cancel channel and open a fresh one.
-	if a.InlineAICancel != nil {
-		close(a.InlineAICancel)
-	}
+	a.cancelInlineAI()
 	cancelCh := make(chan struct{})
 	a.InlineAICancel = cancelCh
 
@@ -256,14 +260,29 @@ func (a *AppUI) openSidePreviewFile(c *ui.Context, relPath string) {
 }
 
 // renderSideFilePreviewBody renders the special preview modes of the side
-// file pane: images via ui.Image and markdown via the themed renderer.
+// file pane: images via ui.Image and markdown via the themed renderer,
+// caching file reads and image decoding by (fullPath, modTime).
 func (a *AppUI) renderSideFilePreviewBody(c *ui.Context, tc theme.ThemeColors, fallback func()) {
 	if a.SideFilePreviewImage != "" {
 		full := a.Workspace.ResolveFullPath(a.SideFilePreviewImage)
-		if data, err := os.ReadFile(full); err == nil {
-			if src, derr := ui.DecodeImage(data); derr == nil {
+		if info, err := os.Stat(full); err == nil {
+			mod := info.ModTime().UnixNano()
+			if a.sidePreviewImgPath != full || a.sidePreviewImgMod != mod || a.sidePreviewImgSrc == nil {
+				if data, rerr := os.ReadFile(full); rerr == nil {
+					if src, derr := ui.DecodeImage(data); derr == nil {
+						a.sidePreviewImgPath = full
+						a.sidePreviewImgMod = mod
+						a.sidePreviewImgSrc = src
+					} else {
+						a.sidePreviewImgSrc = nil
+					}
+				} else {
+					a.sidePreviewImgSrc = nil
+				}
+			}
+			if a.sidePreviewImgSrc != nil {
 				ui.Box(c).Grow(1).Center().Children(func() {
-					ui.Image(c, src).MaxWidth(420)
+					ui.Image(c, a.sidePreviewImgSrc).MaxWidth(420)
 				})
 				return
 			}
@@ -273,14 +292,25 @@ func (a *AppUI) renderSideFilePreviewBody(c *ui.Context, tc theme.ThemeColors, f
 	}
 	if a.SideFilePreviewMd != "" {
 		full := a.Workspace.ResolveFullPath(a.SideFilePreviewMd)
-		if data, err := os.ReadFile(full); err == nil {
-			scroll := ui.Scroll(c)
-			scroll.Children(func() {
-				ui.Column(c).Padding(14).Children(func() {
-					markdown.View(c, string(data), &a.Agent.MdOpts)
-				})
-			}).Grow(1)
-			return
+		if info, err := os.Stat(full); err == nil {
+			mod := info.ModTime().UnixNano()
+			if a.sidePreviewMdPath != full || a.sidePreviewMdMod != mod {
+				if data, rerr := os.ReadFile(full); rerr == nil {
+					a.sidePreviewMdPath = full
+					a.sidePreviewMdMod = mod
+					a.sidePreviewMdText = string(data)
+				}
+			}
+			if a.sidePreviewMdPath == full {
+				scroll := ui.Scroll(c)
+				scroll.Children(func() {
+					ui.Column(c).Padding(14).Children(func() {
+						a.Agent.MdOpts.Theme = a.ThemeMgr.MarkdownTheme()
+						markdown.View(c, a.sidePreviewMdText, &a.Agent.MdOpts)
+					})
+				}).Grow(1)
+				return
+			}
 		}
 		fallback()
 		return

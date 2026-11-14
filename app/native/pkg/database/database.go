@@ -53,11 +53,30 @@ func (dm *DatabaseManager) ScanDatabases() {
 	}
 	dm.Databases = dbs
 
+	// Reset active DB state if switching workspaces or active DB disappeared.
+	stillPresent := false
+	for _, p := range dbs {
+		if p == dm.ActiveDBPath {
+			stillPresent = true
+			break
+		}
+	}
+	if !stillPresent {
+		dm.ActiveDBPath = ""
+		dm.Info = nil
+		dm.ActiveTable = ""
+		dm.QueryResult = nil
+	}
+
 	// Auto-open first discovered database
 	if len(dbs) > 0 && dm.ActiveDBPath == "" {
 		dm.ActiveDBPath = dbs[0]
 		go dm.Inspect(dbs[0])
 	}
+}
+
+func quoteSQLIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // Inspect loads database metadata, tables, and column schemas.
@@ -91,7 +110,7 @@ func (dm *DatabaseManager) Inspect(path string) {
 	if len(info.Tables) > 0 {
 		firstTable := info.Tables[0].Name
 		dm.ActiveTable = firstTable
-		dm.SQLQuery = fmt.Sprintf("SELECT * FROM %s LIMIT 25;", firstTable)
+		dm.SQLQuery = fmt.Sprintf("SELECT * FROM %s LIMIT 25;", quoteSQLIdent(firstTable))
 		go dm.ExecuteQuery()
 	} else if dm.OnNeedRedraw != nil {
 		dm.OnNeedRedraw()
@@ -102,7 +121,7 @@ func (dm *DatabaseManager) Inspect(path string) {
 func (dm *DatabaseManager) SelectTable(tableName string) {
 	dm.mu.Lock()
 	dm.ActiveTable = tableName
-	dm.SQLQuery = fmt.Sprintf("SELECT * FROM %s LIMIT 25;", tableName)
+	dm.SQLQuery = fmt.Sprintf("SELECT * FROM %s LIMIT 25;", quoteSQLIdent(tableName))
 	dm.mu.Unlock()
 
 	go dm.ExecuteQuery()
@@ -142,6 +161,9 @@ func (dm *DatabaseManager) ExecuteQuery() {
 	if err != nil {
 		dm.StatusMsg = fmt.Sprintf("Query error: %v (%d ms)", err, elapsed)
 		dm.QueryResult = nil
+	} else if res != nil && res.Error != "" {
+		dm.StatusMsg = fmt.Sprintf("Query error: %s", res.Error)
+		dm.QueryResult = res
 	} else {
 		dm.QueryResult = res
 		dm.StatusMsg = fmt.Sprintf("%d rows returned in %d ms", len(res.Rows), res.ExecutionMs)

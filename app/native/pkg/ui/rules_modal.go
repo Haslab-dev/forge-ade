@@ -24,11 +24,32 @@ var supportedRuleFiles = []string{
 	".github/copilot-instructions.md",
 }
 
+func (a *AppUI) refreshRulesCache() {
+	root := ""
+	if a.Workspace != nil {
+		root = a.Workspace.RootDir
+	}
+	cache := make(map[string]StandardRuleFile, len(supportedRuleFiles))
+	for _, rf := range supportedRuleFiles {
+		info := StandardRuleFile{Path: rf}
+		if root != "" {
+			if fi, err := os.Stat(filepath.Join(root, rf)); err == nil && !fi.IsDir() {
+				info.Exists = true
+				info.Size = fi.Size()
+			}
+		}
+		cache[rf] = info
+	}
+	a.RuleFilesRoot = root
+	a.RuleFilesCache = cache
+}
+
 // OpenRulesModal initializes the rules list and opens the Unified Rules Manager.
 func (a *AppUI) OpenRulesModal() {
 	if a.SelectedRulePath == "" {
 		a.SelectedRulePath = "AGENTS.md"
 	}
+	a.refreshRulesCache()
 	a.loadSelectedRuleContent()
 	a.ShowRulesModal = true
 }
@@ -55,6 +76,7 @@ func (a *AppUI) SaveActiveRule(c *ui.Context) {
 	if err != nil {
 		c.AddToast(ui.Toast{Title: "Failed to Save", Description: err.Error(), Type: "error"})
 	} else {
+		a.refreshRulesCache()
 		c.AddToast(ui.Toast{Title: "Saved Rule", Description: fmt.Sprintf("Successfully saved %s", a.SelectedRulePath), Type: "success"})
 		a.Workspace.Refresh()
 	}
@@ -78,6 +100,7 @@ func (a *AppUI) SyncRuleStandard(c *ui.Context, src, dst string) {
 	if a.SelectedRulePath == dst {
 		a.RuleEditorContent = string(data)
 	}
+	a.refreshRulesCache()
 	c.AddToast(ui.Toast{Title: "Synced Standard", Description: fmt.Sprintf("Copied %s ➔ %s", src, dst), Type: "success"})
 	a.Workspace.Refresh()
 }
@@ -129,11 +152,12 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 					BorderWidth(0, 1, 0, 0).BorderColor(tc.Border.Alpha(0.6)).Padding(12).Gap(10).Children(func() {
 					ui.Text(c, "DETECTED STANDARDS").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
 
+					if a.RuleFilesCache == nil || a.RuleFilesRoot != a.Workspace.RootDir {
+						a.refreshRulesCache()
+					}
 					for _, rf := range supportedRuleFiles {
 						thisFile := rf
-						fullP := filepath.Join(a.Workspace.RootDir, thisFile)
-						fi, err := os.Stat(fullP)
-						exists := err == nil && !fi.IsDir()
+						exists := a.RuleFilesCache[thisFile].Exists
 						isSel := a.SelectedRulePath == thisFile
 
 						item := ui.Row(c.Key("rule-"+thisFile)).Height(34).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center)
@@ -203,8 +227,8 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 							AlignItems(ui.Center).Justify(ui.Center).
 							Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
 						saveBtn.Children(func() {
-							ui.Icon(c, icons.TablerDeviceFloppy).Width(12).Height(12).TextColor(ui.RGBA(255, 255, 255, 1.0))
-							ui.Text(c, "Save Rule").FontSize(11).FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1.0))
+							ui.Icon(c, icons.TablerDeviceFloppy).Width(12).Height(12).TextColor(tc.AccentForeground)
+							ui.Text(c, "Save Rule").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 						})
 						if saveBtn.Hovered() {
 							saveBtn.Background(tc.Accent.Alpha(0.85))

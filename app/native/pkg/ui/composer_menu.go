@@ -153,6 +153,11 @@ func (a *AppUI) mentionMatches(query string) []composerSuggestion {
 	if a.Workspace == nil {
 		return nil
 	}
+	ver := a.Workspace.SnapshotVersion()
+	root := a.Workspace.RootDir
+	if a.mentionMatchCached != nil && a.mentionQueryCached == query && a.mentionMatchVersion == ver && a.mentionMatchRoot == root {
+		return a.mentionMatchCached
+	}
 	files := a.Workspace.FilteredFiles()
 	type scored struct {
 		path  string
@@ -181,6 +186,10 @@ func (a *AppUI) mentionMatches(query string) []composerSuggestion {
 			Insert:   "@" + m.path + " ",
 		})
 	}
+	a.mentionQueryCached = query
+	a.mentionMatchVersion = ver
+	a.mentionMatchRoot = root
+	a.mentionMatchCached = out
 	return out
 }
 
@@ -272,10 +281,7 @@ func (a *AppUI) composerMentionState(as *agent.AgentState) ([]composerSuggestion
 func (a *AppUI) applyComposerSuggestion(item composerSuggestion) {
 	switch item.Name {
 	case "/settings", "/setup":
-		a.Mode = ModeSettings
-		if a.Settings != nil {
-			a.Settings.IsOpen = true
-		}
+		a.openSettings()
 		a.Agent.InputText = ""
 		a.SlashDismissedAt = ""
 		a.MentionDismissedAt = ""
@@ -327,7 +333,15 @@ func (a *AppUI) applyComposerSuggestion(item composerSuggestion) {
 	if insert == "" {
 		insert = item.Name + " "
 	}
-	a.Agent.InputText = insert
+	if item.Category == "file" || strings.HasPrefix(insert, "@") {
+		if at := strings.LastIndex(a.Agent.InputText, "@"); at >= 0 {
+			a.Agent.InputText = a.Agent.InputText[:at] + insert
+		} else {
+			a.Agent.InputText += insert
+		}
+	} else {
+		a.Agent.InputText = insert
+	}
 	a.SlashDismissedAt = ""
 	a.MentionDismissedAt = ""
 	if a.Window != nil {

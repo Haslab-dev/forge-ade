@@ -86,6 +86,57 @@ func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
 	return inset, inset
 }
 
+// shortModelLabel formats a concise model name for headers and chips.
+func shortModelLabel(model string) string {
+	if model == "" {
+		return "Select Model"
+	}
+	if idx := strings.Index(model, " ("); idx != -1 {
+		model = model[:idx]
+	}
+	if len(model) > 24 {
+		return model[:22] + "…"
+	}
+	return model
+}
+
+// openFileInEditor opens path (relative or absolute) in Editor Mode.
+func (a *AppUI) openFileInEditor(path string) {
+	if path == "" || a.Editor == nil {
+		return
+	}
+	root := ""
+	if a.Workspace != nil {
+		root = a.Workspace.RootDir
+	}
+	fullPath := path
+	relPath := path
+	if filepath.IsAbs(path) {
+		if root != "" {
+			if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
+				relPath = rel
+			}
+		}
+	} else if root != "" {
+		fullPath = filepath.Join(root, path)
+	}
+	_, _ = a.Editor.OpenFile(fullPath, relPath)
+	a.Mode = ModeEditor
+	a.IsGitClientOpen = false
+}
+
+// missionControlPill renders an interactive status pill in the Agent Mission Control header.
+func missionControlPill(c *ui.Context, key string, tint ui.Color, content func()) ui.Element {
+	row := ui.Row(c.Key(key)).Height(24).Radius(999).Padding(0, 8).Gap(5).
+		AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Background(tint.Alpha(0.1)).BorderWidth(1).BorderColor(tint.Alpha(0.28))
+	row.Children(content)
+	if row.Hovered() {
+		row.Background(tint.Alpha(0.18))
+	}
+	return row
+}
+
 // renderAgentChat renders the active conversation view, message bubbles, task checklist, and prompt composer.
 func (a *AppUI) renderAgentChat(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
@@ -115,7 +166,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 		}
 		return i
 	}
-	as.ListState.FollowEnd = true
+	if a.LastFollowSessionID != as.ActiveSessionID {
+		a.LastFollowSessionID = as.ActiveSessionID
+		as.ListState.FollowEnd = true
+	}
 	as.ListState.FollowAnimation = &ui.Smooth
 
 	leftInset, _ := a.chatLaneInset(c)
@@ -125,43 +179,92 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	// any overflow: nothing may paint over the workspace header.
 	ui.Box(c).Fill().Clip().Children(func() {
 		ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
-			// Session header: title, status pill, model, Fork
-			ui.Row(c).Height(44).Gap(10).Padding(0, leftInset+8, 0, leftInset+8).AlignItems(ui.Center).
+			// Agent Mission Control bar: title, status, model picker, tasks, subagents, changes, find, fork
+			ui.Row(c).Height(44).Gap(8).Padding(0, leftInset+8, 0, leftInset+8).AlignItems(ui.Center).
 				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-				ui.Text(c, sessionTitle).FontSize(13).FontWeight(600).MaxWidth(380)
+				// Left cluster: session title + live status pill
+				ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Clip().Children(func() {
+					ui.Text(c, sessionTitle).FontSize(13).FontWeight(600).MaxWidth(280).MinWidth(0).SingleLine()
 
-				// Status pill
-				pill := func(label string, color ui.Color) {
-					p := ui.Row(c).Radius(999).Padding(2, 8).Gap(4).AlignItems(ui.Center).
-						Background(color.Alpha(0.1)).BorderWidth(1).BorderColor(color.Alpha(0.25))
-					p.Children(func() {
-						ui.Box(c).Size(6, 6).Radius(3).Background(color)
-						ui.Text(c, label).FontSize(11).TextColor(color)
-					})
-				}
-				switch sess.Status {
-				case "running":
-					runningPill := ui.Row(c).Radius(999).Padding(2, 8).Gap(5).AlignItems(ui.Center).
-						Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
-					runningPill.Children(func() {
-						ui.Spinner(c).Size(10, 10).Label("Running")
-						ui.Text(c, "Running").FontSize(11).TextColor(tc.Accent)
-					})
-				case "awaiting-approval", "waiting_permission":
-					pill("Waiting for approval", tc.Warning)
-				case "error":
-					pill("Error", tc.Error)
-				case "completed":
-					pill("Completed", tc.Success)
-				default:
-					pill("Idle", tc.SidebarMutedForeground)
+					pill := func(label string, color ui.Color) {
+						p := ui.Row(c).Radius(999).Padding(2, 8).Gap(4).AlignItems(ui.Center).Shrink(0).
+							Background(color.Alpha(0.1)).BorderWidth(1).BorderColor(color.Alpha(0.25))
+						p.Children(func() {
+							ui.Box(c).Size(6, 6).Radius(3).Background(color)
+							ui.Text(c, label).FontSize(11).TextColor(color).SingleLine()
+						})
+					}
+					switch sess.Status {
+					case "running":
+						runningPill := ui.Row(c).Radius(999).Padding(2, 8).Gap(5).AlignItems(ui.Center).Shrink(0).
+							Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
+						runningPill.Children(func() {
+							ui.Spinner(c).Size(10, 10).Label("Running")
+							ui.Text(c, "Running").FontSize(11).TextColor(tc.Accent).SingleLine()
+						})
+					case "awaiting-approval", "waiting_permission":
+						pill("Waiting for approval", tc.Warning)
+					case "error":
+						pill("Error", tc.Error)
+					case "completed":
+						pill("Completed", tc.Success)
+					default:
+						pill("Idle", tc.SidebarMutedForeground)
+					}
+				})
+
+				// Mission Control telemetry & actions
+				if sess != nil && sess.Tasks != nil {
+					if done, total := sess.Tasks.Progress(); total > 0 {
+						tint := tc.Accent
+						if done == total {
+							tint = tc.Success
+						}
+						taskPill := missionControlPill(c, "mc-tasks", tint, func() {
+							ui.Icon(c, icons.TablerCircleCheck).Width(12).Height(12).TextColor(tint)
+							ui.Text(c, fmt.Sprintf("%d/%d tasks", done, total)).FontSize(11).FontWeight(500).TextColor(tint).SingleLine()
+						})
+						if taskPill.Clicked() {
+							sess.Tasks.ToggleExpanded()
+						}
+					}
 				}
 
-				ui.Box(c).Grow(1)
-				ui.Text(c, as.ActiveModel).FontSize(11).TextColor(tc.TextMuted)
-				if as.IsStreaming {
-					ui.Text(c, "Streaming…").FontSize(11).TextColor(tc.Accent)
+				if sess != nil {
+					if subs := as.Subagents(sess.ID); len(subs) > 0 {
+						subPill := missionControlPill(c, "mc-subagents", tc.Accent, func() {
+							ui.Icon(c, icons.TablerBot).Width(12).Height(12).TextColor(tc.Accent)
+							ui.Text(c, fmt.Sprintf("%d Agents", len(subs))).FontSize(11).FontWeight(500).TextColor(tc.Accent).SingleLine()
+						})
+						if subPill.Clicked() {
+							a.ShowRightDrawer = true
+							a.RightDrawerTab = RightTabSubagent
+						}
+					}
 				}
+
+				if dirtyFiles, totalAdd, totalDel := a.gitDirtySummary(); dirtyFiles > 0 {
+					diffPill := ui.Row(c.Key("mc-changes")).Height(24).Radius(999).Padding(0, 8).Gap(5).
+						AlignItems(ui.Center).Cursor(ui.CursorPointer).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					diffPill.Children(func() {
+						ui.Icon(c, icons.TablerFileDiff).Width(12).Height(12).TextColor(tc.TextMuted)
+						ui.Text(c, fmt.Sprintf("%d changed", dirtyFiles)).FontSize(11).FontWeight(500).SingleLine()
+						DiffStatText(c, tc, totalAdd, totalDel)
+					})
+					if diffPill.Hovered() {
+						diffPill.Background(tc.Text.Alpha(0.06))
+					}
+					if diffPill.Clicked() {
+						a.ShowRightDrawer = true
+						a.RightDrawerTab = RightTabChanges
+					}
+				}
+
+				if ToggleIconButton(c, tc, icons.TablerSearch, 14, a.ShowThreadFind).Clicked() {
+					a.ShowThreadFind = !a.ShowThreadFind
+				}
+
 				fork := composerControlChip(c, tc, icons.TablerGitFork, "Fork", "", false)
 				if fork.Clicked() && sess != nil {
 					forked := as.ForkSession(sess)
@@ -304,9 +407,21 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 											cpBtn.Background(tc.Text.Alpha(0.06))
 										}
 										if cpBtn.Clicked() {
-											if err := as.RestoreLastTurnCheckpoint(sess.ID); err == nil {
-												c.AddToast(ui.Toast{Title: "Checkpoint Restored", Type: "success"})
-											}
+											sid := sess.ID
+											go func() {
+												err := as.RestoreLastTurnCheckpoint(sid)
+												if a.Git != nil {
+													a.Git.Refresh()
+												}
+												if err == nil {
+													c.AddToast(ui.Toast{Title: "Checkpoint Restored", Type: "success"})
+												} else {
+													c.AddToast(ui.Toast{Title: "Restore Failed", Description: err.Error(), Type: "error"})
+												}
+												if a.Window != nil {
+													a.Window.Invalidate()
+												}
+											}()
 										}
 									}
 								})
@@ -316,7 +431,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
 							if hasWork {
 								a.renderWorkPill(c, tc, m)
-								open := m.ShowTools || (!m.Done && m.IsThinking)
+								open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
 								if open {
 									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
 										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
@@ -674,6 +789,13 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				} else if isRead {
 					badge = "Read"
 					displayLabel = args.Path
+				} else if isSearch {
+					badge = "Search"
+					if args.Query != "" {
+						displayLabel = args.Query
+					} else if args.Path != "" {
+						displayLabel = args.Path
+					}
 				} else if isBash {
 					badge = "$"
 					if cmd := extractShellCommand(thisTool.Command, args.Cmd); cmd != "" {
@@ -772,6 +894,21 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 								a.renderToolReadBlock(c, tc, args.Path, cleanOut)
 							case isEdit && (args.OldString != "" || args.NewString != ""):
 								a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
+							case isEdit && args.Content != "" && args.Path != "":
+								a.renderToolReadBlock(c, tc, args.Path, args.Content)
+							case isSearch && cleanOut != "":
+								ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+									ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.Accent)
+									searchLbl := args.Query
+									if searchLbl == "" {
+										searchLbl = thisTool.Command
+									}
+									if args.Path != "" && args.Query != "" {
+										searchLbl = fmt.Sprintf("%s  (%s)", args.Query, args.Path)
+									}
+									ui.Text(c, searchLbl).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+								})
+								renderToolOutputBox(c, tc, cleanOut, failed)
 							case strings.Contains(cleanOut, "@@ -") && (strings.Contains(cleanOut, "+++") || strings.Contains(cleanOut, "---")):
 								// Unified patch output: parse into MyGo DiffView
 								d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, cleanOut, a.ThemeMgr)
@@ -852,6 +989,17 @@ func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, o
 				}
 				a.openSideFile(rel)
 			}
+			editBtn := ui.Row(c.Key("read-editor")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			editBtn.Children(func() {
+				ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.TextMuted)
+				ui.Text(c, "Open in Editor").FontSize(11).TextColor(tc.TextMuted)
+			})
+			if editBtn.Hovered() {
+				editBtn.Background(tc.Text.Alpha(0.05))
+			}
+			if editBtn.Clicked() {
+				a.openFileInEditor(path)
+			}
 			copyBtn := ui.Row(c.Key("read-copy")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center)
 			copyBtn.Children(func() {
 				ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.TextMuted)
@@ -927,8 +1075,23 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 			if totalDel > 0 {
 				ui.Text(c, fmt.Sprintf("−%d", totalDel)).FontSize(11).TextColor(tc.DiffDeletionForeground)
 			}
-			// Multi-file review bar: accept dismisses, reject restores the
-			// pre-turn checkpoint (RestoreSessionCheckpoint parity).
+			// Multi-file review bar: Review Diffs drawer shortcut plus Accept/Revert checkpoint.
+			reviewBtn := ui.Row(c.Key("tchg-review")).Height(22).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8))
+			reviewBtn.Children(func() {
+				ui.Icon(c, icons.TablerFileDiff).Width(11).Height(11).TextColor(tc.TextMuted)
+				ui.Text(c, "Review Diffs").FontSize(10).FontWeight(500)
+			})
+			if reviewBtn.Hovered() {
+				reviewBtn.Background(tc.Text.Alpha(0.06))
+			}
+			if reviewBtn.Clicked() {
+				if a.SelectedDiffPath == "" && len(m.Changes) > 0 && m.Changes[0] != nil {
+					a.SelectedDiffPath = m.Changes[0].Path
+				}
+				a.ShowRightDrawer = true
+				a.RightDrawerTab = RightTabChanges
+			}
 			if m.Done {
 				acceptBtn := ui.Row(c.Key("tchg-accept")).Height(22).Radius(6).Padding(0, 8).AlignItems(ui.Center).
 					Background(tc.Success.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
@@ -944,11 +1107,19 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 					ui.Text(c, "Revert all").FontSize(10).FontWeight(600).TextColor(tc.Error)
 				})
 				if rejectBtn.Clicked() {
+					changes := append([]*agent.FileChange(nil), m.Changes...)
 					m.Changes = nil
 					session := as.ActiveSessionID
 					go func() {
-						if rerr := as.RestoreLastTurnCheckpoint(session); rerr != nil {
-							// No checkpoint recorded (e.g. ACP turn); git discard fallback.
+						if rerr := as.RestoreLastTurnCheckpoint(session); rerr != nil && a.Git != nil {
+							for _, ch := range changes {
+								if ch != nil && ch.Path != "" {
+									a.Git.Discard(ch.Path)
+								}
+							}
+						}
+						if a.Git != nil {
+							a.Git.Refresh()
 						}
 						if a.Window != nil {
 							a.Window.Invalidate()
@@ -960,12 +1131,25 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 		ui.Column(c).Padding(8).Gap(4).Children(func() {
 			for _, ch := range m.Changes {
 				chPath := ch.Path
+				edited := false
 				chRow := ui.Row(c.Key("tchg-"+chPath)).Radius(6).Padding(6, 10).Gap(6).AlignItems(ui.Center)
 				chRow.Children(func() {
 					ui.Icon(c, icons.FileIconSVG(chPath)).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, chPath).FontSize(12).Grow(1)
+					ui.Text(c, chPath).FontSize(12).Grow(1).MinWidth(0).SingleLine()
 					if ch.Additions >= 0 {
 						DiffStatText(c, tc, ch.Additions, ch.Deletions)
+					}
+					editBtn := ui.Row(c.Key("tchg-edit-"+chPath)).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					editBtn.Children(func() {
+						ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.TextMuted)
+						ui.Text(c, "Edit").FontSize(10).TextColor(tc.TextMuted)
+					})
+					if editBtn.Hovered() {
+						editBtn.Background(tc.Text.Alpha(0.08))
+					}
+					if editBtn.Clicked() {
+						edited = true
+						a.openFileInEditor(chPath)
 					}
 					// Open the file's working-tree diff (Review Diff parity).
 					ui.Icon(c, icons.TablerFileDiff).Width(13).Height(13).TextColor(tc.TextMuted)
@@ -973,7 +1157,7 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 				if chRow.Hovered() {
 					chRow.Background(tc.Text.Alpha(0.05))
 				}
-				if chRow.Clicked() {
+				if !edited && chRow.Clicked() {
 					a.SelectedDiffPath = chPath
 					a.ShowRightDrawer = true
 					a.RightDrawerTab = RightTabChanges
@@ -997,6 +1181,21 @@ func (a *AppUI) respondApproval(sessionID, requestID string, approve, autoApprov
 	}
 }
 
+// resolvePendingApproval resolves a message's PendingApproval state once and
+// forwards the decision to the active agent harness.
+func (a *AppUI) resolvePendingApproval(msg *agent.ChatMessage, approve, autoApproveAll bool) {
+	if msg == nil || msg.PendingApproval == nil || msg.PendingApproval.Resolved {
+		return
+	}
+	appr := msg.PendingApproval
+	appr.Resolved = true
+	appr.Approved = approve
+	if approve && autoApproveAll && a.Agent != nil {
+		a.Agent.ExecutionMode = agent.ModeBypass
+	}
+	a.respondApproval(appr.SessionID, appr.ToolCallID, approve, autoApproveAll)
+}
+
 func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
 	appr := m.PendingApproval
 	if appr == nil {
@@ -1017,27 +1216,18 @@ func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.
 			allow := chipRow(c, tc)
 			allow.Background(tc.Warning).Radius(6).Height(26)
 			allow.Children(func() {
-				ui.Text(c, "Approve").FontSize(12).FontWeight(500)
+				ui.Text(c, "Approve").FontSize(12).FontWeight(500).TextColor(tc.AccentForeground)
 			})
 			if allow.Clicked() {
-				appr.Resolved = true
-				appr.Approved = true
-				a.respondApproval(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, true, false)
+				a.resolvePendingApproval(m, true, false)
 			}
 			always := composerControlChip(c, tc, icons.TablerShieldCheck, "Always Allow", "", false)
 			if always.Clicked() {
-				appr.Resolved = true
-				appr.Approved = true
-				if a.Agent != nil {
-					a.Agent.ExecutionMode = agent.ModeBypass
-				}
-				a.respondApproval(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, true, true)
+				a.resolvePendingApproval(m, true, true)
 			}
 			deny := composerControlChip(c, tc, icons.TablerX, "Deny", "", true)
 			if deny.Clicked() {
-				appr.Resolved = true
-				appr.Approved = false
-				a.respondApproval(m.PendingApproval.SessionID, m.PendingApproval.ToolCallID, false, false)
+				a.resolvePendingApproval(m, false, false)
 			}
 		})
 	})
@@ -1077,9 +1267,9 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 							as.Lock()
 							if thisIdx < len(as.SteerQueue) {
 								as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
-								as.SaveSteerQueues()
 							}
 							as.Unlock()
+							as.SaveSteerQueues()
 							if as.Invalidate != nil {
 								as.Invalidate()
 							}
@@ -1091,8 +1281,14 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 					ui.Icon(c, icons.TablerPencil).Width(13).Height(13).TextColor(tc.TextMuted)
 				})
 				if edit.Clicked() {
-					as.InputText = thisItem
-					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					as.Lock()
+					if thisIdx < len(as.SteerQueue) {
+						as.InputText = as.SteerQueue[thisIdx]
+						as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					} else {
+						as.InputText = thisItem
+					}
+					as.Unlock()
 					as.SaveSteerQueues()
 				}
 				del := ui.Row(c.Key("steer-del")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
@@ -1103,7 +1299,11 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 					del.Background(tc.Error.Alpha(0.12))
 				}
 				if del.Clicked() {
-					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					as.Lock()
+					if thisIdx < len(as.SteerQueue) {
+						as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					}
+					as.Unlock()
 					as.SaveSteerQueues()
 				}
 			})
@@ -1241,20 +1441,24 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						return true
 					}
 				}
-				// Alt+S: stash the current prompt + clear (promptStashStore).
+				// Alt+S: stash non-empty prompt; otherwise open Terminal Snippets modal.
 				if k.Key == ui.KeyS && k.Mods&ui.Alt != 0 {
-					if txt := strings.TrimSpace(as.InputText); txt != "" {
+					if strings.TrimSpace(as.InputText) != "" {
 						as.StashPrompt()
-						as.SavePromptStash()
-						as.InputText = ""
 						c.AddToast(ui.Toast{Title: "Prompt Stashed", Description: "Alt+S restores via the stash chip", Type: "info"})
+					} else {
+						sessID := ""
+						if a.Terminal != nil {
+							sessID = a.Terminal.ActiveSessionID
+						}
+						a.OpenTerminalSnippetsModal(sessID, "", "")
 					}
 					return true
 				}
-				// Prompt history: up/down while the composer is single-line
-				// and no autocomplete menu is active (promptHistoryStore).
+				// Prompt history: up/down while the composer is empty on a single line
+				// or already browsing history (promptHistoryStore).
 				if k.Key == ui.KeyUp || k.Key == ui.KeyDown {
-					if !strings.Contains(as.InputText, "\n") && strings.TrimSpace(as.InputText) != "" || (k.Key == ui.KeyDown && as.PromptHistoryIdx != -1) {
+					if !strings.Contains(as.InputText, "\n") && (strings.TrimSpace(as.InputText) == "" || as.PromptHistoryIdx != -1) {
 						delta := -1
 						if k.Key == ui.KeyDown {
 							delta = 1
@@ -1268,36 +1472,11 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				}
 				if k.Key == ui.KeyEnter && k.Mods == 0 {
 					trimmed := strings.TrimSpace(as.InputText)
-					if trimmed == "/usage" {
-						a.openUsageModal()
-						as.InputText = ""
+					if a.tryHandleSlashCommand(trimmed) {
 						k.SetText("")
 						return true
 					}
-					if trimmed == "/settings" || trimmed == "/setup" {
-						a.Mode = ModeSettings
-						if a.Settings != nil {
-							a.Settings.IsOpen = true
-						}
-						as.InputText = ""
-						k.SetText("")
-						return true
-					}
-					if trimmed == "/model" {
-						a.ShowModelPalette = true
-						a.ModelSearchQuery = ""
-						as.InputText = ""
-						k.SetText("")
-						return true
-					}
-					if trimmed == "/clear" {
-						if sess := as.ActiveSession(); sess != nil {
-							sess.Messages = nil
-						}
-						as.InputText = ""
-						k.SetText("")
-						return true
-					}
+					as.ListState.FollowEnd = true
 					as.SubmitMessage()
 					k.SetText("")
 					return true
@@ -1416,17 +1595,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			}
 
 			// Model Selector Button (Triggers full ModelProviderPaletteModal)
-			disp := as.ActiveModel
-			if disp == "" {
-				disp = "Select Model"
-			} else {
-				if idx := strings.Index(disp, " ("); idx != -1 {
-					disp = disp[:idx]
-				}
-				if len(disp) > 22 {
-					disp = disp[:20] + "…"
-				}
-			}
+			disp := shortModelLabel(as.ActiveModel)
 			modelBtn := chipRow(c, tc)
 			modelBtn.Children(func() {
 				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
@@ -1533,9 +1702,11 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						ui.Text(c, "Queue").FontSize(11).FontWeight(500)
 					})
 					if queueBtn.Clicked() {
+						as.Lock()
 						as.SteerQueue = append(as.SteerQueue, as.InputText)
-						as.SaveSteerQueues()
 						as.InputText = ""
+						as.Unlock()
+						as.SaveSteerQueues()
 						c.AddToast(ui.Toast{Title: "Queued", Description: "Prompt queued for next turn", Type: "info"})
 					}
 
@@ -1572,25 +1743,8 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					})
 					if sendBtn.Clicked() {
 						trimmed := strings.TrimSpace(as.InputText)
-						if trimmed == "/usage" {
-							a.openUsageModal()
-							as.InputText = ""
-						} else if trimmed == "/settings" || trimmed == "/setup" {
-							a.Mode = ModeSettings
-							if a.Settings != nil {
-								a.Settings.IsOpen = true
-							}
-							as.InputText = ""
-						} else if trimmed == "/model" {
-							a.ShowModelPalette = true
-							a.ModelSearchQuery = ""
-							as.InputText = ""
-						} else if trimmed == "/clear" {
-							if sess := as.ActiveSession(); sess != nil {
-								sess.Messages = nil
-							}
-							as.InputText = ""
-						} else {
+						if !a.tryHandleSlashCommand(trimmed) {
+							as.ListState.FollowEnd = true
 							as.SubmitMessage()
 						}
 					}
@@ -1643,18 +1797,30 @@ func composerControlChip(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, labe
 }
 
 // workspaceMenuItems builds the workspace switcher menu shared by the landing
-// heading and the tray project chip: recent session workspaces, then
-// "Open folder…" and "General (Work outside project)", as AgentHomeView does.
+// heading and header/tray project chips: recent workspaces + session workspaces
+// (deduped), then "Open folder…" and "General (Work outside project)".
 func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
 	current := ""
 	if a.Workspace != nil {
 		current = a.Workspace.RootDir
 	}
-	recents := a.RecentWorkspaces // persisted opened-folder history
-	if len(recents) == 0 {
-		recents = a.recentWorkspacePaths() // fall back to session-derived
+	seen := make(map[string]bool)
+	var projects []string
+	for _, ws := range a.RecentWorkspaces {
+		if ws == "" || seen[ws] {
+			continue
+		}
+		seen[ws] = true
+		projects = append(projects, ws)
 	}
-	for _, ws := range recents {
+	for _, ws := range a.recentWorkspacePaths() {
+		if ws == "" || seen[ws] {
+			continue
+		}
+		seen[ws] = true
+		projects = append(projects, ws)
+	}
+	for _, ws := range projects {
 		path := ws
 		if m.Item(menuChecked(path == current, resolveProjectName(path))).Chosen() {
 			a.switchWorkspace(path)
@@ -1664,7 +1830,7 @@ func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
 	if m.Item("Open folder…").Chosen() {
 		a.openWorkspaceFolder()
 	}
-	if m.Item("General (Work outside project)").Chosen() {
+	if m.Item(menuChecked(current == "", "General (Work outside project)")).Chosen() {
 		a.switchWorkspace("")
 	}
 }
@@ -1729,16 +1895,23 @@ func (a *AppUI) renderLandingTray(c *ui.Context, tc theme.ThemeColors, projectNa
 			a.workspaceMenuItems(m)
 		})
 
-		// Git branch chip — only when the workspace is a local git repository.
+		// Git branch chip — only when an actual local git repository workspace is open.
 		branch := ""
-		if a.Git != nil && a.Git.Branch != "" && (a.Workspace == nil || !strings.HasPrefix(a.Workspace.RootDir, "ssh://")) {
+		if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") && a.Git != nil && a.Git.Branch != "" {
 			branch = a.Git.Branch
 		}
 		if branch != "" {
+			dirtyFiles, _, _ := a.gitDirtySummary()
 			branchChip := ui.Row(c.Key("tray-branch")).Height(26).Radius(6).Padding(0, 7).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			branchChip.Children(func() {
 				ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.TextMuted.Alpha(0.7))
 				ui.Text(c, branch).FontSize(12).TextColor(tc.TextMuted)
+				if dirtyFiles > 0 {
+					ui.Row(c).Height(16).Radius(4).Padding(0, 5).AlignItems(ui.Center).
+						Background(tc.Warning.Alpha(0.14)).Children(func() {
+						ui.Text(c, fmt.Sprintf("%d uncommitted", dirtyFiles)).FontSize(10).FontWeight(600).TextColor(tc.Warning)
+					})
+				}
 				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.TextMuted.Alpha(0.5))
 			})
 			if branchChip.Hovered() {
@@ -1787,7 +1960,7 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 		// ZCode/webview landing unit: suggestion chips ABOVE the composer,
 		// with the context tray fused to the card's top (same width, shared
 		// border — one visual card, not floating boxes).
-		ui.Column(c).Grow(1).MaxWidth(768).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).MaxWidth(768).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).FillWidth().Gap(8).Wrap().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
 				suggestions := []struct {
 					icon   *ui.SVG
@@ -1819,9 +1992,11 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 				}
 			})
 
-			// Tray fused to the card: same width, shared borders.
-			a.renderLandingTray(c, tc, projectName)
-			a.renderComposerCard(c, tc, true)
+			// Tray fused to the card with zero gap: same width, shared borders.
+			ui.Column(c).FillWidth().Gap(0).Children(func() {
+				a.renderLandingTray(c, tc, projectName)
+				a.renderComposerCard(c, tc, true)
+			})
 		})
 
 		if as.ShowModelPicker {
@@ -2131,8 +2306,9 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 					resumeBtn := ui.Row(c.Key("cli-resume-btn")).Height(32).Radius(8).Padding(0, 16).Gap(6).
 						AlignItems(ui.Center).Background(t.Accent).Cursor(ui.CursorPointer)
 					resumeBtn.Children(func() {
-						ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(ui.Hex("#FFFFFF"))
-						ui.Text(c, "Resume Session").FontSize(12).FontWeight(600).TextColor(ui.Hex("#FFFFFF"))
+						fg := a.ThemeMgr.Colors().AccentForeground
+						ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(fg)
+						ui.Text(c, "Resume Session").FontSize(12).FontWeight(600).TextColor(fg)
 					})
 					if resumeBtn.Clicked() {
 						a.CLIMgr.RestartSession(sess.ID)
@@ -2154,8 +2330,9 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 						reBtn := ui.Row(c.Key("overlay-re-btn")).Height(22).Radius(999).Padding(0, 10).Gap(4).
 							AlignItems(ui.Center).Background(t.Accent).Cursor(ui.CursorPointer)
 						reBtn.Children(func() {
-							ui.Icon(c, icons.TablerRotate).Width(11).Height(11).TextColor(ui.Hex("#FFFFFF"))
-							ui.Text(c, "Restart").FontSize(11).FontWeight(600).TextColor(ui.Hex("#FFFFFF"))
+							fg := a.ThemeMgr.Colors().AccentForeground
+							ui.Icon(c, icons.TablerRotate).Width(11).Height(11).TextColor(fg)
+							ui.Text(c, "Restart").FontSize(11).FontWeight(600).TextColor(fg)
 						})
 						if reBtn.Clicked() {
 							a.CLIMgr.RestartSession(sess.ID)
@@ -2248,12 +2425,43 @@ func summarizeTools(tools []*agent.ToolExecution) (string, bool, bool) {
 	return summary, hasRunning, hasFailed
 }
 
+func (a *AppUI) tryHandleSlashCommand(trimmed string) bool {
+	as := a.Agent
+	switch trimmed {
+	case "/usage":
+		a.openUsageModal()
+		as.InputText = ""
+		return true
+	case "/settings", "/setup":
+		a.openSettings()
+		as.InputText = ""
+		return true
+	case "/model":
+		a.ShowModelPalette = true
+		a.ModelSearchQuery = ""
+		as.InputText = ""
+		return true
+	case "/clear":
+		if sess := as.ActiveSession(); sess != nil {
+			as.Lock()
+			sess.Messages = nil
+			as.Messages = nil
+			as.Unlock()
+			go as.SaveSessionToDisk(sess)
+		}
+		as.InputText = ""
+		return true
+	}
+	return false
+}
+
 type ParsedToolArgs struct {
 	Path      string
 	Cmd       string
 	Content   string
 	OldString string
 	NewString string
+	Query     string
 }
 
 func parseToolArgs(raw string, toolName string) ParsedToolArgs {
@@ -2281,9 +2489,21 @@ func parseToolArgs(raw string, toolName string) ParsedToolArgs {
 					if res.Content == "" {
 						res.Content = strVal
 					}
-				case "old_string", "oldstring", "old", "old_text", "target", "search":
+				case "old_string", "oldstring", "old", "old_text", "target":
 					if res.OldString == "" {
 						res.OldString = strVal
+					}
+				case "search":
+					if isSearchTool(toolName) {
+						if res.Query == "" {
+							res.Query = strVal
+						}
+					} else if res.OldString == "" {
+						res.OldString = strVal
+					}
+				case "query", "pattern", "regex", "glob", "search_query":
+					if res.Query == "" {
+						res.Query = strVal
 					}
 				case "new_string", "newstring", "new", "new_text", "replacement", "replace":
 					if res.NewString == "" {
@@ -2311,6 +2531,11 @@ func parseToolArgs(raw string, toolName string) ParsedToolArgs {
 	}
 
 	return res
+}
+
+func isSearchTool(name string) bool {
+	nl := strings.ToLower(name)
+	return strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "glob") || strings.Contains(nl, "find")
 }
 
 func cleanArgPath(s string) string {
@@ -2474,11 +2699,12 @@ func (a *AppUI) renderQuestionBlock(c *ui.Context, tc theme.ThemeColors, session
 		})
 	})
 
-	// The draft feeds the live question on each frame; SubmitQuestionAnswers
-	// reads from the live questions.
-	a.Agent.UpdateQuestion(sessionID, qi, func(qu *agent.AgentQuestion) {
-		qu.Custom = strings.TrimSpace(*draft)
-	})
+	// Only update & invalidate when the draft actually changed, avoiding a redraw loop every frame.
+	if trimmed := strings.TrimSpace(*draft); trimmed != q.Custom {
+		a.Agent.UpdateQuestion(sessionID, qi, func(qu *agent.AgentQuestion) {
+			qu.Custom = trimmed
+		})
+	}
 }
 
 // clearQuestionDrafts drops the custom-answer drafts of a session.

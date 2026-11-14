@@ -174,15 +174,45 @@ func (gm *GitManager) GetFileContentAtCommit(path, hash string) string {
 	return content
 }
 
-// RemoteSource detects the active git remote and parses its host/provider
-// (GitHub vs GitLab vs generic), used by the PRs pane.
+// RemoteSource returns the cached git remote source, queueing a non-blocking
+// background probe if it has not loaded yet.
 func (gm *GitManager) RemoteSource() (*internalgit.GitRemoteSource, error) {
-	ctx, cancel := ctxTimeout(10 * time.Second)
-	defer cancel()
-	if gm.engine == nil {
+	gm.mu.Lock()
+	if gm.engine == nil || gm.engine.GitEngine == nil {
+		gm.mu.Unlock()
 		return nil, errNoEngine
 	}
-	return gm.engine.GitEngine.GetRemoteSource(ctx, gm.RootDir)
+	if gm.remoteSourceLoaded {
+		src := gm.cachedRemoteSource
+		gm.mu.Unlock()
+		return src, nil
+	}
+	if !gm.remoteSourceLoading && gm.RootDir != "" {
+		gm.remoteSourceLoading = true
+		eng := gm.engine.GitEngine
+		root := gm.RootDir
+		gm.mu.Unlock()
+		go func() {
+			ctx, cancel := ctxTimeout(10 * time.Second)
+			src, err := eng.GetRemoteSource(ctx, root)
+			cancel()
+			gm.mu.Lock()
+			if gm.RootDir == root {
+				if err == nil {
+					gm.cachedRemoteSource = src
+				} else {
+					gm.cachedRemoteSource = nil
+				}
+				gm.remoteSourceLoaded = true
+			}
+			gm.remoteSourceLoading = false
+			gm.mu.Unlock()
+			gm.redraw()
+		}()
+		return nil, nil
+	}
+	gm.mu.Unlock()
+	return nil, nil
 }
 
 // errNoEngine guards calls when no engine is wired (tests, detached state).

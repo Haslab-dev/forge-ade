@@ -24,8 +24,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
 	if c.Shortcut(0, ui.KeyEscape) {
-		sm.IsOpen = false
-		a.Mode = ModeAgent
+		a.closeSettings()
 		return
 	}
 
@@ -58,8 +57,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 					ui.Text(c, "Back to workspace").FontSize(12).FontWeight(500)
 				})
 				if backBtn.Clicked() {
-					sm.IsOpen = false
-					a.Mode = ModeAgent
+					a.closeSettings()
 				}
 
 				// Breadcrumb
@@ -84,7 +82,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 					ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
 				})
 				if closeBtn.Clicked() {
-					sm.IsOpen = false
+					a.closeSettings()
 				}
 			})
 
@@ -94,12 +92,6 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 				ui.Column(c).Width(210).FillHeight().Background(tc.Sidebar).
 					BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
 					Padding(12, 8).Gap(14).Children(func() {
-
-					// Nav search filter (SettingsScreen's section filter).
-					ui.Row(c).Padding(0, 4).Gap(6).AlignItems(ui.Center).Children(func() {
-						sIn := ui.TextInput(c, &sm.SearchQuery).Placeholder("Filter sections…").Grow(1).FontSize(12)
-						_ = sIn
-					})
 
 					// Group 1: Models & Agents
 					ui.Column(c).Gap(2).Children(func() {
@@ -305,6 +297,12 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 		selectedIdx = 0
 		sm.SelectedProviderID = profiles[0].ID
 	}
+	if selectedProfile != nil && sm.EditingProfileID != selectedProfile.ID {
+		sm.EditingProfileID = selectedProfile.ID
+		sm.EditProfileName = selectedProfile.Name
+		sm.EditBaseURL = selectedProfile.BaseURL
+		sm.EditAPIKey = selectedProfile.APIKey
+	}
 
 	// Two-column container matching ForgeADE SettingsScreen
 	ui.Row(c).Radius(12).BorderWidth(1).BorderColor(tc.Border).Background(tc.Surface).Clip().Children(func() {
@@ -369,6 +367,10 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 
 					if btn.Clicked() {
 						sm.SelectedProviderID = prof.ID
+						sm.EditingProfileID = prof.ID
+						sm.EditProfileName = prof.Name
+						sm.EditBaseURL = prof.BaseURL
+						sm.EditAPIKey = prof.APIKey
 						sm.IsAddingProvider = false
 						sm.ModelSearchQuery = ""
 					}
@@ -589,6 +591,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 					if delBtn.Clicked() {
 						_ = sm.DeleteProfile(selectedProfile.ID)
 						newProfs := sm.GetProfiles()
+						sm.EditingProfileID = ""
 						if len(newProfs) > 0 {
 							sm.SelectedProviderID = newProfs[0].ID
 						} else {
@@ -598,38 +601,44 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 					}
 				})
 
-				// Edit credentials form
-				ui.Row(c).Gap(12).Children(func() {
-					// Base URL
-					ui.Column(c).Grow(1).Gap(4).Children(func() {
-						ui.Text(c, "Base URL").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
-						ui.TextInput(c, &selectedProfile.BaseURL).Grow(1)
+				// Edit credentials form (bound to persistent SettingsManager draft fields)
+				ui.Column(c).Gap(8).Children(func() {
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "Display Name").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+						ui.TextInput(c, &sm.EditProfileName).Placeholder("Provider display name").Grow(1)
 					})
+					ui.Row(c).Gap(12).Children(func() {
+						// Base URL
+						ui.Column(c).Grow(1).Gap(4).Children(func() {
+							ui.Text(c, "Base URL").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+							ui.TextInput(c, &sm.EditBaseURL).Grow(1)
+						})
 
-					// API Key with Show/Hide
-					ui.Column(c).Grow(1).Gap(4).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, "API Key").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
-							ui.Box(c).Grow(1)
-							showKeyBtn := ui.Row(c).Gap(3).AlignItems(ui.Center)
-							showKeyBtn.Children(func() {
-								ic := icons.TablerEye
-								txt := "Show"
-								if sm.ShowAPIKey {
-									ic = icons.TablerEyeOff
-									txt = "Hide"
+						// API Key with Show/Hide
+						ui.Column(c).Grow(1).Gap(4).Children(func() {
+							ui.Row(c).AlignItems(ui.Center).Children(func() {
+								ui.Text(c, "API Key").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+								ui.Box(c).Grow(1)
+								showKeyBtn := ui.Row(c).Gap(3).AlignItems(ui.Center)
+								showKeyBtn.Children(func() {
+									ic := icons.TablerEye
+									txt := "Show"
+									if sm.ShowAPIKey {
+										ic = icons.TablerEyeOff
+										txt = "Hide"
+									}
+									ui.Icon(c, ic).Width(11).Height(11).TextColor(tc.IconMuted)
+									ui.Text(c, txt).FontSize(10).TextColor(tc.TextMuted)
+								})
+								if showKeyBtn.Clicked() {
+									sm.ShowAPIKey = !sm.ShowAPIKey
 								}
-								ui.Icon(c, ic).Width(11).Height(11).TextColor(tc.IconMuted)
-								ui.Text(c, txt).FontSize(10).TextColor(tc.TextMuted)
 							})
-							if showKeyBtn.Clicked() {
-								sm.ShowAPIKey = !sm.ShowAPIKey
+							keyInput := ui.TextInput(c, &sm.EditAPIKey).Placeholder("Enter API Key...").Grow(1)
+							if !sm.ShowAPIKey {
+								keyInput.Password()
 							}
 						})
-						keyInput := ui.TextInput(c, &selectedProfile.APIKey).Placeholder("Enter API Key...").Grow(1)
-						if !sm.ShowAPIKey {
-							keyInput.Password()
-						}
 					})
 				})
 
@@ -639,9 +648,17 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 					saveBtn := ui.Button(c, "Save Credentials")
 					if saveBtn.Clicked() {
 						if selectedIdx >= 0 && selectedIdx < len(profiles) {
-							profiles[selectedIdx] = *selectedProfile
+							if n := strings.TrimSpace(sm.EditProfileName); n != "" {
+								profiles[selectedIdx].Name = n
+							}
+							profiles[selectedIdx].BaseURL = strings.TrimSpace(sm.EditBaseURL)
+							profiles[selectedIdx].APIKey = strings.TrimSpace(sm.EditAPIKey)
 							_ = sm.SaveProfiles(profiles)
-							c.AddToast(ui.Toast{Title: "Saved", Description: selectedProfile.Name, Type: "success"})
+							if sm.Provider == profiles[selectedIdx].ID {
+								sm.BaseURL = profiles[selectedIdx].BaseURL
+								sm.APIKey = profiles[selectedIdx].APIKey
+							}
+							c.AddToast(ui.Toast{Title: "Saved", Description: profiles[selectedIdx].Name, Type: "success"})
 						}
 					}
 				})
@@ -691,7 +708,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 								if a.Window != nil {
 									a.Window.Invalidate()
 								}
-							}(selectedProfile.ID, selectedProfile.APIKey, selectedProfile.BaseURL)
+							}(selectedProfile.ID, sm.EditAPIKey, sm.EditBaseURL)
 						}
 					})
 
@@ -1052,7 +1069,7 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 					isSel := (tm.PaletteID == thisP.ID)
 					card := ui.Row(c.Key("pal-card-"+thisP.ID)).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center)
 					card.Children(func() {
-						ui.Box(c).Size(12, 12).Radius(6).Background(ui.Hex(thisP.SwatchHex))
+						ui.Box(c).Size(12, 12).Radius(6).Background(theme.SwatchColor(thisP.SwatchHex))
 						ui.Text(c, thisP.Name).FontSize(12).FontWeight(func() int {
 							if isSel {
 								return 600

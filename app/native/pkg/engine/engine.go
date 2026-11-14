@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/agent"
@@ -49,6 +50,11 @@ type Engine struct {
 	ShellMgr  *terminal.Manager
 	AgentMgr  *agent.Manager
 	AutoMgr   *automations.Manager
+
+	watcherMu         sync.Mutex
+	watcherSubscribed bool
+	watcherOnChange   func()
+	watcherTimer      *time.Timer
 }
 
 // NewEngine creates and initializes the native backend subsystems.
@@ -181,7 +187,11 @@ func (e *Engine) GitCheckout(repoPath, branch string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "checkout", branch)
 	cmd.Dir = repoPath
-	return cmd.Run()
+	err := cmd.Run()
+	if err == nil && e.GitEngine != nil {
+		e.GitEngine.Invalidate(repoPath)
+	}
+	return err
 }
 
 // GitCreateBranch creates and checks out a new branch.
@@ -190,7 +200,11 @@ func (e *Engine) GitCreateBranch(repoPath, branch string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "checkout", "-b", branch)
 	cmd.Dir = repoPath
-	return cmd.Run()
+	err := cmd.Run()
+	if err == nil && e.GitEngine != nil {
+		e.GitEngine.Invalidate(repoPath)
+	}
+	return err
 }
 
 // GetGitDiff returns the unified diff for a single file against HEAD.
@@ -225,7 +239,11 @@ func (e *Engine) GitPull(repoPath string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "pull")
 	cmd.Dir = repoPath
-	return cmd.Run()
+	err := cmd.Run()
+	if err == nil && e.GitEngine != nil {
+		e.GitEngine.Invalidate(repoPath)
+	}
+	return err
 }
 
 // GetCommitDiff returns the diff of a specific commit hash.
@@ -280,11 +298,29 @@ func (e *Engine) StartWatcher(rootDir string, onChange func()) {
 	e.Watcher.Start()
 	_ = e.Watcher.WatchDir(rootDir)
 
-	e.Bus.Subscribe(events.FileChanged, func(ev events.Event) {
-		if onChange != nil {
-			onChange()
-		}
-	})
+	e.watcherMu.Lock()
+	e.watcherOnChange = onChange
+	if e.watcherTimer != nil {
+		e.watcherTimer.Stop()
+		e.watcherTimer = nil
+	}
+	subscribed := e.watcherSubscribed
+	e.watcherSubscribed = true
+	e.watcherMu.Unlock()
+
+	if !subscribed {
+		e.Bus.Subscribe(events.FileChanged, func(ev events.Event) {
+			e.watcherMu.Lock()
+			if e.watcherTimer != nil {
+				e.watcherTimer.Stop()
+			}
+			cb := e.watcherOnChange
+			if cb != nil {
+				e.watcherTimer = time.AfterFunc(150*time.Millisecond, cb)
+			}
+			e.watcherMu.Unlock()
+		})
+	}
 }
 
 // GetLLMConfig returns the persisted LLM profile.

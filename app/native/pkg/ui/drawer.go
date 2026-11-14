@@ -38,103 +38,122 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 		// Drawer Header Tabs with ScrollHorizontal so it never overflows or cuts off
 		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+			dirtyFiles, _, _ := a.gitDirtySummary()
+			subCount := 0
+			if a.Agent != nil && a.Agent.ActiveSessionID != "" {
+				subCount = len(a.Agent.Subagents(a.Agent.ActiveSessionID))
+			}
 			tabs := []struct {
-				Tab  int
-				Name string
-				Icon *ui.SVG
+				Tab   int
+				Name  string
+				Icon  *ui.SVG
+				Count int
 			}{
-				{RightTabChanges, "Changes", icons.TablerFileDiff},
-				{RightTabTerminal, "Terminal", icons.TablerTerminal},
-				{RightTabChat, "Chat", icons.TablerMessage},
+				{RightTabChanges, "Changes", icons.TablerFileDiff, dirtyFiles},
+				{RightTabTerminal, "Terminal", icons.TablerTerminal, 0},
+				{RightTabChat, "Chat", icons.TablerMessage, 0},
 			}
 			if len(a.SideFileTabs) > 0 {
 				tabs = append(tabs, struct {
-					Tab  int
-					Name string
-					Icon *ui.SVG
-				}{RightTabSideFile, filepath.Base(a.ActiveSideFile), icons.TablerEye})
+					Tab   int
+					Name  string
+					Icon  *ui.SVG
+					Count int
+				}{RightTabSideFile, filepath.Base(a.ActiveSideFile), icons.TablerEye, 0})
 			}
 			tabs = append(tabs, struct {
-				Tab  int
-				Name string
-				Icon *ui.SVG
-			}{RightTabBrowser, "Browser", icons.TablerWorld})
-			hasSubagents := false
-			if a.SelectedSubagentID != "" {
-				hasSubagents = true
-			} else if a.Agent != nil && a.Agent.ActiveSessionID != "" {
-				hasSubagents = len(a.Agent.Subagents(a.Agent.ActiveSessionID)) > 0
-			}
+				Tab   int
+				Name  string
+				Icon  *ui.SVG
+				Count int
+			}{RightTabBrowser, "Browser", icons.TablerWorld, 0})
+			hasSubagents := a.SelectedSubagentID != "" || subCount > 0
 			if hasSubagents {
 				tabs = append(tabs, struct {
-					Tab  int
-					Name string
-					Icon *ui.SVG
-				}{RightTabSubagent, "Agents", icons.TablerBot})
+					Tab   int
+					Name  string
+					Icon  *ui.SVG
+					Count int
+				}{RightTabSubagent, "Agents", icons.TablerBot, subCount})
 			}
 			tabs = append(tabs, struct {
-				Tab  int
-				Name string
-				Icon *ui.SVG
-			}{RightTabDeck, "Deck", icons.TablerPresentation})
+				Tab   int
+				Name  string
+				Icon  *ui.SVG
+				Count int
+			}{RightTabDeck, "Deck", icons.TablerPresentation, 0})
 
 			if a.RightDrawerTab == RightTabFiles || (a.RightDrawerTab == RightTabSubagent && !hasSubagents) {
 				a.RightDrawerTab = RightTabTerminal
 			}
 
-			ui.Row(c).Grow(1).Gap(3).AlignItems(ui.Center).Clip().Children(func() {
-				for _, tab := range tabs {
-					tTab := tab
-					active := a.RightDrawerTab == tTab.Tab
-					pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d", tTab.Tab))).Height(26).Radius(6).
-						Padding(0, 8).Gap(4).AlignItems(ui.Center)
-					pill.Children(func() {
-						icColor := tc.IconMuted
-						if active {
-							icColor = tc.Accent
-						}
-						ui.Icon(c, tTab.Icon).Width(12).Height(12).TextColor(icColor)
-						txt := ui.Text(c, tTab.Name).FontSize(11)
-						if active {
-							txt.FontWeight(600).TextColor(tc.Text)
-						} else {
-							txt.TextColor(tc.TextMuted)
-						}
-					})
-					if active {
-						pill.Background(tc.Text.Alpha(0.1))
-					} else if pill.Hovered() {
-						pill.Background(tc.Text.Alpha(0.05))
-					}
-					if pill.Clicked() {
-						a.RightDrawerTab = tTab.Tab
-						if tTab.Tab == RightTabBrowser && (a.BrowserWebView == nil || a.BrowserWebView.IsDestroyed()) {
-							a.openBrowserTab("")
-						}
-					}
-					// Active pill shows the tab close ×, as ZCode's panel
-					// tabs do: dynamic tabs close themselves, fixed tabs
-					// close the drawer.
-					if active {
-						tabX := ui.Row(c.Key("rtab-x-"+tTab.Name)).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-						tabX.Children(func() {
-							ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
+				ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
+					for _, tab := range tabs {
+						tTab := tab
+						active := a.RightDrawerTab == tTab.Tab
+						pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d", tTab.Tab))).Height(26).Radius(6).
+							Padding(0, 8).Gap(4).AlignItems(ui.Center)
+						pill.Children(func() {
+							icColor := tc.IconMuted
+							if active {
+								icColor = tc.Accent
+							}
+							ui.Icon(c, tTab.Icon).Width(12).Height(12).TextColor(icColor)
+							txt := ui.Text(c, tTab.Name).FontSize(11)
+							if active {
+								txt.FontWeight(600).TextColor(tc.Text)
+							} else {
+								txt.TextColor(tc.TextMuted)
+							}
+							if tTab.Count > 0 {
+								badgeTint := tc.Accent
+								if tTab.Tab == RightTabChanges {
+									badgeTint = tc.Warning
+								}
+								ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
+									Background(badgeTint.Alpha(0.15)).Children(func() {
+									ui.Text(c, fmt.Sprintf("%d", tTab.Count)).FontSize(9).FontWeight(600).TextColor(badgeTint)
+								})
+							}
 						})
-						if tabX.Hovered() {
-							tabX.Background(tc.Text.Alpha(0.1))
+						if active {
+							pill.Background(tc.Text.Alpha(0.1))
+						} else if pill.Hovered() {
+							pill.Background(tc.Text.Alpha(0.05))
 						}
-						if tabX.Clicked() {
-							switch tTab.Tab {
-							case RightTabSideFile:
-								a.closeSideFile(a.ActiveSideFile)
-							case RightTabBrowser:
-								a.closeBrowserTab()
-							default:
-								a.ShowRightDrawer = false
+						closedPill := false
+						// Active pill shows the tab close ×, as ZCode's panel
+						// tabs do: dynamic tabs close themselves, fixed tabs
+						// close the drawer.
+						if active {
+							tabX := ui.Row(c.Key("rtab-x-"+tTab.Name)).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+							tabX.Children(func() {
+								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+							})
+							if tabX.Hovered() {
+								tabX.Background(tc.Text.Alpha(0.1))
+							}
+							if tabX.Clicked() {
+								closedPill = true
+								switch tTab.Tab {
+								case RightTabSideFile:
+									a.closeSideFile(a.ActiveSideFile)
+								case RightTabBrowser:
+									a.closeBrowserTab()
+								default:
+									a.ShowRightDrawer = false
+								}
+							}
+						}
+						if !closedPill && pill.Clicked() {
+							a.RightDrawerTab = tTab.Tab
+							if tTab.Tab == RightTabBrowser && (a.BrowserWebView == nil || a.BrowserWebView.IsDestroyed()) {
+								a.openBrowserTab("")
 							}
 						}
 					}
-				}
+				})
 			})
 
 			ui.Box(c).Width(4).Shrink(0)
@@ -142,8 +161,12 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 			// "+" tab menu — AgentRightSidebar's plus menu: new terminal,
 			// browser viewer, changes, new conversation, child agents.
 			plus := IconButton(c, tc, icons.TablerPlus, 13).Shrink(0)
-			plus.ContextMenu(func(m *ui.Menu) {
+			plus.Menu(func(m *ui.Menu) {
 				if m.Item("New Terminal").Chosen() {
+					if a.Terminal != nil && a.RightDrawerTab == RightTabTerminal && !a.ShowBottomTerminal {
+						_ = a.Terminal.NewTab("")
+					}
+					a.ShowBottomTerminal = false
 					a.RightDrawerTab = RightTabTerminal
 					a.ShowRightDrawer = true
 				}
@@ -167,9 +190,6 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					a.ShowRightDrawer = true
 				}
 			})
-			if plus.Clicked() {
-				a.RightDrawerTab = RightTabSubagent
-			}
 
 			if IconButton(c, tc, icons.TablerX, 13).Shrink(0).Clicked() {
 				a.ShowRightDrawer = false
@@ -182,11 +202,28 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 			case RightTabChanges:
 				a.renderChangesPane(c)
 			case RightTabTerminal:
+				if a.ShowBottomTerminal {
+					ui.Column(c).Grow(1).Center().Padding(16).Gap(8).Children(func() {
+						ui.Icon(c, icons.TablerTerminal).Width(24).Height(24).TextColor(tc.IconMuted)
+						ui.Text(c, "Terminal open in bottom panel").FontSize(12).FontWeight(500).TextColor(tc.Text)
+						moveBtn := ui.Row(c.Key("move-term-drawer")).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).
+							Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35)).Cursor(ui.CursorPointer)
+						moveBtn.Children(func() {
+							ui.Text(c, "Move to Right Drawer").FontSize(11).FontWeight(600).TextColor(tc.Accent)
+						})
+						if moveBtn.Clicked() {
+							a.ShowBottomTerminal = false
+						}
+					})
+					break
+				}
 				if a.Terminal != nil {
 					ui.Row(c).Height(32).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-						ui.Text(c, "Terminal").FontSize(11).FontWeight(600).TextColor(tc.Text)
-						ui.Box(c).Grow(1)
+						renderTerminalTabsStrip(c, tc, a.Terminal, "drawer-term")
+						if IconButton(c, tc, icons.TablerPlus, 11).Clicked() {
+							_ = a.Terminal.NewTab("")
+						}
 						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
 							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
 						askBtn.Children(func() {
@@ -251,15 +288,15 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 		return
 	}
 
-	var staged []internalgit.FileStatus
-	var unstaged []internalgit.FileStatus
+	var conflicts, staged, unstaged []internalgit.FileStatus
 	if gm != nil {
+		conflicts = gm.Conflicts
 		staged = gm.Staged
 		unstaged = append(unstaged, gm.Unstaged...)
 		unstaged = append(unstaged, gm.Untracked...)
 	}
 
-	totalFiles := len(staged) + len(unstaged)
+	totalFiles := len(conflicts) + len(staged) + len(unstaged)
 
 	ui.Row(c).Height(36).Padding(0, 12).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
@@ -284,7 +321,9 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	}
 
 	if a.SelectedDiffPath == "" {
-		if len(staged) > 0 {
+		if len(conflicts) > 0 {
+			a.SelectedDiffPath = conflicts[0].Path
+		} else if len(staged) > 0 {
 			a.SelectedDiffPath = staged[0].Path
 		} else if len(unstaged) > 0 {
 			a.SelectedDiffPath = unstaged[0].Path
@@ -292,9 +331,55 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		// File lists (Staged & Unstaged)
-		ui.Scroll(c).Height(minF(180, float32(totalFiles)*28+40)).Children(func() {
+		// File lists (Conflicts, Staged & Unstaged)
+		ui.Scroll(c).Height(minF(200, float32(totalFiles)*28+44)).Children(func() {
 			ui.Column(c).Padding(4, 6).Gap(4).Children(func() {
+				// 0. Merge Conflicts section
+				if len(conflicts) > 0 {
+					ui.Row(c).Padding(2, 4).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, fmt.Sprintf("MERGE CONFLICTS (%d)", len(conflicts))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.Error)
+					})
+					for _, f := range conflicts {
+						f := f
+						isSel := a.SelectedDiffPath == f.Path
+						acted := false
+						row := ui.Row(c.Key("conflict-"+f.Path)).Height(26).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+						row.Children(func() {
+							ui.Icon(c, icons.TablerAlertTriangle).Width(12).Height(12).TextColor(tc.Error)
+							ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
+							oursBtn := ui.Row(c.Key("ours-"+f.Path)).Height(18).Radius(4).Padding(0, 5).AlignItems(ui.Center).
+								Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+							oursBtn.Children(func() {
+								ui.Text(c, "Ours").FontSize(9).FontWeight(600).TextColor(tc.Accent)
+							})
+							if oursBtn.Clicked() && gm != nil {
+								acted = true
+								go func(p string) {
+									_ = gm.ResolveConflict(p, "ours")
+								}(f.Path)
+							}
+							theirsBtn := ui.Row(c.Key("theirs-"+f.Path)).Height(18).Radius(4).Padding(0, 5).AlignItems(ui.Center).
+								Background(tc.Warning.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.35))
+							theirsBtn.Children(func() {
+								ui.Text(c, "Theirs").FontSize(9).FontWeight(600).TextColor(tc.Warning)
+							})
+							if theirsBtn.Clicked() && gm != nil {
+								acted = true
+								go func(p string) {
+									_ = gm.ResolveConflict(p, "theirs")
+								}(f.Path)
+							}
+						})
+						if isSel {
+							row.Background(tc.Error.Alpha(0.14))
+						} else if row.Hovered() {
+							row.Background(tc.Text.Alpha(0.04))
+						}
+						if !acted && row.Clicked() {
+							a.SelectedDiffPath = f.Path
+						}
+					}
+				}
 				// 1. Staged section
 				if len(staged) > 0 {
 					ui.Row(c).Padding(2, 4).AlignItems(ui.Center).Children(func() {
@@ -362,6 +447,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 					for _, f := range unstaged {
 						f := f
 						isSel := a.SelectedDiffPath == f.Path
+						acted := false
 						row := ui.Row(c.Key("unstaged-"+f.Path)).Height(26).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
 						row.Children(func() {
 							ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -373,6 +459,38 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 							}
 							Badge(c, tc, statusLabel, tc.Accent)
 
+							if gm != nil && gm.DiscardPendingPath == f.Path {
+								confirmBtn := ui.Row(c.Key("discard-ok-"+f.Path)).Height(18).Radius(4).Padding(0, 5).AlignItems(ui.Center).
+									Background(tc.Error.Alpha(0.18)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.45))
+								confirmBtn.Children(func() {
+									ui.Text(c, "Sure?").FontSize(9).FontWeight(700).TextColor(tc.Error)
+								})
+								if confirmBtn.Clicked() {
+									acted = true
+									go gm.Discard(f.Path)
+								}
+								cancelBtn := ui.Row(c.Key("discard-no-"+f.Path)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+								cancelBtn.Children(func() {
+									ui.Icon(c, icons.TablerX).Width(9).Height(9).TextColor(tc.IconMuted)
+								})
+								if cancelBtn.Clicked() {
+									acted = true
+									gm.DiscardPendingPath = ""
+								}
+							} else {
+								discardBtn := ui.Row(c.Key("discard-"+f.Path)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+								discardBtn.Children(func() {
+									ui.Icon(c, icons.TablerRotate).Width(10).Height(10).TextColor(tc.IconMuted)
+								})
+								if discardBtn.Hovered() {
+									discardBtn.Background(tc.Error.Alpha(0.12))
+								}
+								if discardBtn.Clicked() && gm != nil {
+									acted = true
+									gm.DiscardPendingPath = f.Path
+								}
+							}
+
 							stageBtn := ui.Row(c).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 							stageBtn.Children(func() {
 								ui.Icon(c, icons.TablerPlus).Width(10).Height(10).TextColor(tc.IconMuted)
@@ -381,6 +499,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 								stageBtn.Background(tc.Text.Alpha(0.06))
 							}
 							if stageBtn.Clicked() && gm != nil {
+								acted = true
 								go gm.Stage(f.Path)
 							}
 						})
@@ -389,7 +508,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 						} else if row.Hovered() {
 							row.Background(tc.Text.Alpha(0.04))
 						}
-						if row.Clicked() {
+						if !acted && row.Clicked() {
 							a.SelectedDiffPath = f.Path
 						}
 					}
@@ -433,8 +552,8 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 					if canCommit {
 						commitBtn.Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
 						commitBtn.Children(func() {
-							ui.Icon(c, icons.TablerCheck).Width(11).Height(11).TextColor(ui.RGBA(255, 255, 255, 1.0))
-							ui.Text(c, btnText).FontSize(11).FontWeight(600).TextColor(ui.RGBA(255, 255, 255, 1.0))
+							ui.Icon(c, icons.TablerCheck).Width(11).Height(11).TextColor(tc.AccentForeground)
+							ui.Text(c, btnText).FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 						})
 						if commitBtn.Clicked() {
 							if len(staged) == 0 && len(unstaged) > 0 {
@@ -494,15 +613,24 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 				repoDir = a.Agent.WorkspacePath()
 			}
 			patch := ""
-			if a.Engine != nil && diffTitle != "" {
-				patch = a.Engine.GetGitDiff(repoDir, diffTitle)
+			diffReady := true
+			if diffTitle != "" {
+				if gm != nil {
+					patch, diffReady = gm.GetCachedFileDiff(diffTitle)
+				} else if a.Engine != nil {
+					patch = a.Engine.GetGitDiff(repoDir, diffTitle)
+				}
 			}
-			if patch == "" {
+			if !diffReady {
+				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+					ui.Spinner(c).Size(14, 14).Label("Loading diff")
+				})
+			} else if patch == "" {
 				ui.Column(c).Grow(1).Center().Children(func() {
 					ui.Text(c, "No diff available for this file").FontSize(12).TextColor(tc.TextMuted)
 				})
 			} else {
-				a.renderHunkRevertStrip(c, tc, gm, diffTitle)
+				a.renderHunkRevertStrip(c, tc, gm, diffTitle, patch)
 				d := a.Editor.OpenPatchDiff(diffTitle, patch, a.ThemeMgr)
 				if d != nil {
 					mygoeditor.DiffView(c, d).Grow(1).FillWidth()
@@ -771,7 +899,7 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 				Label string
 				Icon  *ui.SVG
 			}{
-				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked)), icons.TablerFileDiff},
+				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(gm.Conflicts)+len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked)), icons.TablerFileDiff},
 				{git.GitTabHistory, "History", icons.TablerHistory},
 				{git.GitTabBranches, "Branches", icons.TablerGitBranch},
 			}
@@ -837,14 +965,18 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 							ui.Text(c, fmt.Sprintf("Commit Diff (%s)", shortH)).FontSize(11).FontWeight(600).TextColor(tc.Text)
 						})
 
-						if gm.SelectedCommitDiff != "" {
+						if gm.LoadingCommitDiff {
+							ui.Column(c).Grow(1).Center().Children(func() {
+								ui.Text(c, "Loading commit diff...").FontSize(11).TextColor(tc.TextMuted)
+							})
+						} else if gm.SelectedCommitDiff != "" {
 							d := a.Editor.OpenPatchDiff("commit.diff", gm.SelectedCommitDiff, a.ThemeMgr)
 							if d != nil {
 								mygoeditor.DiffView(c, d).Grow(1).FillWidth()
 							}
 						} else {
 							ui.Column(c).Grow(1).Center().Children(func() {
-								ui.Text(c, "Loading commit diff...").FontSize(11).TextColor(tc.TextMuted)
+								ui.Text(c, "No diff in this commit").FontSize(11).TextColor(tc.TextMuted)
 							})
 						}
 					})
@@ -939,6 +1071,38 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 				ui.Text(c, "Add a .sqlite, .sqlite3, .db, or .duckdb file to your workspace.").TextColor(t.TextMuted)
 			})
 			return
+		}
+
+		// Database file switcher strip when workspace contains database files.
+		if len(dm.Databases) > 0 {
+			ui.Row(c).Height(32).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
+				ui.Text(c, "DB:").FontSize(10).Bold().TextColor(t.TextMuted)
+				ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						for _, dbPath := range dm.Databases {
+							p := dbPath
+							isSel := (p == dm.ActiveDBPath)
+							pill := ui.Row(c.Key("db-switch-"+p)).Height(22).Radius(4).Padding(0, 8).AlignItems(ui.Center)
+							pill.Children(func() {
+								txt := ui.Text(c, filepath.Base(p)).FontSize(11)
+								if isSel {
+									txt.Bold().TextColor(a.ThemeMgr.Colors().AccentForeground)
+								}
+							})
+							if isSel {
+								pill.Background(t.Accent)
+							} else if pill.Hovered() {
+								pill.Background(t.Border)
+							}
+							pill.Tooltip(p)
+							if pill.Clicked() && !isSel {
+								go dm.Inspect(p)
+							}
+						}
+					})
+				})
+			})
 		}
 
 		renderSQLConsole := func() {
@@ -1230,10 +1394,17 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 				repoDir = a.Agent.WorkspacePath()
 			}
 			patch := ""
-			if a.Engine != nil {
+			diffReady := true
+			if a.Git != nil {
+				patch, diffReady = a.Git.GetCachedFileDiff(a.ActiveSideFile)
+			} else if a.Engine != nil {
 				patch = a.Engine.GetGitDiff(repoDir, a.ActiveSideFile)
 			}
-			if patch == "" {
+			if !diffReady {
+				ui.Column(c).Grow(1).Center().Children(func() {
+					ui.Spinner(c).Size(14, 14).Label("Loading diff")
+				})
+			} else if patch == "" {
 				ui.Column(c).Grow(1).Center().Children(func() {
 					ui.Text(c, "No uncommitted changes").FontSize(12).TextColor(tc.TextMuted)
 				})
@@ -1267,12 +1438,17 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 
 // renderHunkRevertStrip lists the working-tree hunks of a file with per-hunk
 // Revert buttons (GetGitFileDiffHunks / RevertGitHunk parity) above the diff.
-func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager, path string) {
-	if gm == nil || path == "" {
+func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager, path, patch string) {
+	if gm == nil || path == "" || patch == "" {
 		return
 	}
-	hunks, err := gm.GetFileDiffHunks(path)
-	if err != nil || len(hunks) == 0 {
+	var hunkHeaders []string
+	for _, ln := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(ln, "@@ ") {
+			hunkHeaders = append(hunkHeaders, strings.TrimSpace(ln))
+		}
+	}
+	if len(hunkHeaders) == 0 {
 		return
 	}
 	if len(a.HunkRevertPaths) == 0 {
@@ -1283,16 +1459,12 @@ func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *g
 		Background(tc.SurfaceRaised.Alpha(0.3))
 	strip.Children(func() {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, fmt.Sprintf("Hunks (%d)", len(hunks))).FontSize(10).FontWeight(700).TextColor(tc.TextMuted)
+			ui.Text(c, fmt.Sprintf("Hunks (%d)", len(hunkHeaders))).FontSize(10).FontWeight(700).TextColor(tc.TextMuted)
 			ui.Box(c).Grow(1)
 			ui.Text(c, "revert restores the hunk to HEAD").FontSize(9).TextColor(tc.SecondaryLabel)
 		})
-		for i, h := range hunks {
-			i, h := i, h
-			header := ""
-			if len(h.Header) > 0 {
-				header = strings.TrimSpace(h.Header)
-			}
+		for i, header := range hunkHeaders {
+			i, header := i, header
 			row := ui.Row(c.Key(fmt.Sprintf("hunk-%s-%d", path, i))).Height(24).Radius(6).Padding(0, 6).Gap(6).AlignItems(ui.Center)
 			row.Children(func() {
 				ui.Text(c, header).FontSize(10).Font("monospace").TextColor(tc.Accent).Grow(1).SingleLine()

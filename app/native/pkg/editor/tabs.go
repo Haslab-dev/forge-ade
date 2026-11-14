@@ -114,14 +114,23 @@ func (em *EditorManager) SplitRight() {
 	if em.ActivePath == "" {
 		return
 	}
-	if em.Panes == nil {
-		em.Panes = []string{em.ActivePath}
-	} else if len(em.Panes) == 0 {
-		em.Panes = []string{em.ActivePath}
+	if len(em.Panes) < 2 {
+		secondary := em.ActivePath
+		for _, p := range em.OpenTabPaths {
+			if p != em.ActivePath {
+				secondary = p
+				break
+			}
+		}
+		em.Panes = []string{em.ActivePath, secondary}
 	} else {
 		em.Panes = append(em.Panes, em.ActivePath)
 	}
-	em.PaneWeights = nil // equal weights
+	em.PaneWeights = make([]float32, len(em.Panes))
+	eq := 1.0 / float32(len(em.Panes))
+	for i := range em.PaneWeights {
+		em.PaneWeights[i] = eq
+	}
 	em.IsSplit = true
 }
 
@@ -137,10 +146,14 @@ func (em *EditorManager) ClosePane(i int) {
 		em.Panes = nil
 		em.PaneWeights = nil
 		em.IsSplit = false
+		em.ActivePane = 0
 		return
 	}
 	if len(em.PaneWeights) == len(em.Panes)+1 {
 		em.PaneWeights = append(em.PaneWeights[:i], em.PaneWeights[i+1:]...)
+	}
+	if em.ActivePane >= len(em.Panes) {
+		em.ActivePane = len(em.Panes) - 1
 	}
 }
 
@@ -171,8 +184,18 @@ func (em *EditorManager) PaneWeight(i int) float32 {
 func (em *EditorManager) SetPaneWeight(i int, w float32) {
 	em.mu.Lock()
 	defer em.mu.Unlock()
-	if i < 0 || i >= len(em.PaneWeights) {
+	if i < 0 || i >= len(em.Panes) {
 		return
+	}
+	if len(em.PaneWeights) != len(em.Panes) {
+		em.PaneWeights = make([]float32, len(em.Panes))
+		eq := 1.0 / float32(len(em.Panes))
+		for k := range em.PaneWeights {
+			em.PaneWeights[k] = eq
+		}
+	}
+	if w < 0.1 {
+		w = 0.1
 	}
 	em.PaneWeights[i] = w
 }

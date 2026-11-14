@@ -62,9 +62,7 @@ func (a *AppUI) renderTerminalSnippetsModal(c *ui.Context) {
 		return
 	}
 
-	// Modal backdrop
-	ui.Column(c).Fill().Background(ui.RGBA(0, 0, 0, 0.55)).Center().Children(func() {
-		// Modal window container
+	ui.Modal(c, &a.ShowTerminalSnippetsModal, func() {
 		modal := ui.Column(c).Width(680).MaxHeight(600).Radius(12).
 			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 16, 48, -12, ui.RGBA(0, 0, 0, 0.65)).Clip()
@@ -231,7 +229,7 @@ func (a *AppUI) renderTerminalSnippetsModal(c *ui.Context) {
 			}
 
 			// 4. Main Body: Scrollable list of Snippets or History Items
-			ui.Scroll(c).Grow(1).Children(func() {
+			ui.Scroll(c).MaxHeight(420).Children(func() {
 				ui.Column(c).Padding(10, 14).Gap(6).Children(func() {
 					if a.TerminalSnippetTab == "history" {
 						// Render History Items
@@ -420,6 +418,9 @@ func (a *AppUI) runTerminalCommand(cmd string) {
 	}
 
 	if a.Terminal != nil {
+		if !a.ShowBottomTerminal && !(a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
+			a.ShowBottomTerminal = true
+		}
 		_ = a.Terminal.WriteInput(targetSessionID, cmd+"\n")
 	}
 }

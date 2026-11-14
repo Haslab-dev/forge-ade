@@ -61,7 +61,7 @@ func (b *BoardManager) Refresh() {
 		for _, col := range BoardColumnDefs {
 			list := byStatus[col.Status]
 			sort.SliceStable(list, func(i, j int) bool { return list[i].UpdatedAt > list[j].UpdatedAt })
-			data.Columns = append(data.Columns, BoardColumn{Name: col.Name, Tasks: list})
+			data.Columns = append(data.Columns, BoardColumn{Name: col.Name, Status: col.Status, Tasks: list})
 		}
 	}
 	b.Data = data

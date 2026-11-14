@@ -367,8 +367,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				})
 				if provBtn.Clicked() {
 					a.ShowModelPalette = false
-					a.Settings.ActiveTab = settings.SettingsTabModels
-					a.Settings.IsOpen = true
+					a.openSettings(settings.SettingsTabModels)
 				}
 			})
 
@@ -407,6 +406,21 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 							a.SelectedHarnessID = thisH.ID
 							a.SelectedProviderTab = "all"
 							a.ModelSearchQuery = ""
+							if thisH.ID != "agent-internal" && a.Agent != nil {
+								model := a.Agent.SelectACPAgent(thisH.ID)
+								a.SelectedAgentID = thisH.ID
+								if model != "" {
+									a.SelectedAgentModel = model
+								}
+								if sess := a.Agent.ActiveSession(); sess != nil {
+									sess.AgentID = thisH.ID
+									sess.AgentType = "acp"
+									if model != "" {
+										sess.Model = model
+									}
+									a.Agent.SaveSessionToDisk(sess)
+								}
+							}
 						}
 					}
 				})
@@ -503,10 +517,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 										cfgBtn := ui.PrimaryButton(c, "Configure Providers").FontSize(12)
 										if cfgBtn.Clicked() {
 											a.ShowModelPalette = false
-											if a.Settings != nil {
-												a.Settings.ActiveTab = settings.SettingsTabModels
-												a.Settings.IsOpen = true
-											}
+											a.openSettings(settings.SettingsTabModels)
 										}
 									}
 								})

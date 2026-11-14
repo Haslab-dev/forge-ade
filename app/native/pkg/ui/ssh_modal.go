@@ -34,8 +34,7 @@ func (a *AppUI) openRemoteTerminal() {
 		_ = a.Terminal.Restart()
 	} else {
 		a.ShowBottomTerminal = true
-		a.Terminal.Cwd = a.Workspace.RootDir
-		_ = a.Terminal.Restart()
+		_ = a.Terminal.ResetShell(a.Workspace.RootDir)
 	}
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -214,6 +213,10 @@ func (a *AppUI) ConnectCurrentSSH() {
 		remPath = "/"
 	}
 	port := a.SSHPort
+	if parsed, err := strconv.Atoi(strings.TrimSpace(a.SSHPortText)); err == nil && parsed > 0 && parsed <= 65535 {
+		port = parsed
+		a.SSHPort = parsed
+	}
 	if port <= 0 {
 		port = 22
 	}

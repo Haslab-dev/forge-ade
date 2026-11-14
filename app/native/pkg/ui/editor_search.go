@@ -9,12 +9,14 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/egoist/mygo/ui"
+	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
@@ -203,16 +205,42 @@ func (a *AppUI) renderSearchToggle(c *ui.Context, tc theme.ThemeColors, label, t
 // runEditorSearch executes the active mode's search off the render path.
 func (a *AppUI) runEditorSearch() {
 	query := strings.TrimSpace(a.FileSearchQuery)
-	if a.FileSearchMode != "content" || len(query) < 2 || a.Engine == nil || a.Engine.SearchMgr == nil {
+	if a.FileSearchMode != "content" {
+		if len(query) < 2 || a.Workspace == nil {
+			a.FileSearchHits = nil
+			a.ContentHitsAt = ""
+			return
+		}
+		signature := "files|" + a.Workspace.RootDir + "|" + query
+		if signature == a.ContentHitsAt {
+			return
+		}
+		a.ContentHitsAt = signature
+		a.FileSearchBusy = true
+		ws := a.Workspace
+		go func() {
+			hits := ws.SearchFiles(query)
+			if a.ContentHitsAt == signature {
+				a.FileSearchHits = hits
+			}
+			a.FileSearchBusy = false
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		}()
+		return
+	}
+	if len(query) < 2 || a.Engine == nil || a.Engine.SearchMgr == nil {
 		if len(query) < 2 {
 			a.ContentHits = nil
+			a.ContentHitsAt = ""
 		}
 		return
 	}
 	if a.Workspace != nil {
 		a.Engine.SearchMgr.SetDirectories([]string{a.Workspace.RootDir})
 	}
-	signature := fmt.Sprintf("%s|%v|%v|%v|%s", query, a.FileSearchCase, a.FileSearchRegex, a.FileSearchWholeWord, a.FileSearchGlob)
+	signature := fmt.Sprintf("content|%s|%v|%v|%v|%s", query, a.FileSearchCase, a.FileSearchRegex, a.FileSearchWholeWord, a.FileSearchGlob)
 	if signature == a.ContentHitsAt {
 		return
 	}
@@ -235,7 +263,7 @@ func (a *AppUI) runEditorSearch() {
 		}
 		hits, err := a.Engine.SearchMgr.SearchContentWithOptions(opts)
 		a.FileSearchBusy = false
-		if err == nil {
+		if err == nil && a.ContentHitsAt == signature {
 			a.ContentHits = hits
 		}
 		if a.Window != nil {
@@ -349,7 +377,8 @@ func (a *AppUI) renderContentSearchResults(c *ui.Context, tc theme.ThemeColors) 
 	}).Grow(1)
 }
 
-// openSearchHitAtLine opens a file and jumps to the given line (1-based).
+// openSearchHitAtLine opens a file and jumps to the given line (1-based),
+// selecting the matched query's column range when found on that line.
 func (a *AppUI) openSearchHitAtLine(relPath string, line int, query string) {
 	full := a.Workspace.ResolveFullPath(relPath)
 	doc, err := a.Editor.OpenFile(full, relPath)
@@ -357,23 +386,43 @@ func (a *AppUI) openSearchHitAtLine(relPath string, line int, query string) {
 		return
 	}
 	buf := doc.Editor.Buffer
-	text := buf.String()
-	offset := 0
-	if line > 1 {
-		lines := strings.Split(text, "\n")
-		if line-1 < len(lines) {
-			for i := 0; i < line-1; i++ {
-				offset += len(lines[i]) + 1
+	lineCount := buf.LineCount()
+	lineIdx := line - 1
+	if lineIdx < 0 {
+		lineIdx = 0
+	}
+	if lineCount > 0 && lineIdx >= lineCount {
+		lineIdx = lineCount - 1
+	}
+
+	colStart, colEnd := 0, 0
+	if q := strings.TrimSpace(query); q != "" && lineIdx < lineCount {
+		lineText := buf.Line(lineIdx)
+		if a.FileSearchRegex {
+			pattern := q
+			if !a.FileSearchCase {
+				pattern = "(?i)" + pattern
+			}
+			if re, rerr := regexp.Compile(pattern); rerr == nil {
+				if loc := re.FindStringIndex(lineText); len(loc) == 2 {
+					colStart, colEnd = loc[0], loc[1]
+				}
+			}
+		} else if a.FileSearchCase {
+			if idx := strings.Index(lineText, q); idx >= 0 {
+				colStart, colEnd = idx, idx+len(q)
+			}
+		} else {
+			if idx := strings.Index(strings.ToLower(lineText), strings.ToLower(q)); idx >= 0 {
+				colStart, colEnd = idx, idx+len(q)
 			}
 		}
 	}
-	length := len(query)
-	if length <= 0 {
-		length = 0
+
+	lineOffset := buf.Offset(mygoeditor.Pos{Line: lineIdx, Col: 0})
+	if colEnd > colStart && lineOffset+colEnd <= buf.Len() {
+		doc.Editor.Select(lineOffset+colStart, lineOffset+colEnd)
 	}
-	if length > 0 && offset+length <= buf.Len() {
-		doc.Editor.Select(offset, offset+length)
-		doc.Editor.GoTo(doc.Editor.CursorPos())
-	}
+	doc.Editor.GoTo(mygoeditor.Pos{Line: lineIdx, Col: colStart})
 	a.SelectedFile = relPath
 }

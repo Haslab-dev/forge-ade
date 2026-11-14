@@ -95,10 +95,7 @@ func (a *AppUI) loadUIPrefs() {
 	a.ShowRightDrawer = p.ShowRightDrawer
 	a.ShowBottomTerminal = p.ShowBottomTerminal
 	a.FollowAgent = p.FollowAgent
-	switch p.AgentViewMode {
-	case AgentViewChat, AgentViewBoard, AgentViewGit:
-		a.AgentViewMode = p.AgentViewMode
-	}
+	a.AgentViewMode = AgentViewChat
 	switch p.LeftSidebarView {
 	case "tasks", "files":
 		a.LeftSidebarView = p.LeftSidebarView
@@ -164,11 +161,11 @@ func (a *AppUI) prefsSnapshot() string {
 		a.ThemeMgr.Appearance, a.ThemeMgr.PaletteID, a.ThemeMgr.ChatWidth, a.ThemeMgr.DiffScheme,
 		f(a.ShowLeftSidebar), f(a.ShowRightDrawer), f(a.ShowBottomTerminal),
 		f32(a.LeftSidebarWidth), f32(a.RightDrawerWidth), f32(a.BottomTerminalHeight),
-		f(a.FollowAgent), a.AgentViewMode, a.LeftSidebarView, a.ProjectFilter, a.TaskSortBy,
+		f(a.FollowAgent), a.AgentViewMode, a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
 	}.String()
 }
 
-type prefsSnap [15]string
+type prefsSnap [16]string
 
 func (p prefsSnap) String() string {
 	return strings.Join(p[:], "|")

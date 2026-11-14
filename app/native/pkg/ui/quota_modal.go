@@ -37,7 +37,7 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 			return tc.Success
 		}
 		if p > 15 {
-			return ui.Hex("#fbbf24")
+			return tc.Warning
 		}
 		return tc.Error
 	}
@@ -126,7 +126,8 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 					refreshBtn.Background(tc.Text.Alpha(0.06))
 				}
 				if refreshBtn.Clicked() {
-					c.AddToast(ui.Toast{Title: "Refreshed Quotas", Description: "Quota counters synchronized", Type: "info"})
+					a.refreshQuotaAsync()
+					c.AddToast(ui.Toast{Title: "Refreshing Quotas", Description: "Quota counters synchronized", Type: "info"})
 				}
 
 				// Close button

@@ -88,7 +88,8 @@ type AppUI struct {
 	ACPMgr                *agent.ACPManager
 	CLIMgr                *agent.AgentCLIManager
 	Board                 *board.BoardManager
-	Mode                  int      // ModeAgent or ModeEditor
+	Mode                  int      // ModeAgent, ModeEditor, or ModeSettings
+	PrevMode              int      // Mode to restore when closing Settings
 	ActiveTaskKind        string   // "agent" or "cli"
 	ShowLeftSidebar       bool     // Left sidebar visibility
 	LeftSidebarView       string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
@@ -126,10 +127,15 @@ type AppUI struct {
 	// Composer autocomplete state (slash commands / @-mentions): visibility
 	// derives from the composer text each frame; the dismissal latches hold
 	// the text at Esc time so editing re-opens the menu.
-	SlashSelected      int
-	SlashDismissedAt   string
-	MentionSelected    int
-	MentionDismissedAt string
+	SlashSelected       int
+	SlashDismissedAt    string
+	MentionSelected     int
+	MentionDismissedAt  string
+	LastFollowSessionID string
+	mentionQueryCached  string
+	mentionMatchVersion uint64
+	mentionMatchRoot    string
+	mentionMatchCached  []composerSuggestion
 
 	// Structured agent questions (ask tool): modal flag + custom-answer
 	// drafts keyed by questionDraftKey.
@@ -147,6 +153,12 @@ type AppUI struct {
 	SideFilePreviewImage string
 	SideFilePreviewMd    string
 	SideFileDiffMode     map[string]bool
+	sidePreviewImgPath   string
+	sidePreviewImgMod    int64
+	sidePreviewImgSrc    ui.ImageSource
+	sidePreviewMdPath    string
+	sidePreviewMdMod     int64
+	sidePreviewMdText    string
 
 	// Right-drawer browser viewer tab (native web view) + subagent pane.
 	BrowserWebView    *mygo.WebView
@@ -155,15 +167,19 @@ type AppUI struct {
 	BrowserZoom       float64
 
 	// Right-drawer / Editor PDF viewer
-	PDFWebView     *mygo.WebView
-	PDFCurrentPath string
+	PDFWebView      *mygo.WebView
+	PDFCurrentPath  string
+	PDFFileSize     int64
+	PDFFileSizePath string
 
 	// Thread find bar (⌘F) state — ThreadFindBar parity.
-	ShowThreadFind    bool
-	ThreadFindQuery   string
-	ThreadFindQueryAt string
-	ThreadFindMatches []int
-	ThreadFindIdx     int
+	ShowThreadFind      bool
+	ThreadFindQuery     string
+	ThreadFindQueryAt   string
+	ThreadFindSessionID string
+	ThreadFindMsgCount  int
+	ThreadFindMatches   []int
+	ThreadFindIdx       int
 
 	ShowNewFileModal        bool
 	NewFileName             string
@@ -199,6 +215,10 @@ type AppUI struct {
 	CollapsedProjectGroups  map[string]bool
 	ExpandedProjectGroups   map[string]bool
 	ExpandedFileTreeFolders map[string]bool
+	explorerTreeRoot        string
+	explorerTreeVersion     uint64
+	explorerTreeQuery       string
+	explorerTreeCached      []*FileTreeNode
 	ProjectFilter           string   // "all" or a project name (sidebar "All projects" menu)
 	TaskSortBy              string   // "updated" (default) or "created" (sidebar sort menu)
 	RecentWorkspaces        []string // most-recent-first history of opened folders
@@ -237,6 +257,8 @@ type AppUI struct {
 	ShowRulesModal        bool
 	SelectedRulePath      string
 	RuleEditorContent     string
+	RuleFilesRoot         string
+	RuleFilesCache        map[string]StandardRuleFile
 	BoardSearchQuery      string
 	BoardViewMode         string // "" = board, "list"
 	ShowBoardTaskModal    bool
@@ -245,6 +267,8 @@ type AppUI struct {
 	AgentViewMode         string // AgentViewChat / AgentViewBoard / AgentViewGit
 	IsGitClientOpen       bool   // Full Git Client surface in Editor Mode
 	GitRemoteURL          string
+	gitRemoteRoot         string
+	gitRemoteLoading      bool
 	ShowNewBoardTaskModal bool
 	NewBoardTaskTitle     string
 	NewBoardTaskDesc      string
@@ -278,23 +302,22 @@ type AppUI struct {
 	PeekResults   []editor.PeekMatch
 
 	// Deck & Presentation tab
-	DeckActiveSlide int
-	DeckSlideCount  int
-	DeckIsPlaying   bool
-	DeckWebView     *mygo.WebView
-	DeckCurrentPath string
-	DeckMode        string
-	DeckFiles       []string
+	DeckActiveSlide  int
+	DeckSlideCount   int
+	DeckIsPlaying    bool
+	DeckWebView      *mygo.WebView
+	DeckCurrentPath  string
+	DeckMode         string
+	DeckFiles        []string
+	DeckFilesScanned bool
 }
 
 // NewAppUI constructs the complete AppUI state tree.
 func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
-	// No workspace (empty root dir): open in editor mode with the welcome
-	// state; the terminal defaults to the home directory.
-	startMode := ModeAgent
+	// Always launch in Agent Mode on the New Task view; if opened with no
+	// workspace folder, the terminal defaults to the user's home directory.
 	terminalDir := rootDir
 	if rootDir == "" {
-		startMode = ModeEditor
 		home, _ := os.UserHomeDir()
 		terminalDir = home
 	}
@@ -305,8 +328,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		Editor:                  editor.NewEditorManager(),
 		Terminal:                terminal.NewTerminalState(terminalDir),
 		ThemeMgr:                theme.NewThemeManager(),
-		Mode:                    startMode,
+		Mode:                    ModeAgent,
 		ActiveTaskKind:          "agent",
+		AgentViewMode:           AgentViewChat,
 		RecentWorkspaces:        loadRecentWorkspaces(),
 		ShowLeftSidebar:         true,
 		LeftSidebarWidth:        LeftSidebarDefault,
@@ -403,10 +427,10 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 
 	appUI.ACPMgr.OnTurnDone = func(sessionID string, info agent.TurnEndInfo) {
 		// Finalizes the message, maps the status, records turn changes, and
-		// returns the next queued steer prompt to run.
+		// returns the next queued steer prompt to run in its originating session.
 		nativeID := appUI.Agent.MapInternalSession(sessionID)
 		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
-			go appUI.Agent.TriggerTurn(next)
+			go appUI.Agent.TriggerTurnForSession(nativeID, next)
 		}
 		// Follow Agent: jump the editor to the file the turn edited
 		// (layoutStore.isFollowAgentMode parity).
@@ -424,14 +448,14 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	// Live elapsed indicators ("Working for 12s", spinners): repaint once a
-	// second while a turn is streaming; the same tick coalesces UI-pref
+	// second while any session is streaming; the same tick coalesces UI-pref
 	// persistence (cheap JSON write, only when the snapshot changed).
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		var last string
 		for range ticker.C {
-			if appUI.Agent.IsStreaming && appUI.Window != nil {
+			if appUI.Agent.HasRunningSession() && appUI.Window != nil {
 				appUI.Window.Invalidate()
 			}
 			if snap := appUI.prefsSnapshot(); snap != last {
@@ -466,7 +490,11 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		}
 	}
 
-	appUI.Git = git.NewGitManager(engine, rootDir, func(path string, showDiff bool) {
+	gitEng := engine
+	if rootDir == "" {
+		gitEng = nil
+	}
+	appUI.Git = git.NewGitManager(gitEng, rootDir, func(path string, showDiff bool) {
 		fullPath := appUI.Workspace.ResolveFullPath(path)
 		_, _ = appUI.Editor.OpenFile(fullPath, path)
 		appUI.SelectedFile = path
@@ -554,10 +582,17 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		{ID: "toggle-terminal", Label: "Toggle Terminal", Detail: "Bottom terminal drawer", Shortcut: "⌘`", Run: func() {
 			a.ShowBottomTerminal = !a.ShowBottomTerminal
 		}},
+		{ID: "terminal-snippets", Label: "Terminal Snippets & History", Detail: "Saved terminal commands and history", Shortcut: "⌥S", Run: func() {
+			sessID := ""
+			if a.Terminal != nil {
+				sessID = a.Terminal.ActiveSessionID
+			}
+			a.OpenTerminalSnippetsModal(sessID, "", "")
+		}},
 		{ID: "toggle-sidebar", Label: "Toggle Sidebar", Shortcut: "⌘B", Run: func() { a.ShowLeftSidebar = !a.ShowLeftSidebar }},
 		{ID: "toggle-drawer", Label: "Toggle Right Drawer", Shortcut: "⌘J", Run: func() { a.ShowRightDrawer = !a.ShowRightDrawer }},
 		{ID: "save", Label: "Save File", Shortcut: "⌘S", Run: func() { _ = a.Editor.SaveActiveFile() }},
-		{ID: "settings", Label: "Open Settings", Shortcut: "⌘,", Run: func() { a.Settings.Toggle() }},
+		{ID: "settings", Label: "Open Settings", Shortcut: "⌘,", Run: func() { a.openSettings() }},
 		{ID: "appearance", Label: "Toggle Appearance", Detail: "Dark / light", Shortcut: "⌘/", Run: a.toggleAppearance},
 		{ID: "theme", Label: "Pick Theme Palette", Run: func() { a.ThemeMgr.Toggle() }},
 		{ID: "open-folder", Label: "Open Workspace Folder", Shortcut: "⌘O", Run: a.openWorkspaceFolder},
@@ -636,17 +671,34 @@ func (a *AppUI) refreshQuotaAsync() {
 	}()
 }
 
-// loadGitRemoteURL reads the origin remote URL for the Git Client badge.
+// loadGitRemoteURL reads the origin remote URL for the Git Client badge asynchronously.
 func (a *AppUI) loadGitRemoteURL() {
-	if a.Engine == nil {
+	if a.Engine == nil || a.Workspace == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", a.Workspace.RootDir, "config", "--get", "remote.origin.url").Output()
-	if err == nil {
-		a.GitRemoteURL = strings.TrimSpace(string(out))
+	dir := a.Workspace.RootDir
+	if dir == "" || strings.HasPrefix(dir, "ssh://") {
+		return
 	}
+	if a.gitRemoteLoading || a.gitRemoteRoot == dir {
+		return
+	}
+	a.gitRemoteLoading = true
+	a.gitRemoteRoot = dir
+	go func(root string) {
+		defer func() {
+			a.gitRemoteLoading = false
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "git", "-C", root, "config", "--get", "remote.origin.url").Output()
+		if err == nil && a.Workspace != nil && a.Workspace.RootDir == root {
+			a.GitRemoteURL = strings.TrimSpace(string(out))
+		}
+	}(dir)
 }
 
 // RefreshBoard reloads the workflow board from .forge/board_tasks.json.
@@ -724,7 +776,7 @@ func (a *AppUI) View(c *ui.Context) {
 		// Approve the pending permission (⌘Y, AgentApprovalBar parity).
 		if as := a.Agent.ActiveSession(); as != nil && len(as.Messages) > 0 {
 			if last := as.Messages[len(as.Messages)-1]; last.PendingApproval != nil && !last.PendingApproval.Resolved {
-				a.respondApproval(last.PendingApproval.SessionID, last.PendingApproval.ToolCallID, true, false)
+				a.resolvePendingApproval(last, true, false)
 			}
 		}
 	}
@@ -772,9 +824,10 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
 	}
 	if cmdOrCtrl(ui.KeyComma) {
-		a.Mode = ModeSettings
-		if a.Settings != nil {
-			a.Settings.IsOpen = true
+		if a.Mode == ModeSettings {
+			a.closeSettings()
+		} else {
+			a.openSettings()
 		}
 	}
 	if cmdOrCtrl(ui.KeyB) {
@@ -807,6 +860,13 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if cmdOrCtrl(ui.KeyBackquote) {
 		a.ShowBottomTerminal = !a.ShowBottomTerminal
+	}
+	if c.Shortcut(ui.Alt, ui.KeyS) {
+		sessID := ""
+		if a.Terminal != nil {
+			sessID = a.Terminal.ActiveSessionID
+		}
+		a.OpenTerminalSnippetsModal(sessID, "", "")
 	}
 	if c.Shortcut(ui.Ctrl, ui.KeyTab) {
 		a.Editor.CycleTab(1)
@@ -847,6 +907,7 @@ func (a *AppUI) toggleAppearance() {
 // in the specified workspace (or active workspace if workspacePath is empty).
 func (a *AppUI) NewAgentTask(workspacePath string) {
 	a.Mode = ModeAgent
+	a.AgentViewMode = AgentViewChat
 	a.ActiveTaskKind = "agent"
 	a.ShowNewTaskModal = false
 
@@ -856,8 +917,40 @@ func (a *AppUI) NewAgentTask(workspacePath string) {
 
 	if a.Agent != nil {
 		a.Agent.ClearActiveSession()
+		if a.Agent.ActiveAgentID != "" && a.Agent.ActiveAgentID != "agent-internal" {
+			a.Agent.ActiveModel = a.Agent.ResolveModelForAgent(a.Agent.ActiveAgentID, a.Agent.ActiveModel)
+			a.SelectedAgentModel = a.Agent.ActiveModel
+		}
 	}
 
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// selectACPAgentForNewTask switches the workspace if needed, resets the composer to
+// a fresh New Task state without stopping running background sessions, and auto-selects
+// the default model and reasoning effort defined by agentID.
+func (a *AppUI) selectACPAgentForNewTask(agentID, wsPath string) {
+	if wsPath != "" && wsPath != a.Workspace.RootDir {
+		a.switchWorkspace(wsPath)
+	}
+	if a.Agent != nil {
+		a.Agent.ClearActiveSession()
+		model := a.Agent.SelectACPAgent(agentID)
+		a.SelectedAgentID = a.Agent.ActiveAgentID
+		a.SelectedHarnessID = a.Agent.ActiveAgentID
+		if model != "" {
+			a.SelectedAgentModel = model
+		}
+	} else {
+		a.SelectedAgentID = agentID
+		a.SelectedHarnessID = agentID
+	}
+	a.ActiveTaskKind = "agent"
+	a.Mode = ModeAgent
+	a.AgentViewMode = AgentViewChat
+	a.ShowNewTaskModal = false
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}
@@ -867,7 +960,11 @@ func (a *AppUI) NewAgentTask(workspacePath string) {
 // without opening any modal dialog, exactly matching AgentSidebar.tsx handleNewTask.
 func (a *AppUI) handleNewTask() {
 	if a.Agent != nil {
-		a.Agent.ActiveSessionID = ""
+		a.Agent.ClearActiveSession()
+		if a.Agent.ActiveAgentID != "" && a.Agent.ActiveAgentID != "agent-internal" {
+			a.Agent.ActiveModel = a.Agent.ResolveModelForAgent(a.Agent.ActiveAgentID, a.Agent.ActiveModel)
+			a.SelectedAgentModel = a.Agent.ActiveModel
+		}
 	}
 	a.ActiveTaskKind = "agent"
 	a.Mode = ModeAgent
@@ -1086,27 +1183,83 @@ func (a *AppUI) openWorkspaceFolder() {
 	}()
 }
 
+// selectAgentSession switches the active workspace to match the session's
+// project (if different) and activates the agent chat session.
+func (a *AppUI) selectAgentSession(s *agent.AgentSession) {
+	if s == nil {
+		return
+	}
+	if a.Workspace == nil || a.Workspace.RootDir != s.WorkspacePath {
+		a.switchWorkspace(s.WorkspacePath)
+	}
+	a.ActiveTaskKind = "agent"
+	a.AgentViewMode = AgentViewChat
+	if a.Agent != nil {
+		a.Agent.SelectSession(s.ID)
+	}
+}
+
+// selectCLISession switches the active workspace to match the CLI session's
+// working directory (if different) and activates the CLI session.
+func (a *AppUI) selectCLISession(cs *agent.AgentCLISession) {
+	if cs == nil {
+		return
+	}
+	if a.Workspace == nil || a.Workspace.RootDir != cs.Cwd {
+		a.switchWorkspace(cs.Cwd)
+	}
+	a.ActiveTaskKind = "cli"
+	a.AgentViewMode = AgentViewChat
+	if a.CLIMgr != nil {
+		a.CLIMgr.ActiveID = cs.ID
+	}
+}
+
 func (a *AppUI) switchWorkspace(dir string) {
-	a.Workspace = workspace.NewWorkspaceState(dir)
-	a.recordRecentWorkspace(dir)
+	rawDir := dir
+	a.Workspace = workspace.NewWorkspaceState(rawDir)
+	a.recordRecentWorkspace(rawDir)
 	if a.Engine != nil {
 		a.Workspace.RemoteFS = a.Engine.RemoteFS
 		a.Workspace.Refresh()
 	}
-	if a.Editor != nil && a.Engine != nil {
-		a.Editor.RemoteFS = a.Engine.RemoteFS
+	if a.Editor != nil {
+		a.Editor.WorkspaceDir = rawDir
+		if a.Engine != nil {
+			a.Editor.RemoteFS = a.Engine.RemoteFS
+		}
 	}
-	a.Agent.SetWorkspacePath(dir)
-	if dir == "" {
+	if a.Agent != nil {
+		if sess := a.Agent.ActiveSession(); sess != nil && sess.WorkspacePath != rawDir {
+			a.Agent.ClearActiveSession()
+		}
+		a.Agent.SetWorkspacePath(rawDir)
+	}
+	termDir := rawDir
+	if termDir == "" {
 		home, _ := os.UserHomeDir()
-		dir = home
+		termDir = home
 	}
-	a.Terminal.Cwd = dir
+	if a.Terminal != nil {
+		if strings.HasPrefix(rawDir, "ssh://") {
+			a.Terminal.Cwd = rawDir
+		} else {
+			_ = a.Terminal.ResetShell(termDir)
+		}
+	}
 	a.Editor.CloseAll()
 	a.SelectedFile = ""
 	a.SelectedDiffPath = ""
+	a.DeckFiles = nil
+	a.DeckFilesScanned = false
+	a.GitRemoteURL = ""
+	a.gitRemoteRoot = ""
+	a.RuleFilesRoot = ""
+	a.RuleFilesCache = nil
+	a.PDFFileSize = 0
+	a.PDFFileSizePath = ""
 
-	if strings.HasPrefix(dir, "ssh://") {
+	if strings.HasPrefix(rawDir, "ssh://") {
 		// Remote SSH workspace
 		if a.Database != nil {
 			a.Database.Workspace = a.Workspace
@@ -1127,16 +1280,22 @@ func (a *AppUI) switchWorkspace(dir string) {
 		go a.Database.ScanDatabases()
 	}
 	if a.Git != nil {
-		a.Git = git.NewGitManager(a.Engine, dir, a.Git.OnFileSelect)
+		gitEng := a.Engine
+		if rawDir == "" {
+			gitEng = nil
+		}
+		a.Git = git.NewGitManager(gitEng, rawDir, a.Git.OnFileSelect)
 		a.Git.OnNeedRedraw = func() {
 			if a.Window != nil {
 				a.Window.Invalidate()
 			}
 		}
-		go a.Git.Refresh()
+		if rawDir != "" {
+			go a.Git.Refresh()
+		}
 	}
-	if a.Engine != nil {
-		a.Engine.StartWatcher(dir, func() {
+	if rawDir != "" && a.Engine != nil {
+		a.Engine.StartWatcher(rawDir, func() {
 			a.Workspace.Refresh()
 			if a.Git != nil {
 				a.Git.Refresh()
@@ -1156,14 +1315,41 @@ func (a *AppUI) switchWorkspace(dir string) {
 	}
 }
 
+func (a *AppUI) openSettings(tab ...int) {
+	if a.Mode != ModeSettings {
+		a.PrevMode = a.Mode
+	}
+	a.Mode = ModeSettings
+	if a.Settings != nil {
+		a.Settings.IsOpen = true
+		a.Settings.StatusMsg = ""
+		if len(tab) > 0 {
+			a.Settings.ActiveTab = tab[0]
+		}
+	}
+}
+
+func (a *AppUI) closeSettings() {
+	if a.Settings != nil {
+		a.Settings.IsOpen = false
+	}
+	target := a.PrevMode
+	if target == ModeSettings {
+		target = ModeAgent
+	}
+	a.Mode = target
+}
+
 func (a *AppUI) renderMainColumn(c *ui.Context) {
+	if a.Mode == ModeSettings {
+		a.renderSettingsScreen(c)
+		return
+	}
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
 		a.renderWorkspaceHeader(c)
 
 		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 			switch a.Mode {
-			case ModeSettings:
-				a.renderSettingsScreen(c)
 			case ModeEditor:
 				a.renderEditorSurface(c)
 			default:
