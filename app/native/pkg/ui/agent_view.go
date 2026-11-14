@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -1590,9 +1591,36 @@ func (a *AppUI) renderModelPickerModal(c *ui.Context) {
 			ui.Text(c, "Select AI Model").FontSize(12).FontWeight(600)
 			ui.Box(c).Grow(1)
 		})
+		// Fetch models from the ACTIVE provider live (ForgeADE's
+		// FetchProviderModels parity) the first time the picker opens.
+		if len(as.AvailableModels) == 0 && !as.FetchingModels && a.Engine != nil && a.Engine.LLMClient != nil {
+			cfg := a.Engine.LLMClient.GetConfig()
+			if cfg.APIKey != "" && cfg.BaseURL != "" {
+				as.FetchingModels = true
+				llmClient := a.Engine.LLMClient
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					defer cancel()
+					models, err := llmClient.FetchModels(ctx, cfg.APIKey, cfg.BaseURL)
+					as.Lock()
+					as.FetchingModels = false
+					if err == nil && len(models) > 0 {
+						as.AvailableModels = models
+					}
+					as.Unlock()
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
+				}()
+			}
+		}
 		if len(as.AvailableModels) == 0 {
-			ui.Row(c).Padding(12, 8).Justify(ui.Center).Children(func() {
-				ui.Text(c, "No models configured").FontSize(11).TextColor(tc.TextMuted)
+			ui.Row(c).Padding(12, 8).Justify(ui.Center).Gap(6).AlignItems(ui.Center).Children(func() {
+				if as.FetchingModels {
+					ui.Spinner(c).Size(12, 12).Label("Fetching models")
+				} else {
+					ui.Text(c, "No models configured").FontSize(11).TextColor(tc.TextMuted)
+				}
 			})
 		}
 		for _, model := range as.AvailableModels {

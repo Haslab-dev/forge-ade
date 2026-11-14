@@ -156,6 +156,8 @@ type AgentState struct {
 	ActiveAgentID   string
 	ActiveAgentType string
 	ExecutionMode   ExecutionMode
+	// FetchingModels guards the live /models fetch for the model picker.
+	FetchingModels  bool
 	ReasoningEffort ReasoningEffort
 	AutoVerify      bool
 	SteerQueue      []string
@@ -525,7 +527,12 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 			s.Status = "idle"
 		}
 		s.UpdatedAt = time.Now()
+		// SaveSessionToDisk takes as.mu itself — call it OUTSIDE the held
+		// lock or this goroutine self-deadlocks holding the state and the
+		// whole UI freezes ("Not Responding").
+		as.mu.Unlock()
 		as.SaveSessionToDisk(s)
+		as.mu.Lock()
 		break
 	}
 	// Only the visible session drives the global streaming flag.
@@ -1890,7 +1897,10 @@ func (as *AgentState) SubmitMessage() {
 					s.Messages = s.Messages[:0]
 					as.Messages = s.Messages
 					s.UpdatedAt = time.Now()
+					// Save outside the held lock (SaveSessionToDisk locks).
+					as.mu.Unlock()
 					as.SaveSessionToDisk(s)
+					as.mu.Lock()
 					break
 				}
 			}
@@ -1984,7 +1994,10 @@ func (as *AgentState) CancelStreaming() {
 			if s.Status == "running" {
 				s.Status = "idle"
 			}
+			// Save outside the held lock (SaveSessionToDisk locks).
+			as.mu.Unlock()
 			as.SaveSessionToDisk(s)
+			as.mu.Lock()
 			break
 		}
 	}
