@@ -55,16 +55,6 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 			}
 		})
 	})
-
-	// Collapsible Right Drawer with interactive drag resize handle
-	if a.ShowRightDrawer {
-		maxRight := float32(750)
-		if winW, _ := c.Size(); winW > 0 && winW*0.6 < maxRight {
-			maxRight = winW * 0.6
-		}
-		LeftResizeHandle(c, &a.RightDrawerWidth, 280, maxRight, RightDrawerDefault)
-		a.renderRightDrawer(c)
-	}
 }
 
 // chatLaneInset returns the chat content insets, honoring the Appearance
@@ -128,7 +118,13 @@ func (a *AppUI) openFileInEditor(path string) {
 }
 
 func (a *AppUI) showFloatingInspector(c *ui.Context) bool {
-	return a.Mode == ModeAgent && a.AgentViewMode == AgentViewChat && !a.InspectorCollapsed && !a.ShowRightDrawer && a.chatColumnWidth(c) >= 860
+	if a.Mode != ModeAgent || a.AgentViewMode != AgentViewChat || a.InspectorCollapsed || a.ShowRightDrawer || a.chatColumnWidth(c) < 860 || a.Agent == nil {
+		return false
+	}
+	if a.Agent.TaskManager != nil && len(a.Agent.TaskManager.GetTasks()) > 0 {
+		return true
+	}
+	return len(a.Agent.Subagents(a.Agent.ActiveSessionID)) > 0
 }
 
 // renderAgentChat renders the active conversation view, message bubbles, task checklist, and prompt composer.
@@ -2173,30 +2169,49 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
 		Shadow(0, 8, 24, -6, ui.RGBA(0, 0, 0, 0.28))
 	card.Children(func() {
-		// 1. Plans header + active goal
-		ui.Column(c).Gap(8).Children(func() {
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Plans").FontSize(13).FontWeight(600).Grow(1)
-				menuBtn := ui.Row(c.Key("insp-plans-more")).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-				menuBtn.Children(func() {
-					ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
-				})
-				if menuBtn.Hovered() {
-					menuBtn.Background(tc.Text.Alpha(0.06))
-				}
-				menuBtn.Menu(func(m *ui.Menu) {
-					if m.Item("Open Agents Drawer").Chosen() {
-						a.ShowRightDrawer = true
-						a.RightDrawerTab = RightTabSubagent
-					}
-					if tm != nil && len(tasks) > 0 {
-						m.Separator()
-						if m.Item("Clear tasks").Danger().Chosen() {
-							tm.Clear()
-						}
-					}
-				})
+		a.renderInspectorBody(c, tc, true)
+	})
+}
 
+// renderInspectorBody renders the Plans, Progress, Terminals, and Agents sections
+// shared between the floating ZCode card and the Right Sidebar Plans pane.
+func (a *AppUI) renderInspectorBody(c *ui.Context, tc theme.ThemeColors, isFloating bool) {
+	if a.Agent == nil {
+		return
+	}
+	tm := a.Agent.TaskManager
+	var tasks []agent.TaskItem
+	var completed, total int
+	if tm != nil {
+		tasks = tm.GetTasks()
+		completed, total = tm.Progress()
+	}
+
+	// 1. Plans header + active goal
+	ui.Column(c).Gap(8).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Plans").FontSize(13).FontWeight(600).Grow(1)
+			menuBtn := ui.Row(c.Key("insp-plans-more")).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+			menuBtn.Children(func() {
+				ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
+			})
+			if menuBtn.Hovered() {
+				menuBtn.Background(tc.Text.Alpha(0.06))
+			}
+			menuBtn.Menu(func(m *ui.Menu) {
+				if m.Item("Open Agents Drawer").Chosen() {
+					a.ShowRightDrawer = true
+					a.RightDrawerTab = RightTabSubagent
+				}
+				if tm != nil && len(tasks) > 0 {
+					m.Separator()
+					if m.Item("Clear tasks").Danger().Chosen() {
+						tm.Clear()
+					}
+				}
+			})
+
+			if isFloating {
 				collapseBtn := ui.Row(c.Key("insp-collapse")).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 				collapseBtn.Children(func() {
 					ui.Icon(c, icons.TablerMinimize2).Width(13).Height(13).TextColor(tc.IconMuted)
@@ -2207,162 +2222,162 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 				if collapseBtn.Clicked() {
 					a.InspectorCollapsed = true
 				}
-			})
-
-			goal := ""
-			if tm != nil {
-				goal = tm.Goal
 			}
-			if goal == "" {
-				if activeSess := a.Agent.ActiveSession(); activeSess != nil && activeSess.Title != "" && activeSess.Title != "New Task" {
-					goal = activeSess.Title
-				} else {
-					goal = "No active plan"
-				}
-			}
-			ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.TablerList).Width(13).Height(13).TextColor(tc.IconMuted)
-				ui.Text(c, goal).FontSize(12).TextColor(tc.Text).SingleLine().Grow(1)
-			})
 		})
 
-		// 2. Progress section
-		ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
-		ui.Column(c).Gap(8).Children(func() {
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Progress").FontSize(13).FontWeight(600)
-				countColor := tc.Success
-				if total == 0 {
-					countColor = tc.TextMuted
-				}
-				ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(12).FontWeight(600).TextColor(countColor)
-			})
-
-			if len(tasks) == 0 {
-				ui.Text(c, "No tasks tracked yet").FontSize(12).TextColor(tc.TextMuted)
+		goal := ""
+		if tm != nil {
+			goal = tm.Goal
+		}
+		if goal == "" {
+			if activeSess := a.Agent.ActiveSession(); activeSess != nil && activeSess.Title != "" && activeSess.Title != "New Task" {
+				goal = activeSess.Title
 			} else {
-				ui.Column(c).Gap(6).Children(func() {
-					for _, task := range tasks {
-						tid := task.ID
-						isDone := task.Status == agent.TaskCompleted
-						isCurrent := task.Status == agent.TaskInProgress
-						row := ui.Row(c.Key("trk-"+tid)).Gap(8).AlignItems(ui.Center).MinHeight(22).Padding(2, 4).Radius(6).Cursor(ui.CursorPointer)
-						row.Children(func() {
-							if isDone {
-								ui.Icon(c, icons.TablerCircleCheck).Width(14).Height(14).TextColor(tc.Success)
-							} else if isCurrent {
-								ui.Icon(c, icons.TablerArrowRight).Width(14).Height(14).TextColor(tc.Accent)
-							} else {
-								ui.Icon(c, icons.TablerCircle).Width(14).Height(14).TextColor(tc.TextMuted)
-							}
-							txt := ui.Text(c, task.Title).FontSize(12).LineHeight(16).Grow(1)
-							if isDone {
-								txt.TextColor(tc.TextMuted)
-							} else if isCurrent {
-								txt.FontWeight(600).TextColor(tc.Accent)
-							}
-						})
-						if row.Hovered() {
-							row.Background(tc.Text.Alpha(0.04))
-						}
-						if row.Clicked() && tm != nil {
-							tm.ToggleTask(tid)
-						}
-					}
-				})
+				goal = "No active plan"
 			}
+		}
+		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.TablerList).Width(13).Height(13).TextColor(tc.IconMuted)
+			ui.Text(c, goal).FontSize(12).TextColor(tc.Text).SingleLine().Grow(1)
+		})
+	})
+
+	// 2. Progress section
+	ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+	ui.Column(c).Gap(8).Children(func() {
+		ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "Progress").FontSize(13).FontWeight(600)
+			countColor := tc.Success
+			if total == 0 {
+				countColor = tc.TextMuted
+			}
+			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(12).FontWeight(600).TextColor(countColor)
 		})
 
-		// 3. Terminals section
-		ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
-		termCount := a.terminalSessionCount()
-		termRow := ui.Row(c.Key("insp-terminals")).Padding(4, 4).Radius(6).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-		termRow.Children(func() {
-			ui.Text(c, "Terminals").FontSize(13).FontWeight(600).Grow(1)
-			termMeta := "0 background"
-			if termCount > 0 {
-				termMeta = fmt.Sprintf("%d background", termCount)
-			}
-			ui.Text(c, termMeta).FontSize(12).TextColor(tc.TextMuted)
-		})
-		if termRow.Hovered() {
-			termRow.Background(tc.Text.Alpha(0.04))
-		}
-		if termRow.Clicked() {
-			a.ShowBottomTerminal = !a.ShowBottomTerminal
-		}
-
-		// 4. Agents / Orchestrator Personas section
-		ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
-		subs := a.Agent.Subagents(a.Agent.ActiveSessionID)
-		ui.Column(c).Gap(6).Children(func() {
-			agentsHdr := ui.Row(c.Key("insp-agents-hdr")).Padding(2, 4).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-			agentsHdr.Children(func() {
-				ui.Text(c, "Agents").FontSize(13).FontWeight(600).Grow(1)
-				if len(subs) > 0 {
-					ui.Text(c, fmt.Sprintf("%d", len(subs))).FontSize(12).TextColor(tc.TextMuted)
-				}
-			})
-			if agentsHdr.Hovered() {
-				agentsHdr.Background(tc.Text.Alpha(0.04))
-			}
-			if agentsHdr.Clicked() {
-				if len(subs) > 0 {
-					a.ShowRightDrawer = true
-					a.RightDrawerTab = RightTabSubagent
-				} else {
-					a.openSettings(settings.SettingsTabSubagents)
-				}
-			}
-
-			if len(subs) > 0 {
-				limit := len(subs)
-				if limit > 5 {
-					limit = 5
-				}
-				for i := 0; i < limit; i++ {
-					sub := subs[i]
-					_, statusColor := subagentStatus(sub.State, tc)
-					subRow := ui.Row(c.Key("insp-sub-"+sub.ID)).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-					subRow.Children(func() {
-						ui.Box(c).Size(6, 6).Radius(3).Background(statusColor)
-						name := sub.Name
-						if name == "" {
-							name = "Subagent"
+		if len(tasks) == 0 {
+			ui.Text(c, "No tasks tracked yet").FontSize(12).TextColor(tc.TextMuted)
+		} else {
+			ui.Column(c).Gap(6).Children(func() {
+				for _, task := range tasks {
+					tid := task.ID
+					isDone := task.Status == agent.TaskCompleted
+					isCurrent := task.Status == agent.TaskInProgress
+					row := ui.Row(c.Key("trk-"+tid)).Gap(8).AlignItems(ui.Center).MinHeight(22).Padding(2, 4).Radius(6).Cursor(ui.CursorPointer)
+					row.Children(func() {
+						if isDone {
+							ui.Icon(c, icons.TablerCircleCheck).Width(14).Height(14).TextColor(tc.Success)
+						} else if isCurrent {
+							ui.Icon(c, icons.TablerArrowRight).Width(14).Height(14).TextColor(tc.Accent)
+						} else {
+							ui.Icon(c, icons.TablerCircle).Width(14).Height(14).TextColor(tc.TextMuted)
 						}
-						ui.Text(c, name).FontSize(12).SingleLine().Grow(1)
-						if sub.RoleFilter != "" {
-							ui.Text(c, string(sub.RoleFilter)).FontSize(11).TextColor(tc.TextMuted)
+						txt := ui.Text(c, task.Title).FontSize(12).LineHeight(16).Grow(1)
+						if isDone {
+							txt.TextColor(tc.TextMuted)
+						} else if isCurrent {
+							txt.FontWeight(600).TextColor(tc.Accent)
 						}
 					})
-					if subRow.Hovered() {
-						subRow.Background(tc.Text.Alpha(0.04))
+					if row.Hovered() {
+						row.Background(tc.Text.Alpha(0.04))
 					}
-					if subRow.Clicked() {
-						a.SelectedSubagentID = sub.ID
-						a.ShowRightDrawer = true
-						a.RightDrawerTab = RightTabSubagent
+					if row.Clicked() && tm != nil {
+						tm.ToggleTask(tid)
 					}
 				}
-			} else {
-				_, personaName := a.Agent.EffectivePersona(a.Agent.ActiveSession())
-				if personaName == "" {
-					personaName = "Orchestrator"
-				}
-				leadRow := ui.Row(c.Key("insp-lead-persona")).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-				leadRow.Children(func() {
-					ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, personaName).FontSize(12).TextColor(tc.TextMuted).SingleLine().Grow(1)
-					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
-				})
-				if leadRow.Hovered() {
-					leadRow.Background(tc.Text.Alpha(0.04))
-				}
-				if leadRow.Clicked() {
-					a.openSettings(settings.SettingsTabSubagents)
-				}
+			})
+		}
+	})
+
+	// 3. Terminals section
+	ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+	termCount := a.terminalSessionCount()
+	termRow := ui.Row(c.Key("insp-terminals")).Padding(4, 4).Radius(6).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	termRow.Children(func() {
+		ui.Text(c, "Terminals").FontSize(13).FontWeight(600).Grow(1)
+		termMeta := "0 background"
+		if termCount > 0 {
+			termMeta = fmt.Sprintf("%d background", termCount)
+		}
+		ui.Text(c, termMeta).FontSize(12).TextColor(tc.TextMuted)
+	})
+	if termRow.Hovered() {
+		termRow.Background(tc.Text.Alpha(0.04))
+	}
+	if termRow.Clicked() {
+		a.ShowBottomTerminal = !a.ShowBottomTerminal
+	}
+
+	// 4. Agents / Orchestrator Personas section
+	ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+	subs := a.Agent.Subagents(a.Agent.ActiveSessionID)
+	ui.Column(c).Gap(6).Children(func() {
+		agentsHdr := ui.Row(c.Key("insp-agents-hdr")).Padding(2, 4).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+		agentsHdr.Children(func() {
+			ui.Text(c, "Agents").FontSize(13).FontWeight(600).Grow(1)
+			if len(subs) > 0 {
+				ui.Text(c, fmt.Sprintf("%d", len(subs))).FontSize(12).TextColor(tc.TextMuted)
 			}
 		})
+		if agentsHdr.Hovered() {
+			agentsHdr.Background(tc.Text.Alpha(0.04))
+		}
+		if agentsHdr.Clicked() {
+			if len(subs) > 0 {
+				a.ShowRightDrawer = true
+				a.RightDrawerTab = RightTabSubagent
+			} else {
+				a.openSettings(settings.SettingsTabSubagents)
+			}
+		}
+
+		if len(subs) > 0 {
+			limit := len(subs)
+			if limit > 5 {
+				limit = 5
+			}
+			for i := 0; i < limit; i++ {
+				sub := subs[i]
+				_, statusColor := subagentStatus(sub.State, tc)
+				subRow := ui.Row(c.Key("insp-sub-"+sub.ID)).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				subRow.Children(func() {
+					ui.Box(c).Size(6, 6).Radius(3).Background(statusColor)
+					name := sub.Name
+					if name == "" {
+						name = "Subagent"
+					}
+					ui.Text(c, name).FontSize(12).SingleLine().Grow(1)
+					if sub.RoleFilter != "" {
+						ui.Text(c, string(sub.RoleFilter)).FontSize(11).TextColor(tc.TextMuted)
+					}
+				})
+				if subRow.Hovered() {
+					subRow.Background(tc.Text.Alpha(0.04))
+				}
+				if subRow.Clicked() {
+					a.SelectedSubagentID = sub.ID
+					a.ShowRightDrawer = true
+					a.RightDrawerTab = RightTabSubagent
+				}
+			}
+		} else {
+			_, personaName := a.Agent.EffectivePersona(a.Agent.ActiveSession())
+			if personaName == "" {
+				personaName = "Orchestrator"
+			}
+			leadRow := ui.Row(c.Key("insp-lead-persona")).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			leadRow.Children(func() {
+				ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.IconMuted)
+				ui.Text(c, personaName).FontSize(12).TextColor(tc.TextMuted).SingleLine().Grow(1)
+				ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
+			})
+			if leadRow.Hovered() {
+				leadRow.Background(tc.Text.Alpha(0.04))
+			}
+			if leadRow.Clicked() {
+				a.openSettings(settings.SettingsTabSubagents)
+			}
+		}
 	})
 }
 

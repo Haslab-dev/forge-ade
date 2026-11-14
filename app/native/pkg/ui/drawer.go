@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,11 +15,50 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
-// renderRightDrawer renders the collapsible side drawer: tabs and active pane.
+func (a *AppUI) rightDrawerTabMeta(dirtyFiles int) (title string, icon *ui.SVG, count int) {
+	switch a.RightDrawerTab {
+	case RightTabFiles:
+		return "Files", icons.TablerFolder, 0
+	case RightTabBrowser:
+		return "Browser", icons.TablerWorld, 0
+	case RightTabTerminal:
+		return "Terminal", icons.TablerTerminal, 0
+	case RightTabChanges:
+		return "Review", icons.TablerFileDiff, dirtyFiles
+	case RightTabTasks:
+		return "Plans", icons.TablerChecklist, 0
+	case RightTabChat:
+		return "Side conversation", icons.TablerMessage, 0
+	case RightTabSubagent:
+		subCount := 0
+		if a.Agent != nil && a.Agent.ActiveSessionID != "" {
+			subCount = len(a.Agent.Subagents(a.Agent.ActiveSessionID))
+		}
+		return "Agents", icons.TablerBot, subCount
+	case RightTabDeck:
+		return "Presentations", icons.TablerPresentation, 0
+	case RightTabDatabase:
+		return "Database", icons.TablerDatabase, 0
+	case RightTabGit:
+		return "Git", icons.TablerGitBranch, dirtyFiles
+	case RightTabSideFile:
+		name := filepath.Base(a.ActiveSideFile)
+		if name == "" || name == "." {
+			name = "File"
+		}
+		return name, icons.FileIconSVG(a.ActiveSideFile), 0
+	default:
+		return "New tab", icons.TablerFileText, 0
+	}
+}
+
+// renderRightDrawer renders ZCode's full-height collapsible Right Sidebar with
+// the 42px multi-tool tab strip and the New tab launcher / active tool view.
 func (a *AppUI) renderRightDrawer(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
@@ -34,164 +74,86 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 		}
 	}
 
-	ui.Column(c).Width(drawerWidth).Shrink(0).Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
-		// Drawer Header Tabs with ScrollHorizontal so it never overflows or cuts off
-		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 6).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-			dirtyFiles, _, _ := a.gitDirtySummary()
-			subCount := 0
-			if a.Agent != nil && a.Agent.ActiveSessionID != "" {
-				subCount = len(a.Agent.Subagents(a.Agent.ActiveSessionID))
-			}
-			tabs := []struct {
-				Tab   int
-				Name  string
-				Icon  *ui.SVG
-				Count int
-			}{
-				{RightTabChanges, "Changes", icons.TablerFileDiff, dirtyFiles},
-				{RightTabTerminal, "Terminal", icons.TablerTerminal, 0},
-				{RightTabChat, "Chat", icons.TablerMessage, 0},
-			}
-			if len(a.SideFileTabs) > 0 {
-				tabs = append(tabs, struct {
-					Tab   int
-					Name  string
-					Icon  *ui.SVG
-					Count int
-				}{RightTabSideFile, filepath.Base(a.ActiveSideFile), icons.TablerEye, 0})
-			}
-			tabs = append(tabs, struct {
-				Tab   int
-				Name  string
-				Icon  *ui.SVG
-				Count int
-			}{RightTabBrowser, "Browser", icons.TablerWorld, 0})
-			hasSubagents := a.SelectedSubagentID != "" || subCount > 0
-			if hasSubagents {
-				tabs = append(tabs, struct {
-					Tab   int
-					Name  string
-					Icon  *ui.SVG
-					Count int
-				}{RightTabSubagent, "Agents", icons.TablerBot, subCount})
-			}
-			tabs = append(tabs, struct {
-				Tab   int
-				Name  string
-				Icon  *ui.SVG
-				Count int
-			}{RightTabDeck, "Deck", icons.TablerPresentation, 0})
+	dirtyFiles, _, _ := a.gitDirtySummary()
+	tabTitle, tabIcon, tabCount := a.rightDrawerTabMeta(dirtyFiles)
 
-			if a.RightDrawerTab == RightTabFiles || (a.RightDrawerTab == RightTabSubagent && !hasSubagents) {
-				a.RightDrawerTab = RightTabTerminal
+	bar := c.TitleBar()
+	rightPad := float32(10)
+	if bar.Right > 0 {
+		rightPad = max(bar.Right+10, 135)
+	} else if bar.Left == 0 && (runtime.GOOS == "linux" || runtime.GOOS == "windows") {
+		rightPad = 135
+	}
+
+	ui.Column(c).Width(drawerWidth).Shrink(0).FillHeight().Background(tc.Canvas).
+		BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
+		// ZCode Right Sidebar Header Bar (42px, aligned with WorkspaceTopBarHeight)
+		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, rightPad, 0, 8).Gap(6).AlignItems(ui.Center).
+			Background(tc.Chrome).BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).DragWindow().Children(func() {
+			if IconButton(c, tc, icons.TablerChevronsDownUp, 13).Shrink(0).Clicked() {
+				a.RightDrawerTab = RightTabLauncher
 			}
 
+			// Active tab pill + "+" launcher shortcut inside horizontal strip
 			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
-				ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
-					for _, tab := range tabs {
-						tTab := tab
-						active := a.RightDrawerTab == tTab.Tab
-						pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d", tTab.Tab))).Height(26).Radius(6).
-							Padding(0, 8).Gap(4).AlignItems(ui.Center)
-						pill.Children(func() {
-							icColor := tc.IconMuted
-							if active {
-								icColor = tc.Accent
-							}
-							ui.Icon(c, tTab.Icon).Width(12).Height(12).TextColor(icColor)
-							txt := ui.Text(c, tTab.Name).FontSize(11)
-							if active {
-								txt.FontWeight(600).TextColor(tc.Text)
-							} else {
-								txt.TextColor(tc.TextMuted)
-							}
-							if tTab.Count > 0 {
-								badgeTint := tc.Accent
-								if tTab.Tab == RightTabChanges {
-									badgeTint = tc.Warning
-								}
-								ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
-									Background(badgeTint.Alpha(0.15)).Children(func() {
-									ui.Text(c, fmt.Sprintf("%d", tTab.Count)).FontSize(9).FontWeight(600).TextColor(badgeTint)
-								})
-							}
-						})
-						if active {
-							pill.Background(tc.Text.Alpha(0.1))
-						} else if pill.Hovered() {
-							pill.Background(tc.Text.Alpha(0.05))
-						}
-						closedPill := false
-						// Active pill shows the tab close ×, as ZCode's panel
-						// tabs do: dynamic tabs close themselves, fixed tabs
-						// close the drawer.
-						if active {
-							tabX := ui.Row(c.Key("rtab-x-"+tTab.Name)).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-							tabX.Children(func() {
-								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					pill := ui.Row(c.Key("rtab-active")).Height(26).Radius(6).
+						Padding(0, 8).Gap(6).AlignItems(ui.Center).
+						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+					pill.Children(func() {
+						ui.Icon(c, tabIcon).Width(13).Height(13).TextColor(tc.IconMuted)
+						ui.Text(c, tabTitle).FontSize(12).FontWeight(500).TextColor(tc.Text).MaxWidth(150).SingleLine()
+						if tabCount > 0 {
+							ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
+								Background(tc.Accent.Alpha(0.15)).Children(func() {
+								ui.Text(c, fmt.Sprintf("%d", tabCount)).FontSize(9).FontWeight(600).TextColor(tc.Accent)
 							})
-							if tabX.Hovered() {
-								tabX.Background(tc.Text.Alpha(0.1))
-							}
-							if tabX.Clicked() {
-								closedPill = true
-								switch tTab.Tab {
-								case RightTabSideFile:
-									a.closeSideFile(a.ActiveSideFile)
-								case RightTabBrowser:
-									a.closeBrowserTab()
-								default:
-									a.ShowRightDrawer = false
+						}
+						tabX := ui.Row(c.Key("rtab-x-active")).Size(16, 16).Radius(4).
+							AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+						tabX.Children(func() {
+							ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+						})
+						if tabX.Hovered() {
+							tabX.Background(tc.Text.Alpha(0.1))
+						}
+						if tabX.Clicked() {
+							switch a.RightDrawerTab {
+							case RightTabSideFile:
+								a.closeSideFile(a.ActiveSideFile)
+								if len(a.SideFileTabs) == 0 {
+									a.RightDrawerTab = RightTabLauncher
 								}
+							case RightTabBrowser:
+								a.closeBrowserTab()
+								a.RightDrawerTab = RightTabLauncher
+							case RightTabLauncher:
+								a.ShowRightDrawer = false
+							default:
+								a.RightDrawerTab = RightTabLauncher
 							}
 						}
-						if !closedPill && pill.Clicked() {
-							a.RightDrawerTab = tTab.Tab
-							if tTab.Tab == RightTabBrowser && (a.BrowserWebView == nil || a.BrowserWebView.IsDestroyed()) {
-								a.openBrowserTab("")
-							}
-						}
+					})
+
+					if IconButton(c, tc, icons.TablerPlus, 13).Shrink(0).Clicked() {
+						a.RightDrawerTab = RightTabLauncher
 					}
 				})
 			})
 
-			ui.Box(c).Width(4).Shrink(0)
+			expandIcon := icons.TablerMaximize2
+			if a.RightDrawerWidth > 420 {
+				expandIcon = icons.TablerMinimize2
+			}
+			if IconButton(c, tc, expandIcon, 13).Shrink(0).Clicked() {
+				if a.RightDrawerWidth > 420 {
+					a.RightDrawerWidth = RightDrawerDefault
+				} else {
+					a.RightDrawerWidth = 540
+				}
+			}
 
-			// "+" tab menu — AgentRightSidebar's plus menu: new terminal,
-			// browser viewer, changes, new conversation, child agents.
-			plus := IconButton(c, tc, icons.TablerPlus, 13).Shrink(0)
-			plus.Menu(func(m *ui.Menu) {
-				if m.Item("New Terminal").Chosen() {
-					if a.Terminal != nil && a.RightDrawerTab == RightTabTerminal && !a.ShowBottomTerminal {
-						_ = a.Terminal.NewTab("")
-					}
-					a.ShowBottomTerminal = false
-					a.RightDrawerTab = RightTabTerminal
-					a.ShowRightDrawer = true
-				}
-				if m.Item("Browser Viewer").Chosen() {
-					a.openBrowserTab("")
-				}
-				if m.Item("Changes").Chosen() {
-					a.RightDrawerTab = RightTabChanges
-					a.ShowRightDrawer = true
-				}
-				if m.Item("New Conversation").Chosen() {
-					a.RightDrawerTab = RightTabChat
-					a.ShowRightDrawer = true
-				}
-				if m.Item("Child Agents").Chosen() {
-					a.RightDrawerTab = RightTabSubagent
-					a.ShowRightDrawer = true
-				}
-				if m.Item("Presentation & Motion (Deck)").Chosen() {
-					a.RightDrawerTab = RightTabDeck
-					a.ShowRightDrawer = true
-				}
-			})
-
-			if IconButton(c, tc, icons.TablerX, 13).Shrink(0).Clicked() {
+			if IconButton(c, tc, icons.TablerPanelRight, 14).Shrink(0).Clicked() {
 				a.ShowRightDrawer = false
 			}
 		})
@@ -259,6 +221,12 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				}
 			case RightTabChat:
 				a.renderSideChatPane(c)
+			case RightTabTasks:
+				a.renderDrawerPlansPane(c, tc)
+			case RightTabGit:
+				a.renderGitPane(c)
+			case RightTabDatabase:
+				a.renderDatabasePane(c)
 			case RightTabFiles:
 				a.renderFilesPane(c)
 			case RightTabSideFile:
@@ -269,7 +237,116 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderSubagentPane(c)
 			case RightTabDeck:
 				a.renderDeckPane(c)
+			default:
+				a.renderRightDrawerLauncher(c, tc)
 			}
+		})
+	})
+}
+
+func (a *AppUI) renderDrawerPlansPane(c *ui.Context, tc theme.ThemeColors) {
+	ui.Scroll(c).Grow(1).Padding(16, 18).Children(func() {
+		ui.Column(c).Gap(10).Children(func() {
+			a.renderInspectorBody(c, tc, false)
+		})
+	})
+}
+
+func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
+	ui.Scroll(c).Grow(1).Padding(16, 18).Children(func() {
+		ui.Column(c).Gap(14).Children(func() {
+			ui.Text(c, "New tab").FontSize(15).FontWeight(600)
+
+			launcherCard := func(key, title, desc string, icon *ui.SVG, tileBg, tileFg ui.Color, bordered bool, onOpen func()) {
+				row := ui.Row(c.Key("rlaunch-"+key)).Padding(6, 6).Radius(10).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				if row.Hovered() {
+					row.Background(tc.Text.Alpha(0.04))
+				}
+				openClicked := false
+				row.Children(func() {
+					tile := ui.Row(c).Size(36, 36).Radius(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Background(tileBg)
+					if bordered {
+						tile.BorderWidth(1).BorderColor(tc.Border)
+					}
+					tile.Children(func() {
+						ui.Icon(c, icon).Width(17).Height(17).TextColor(tileFg)
+					})
+					ui.Column(c).Gap(2).Grow(1).MinWidth(0).Children(func() {
+						ui.Text(c, title).FontSize(13).FontWeight(600).SingleLine()
+						ui.Text(c, desc).FontSize(11).TextColor(tc.TextMuted).SingleLine()
+					})
+					openBtn := ui.Row(c.Key("rlaunch-open-"+key)).Height(26).Radius(999).Padding(0, 12).
+						AlignItems(ui.Center).Justify(ui.Center).Shrink(0).
+						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+					openBtn.Children(func() {
+						ui.Text(c, "Open").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					})
+					if openBtn.Hovered() {
+						openBtn.Background(tc.Text.Alpha(0.08))
+					}
+					if openBtn.Clicked() {
+						openClicked = true
+						onOpen()
+					}
+				})
+				if !openClicked && row.Clicked() {
+					onOpen()
+				}
+			}
+
+			ui.Column(c).Gap(4).Children(func() {
+				launcherCard("files", "Files", "Select a file from the navigation", icons.TablerFolder, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.RightDrawerTab = RightTabFiles
+				})
+				launcherCard("browser", "Browser", "Browse websites and preview apps.", icons.TablerWorld, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.openBrowserTab("")
+				})
+				launcherCard("terminal", "Terminal", "Run commands and view output.", icons.TablerTerminal, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.ShowBottomTerminal = false
+					a.RightDrawerTab = RightTabTerminal
+				})
+				launcherCard("review", "Review", "Review code changes and diffs.", icons.TablerFileDiff, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.RightDrawerTab = RightTabChanges
+				})
+				launcherCard("plans", "Plans & Progress", "View active plans, tasks, and sub-agents.", icons.TablerChecklist, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.RightDrawerTab = RightTabTasks
+				})
+				launcherCard("sidechat", "Side conversation", "Continue a conversation in the side pane.", icons.TablerMessage, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.RightDrawerTab = RightTabChat
+				})
+				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.RightDrawerTab = RightTabSubagent
+				})
+			})
+
+			ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "App plugins").FontSize(13).FontWeight(600).Grow(1)
+				viewAll := ui.Row(c.Key("rlaunch-plugins-all")).Gap(3).Radius(6).Padding(3, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				viewAll.Children(func() {
+					ui.Text(c, "View all plugins").FontSize(11).TextColor(tc.TextMuted)
+					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.TextMuted)
+				})
+				if viewAll.Hovered() {
+					viewAll.Background(tc.Text.Alpha(0.05))
+				}
+				if viewAll.Clicked() {
+					a.openSettings(settings.SettingsTabPlugins)
+				}
+			})
+
+			ui.Column(c).Gap(4).Children(func() {
+				launcherCard("pdf", "PDF", "PDF", icons.TablerFileText, tc.Error.Alpha(0.14), tc.Error, false, func() {
+					a.RightDrawerTab = RightTabFiles
+				})
+				launcherCard("presentations", "Presentations", "Presentations", icons.TablerPresentation, tc.Warning.Alpha(0.14), tc.Warning, false, func() {
+					a.RightDrawerTab = RightTabDeck
+				})
+				launcherCard("database", "Database", "SQLite & DuckDB inspector", icons.TablerDatabase, tc.Info.Alpha(0.14), tc.Info, false, func() {
+					a.RightDrawerTab = RightTabDatabase
+				})
+			})
 		})
 	})
 }

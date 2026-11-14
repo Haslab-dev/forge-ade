@@ -33,15 +33,17 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
 		// Top window controls strip (aligned with WorkspaceTopBarHeight & macOS traffic lights).
-		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 10, 0, topPadLeft).Gap(6).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.SidebarBorder).DragWindow().Children(func() {
+		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 10, 0, topPadLeft).Gap(4).AlignItems(ui.Center).
+			DragWindow().Children(func() {
 			if IconButton(c, tc, icons.TablerPanelLeft, 15).Clicked() {
 				a.ShowLeftSidebar = false
 			}
-			ui.Row(c).Padding(0, 4).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.ForgeSparkSVG).Width(14).Height(14).TextColor(tc.Accent)
-				ui.Text(c, "ForgeADE").FontSize(13).FontWeight(600).LetterSpacing(-0.2)
-			})
+			if IconButton(c, tc, icons.TablerArrowLeft, 14).Clicked() {
+				a.cycleAgentSession(-1)
+			}
+			if IconButton(c, tc, icons.TablerArrowRight, 14).Clicked() {
+				a.cycleAgentSession(1)
+			}
 			ui.Box(c).Grow(1)
 		})
 
@@ -50,16 +52,20 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		if a.LeftSidebarView == "files" {
 			a.renderSidebarFileExplorer(c, tc)
 		} else {
-			// Primary action rows: New task, Automations — ZCode stack.
+			// Primary action rows: New task, Automations, Plugin Marketplace — ZCode stack.
 			ui.Column(c).Padding(10, 12, 6, 12).Gap(2).Children(func() {
 				isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
-				newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New task", "⌘N", isNewTaskActive)
+				newTask := SidebarActionButton(c, tc, icons.TablerCirclePlus, "New task", "⌘N", isNewTaskActive)
 				if newTask.Clicked() {
 					a.handleNewTask()
 				}
 				autos := SidebarActionButton(c, tc, icons.TablerClock, "Automations", "", false)
 				if autos.Clicked() {
 					a.openSettings(settings.SettingsTabAutos)
+				}
+				plugins := SidebarActionButton(c, tc, icons.TablerPuzzle, "Plugin Marketplace", "", false)
+				if plugins.Clicked() {
+					a.openSettings(settings.SettingsTabPlugins)
 				}
 			})
 

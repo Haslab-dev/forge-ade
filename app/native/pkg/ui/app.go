@@ -59,6 +59,7 @@ const (
 	RightTabBrowser  = 9
 	RightTabSubagent = 10
 	RightTabDeck     = 11
+	RightTabLauncher = 12
 )
 
 // Layout metrics of ForgeADE's CSS
@@ -355,7 +356,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		BottomTerminalHeight:    240,
 		ShowBottomTerminal:      false,
 		ShowRightDrawer:         false,
-		RightDrawerTab:          RightTabChanges,
+		RightDrawerTab:          RightTabLauncher,
 		EditorActivity:          ActivityExplorer,
 		NewTaskAgentType:        "acp",
 		NewTaskFilterTab:        "all",
@@ -1627,20 +1628,37 @@ func (a *AppUI) renderMainColumn(c *ui.Context) {
 		a.renderSettingsScreen(c)
 		return
 	}
-	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		a.renderWorkspaceHeader(c)
+	if a.Mode == ModeEditor {
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			a.renderWorkspaceHeader(c)
 
-		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-			switch a.Mode {
-			case ModeEditor:
+			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 				a.renderEditorSurface(c)
-			default:
+			})
+
+			a.renderStatusBar(c)
+		})
+		return
+	}
+
+	// ZCode 3-column layout in Agent Mode: Center workspace (header + chat/terminal)
+	// alongside a full-height collapsible Right Sidebar (spanning Y=0 to bottom).
+	ui.Row(c).Grow(1).FillHeight().AlignItems(ui.Stretch).Children(func() {
+		ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
+			a.renderWorkspaceHeader(c)
+
+			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 				a.renderAgentSurface(c)
-			}
+			})
 		})
 
-		if a.Mode == ModeEditor {
-			a.renderStatusBar(c)
+		if a.ShowRightDrawer {
+			maxRight := float32(750)
+			if winW, _ := c.Size(); winW > 0 && winW*0.6 < maxRight {
+				maxRight = winW * 0.6
+			}
+			LeftResizeHandle(c, &a.RightDrawerWidth, 280, maxRight, RightDrawerDefault)
+			a.renderRightDrawer(c)
 		}
 	})
 }
