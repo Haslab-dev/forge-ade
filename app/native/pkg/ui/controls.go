@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -219,6 +220,7 @@ type taskRowData struct {
 	OnSnooze    func()
 	OnStop      func() // terminal sessions: stop while running
 	OnRestart   func() // terminal sessions: relaunch when stopped
+	OnRename    func()
 	OnDelete    func()
 	OnOpen      func()
 }
@@ -250,9 +252,10 @@ func relativeTime(t time.Time) string {
 // CLI sessions display agent brand icon + terminal icon group,
 // single-line title with inline pin, relative time, hover-only actions.
 func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
-	row := ui.Row(c.Key(d.Key)).Radius(8).Padding(6, 8, 6, 10).Gap(8).AlignItems(ui.Center)
+	row := ui.Row(c.Key(d.Key)).Height(28).Radius(8).Padding(0, 8, 0, 10).Gap(8).AlignItems(ui.Center)
 	isRunning := d.Status == "running" || d.Status == "working"
 	isAwaiting := d.Status == "awaiting-approval" || d.Status == "waiting"
+	actionClicked := false
 
 	if d.Active {
 		row.Background(tc.SidebarRowActive)
@@ -307,7 +310,7 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			}
 		})
 		// Title with the inline filled pin, as the original's title span.
-		titleRow := ui.Row(c).Grow(1).Gap(5).AlignItems(ui.Center)
+		titleRow := ui.Row(c).Grow(1).MinWidth(0).Gap(5).AlignItems(ui.Center).Clip()
 		titleRow.Children(func() {
 			if d.ProjectName != "" {
 				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.Border.Alpha(0.6)).AlignItems(ui.Center).Children(func() {
@@ -361,109 +364,88 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 		}
 
 		// Hover actions: stop (running) / restart (stopped) for terminal
-		// sessions, pin (always when pinned), snooze, delete — size-5 hit
-		// areas, as forge-ade's group-hover buttons.
+		// sessions, pin (always when pinned), snooze, delete — compact 18x18 hit
+		// areas so rows maintain an exact 28px height on hover.
 		showActions := row.Hovered() || d.Pinned || d.Snoozed
-		if showActions && isRunning && d.OnStop != nil {
-			stopBtn := ui.Row(c.Key("ract-stop-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			stopBtn.Children(func() {
-				ui.Icon(c, icons.TablerSquare).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
-			})
-			if stopBtn.Hovered() {
-				stopBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if stopBtn.Clicked() {
-				d.OnStop()
-			}
-		}
-		if showActions && !isRunning && d.OnRestart != nil {
-			restartBtn := ui.Row(c.Key("ract-restart-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			restartBtn.Children(func() {
-				ui.Icon(c, icons.TablerRotate).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
-			})
-			if restartBtn.Hovered() {
-				restartBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if restartBtn.Clicked() {
-				d.OnRestart()
-			}
-		}
-		if showActions && d.OnPin != nil {
-			pinBtn := ui.Row(c.Key("ract-pin-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			pinBtn.Children(func() {
-				if d.Pinned {
-					ui.Icon(c, icons.TablerPinFilled).Width(12).Height(12).TextColor(tc.Accent)
-				} else {
-					ui.Icon(c, icons.TablerPin).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+		if showActions {
+			ui.Row(c).Gap(2).Shrink(0).AlignItems(ui.Center).Children(func() {
+				renderActionBtn := func(key string, icon *ui.SVG, danger bool, accent bool, onClick func()) {
+					btn := ui.Row(c.Key(key)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+					btn.Children(func() {
+						ic := ui.Icon(c, icon).Width(12).Height(12)
+						if accent {
+							ic.TextColor(tc.Accent)
+						} else if danger {
+							ic.TextColor(tc.SidebarMutedForeground)
+						} else {
+							ic.TextColor(tc.SidebarMutedForeground)
+						}
+					})
+					if danger && btn.Hovered() {
+						btn.Background(tc.Error.Alpha(0.12))
+					} else if btn.Hovered() {
+						btn.Background(tc.Text.Alpha(0.06))
+					}
+					if btn.Clicked() {
+						actionClicked = true
+						onClick()
+					}
+				}
+
+				if isRunning && d.OnStop != nil {
+					renderActionBtn("ract-stop-"+d.Key, icons.TablerSquare, false, false, d.OnStop)
+				}
+				if !isRunning && d.OnRestart != nil {
+					renderActionBtn("ract-restart-"+d.Key, icons.TablerRotate, false, false, d.OnRestart)
+				}
+				if d.OnPin != nil {
+					pinIcon := icons.TablerPin
+					if d.Pinned {
+						pinIcon = icons.TablerPinFilled
+					}
+					renderActionBtn("ract-pin-"+d.Key, pinIcon, false, d.Pinned, d.OnPin)
+				}
+				if d.OnFork != nil && row.Hovered() {
+					renderActionBtn("ract-fork-"+d.Key, icons.TablerGitFork, false, false, d.OnFork)
+				}
+				if d.OnSnooze != nil {
+					btn := ui.Row(c.Key("ract-sn-"+d.Key)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+					btn.Children(func() {
+						bell := ui.Icon(c, icons.TablerBellOff).Width(12).Height(12)
+						if d.Snoozed {
+							bell.TextColor(tc.Warning)
+						} else {
+							bell.TextColor(tc.SidebarMutedForeground)
+						}
+					})
+					if btn.Hovered() {
+						btn.Background(tc.Text.Alpha(0.06))
+					}
+					if btn.Clicked() {
+						actionClicked = true
+						d.OnSnooze()
+					}
+				}
+				if d.OnArchive != nil && row.Hovered() {
+					renderActionBtn("ract-arch-"+d.Key, icons.TablerArchive, false, false, d.OnArchive)
+				}
+				if d.OnDelete != nil && row.Hovered() {
+					btn := ui.Row(c.Key("ract-del-"+d.Key)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+					btn.Children(func() {
+						ui.Icon(c, icons.TablerTrash).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
+					})
+					if btn.Hovered() {
+						btn.Background(tc.Error.Alpha(0.12))
+					}
+					if btn.Clicked() {
+						actionClicked = true
+						d.OnDelete()
+					}
 				}
 			})
-			if pinBtn.Hovered() {
-				pinBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if pinBtn.Clicked() {
-				d.OnPin()
-			}
-		}
-		if showActions && d.OnFork != nil {
-			forkBtn := ui.Row(c.Key("ract-fork-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			forkBtn.Children(func() {
-				ui.Icon(c, icons.TablerGitFork).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
-			})
-			if forkBtn.Hovered() {
-				forkBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if forkBtn.Clicked() {
-				d.OnFork()
-			}
-		}
-		if showActions && d.OnSnooze != nil {
-			snoozeBtn := ui.Row(c.Key("ract-sn-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			snoozeBtn.Children(func() {
-				bell := ui.Icon(c, icons.TablerBellOff).Width(12).Height(12)
-				if d.Snoozed {
-					bell.TextColor(tc.Warning)
-				} else {
-					bell.TextColor(tc.SidebarMutedForeground)
-				}
-			})
-			if snoozeBtn.Hovered() {
-				snoozeBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if snoozeBtn.Clicked() {
-				d.OnSnooze()
-			}
-		}
-		if showActions && d.OnArchive != nil {
-			archBtn := ui.Row(c.Key("ract-arch-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			archBtn.Children(func() {
-				ui.Icon(c, icons.TablerArchive).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
-			})
-			if archBtn.Hovered() {
-				archBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if archBtn.Clicked() {
-				d.OnArchive()
-			}
-		}
-		if showActions && d.OnDelete != nil {
-			delBtn := ui.Row(c.Key("ract-del-"+d.Key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			delBtn.Children(func() {
-				ui.Icon(c, icons.TablerTrash).Width(13).Height(13).TextColor(tc.SidebarMutedForeground)
-			})
-			if delBtn.Hovered() {
-				delBtn.Background(tc.Error.Alpha(0.12))
-			}
-			if delBtn.Clicked() {
-				d.OnDelete()
-			}
 		}
 	})
-	if d.Active {
-		row.Background(tc.Text.Alpha(0.1))
-	} else if row.Hovered() {
-		row.Background(tc.Text.Alpha(0.1))
-	}
-	if row.Clicked() && d.OnOpen != nil {
+	if row.Clicked() && !actionClicked && d.OnOpen != nil {
 		d.OnOpen()
 	}
 	if d.Archived {
@@ -478,14 +460,20 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 		if m.Item("Open").Chosen() && d.OnOpen != nil {
 			d.OnOpen()
 		}
+		if d.OnRename != nil {
+			if m.Item("Rename").Chosen() {
+				d.OnRename()
+			}
+		}
 		if d.OnFork != nil {
 			if m.Item("Fork Session").Chosen() {
 				d.OnFork()
 			}
 		}
 		if m.Item("Copy Session ID").Chosen() {
-			mygo.Clipboard.WriteText(d.Key)
-			c.AddToast(ui.Toast{Title: "Session ID Copied", Description: d.Key, Type: "info"})
+			rawID := strings.TrimPrefix(strings.TrimPrefix(d.Key, "cli-sess-"), "sess-")
+			mygo.Clipboard.WriteText(rawID)
+			c.AddToast(ui.Toast{Title: "Session ID Copied", Description: rawID, Type: "info"})
 		}
 		if m.Item("Copy Title").Chosen() {
 			mygo.Clipboard.WriteText(d.Title)

@@ -57,29 +57,124 @@ func (q *AgentQuestion) AnswersMap() map[string]any {
 // ensureInternalManagerSession returns the RakitKode agent session backing a
 // native internal session, creating it on the first turn (and re-linking
 // restored sessions whose manager session no longer exists).
+func (as *AgentState) resolveTargetPersonaKeyLocked(sess *AgentSession) (string, agent.RoleFilter) {
+	role := agent.RoleCoding
+	var orchCfg agent.OrchestrationConfig
+	if as.engine != nil && as.engine.AgentMgr != nil {
+		orchCfg = as.engine.AgentMgr.GetOrchestrationConfig()
+	}
+	if as.ExecutionMode == ModePlan {
+		return string(agent.RolePlanning), agent.RolePlanning
+	}
+	personaID := ""
+	if sess != nil && sess.PersonaID != "" {
+		personaID = sess.PersonaID
+	} else if as.ActivePersonaID != "" {
+		personaID = as.ActivePersonaID
+	}
+	if personaID != "" {
+		if as.engine != nil && as.engine.AgentMgr != nil {
+			if def, ok := as.engine.AgentMgr.FindDefinition(personaID); ok && def.Role != "" {
+				return personaID, def.Role
+			}
+		}
+		return personaID, role
+	}
+	if orchCfg.Enabled {
+		defRole := orchCfg.DefaultRole
+		if defRole == "" {
+			defRole = agent.RoleOrchestrator
+		}
+		return string(defRole), defRole
+	}
+	return string(agent.RoleCoding), agent.RoleCoding
+}
+
+// SetSessionPersona sets the persona ID for a session and clears applied state so
+// the next turn applies the updated persona definition cleanly.
+func (as *AgentState) SetSessionPersona(sessionID, personaID string) {
+	if as == nil {
+		return
+	}
+	var updated *AgentSession
+	as.mu.Lock()
+	as.ActivePersonaID = personaID
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			s.PersonaID = personaID
+			s.appliedPersonaKey = ""
+			updated = s
+			break
+		}
+	}
+	as.mu.Unlock()
+	if updated != nil {
+		as.SaveSessionToDisk(updated)
+	}
+}
+
+// EffectivePersona returns the resolved persona ID and display title for sess
+// (falling back to the global orchestration config default role when enabled).
+func (as *AgentState) EffectivePersona(sess *AgentSession) (string, string) {
+	if as == nil {
+		return "coding", "Coding Agent"
+	}
+	as.mu.Lock()
+	key, _ := as.resolveTargetPersonaKeyLocked(sess)
+	as.mu.Unlock()
+	if as.engine != nil && as.engine.AgentMgr != nil && key != "" {
+		if def, ok := as.engine.AgentMgr.FindDefinition(key); ok {
+			name := def.Name
+			if name == "" {
+				name = string(def.Role)
+			}
+			return def.ID, name
+		}
+	}
+	if key == "" {
+		key = "coding"
+	}
+	return key, strings.ToUpper(key[:1]) + key[1:]
+}
+
 func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, error) {
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return "", fmt.Errorf("agent engine unavailable")
 	}
-	if sess.RemoteSessionID != "" {
-		if _, ok := as.engine.AgentMgr.GetSession(sess.RemoteSessionID); ok {
-			return sess.RemoteSessionID, nil
-		}
-	}
-	role := agent.RoleCoding
+	as.mu.Lock()
+	remoteID := sess.RemoteSessionID
+	title := sess.Title
 	ws := sess.WorkspacePath
 	if ws == "" {
 		ws = as.workspacePath
 	}
+	targetKey, role := as.resolveTargetPersonaKeyLocked(sess)
+	as.mu.Unlock()
+
+	if remoteID != "" {
+		if _, ok := as.engine.AgentMgr.GetSession(remoteID); ok {
+			return remoteID, nil
+		}
+	}
 	if ws == "" && as.engine != nil {
 		ws = as.engine.DataDir
 	}
-	mgrSess, err := as.engine.AgentMgr.CreateSession(sess.Title, role, ws)
+	mgrSess, err := as.engine.AgentMgr.CreateSession(title, role, ws)
 	if err != nil {
 		return "", err
 	}
+	appliedKey := ""
+	if targetKey != "" {
+		if def, ok := as.engine.AgentMgr.FindDefinition(targetKey); ok {
+			_ = as.engine.AgentMgr.ApplyDefinitionToSession(mgrSess.ID, def.ID)
+			appliedKey = targetKey
+		}
+	}
 	as.mu.Lock()
 	sess.RemoteSessionID = mgrSess.ID
+	if appliedKey != "" {
+		sess.appliedPersonaKey = appliedKey
+	}
 	as.mu.Unlock()
 	return mgrSess.ID, nil
 }
@@ -90,7 +185,22 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return
 	}
+	targetKey, targetRole := as.resolveTargetPersonaKeyLocked(sess)
+	personaModel := ""
+	if targetKey != "" && targetKey != sess.appliedPersonaKey {
+		if def, ok := as.engine.AgentMgr.FindDefinition(targetKey); ok {
+			_ = as.engine.AgentMgr.ApplyDefinitionToSession(mgrID, def.ID)
+			personaModel = def.Model
+		} else {
+			_, _ = as.engine.AgentMgr.UpdateSession(mgrID, "", targetRole, "", "")
+		}
+		sess.appliedPersonaKey = targetKey
+	}
+
 	activeModel := sess.Model
+	if activeModel == "" && personaModel != "" {
+		activeModel = personaModel
+	}
 	if activeModel == "" && as.ActiveModel != "" {
 		activeModel = as.ActiveModel
 	}

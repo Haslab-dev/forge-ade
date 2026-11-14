@@ -17,6 +17,7 @@ type TerminalTab struct {
 	Term     *termplugin.Terminal
 	Command  []string
 	Env      []string
+	gen      uint64
 }
 
 // TerminalTabSnapshot is an immutable snapshot of a terminal tab's metadata.
@@ -126,11 +127,19 @@ func (ts *TerminalState) syncActiveLocked() {
 	ts.Env = cloneStrings(tab.Env)
 }
 
-func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) error {
-	if tab.Term != nil {
-		tab.Term.Close()
-		tab.Term = nil
+func closeTerms(terms ...*termplugin.Terminal) {
+	for _, t := range terms {
+		if t != nil {
+			t.Close()
+		}
 	}
+}
+
+func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) (*termplugin.Terminal, error) {
+	oldTerm := tab.Term
+	tab.Term = nil
+	tab.gen++
+	gen := tab.gen
 	if tab.Title == "" {
 		tab.Title = "Terminal"
 	}
@@ -138,19 +147,23 @@ func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) error {
 		Dir: tab.Cwd,
 		OnTitle: func(title string) {
 			ts.mu.Lock()
-			tab.Title = title
-			if ts.ActiveTabIdx >= 0 && ts.ActiveTabIdx < len(ts.Tabs) && ts.Tabs[ts.ActiveTabIdx] == tab {
-				ts.Title = title
+			if tab.gen == gen {
+				tab.Title = title
+				if ts.ActiveTabIdx >= 0 && ts.ActiveTabIdx < len(ts.Tabs) && ts.Tabs[ts.ActiveTabIdx] == tab {
+					ts.Title = title
+				}
 			}
 			ts.mu.Unlock()
 		},
 		OnExit: func(code int) {
 			ts.mu.Lock()
-			tab.Exited = true
-			tab.ExitCode = code
-			if ts.ActiveTabIdx >= 0 && ts.ActiveTabIdx < len(ts.Tabs) && ts.Tabs[ts.ActiveTabIdx] == tab {
-				ts.Exited = true
-				ts.ExitCode = code
+			if tab.gen == gen {
+				tab.Exited = true
+				tab.ExitCode = code
+				if ts.ActiveTabIdx >= 0 && ts.ActiveTabIdx < len(ts.Tabs) && ts.Tabs[ts.ActiveTabIdx] == tab {
+					ts.Exited = true
+					ts.ExitCode = code
+				}
 			}
 			ts.mu.Unlock()
 		},
@@ -164,23 +177,22 @@ func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) error {
 	term, err := termplugin.New(opts)
 	if err != nil {
 		ts.syncActiveLocked()
-		return err
+		return oldTerm, err
 	}
 	tab.Term = term
 	tab.Exited = false
 	tab.ExitCode = 0
 	ts.syncActiveLocked()
-	return nil
+	return oldTerm, nil
 }
 
 // Restart spawns a new shell process in the active tab's working directory.
 func (ts *TerminalState) Restart() error {
+	var toClose []*termplugin.Terminal
 	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
 	tab := ts.ensureActiveTabLocked()
 	if ts.term != nil && ts.term != tab.Term {
-		ts.term.Close()
+		toClose = append(toClose, ts.term)
 		ts.term = nil
 	}
 	tab.Cwd = ts.Cwd
@@ -189,14 +201,19 @@ func (ts *TerminalState) Restart() error {
 	if ts.Title != "" {
 		tab.Title = ts.Title
 	}
-	return ts.spawnTabLocked(tab)
+	old, err := ts.spawnTabLocked(tab)
+	if old != nil {
+		toClose = append(toClose, old)
+	}
+	ts.mu.Unlock()
+	closeTerms(toClose...)
+	return err
 }
 
 // ResetShell clears any custom command/env (such as SSH) and restarts a local shell in cwd.
 func (ts *TerminalState) ResetShell(cwd string) error {
+	var toClose []*termplugin.Terminal
 	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
 	if cwd != "" {
 		ts.Cwd = cwd
 	}
@@ -205,14 +222,20 @@ func (ts *TerminalState) ResetShell(cwd string) error {
 	ts.Title = "Terminal"
 	tab := ts.ensureActiveTabLocked()
 	if ts.term != nil && ts.term != tab.Term {
-		ts.term.Close()
+		toClose = append(toClose, ts.term)
 		ts.term = nil
 	}
 	tab.Cwd = ts.Cwd
 	tab.Command = nil
 	tab.Env = nil
 	tab.Title = "Terminal"
-	return ts.spawnTabLocked(tab)
+	old, err := ts.spawnTabLocked(tab)
+	if old != nil {
+		toClose = append(toClose, old)
+	}
+	ts.mu.Unlock()
+	closeTerms(toClose...)
+	return err
 }
 
 // TabCount returns the number of open terminal tabs.
@@ -244,8 +267,6 @@ func (ts *TerminalState) SnapshotTabs() ([]TerminalTabSnapshot, int) {
 // NewTab spawns a new shell tab in cwd (or the active tab's Cwd when empty) and activates it.
 func (ts *TerminalState) NewTab(cwd string) error {
 	ts.mu.Lock()
-	defer ts.mu.Unlock()
-
 	ts.ensureActiveTabLocked()
 	if cwd == "" {
 		cwd = ts.Cwd
@@ -258,7 +279,10 @@ func (ts *TerminalState) NewTab(cwd string) error {
 	}
 	ts.Tabs = append(ts.Tabs, tab)
 	ts.ActiveTabIdx = len(ts.Tabs) - 1
-	return ts.spawnTabLocked(tab)
+	old, err := ts.spawnTabLocked(tab)
+	ts.mu.Unlock()
+	closeTerms(old)
+	return err
 }
 
 // SelectTab switches the active terminal tab to idx.
@@ -274,9 +298,10 @@ func (ts *TerminalState) SelectTab(idx int) {
 
 // CloseTab closes tab idx. If it is the only tab, it restarts that tab with a fresh shell.
 func (ts *TerminalState) CloseTab(idx int) {
+	var old *termplugin.Terminal
 	ts.mu.Lock()
-	defer ts.mu.Unlock()
 	if idx < 0 || idx >= len(ts.Tabs) {
+		ts.mu.Unlock()
 		return
 	}
 	if len(ts.Tabs) <= 1 {
@@ -284,14 +309,15 @@ func (ts *TerminalState) CloseTab(idx int) {
 		tab.Command = nil
 		tab.Env = nil
 		tab.Title = "Terminal"
-		_ = ts.spawnTabLocked(tab)
+		old, _ = ts.spawnTabLocked(tab)
+		ts.mu.Unlock()
+		closeTerms(old)
 		return
 	}
 	victim := ts.Tabs[idx]
-	if victim.Term != nil {
-		victim.Term.Close()
-		victim.Term = nil
-	}
+	victim.gen++
+	old = victim.Term
+	victim.Term = nil
 	ts.Tabs = append(ts.Tabs[:idx], ts.Tabs[idx+1:]...)
 	if idx < ts.ActiveTabIdx {
 		ts.ActiveTabIdx--
@@ -300,24 +326,31 @@ func (ts *TerminalState) CloseTab(idx int) {
 		ts.ActiveTabIdx = len(ts.Tabs) - 1
 	}
 	ts.syncActiveLocked()
+	ts.mu.Unlock()
+	closeTerms(old)
 }
 
 // Close terminates all running terminal processes.
 func (ts *TerminalState) Close() {
+	var toClose []*termplugin.Terminal
 	ts.mu.Lock()
-	defer ts.mu.Unlock()
 	for _, tab := range ts.Tabs {
-		if tab != nil && tab.Term != nil {
-			tab.Term.Close()
-			tab.Term = nil
+		if tab != nil {
+			tab.gen++
+			if tab.Term != nil {
+				toClose = append(toClose, tab.Term)
+				tab.Term = nil
+			}
 		}
 	}
 	if ts.term != nil {
-		ts.term.Close()
+		toClose = append(toClose, ts.term)
 		ts.term = nil
 	}
 	ts.Tabs = nil
 	ts.ActiveTabIdx = 0
+	ts.mu.Unlock()
+	closeTerms(toClose...)
 }
 
 // SendInput writes raw characters or commands to the running shell process.

@@ -48,6 +48,7 @@ var (
 	TablerCheck           = tablerSVG(`<path d="M5 12l5 5l10 -10"/>`)
 	TablerCircleCheck     = tablerSVG(`<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/>`)
 	TablerCircle          = tablerSVG(`<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/>`)
+	TablerCirclePlus      = tablerSVG(`<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12h6"/><path d="M12 9v6"/>`)
 	TablerCircleDot       = tablerSVG(`<path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/>`)
 	TablerLoader          = tablerSVG(`<path d="M12 3a9 9 0 1 0 9 9"/>`)
 	TablerPin             = tablerSVG(`<path d="M15 4.5l-4 4l-4 1.5l-1.5 1.5l7 7l1.5 -1.5l1.5 -4l4 -4"/><path d="M9 15l-4.5 4.5"/><path d="M14.5 4l5.5 5.5"/>`)

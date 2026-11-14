@@ -84,8 +84,8 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 
 	ui.Column(c).Height(a.BottomTerminalHeight).Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 		// Terminal Drawer Header — ZCode dock style: bold label, shell name,
-		// session tab strip, then new/close on the right.
-		ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 12).Gap(10).AlignItems(ui.Center).
+		// session tab strip, then compact actions menu + new/close on the right.
+		ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 14).Gap(10).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			ui.Text(c, "Terminal").FontSize(13).FontWeight(600)
 			shellName := "zsh"
@@ -96,39 +96,35 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 
 			renderTerminalTabsStrip(c, tc, a.Terminal, "bottom-term")
 
-			// Ask Agent diagnostic button (1:1 with webview BottomTerminal)
-			askBtn := ui.Row(c.Key("term-ask-agent")).Height(24).Radius(5).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-				Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
-			askBtn.Children(func() {
-				ui.Icon(c, icons.TablerSparkles).Width(11).Height(11).TextColor(tc.Accent)
-				ui.Text(c, "Ask Agent").FontSize(11).FontWeight(600).TextColor(tc.Accent)
+			moreBtn := ui.Row(c.Key("term-actions-menu")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+			moreBtn.Children(func() {
+				ui.Icon(c, icons.TablerDots).Width(14).Height(14).TextColor(tc.IconMuted)
 			})
-			if askBtn.Clicked() {
-				a.askAgentFromTerminal()
+			if moreBtn.Hovered() {
+				moreBtn.Background(tc.Text.Alpha(0.06))
 			}
-
-			// Snippets modal button (⌥S)
-			snipBtn := ui.Row(c.Key("term-snippets")).Height(24).Radius(5).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-			snipBtn.Children(func() {
-				ui.Icon(c, icons.TablerBook).Width(11).Height(11).TextColor(tc.IconMuted)
-				ui.Text(c, "Snippets").FontSize(11).TextColor(tc.Text)
-			})
-			if snipBtn.Clicked() {
-				sessID := ""
-				if a.Terminal != nil {
-					sessID = a.Terminal.ActiveSessionID
+			moreBtn.Menu(func(m *ui.Menu) {
+				if m.Item("Ask Agent Diagnostic").Chosen() {
+					a.askAgentFromTerminal()
 				}
-				a.OpenTerminalSnippetsModal(sessID, "", "")
-			}
+				if m.Item("Terminal Snippets").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+					sessID := ""
+					if a.Terminal != nil {
+						sessID = a.Terminal.ActiveSessionID
+					}
+					a.OpenTerminalSnippetsModal(sessID, "", "")
+				}
+				if a.Terminal != nil {
+					m.Separator()
+					if m.Item("Clear Terminal").Chosen() {
+						a.Terminal.SendInput("\x0c")
+					}
+					if m.Item("Restart Shell").Chosen() {
+						_ = a.Terminal.Restart()
+					}
+				}
+			})
 
-			// Clear (\x0c reset), Restart, close — ZCode terminal dock actions.
-			if IconButton(c, tc, icons.TablerEraser, 13).Clicked() && a.Terminal != nil {
-				a.Terminal.SendInput("\x0c")
-			}
-			if IconButton(c, tc, icons.TablerRefresh, 13).Clicked() && a.Terminal != nil {
-				_ = a.Terminal.Restart()
-			}
 			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && a.Terminal != nil {
 				_ = a.Terminal.NewTab("")
 			}

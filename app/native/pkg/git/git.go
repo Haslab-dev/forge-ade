@@ -74,7 +74,14 @@ type CommitFileDiff struct {
 
 // NewGitManager creates an initialized GitManager for the repository.
 func NewGitManager(engine *engine.Engine, rootDir string, onFileSelect func(path string, showDiff bool)) *GitManager {
-	gm := &GitManager{
+	gm := NewGitManagerLazy(engine, rootDir, onFileSelect)
+	gm.Refresh()
+	return gm
+}
+
+// NewGitManagerLazy creates a GitManager without running an initial synchronous Refresh.
+func NewGitManagerLazy(engine *engine.Engine, rootDir string, onFileSelect func(path string, showDiff bool)) *GitManager {
+	return &GitManager{
 		engine:          engine,
 		RootDir:         rootDir,
 		ActiveTab:       GitTabChanges,
@@ -83,8 +90,6 @@ func NewGitManager(engine *engine.Engine, rootDir string, onFileSelect func(path
 		fileDiffPending: make(map[string]bool),
 		cachedRootDir:   rootDir,
 	}
-	gm.Refresh()
-	return gm
 }
 
 func (gm *GitManager) redraw() {

@@ -35,6 +35,14 @@ func NewDatabaseManager(ws *workspace.WorkspaceState) *DatabaseManager {
 	return dm
 }
 
+// SetWorkspaceAndScan atomically updates the workspace reference and rescans its files.
+func (dm *DatabaseManager) SetWorkspaceAndScan(ws *workspace.WorkspaceState) {
+	dm.mu.Lock()
+	dm.Workspace = ws
+	dm.mu.Unlock()
+	dm.ScanDatabases()
+}
+
 // ScanDatabases finds database files inside the active workspace.
 func (dm *DatabaseManager) ScanDatabases() {
 	dm.mu.Lock()

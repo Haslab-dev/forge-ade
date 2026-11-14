@@ -191,6 +191,8 @@ type AgentSession struct {
 	Provider             string
 	AgentID              string
 	AgentType            string
+	PersonaID            string `json:"personaId,omitempty"`
+	appliedPersonaKey    string `json:"-"`
 	WorkspacePath        string
 	Pinned               bool
 	Archived             bool
@@ -218,6 +220,7 @@ type AgentState struct {
 	ActiveModel     string
 	ActiveAgentID   string
 	ActiveAgentType string
+	ActivePersonaID string
 	ExecutionMode   ExecutionMode
 	// FetchingModels guards the live /models fetch for the model picker.
 	FetchingModels  bool
@@ -279,9 +282,11 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 		}
 	}
 
+	normWs := agentsession.NormalizeWorkspacePath(workspacePath)
+
 	as := &AgentState{
 		engine:          engine,
-		workspacePath:   workspacePath,
+		workspacePath:   normWs,
 		ActiveAgentID:   defaultAgentID,
 		ActiveAgentType: defaultAgentType,
 		ActiveModel:     defaultModel,
@@ -299,7 +304,7 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 	}
 
 	// Load real sessions from ~/.forge/sessions/ and ~/.forge-ade/sessions/
-	as.LoadSessionsFromDisk(workspacePath)
+	as.LoadSessionsFromDisk(normWs)
 	as.LoadPromptHistory()
 	as.LoadPromptStash()
 	as.LoadSteerQueues()
@@ -359,7 +364,6 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 		if s.ID == as.ActiveSessionID {
 			as.Messages = s.Messages
 		}
-		s.UpdatedAt = time.Now()
 		break
 	}
 	as.mu.Unlock()
@@ -430,7 +434,6 @@ func (as *AgentState) HandleThoughtChunk(sessionID, text string) {
 		if s.ID == as.ActiveSessionID {
 			as.Messages = s.Messages
 		}
-		s.UpdatedAt = time.Now()
 		break
 	}
 	as.mu.Unlock()
@@ -501,7 +504,6 @@ func (as *AgentState) HandleToolEvent(ev ToolEvent) {
 		if s.ID == as.ActiveSessionID {
 			as.Messages = s.Messages
 		}
-		s.UpdatedAt = time.Now()
 		break
 	}
 	as.mu.Unlock()
@@ -1456,6 +1458,7 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 		if wsPath == "" {
 			wsPath = diskSess.Folder
 		}
+		wsPath = agentsession.NormalizeWorkspacePath(wsPath)
 
 		loaded = append(loaded, &AgentSession{
 			ID:                   diskSess.ID,
@@ -1480,9 +1483,12 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 	}
 
 	if len(loaded) > 0 {
-		// Sort by UpdatedAt descending (newest first)
+		// Sort by UpdatedAt descending (newest first), tie-broken deterministically by ID.
 		sort.Slice(loaded, func(i, j int) bool {
-			return loaded[i].UpdatedAt.After(loaded[j].UpdatedAt)
+			if !loaded[i].UpdatedAt.Equal(loaded[j].UpdatedAt) {
+				return loaded[i].UpdatedAt.After(loaded[j].UpdatedAt)
+			}
+			return loaded[i].ID > loaded[j].ID
 		})
 		as.Sessions = loaded
 		as.ActiveSessionID = ""
@@ -1539,9 +1545,17 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		}
 	}
 
-	wsPath := sess.WorkspacePath
-	if wsPath == "" {
-		wsPath = as.workspacePath
+	// Preserve empty string for General sessions instead of re-binding them to
+	// whichever workspace happens to be active during a background turn completion.
+	wsPath := agentsession.NormalizeWorkspacePath(sess.WorkspacePath)
+	diskWs := wsPath
+	if diskWs == "" && agentsession.IsTempTestPath(as.workspacePath) {
+		diskWs = as.workspacePath
+	}
+
+	updatedAt := sess.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = time.Now()
 	}
 
 	data := map[string]interface{}{
@@ -1550,7 +1564,7 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		"goal":           goal,
 		"status":         sess.Status,
 		"createdAt":      sess.CreatedAt.Format(time.RFC3339),
-		"updatedAt":      time.Now().Format(time.RFC3339),
+		"updatedAt":      updatedAt.Format(time.RFC3339),
 		"model":          sess.Model,
 		"provider":       sess.Provider,
 		"agentId":        sess.AgentID,
@@ -1579,7 +1593,7 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		return
 	}
 
-	_ = agentsession.SaveSessionDisk(string(bytes), wsPath)
+	_ = agentsession.SaveSessionDisk(string(bytes), diskWs)
 }
 
 // ActiveSession returns the currently selected agent session, or nil if on the New Agent UI / landing screen.
@@ -1615,6 +1629,13 @@ func (as *AgentState) nextSessionIDLocked() string {
 		as.NextID++
 		candidate = fmt.Sprintf("%s-%d", base, as.NextID)
 	}
+}
+
+// ReplaceSessions atomically replaces the session slice (thread-safe).
+func (as *AgentState) ReplaceSessions(sessions []*AgentSession) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	as.Sessions = sessions
 }
 
 // HasRunningSession reports whether the active session or any background session is streaming.
@@ -2136,28 +2157,136 @@ func (as *AgentState) ToggleSnooze(id string) {
 // DeleteSession permanently removes a session from memory and disk.
 func (as *AgentState) DeleteSession(id string) {
 	as.mu.Lock()
+	var deletedWs string
 	newSessions := make([]*AgentSession, 0, len(as.Sessions))
 	for _, s := range as.Sessions {
-		if s.ID != id {
-			newSessions = append(newSessions, s)
+		if s.ID == id {
+			deletedWs = s.WorkspacePath
+			continue
 		}
+		newSessions = append(newSessions, s)
 	}
 	as.Sessions = newSessions
 	if as.ActiveSessionID == id {
-		if len(as.Sessions) > 0 {
-			as.ActiveSessionID = as.Sessions[0].ID
-		} else {
-			as.ActiveSessionID = ""
+		nextID := ""
+		for _, s := range as.Sessions {
+			if !s.Archived && !s.Snoozed && s.WorkspacePath == deletedWs {
+				nextID = s.ID
+				break
+			}
+		}
+		as.ActiveSessionID = nextID
+	}
+	curWs := as.workspacePath
+	as.syncActiveSession()
+	as.mu.Unlock()
+
+	diskWs := deletedWs
+	if diskWs == "" && agentsession.IsTempTestPath(curWs) {
+		diskWs = curWs
+	}
+	_ = agentsession.DeleteSessionDisk(id, diskWs)
+
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// DeleteSessionsByProject removes all ACP sessions belonging to a workspace project
+// across all tabs (active, pinned, snoozed, archived) and deletes its on-disk folder.
+func (as *AgentState) DeleteSessionsByProject(projectName, folderPath string) {
+	normFolder := agentsession.NormalizeWorkspacePath(folderPath)
+	if strings.EqualFold(projectName, "General") || (normFolder == "" && projectName == "") {
+		return
+	}
+
+	as.mu.Lock()
+	curWs := as.workspacePath
+	newSessions := make([]*AgentSession, 0, len(as.Sessions))
+	var deleted []struct {
+		id string
+		ws string
+	}
+	activeDeleted := false
+	for _, s := range as.Sessions {
+		if s.WorkspacePath == "" {
+			newSessions = append(newSessions, s)
+			continue
+		}
+		match := (normFolder != "" && s.WorkspacePath == normFolder) ||
+			(normFolder == "" && projectName != "" && filepath.Base(filepath.Clean(s.WorkspacePath)) == projectName)
+		if match {
+			deleted = append(deleted, struct {
+				id string
+				ws string
+			}{id: s.ID, ws: s.WorkspacePath})
+			if as.ActiveSessionID == s.ID {
+				activeDeleted = true
+			}
+			continue
+		}
+		newSessions = append(newSessions, s)
+	}
+	as.Sessions = newSessions
+	if activeDeleted {
+		as.ActiveSessionID = ""
+		for _, s := range as.Sessions {
+			if !s.Archived && !s.Snoozed && s.WorkspacePath == "" {
+				as.ActiveSessionID = s.ID
+				break
+			}
 		}
 	}
 	as.syncActiveSession()
 	as.mu.Unlock()
 
-	_ = agentsession.DeleteSessionDisk(id, as.workspacePath)
+	for _, d := range deleted {
+		diskWs := d.ws
+		if diskWs == "" && agentsession.IsTempTestPath(curWs) {
+			diskWs = curWs
+		}
+		_ = agentsession.DeleteSessionDisk(d.id, diskWs)
+	}
+	_ = agentsession.DeleteProjectSessionsDisk(projectName, normFolder)
 
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
+}
+
+// RenameSession updates a session's title and persists it to disk.
+func (as *AgentState) RenameSession(id, title string) {
+	title = strings.TrimSpace(title)
+	if id == "" || title == "" {
+		return
+	}
+	as.mu.Lock()
+	var renamed *AgentSession
+	for _, s := range as.Sessions {
+		if s.ID == id {
+			s.Title = title
+			renamed = s
+			break
+		}
+	}
+	as.syncActiveSession()
+	as.mu.Unlock()
+
+	if renamed != nil {
+		as.SaveSessionToDisk(renamed)
+		if as.Invalidate != nil {
+			as.Invalidate()
+		}
+	}
+}
+
+// AllSessions returns a thread-safe snapshot of all loaded ACP sessions.
+func (as *AgentState) AllSessions() []*AgentSession {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	out := make([]*AgentSession, len(as.Sessions))
+	copy(out, as.Sessions)
+	return out
 }
 
 // TabCounts returns session counts for active, pinned, snoozed, and archived tabs.
@@ -2609,13 +2738,16 @@ func (as *AgentState) Unlock() {
 
 // SetWorkspacePath updates the active workspace path.
 func (as *AgentState) SetWorkspacePath(dir string) {
+	norm := agentsession.NormalizeWorkspacePath(dir)
 	as.mu.Lock()
-	defer as.mu.Unlock()
-	as.workspacePath = dir
+	as.workspacePath = norm
+	as.mu.Unlock()
 }
 
 // WorkspacePath returns the active workspace path.
 func (as *AgentState) WorkspacePath() string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
 	return as.workspacePath
 }
 

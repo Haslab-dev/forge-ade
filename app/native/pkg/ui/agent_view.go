@@ -17,7 +17,9 @@ import (
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/core/agentsession"
 )
 
 // renderAgentSurface renders the center chat viewport, collapsible terminal & right drawer.
@@ -125,16 +127,8 @@ func (a *AppUI) openFileInEditor(path string) {
 	a.IsGitClientOpen = false
 }
 
-// missionControlPill renders an interactive status pill in the Agent Mission Control header.
-func missionControlPill(c *ui.Context, key string, tint ui.Color, content func()) ui.Element {
-	row := ui.Row(c.Key(key)).Height(24).Radius(999).Padding(0, 8).Gap(5).
-		AlignItems(ui.Center).Cursor(ui.CursorPointer).
-		Background(tint.Alpha(0.1)).BorderWidth(1).BorderColor(tint.Alpha(0.28))
-	row.Children(content)
-	if row.Hovered() {
-		row.Background(tint.Alpha(0.18))
-	}
-	return row
+func (a *AppUI) showFloatingInspector(c *ui.Context) bool {
+	return a.Mode == ModeAgent && a.AgentViewMode == AgentViewChat && !a.InspectorCollapsed && !a.ShowRightDrawer && a.chatColumnWidth(c) >= 860
 }
 
 // renderAgentChat renders the active conversation view, message bubbles, task checklist, and prompt composer.
@@ -154,10 +148,6 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 		return
 	}
 
-	sessionTitle := "Agent Assistant"
-	if sess != nil {
-		sessionTitle = sess.Title
-	}
 	as.MdOpts.Theme = a.ThemeMgr.MarkdownTheme()
 
 	as.ListState.Key = func(i int) any {
@@ -173,119 +163,21 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	as.ListState.FollowAnimation = &ui.Smooth
 
 	leftInset, _ := a.chatLaneInset(c)
+	rightInset := leftInset
+	if a.showFloatingInspector(c) {
+		rightInset = 324
+	}
 
-	// The chat fills a box so the floating task tracker can overlay it at
-	// the top-right, as forge-ade's FloatingTaskTracker does. Clip contains
-	// any overflow: nothing may paint over the workspace header.
+	// The chat fills a box so the ZCode floating inspector card can overlay it
+	// at the top-right cleanly. Clip contains any overflow.
 	ui.Box(c).Fill().Clip().Children(func() {
 		ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
-			// Agent Mission Control bar: title, status, model picker, tasks, subagents, changes, find, fork
-			ui.Row(c).Height(44).Gap(8).Padding(0, leftInset+8, 0, leftInset+8).AlignItems(ui.Center).
-				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-				// Left cluster: session title + live status pill
-				ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Clip().Children(func() {
-					ui.Text(c, sessionTitle).FontSize(13).FontWeight(600).MaxWidth(280).MinWidth(0).SingleLine()
-
-					pill := func(label string, color ui.Color) {
-						p := ui.Row(c).Radius(999).Padding(2, 8).Gap(4).AlignItems(ui.Center).Shrink(0).
-							Background(color.Alpha(0.1)).BorderWidth(1).BorderColor(color.Alpha(0.25))
-						p.Children(func() {
-							ui.Box(c).Size(6, 6).Radius(3).Background(color)
-							ui.Text(c, label).FontSize(11).TextColor(color).SingleLine()
-						})
-					}
-					switch sess.Status {
-					case "running":
-						runningPill := ui.Row(c).Radius(999).Padding(2, 8).Gap(5).AlignItems(ui.Center).Shrink(0).
-							Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
-						runningPill.Children(func() {
-							ui.Spinner(c).Size(10, 10).Label("Running")
-							ui.Text(c, "Running").FontSize(11).TextColor(tc.Accent).SingleLine()
-						})
-					case "awaiting-approval", "waiting_permission":
-						pill("Waiting for approval", tc.Warning)
-					case "error":
-						pill("Error", tc.Error)
-					case "completed":
-						pill("Completed", tc.Success)
-					default:
-						pill("Idle", tc.SidebarMutedForeground)
-					}
-				})
-
-				// Mission Control telemetry & actions
-				if sess != nil && sess.Tasks != nil {
-					if done, total := sess.Tasks.Progress(); total > 0 {
-						tint := tc.Accent
-						if done == total {
-							tint = tc.Success
-						}
-						taskPill := missionControlPill(c, "mc-tasks", tint, func() {
-							ui.Icon(c, icons.TablerCircleCheck).Width(12).Height(12).TextColor(tint)
-							ui.Text(c, fmt.Sprintf("%d/%d tasks", done, total)).FontSize(11).FontWeight(500).TextColor(tint).SingleLine()
-						})
-						if taskPill.Clicked() {
-							sess.Tasks.ToggleExpanded()
-						}
-					}
-				}
-
-				if sess != nil {
-					if subs := as.Subagents(sess.ID); len(subs) > 0 {
-						subPill := missionControlPill(c, "mc-subagents", tc.Accent, func() {
-							ui.Icon(c, icons.TablerBot).Width(12).Height(12).TextColor(tc.Accent)
-							ui.Text(c, fmt.Sprintf("%d Agents", len(subs))).FontSize(11).FontWeight(500).TextColor(tc.Accent).SingleLine()
-						})
-						if subPill.Clicked() {
-							a.ShowRightDrawer = true
-							a.RightDrawerTab = RightTabSubagent
-						}
-					}
-				}
-
-				if dirtyFiles, totalAdd, totalDel := a.gitDirtySummary(); dirtyFiles > 0 {
-					diffPill := ui.Row(c.Key("mc-changes")).Height(24).Radius(999).Padding(0, 8).Gap(5).
-						AlignItems(ui.Center).Cursor(ui.CursorPointer).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-					diffPill.Children(func() {
-						ui.Icon(c, icons.TablerFileDiff).Width(12).Height(12).TextColor(tc.TextMuted)
-						ui.Text(c, fmt.Sprintf("%d changed", dirtyFiles)).FontSize(11).FontWeight(500).SingleLine()
-						DiffStatText(c, tc, totalAdd, totalDel)
-					})
-					if diffPill.Hovered() {
-						diffPill.Background(tc.Text.Alpha(0.06))
-					}
-					if diffPill.Clicked() {
-						a.ShowRightDrawer = true
-						a.RightDrawerTab = RightTabChanges
-					}
-				}
-
-				if ToggleIconButton(c, tc, icons.TablerSearch, 14, a.ShowThreadFind).Clicked() {
-					a.ShowThreadFind = !a.ShowThreadFind
-				}
-
-				fork := composerControlChip(c, tc, icons.TablerGitFork, "Fork", "", false)
-				if fork.Clicked() && sess != nil {
-					forked := as.ForkSession(sess)
-					if forked != nil {
-						as.SaveSessionToDisk(forked)
-					}
-				}
-			})
-
 			// Find-in-thread bar (⌘F), ThreadFindBar parity.
 			if a.ShowThreadFind {
 				a.renderThreadFindBar(c, tc, as)
 			}
 
-			// Turn scrubber + chat lane, as forge-ade's left minimap rail.
-			// The row takes the column's remaining height; the List bounds
-			// itself to that height (FillHeight + Clip) so the transcript
-			// virtualizes and scrolls instead of overflowing the header.
-			// MaxWidth caps the row's INTRINSIC width: a giant unwrapped
-			// message would otherwise inflate the chat column's flex basis
-			// and squeeze the right drawer via proportional flex-shrink.
+			// Turn scrubber + chat lane.
 			transcriptWidth := a.chatColumnWidth(c)
 			ui.Row(c).Grow(1).MaxWidth(transcriptWidth).Children(func() {
 				a.renderTurnScrubber(c, tc, as)
@@ -295,10 +187,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 					}
 					m := as.Messages[i]
 					if m.Role == "user" {
-						// User bubble: right-aligned inside the centered lane
-						// (Padding is CSS order top,right,bottom,left — the lane
-						// inset belongs on BOTH sides).
-						ui.Row(c.Key("urow")).Padding(8, leftInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Row(c.Key("urow")).Padding(8, rightInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center).Children(func() {
 							copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Height(24).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
 							copyBtn.Children(func() {
 								ui.Icon(c, icons.TablerCopy).Width(12).Height(12).TextColor(tc.TextMuted)
@@ -316,8 +205,6 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								MaxWidth(600)
 							bubble.Children(func() {
 								ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
-								// Attachment chips for the "Attached files:" block,
-								// as the webview's UserAttachmentThumbnail pills.
 								atts := userMessageAttachments(m.Text)
 								if len(atts) > 0 {
 									chipRow := ui.Row(c).Gap(5).Wrap().Padding(6, 0, 0, 0)
@@ -340,17 +227,56 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 							bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
 						})
 					} else {
-						// Agent message: full lane width (centered via the insets),
-						// work blocks and markdown spanning the lane like forge-ade.
-						ui.Column(c.Key("arow")).Padding(8, leftInset, 8, leftInset).Gap(6).Children(func() {
-							// Message action bar: Copy, ThumbsUp, ThumbsDown, Checkpoint (1:1 with AgentActiveSessionView)
+						// Agent message: ZCode lane with work traces -> markdown ->
+						// changes card -> bottom-left action icons + timestamp.
+						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, leftInset).Gap(8).Children(func() {
+							// 1. "Working / Worked for Ns" pill & trace block
+							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+							if hasWork {
+								a.renderWorkPill(c, tc, m)
+								open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
+								if open {
+									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+									work.Children(func() {
+										if m.Thinking != "" || m.IsThinking {
+											a.renderThinkingBlock(c, tc, m)
+										}
+										if len(m.Tools) > 0 {
+											a.renderFoldedToolTraces(c, tc, m)
+										}
+									})
+								}
+							}
+
+							// 2. Response Markdown body
+							if m.Text != "" {
+								if m.Done {
+									markdown.View(c, m.Text, &as.MdOpts)
+								} else {
+									markdown.Stream(c, m.Text, &as.MdOpts)
+								}
+							}
+
+							// 3. ZCode Turn Changes Card
+							if len(m.Changes) > 0 {
+								a.renderTurnChangesCard(c, tc, m)
+							}
+
+							// 4. Pending Approval Bar & Structured Questions Card
+							if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+								a.renderApprovalBar(c, tc, m)
+							}
+							if len(m.PendingQuestions) > 0 {
+								a.renderPendingQuestionsCard(c, tc, sess.ID, m)
+							}
+
+							// 5. ZCode Bottom-Left Action Icons + Timestamp
 							if m.Done && (m.Text != "" || len(m.Tools) > 0) {
-								ui.Row(c).Justify(ui.End).Gap(4).AlignItems(ui.Center).Children(func() {
-									// Copy
-									acopy := ui.Row(c.Key("acopy-"+fmt.Sprint(m.ID))).Height(22).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
+								ui.Row(c).Gap(6).Padding(2, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+									acopy := ui.Row(c.Key("acopy-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 									acopy.Children(func() {
-										ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.TextMuted)
-										ui.Text(c, "Copy").FontSize(11).TextColor(tc.TextMuted)
+										ui.Icon(c, icons.TablerCopy).Width(13).Height(13).TextColor(tc.IconMuted)
 									})
 									if acopy.Hovered() {
 										acopy.Background(tc.Text.Alpha(0.06))
@@ -360,15 +286,17 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
 									}
 
-									// Thumbs Up
-									upBtn := ui.Row(c.Key("thumb-up-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+									upBtn := ui.Row(c.Key("thumb-up-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 									upColor := tc.IconMuted
 									if m.Feedback == "up" {
 										upColor = tc.Success
 									}
 									upBtn.Children(func() {
-										ui.Icon(c, icons.TablerThumbUp).Width(12).Height(12).TextColor(upColor)
+										ui.Icon(c, icons.TablerThumbUp).Width(13).Height(13).TextColor(upColor)
 									})
+									if upBtn.Hovered() {
+										upBtn.Background(tc.Text.Alpha(0.06))
+									}
 									if upBtn.Clicked() {
 										if m.Feedback == "up" {
 											m.Feedback = ""
@@ -378,15 +306,17 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										}
 									}
 
-									// Thumbs Down
-									downBtn := ui.Row(c.Key("thumb-down-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+									downBtn := ui.Row(c.Key("thumb-down-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 									downColor := tc.IconMuted
 									if m.Feedback == "down" {
 										downColor = tc.Error
 									}
 									downBtn.Children(func() {
-										ui.Icon(c, icons.TablerThumbDown).Width(12).Height(12).TextColor(downColor)
+										ui.Icon(c, icons.TablerThumbDown).Width(13).Height(13).TextColor(downColor)
 									})
+									if downBtn.Hovered() {
+										downBtn.Background(tc.Text.Alpha(0.06))
+									}
 									if downBtn.Clicked() {
 										if m.Feedback == "down" {
 											m.Feedback = ""
@@ -396,12 +326,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										}
 									}
 
-									// Restore turn checkpoint (if available)
 									if sess != nil && sess.LastCheckpointTurnID != "" {
-										cpBtn := ui.Row(c.Key("cp-restore-"+fmt.Sprint(m.ID))).Height(22).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center)
+										cpBtn := ui.Row(c.Key("cp-restore-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 										cpBtn.Children(func() {
-											ui.Icon(c, icons.TablerRotate).Width(11).Height(11).TextColor(tc.IconMuted)
-											ui.Text(c, "Checkpoint").FontSize(10).TextColor(tc.TextMuted)
+											ui.Icon(c, icons.TablerRotate).Width(12).Height(12).TextColor(tc.IconMuted)
 										})
 										if cpBtn.Hovered() {
 											cpBtn.Background(tc.Text.Alpha(0.06))
@@ -424,51 +352,11 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 											}()
 										}
 									}
+
+									if !m.Timestamp.IsZero() {
+										ui.Text(c, m.Timestamp.Format("03:04 PM")).FontSize(11).TextColor(tc.TextMuted)
+									}
 								})
-							}
-
-							// "Working / Worked for Ns" pill
-							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
-							if hasWork {
-								a.renderWorkPill(c, tc, m)
-								open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
-								if open {
-									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
-										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
-									work.Children(func() {
-										if m.Thinking != "" || m.IsThinking {
-											a.renderThinkingBlock(c, tc, m)
-										}
-										if len(m.Tools) > 0 {
-											a.renderFoldedToolTraces(c, tc, m)
-										}
-									})
-								}
-							}
-
-							// Turn Changes Card
-							if len(m.Changes) > 0 {
-								a.renderTurnChangesCard(c, tc, m)
-							}
-
-							// Pending Approval Bar
-							if m.PendingApproval != nil && !m.PendingApproval.Resolved {
-								a.renderApprovalBar(c, tc, m)
-							}
-
-							// Structured Questions Card (ask tool) — option chips,
-							// custom answers, open-in-dialog.
-							if len(m.PendingQuestions) > 0 {
-								a.renderPendingQuestionsCard(c, tc, sess.ID, m)
-							}
-
-							// Response Markdown body
-							if m.Text != "" {
-								if m.Done {
-									markdown.View(c, m.Text, &as.MdOpts)
-								} else {
-									markdown.Stream(c, m.Text, &as.MdOpts)
-								}
 							}
 						})
 					}
@@ -962,56 +850,84 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 // renderToolReadBlock draws forge-ade's ToolReadBlock: a file header with
 // Open-in-Side-Viewer + Copy actions, then uses MyGo's internal read-only
 // editor component for syntax highlighting, line numbers, and selections.
+func fileExtBadgeLabel(path string) string {
+	ext := strings.TrimPrefix(strings.ToUpper(filepath.Ext(path)), ".")
+	switch ext {
+	case "":
+		return "FILE"
+	case "MD", "MARKDOWN":
+		return "M↓"
+	default:
+		if len(ext) > 4 {
+			return ext[:4]
+		}
+		return ext
+	}
+}
+
+func fileExtBadgeColor(path string, tc theme.ThemeColors) ui.Color {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go", ".rs", ".py":
+		return tc.Success
+	case ".md", ".ts", ".tsx", ".js", ".jsx":
+		return tc.Info
+	case ".json", ".yaml", ".yml", ".toml":
+		return tc.Warning
+	default:
+		return tc.Accent
+	}
+}
+
 func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, output string) {
 	fileName := filepath.Base(path)
+	extRaw := strings.TrimPrefix(strings.ToUpper(filepath.Ext(path)), ".")
+	subLabel := "Document"
+	if extRaw != "" {
+		subLabel = "Document · " + extRaw
+	}
+	badgeColor := fileExtBadgeColor(path, tc)
 
-	ui.Column(c).Radius(8).Background(tc.Surface.Alpha(0.8)).
-		BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip().Children(func() {
-		// File header: icon + name + truncated path + actions
-		ui.Row(c).Height(30).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-			Background(tc.SurfaceRaised.Alpha(0.6)).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.4)).Children(func() {
-			ui.Icon(c, icons.TablerFileText).Width(13).Height(13).TextColor(tc.Accent)
-			ui.Text(c, fileName).FontSize(11).Font("monospace").FontWeight(600).TextColor(tc.Text).SingleLine()
-			ui.Text(c, path).FontSize(11).Font("monospace").TextColor(tc.TextMuted).Grow(1).SingleLine()
-			sideBtn := ui.Row(c.Key("read-side")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center)
-			sideBtn.Children(func() {
-				ui.Icon(c, icons.TablerExternalLink).Width(11).Height(11).TextColor(tc.TextMuted)
-				ui.Text(c, "Open in Side Viewer").FontSize(11).TextColor(tc.TextMuted)
+	ui.Column(c).Radius(10).Background(tc.Surface).
+		BorderWidth(1).BorderColor(tc.Border).Clip().Children(func() {
+		// ZCode Document Header Card: 32x32 ext badge + bold title + subtitle + [Open ▾]
+		ui.Row(c).Padding(10, 12).Gap(10).AlignItems(ui.Center).
+			Background(tc.SurfaceRaised.Alpha(0.35)).
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+			ui.Row(c).Size(32, 32).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+				Background(badgeColor.Alpha(0.14)).BorderWidth(1).BorderColor(badgeColor.Alpha(0.28)).Children(func() {
+				ui.Text(c, fileExtBadgeLabel(path)).FontSize(10).FontWeight(700).TextColor(badgeColor)
 			})
-			if sideBtn.Hovered() {
-				sideBtn.Background(tc.Text.Alpha(0.05))
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				ui.Text(c, fileName).FontSize(13).FontWeight(600).TextColor(tc.Text).SingleLine()
+				ui.Text(c, subLabel).FontSize(11).TextColor(tc.TextMuted).SingleLine()
+			})
+			openPill := ui.Row(c.Key("read-open-"+path)).Height(26).Radius(6).Padding(0, 10).Gap(5).
+				AlignItems(ui.Center).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+			openPill.Children(func() {
+				ui.Text(c, "Open").FontSize(12).FontWeight(500).TextColor(tc.Text)
+				ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
+			})
+			if openPill.Hovered() {
+				openPill.Background(tc.Text.Alpha(0.06))
 			}
-			if sideBtn.Clicked() && a.Workspace != nil {
-				rel, err := filepath.Rel(a.Workspace.RootDir, path)
-				if err != nil || strings.HasPrefix(rel, "..") {
-					rel = path
+			openPill.Menu(func(m *ui.Menu) {
+				if m.Item("Open in Side Viewer").Chosen() && a.Workspace != nil {
+					rel, err := filepath.Rel(a.Workspace.RootDir, path)
+					if err != nil || strings.HasPrefix(rel, "..") {
+						rel = path
+					}
+					a.openSideFile(rel)
 				}
-				a.openSideFile(rel)
-			}
-			editBtn := ui.Row(c.Key("read-editor")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-			editBtn.Children(func() {
-				ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.TextMuted)
-				ui.Text(c, "Open in Editor").FontSize(11).TextColor(tc.TextMuted)
+				if m.Item("Open in Editor").Chosen() {
+					a.openFileInEditor(path)
+				}
+				m.Separator()
+				if m.Item("Copy Contents").Chosen() {
+					mygo.Clipboard.WriteText(output)
+					c.AddToast(ui.Toast{Title: "Copied", Description: fileName, Type: "success"})
+				}
 			})
-			if editBtn.Hovered() {
-				editBtn.Background(tc.Text.Alpha(0.05))
-			}
-			if editBtn.Clicked() {
-				a.openFileInEditor(path)
-			}
-			copyBtn := ui.Row(c.Key("read-copy")).Gap(4).Radius(4).Padding(2, 6).AlignItems(ui.Center)
-			copyBtn.Children(func() {
-				ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.TextMuted)
-				ui.Text(c, "Copy").FontSize(11).TextColor(tc.TextMuted)
-			})
-			if copyBtn.Hovered() {
-				copyBtn.Background(tc.Text.Alpha(0.05))
-			}
-			if copyBtn.Clicked() {
-				mygo.Clipboard.WriteText(output)
-				c.AddToast(ui.Toast{Title: "Copied", Description: fileName, Type: "success"})
-			}
 		})
 
 		// Internal MyGo Editor component (Read-only, syntax highlighted)
@@ -1062,51 +978,47 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 		}
 	}
 
-	card := ui.Column(c).Radius(8).Background(tc.Surface.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7))
+	collapsed := a.ChangesCardCollapsed != nil && a.ChangesCardCollapsed[m.ID]
+
+	card := ui.Column(c).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Clip()
 	card.Children(func() {
-		ui.Row(c).Padding(6, 12).Gap(6).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.4)).Children(func() {
-			ui.Icon(c, icons.TablerFileCode).Width(13).Height(13).TextColor(tc.Accent)
-			ui.Text(c, fmt.Sprintf("Modified %d files in this turn", len(m.Changes))).FontSize(12).FontWeight(500)
-			ui.Box(c).Grow(1)
-			if totalAdd > 0 {
-				ui.Text(c, fmt.Sprintf("+%d", totalAdd)).FontSize(11).TextColor(tc.DiffAdditionForeground)
-			}
-			if totalDel > 0 {
-				ui.Text(c, fmt.Sprintf("−%d", totalDel)).FontSize(11).TextColor(tc.DiffDeletionForeground)
-			}
-			// Multi-file review bar: Review Diffs drawer shortcut plus Accept/Revert checkpoint.
-			reviewBtn := ui.Row(c.Key("tchg-review")).Height(22).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8))
-			reviewBtn.Children(func() {
-				ui.Icon(c, icons.TablerFileDiff).Width(11).Height(11).TextColor(tc.TextMuted)
-				ui.Text(c, "Review Diffs").FontSize(10).FontWeight(500)
+		// ZCode Changes Header Row: ⌄ N files changed  +A -D        ↩ Undo
+		hdr := ui.Row(c.Key("tchg-hdr-"+fmt.Sprint(m.ID))).Padding(8, 12).Gap(8).AlignItems(ui.Center)
+		if !collapsed {
+			hdr.BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5))
+		}
+		hdr.Children(func() {
+			chevBtn := ui.Row(c.Key("tchg-tog-" + fmt.Sprint(m.ID))).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			chevBtn.Children(func() {
+				chevIcon := icons.TablerChevronDown
+				if collapsed {
+					chevIcon = icons.TablerChevronRight
+				}
+				ui.Icon(c, chevIcon).Width(13).Height(13).TextColor(tc.IconMuted)
+				ui.Text(c, fmt.Sprintf("%d files changed", len(m.Changes))).FontSize(12).FontWeight(600)
 			})
-			if reviewBtn.Hovered() {
-				reviewBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if reviewBtn.Clicked() {
-				if a.SelectedDiffPath == "" && len(m.Changes) > 0 && m.Changes[0] != nil {
-					a.SelectedDiffPath = m.Changes[0].Path
+			if chevBtn.Clicked() {
+				if a.ChangesCardCollapsed == nil {
+					a.ChangesCardCollapsed = map[int]bool{}
 				}
-				a.ShowRightDrawer = true
-				a.RightDrawerTab = RightTabChanges
+				a.ChangesCardCollapsed[m.ID] = !collapsed
 			}
+
+			ui.Text(c, fmt.Sprintf("+%d", totalAdd)).FontSize(11).FontWeight(600).TextColor(tc.DiffAdditionForeground)
+			ui.Text(c, fmt.Sprintf("-%d", totalDel)).FontSize(11).FontWeight(600).TextColor(tc.DiffDeletionForeground)
+			ui.Box(c).Grow(1)
+
 			if m.Done {
-				acceptBtn := ui.Row(c.Key("tchg-accept")).Height(22).Radius(6).Padding(0, 8).AlignItems(ui.Center).
-					Background(tc.Success.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
-				acceptBtn.Children(func() {
-					ui.Text(c, "Accept all").FontSize(10).FontWeight(600).TextColor(tc.Success)
+				undoBtn := ui.Row(c.Key("tchg-undo-"+fmt.Sprint(m.ID))).Height(22).Radius(6).Padding(0, 8).Gap(4).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				undoBtn.Children(func() {
+					ui.Icon(c, icons.TablerRotate).Width(12).Height(12).TextColor(tc.TextMuted)
+					ui.Text(c, "Undo").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
 				})
-				if acceptBtn.Clicked() {
-					m.Changes = nil
+				if undoBtn.Hovered() {
+					undoBtn.Background(tc.Text.Alpha(0.06))
 				}
-				rejectBtn := ui.Row(c.Key("tchg-reject")).Height(22).Radius(6).Padding(0, 8).AlignItems(ui.Center).
-					Background(tc.Error.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.35))
-				rejectBtn.Children(func() {
-					ui.Text(c, "Revert all").FontSize(10).FontWeight(600).TextColor(tc.Error)
-				})
-				if rejectBtn.Clicked() {
+				if undoBtn.Clicked() {
 					changes := append([]*agent.FileChange(nil), m.Changes...)
 					m.Changes = nil
 					session := as.ActiveSessionID
@@ -1121,6 +1033,7 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 						if a.Git != nil {
 							a.Git.Refresh()
 						}
+						c.AddToast(ui.Toast{Title: "Turn Changes Undone", Type: "info"})
 						if a.Window != nil {
 							a.Window.Invalidate()
 						}
@@ -1128,44 +1041,77 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 				}
 			}
 		})
-		ui.Column(c).Padding(8).Gap(4).Children(func() {
-			for _, ch := range m.Changes {
-				chPath := ch.Path
-				edited := false
-				chRow := ui.Row(c.Key("tchg-"+chPath)).Radius(6).Padding(6, 10).Gap(6).AlignItems(ui.Center)
-				chRow.Children(func() {
-					ui.Icon(c, icons.FileIconSVG(chPath)).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, chPath).FontSize(12).Grow(1).MinWidth(0).SingleLine()
-					if ch.Additions >= 0 {
-						DiffStatText(c, tc, ch.Additions, ch.Deletions)
+
+		if !collapsed {
+			ui.Column(c).Padding(6, 8).Gap(4).Children(func() {
+				for _, ch := range m.Changes {
+					if ch == nil {
+						continue
 					}
-					editBtn := ui.Row(c.Key("tchg-edit-"+chPath)).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-					editBtn.Children(func() {
-						ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.TextMuted)
-						ui.Text(c, "Edit").FontSize(10).TextColor(tc.TextMuted)
+					chPath := ch.Path
+					base := filepath.Base(chPath)
+					dir := filepath.Dir(chPath)
+					if dir == "." {
+						dir = ""
+					}
+					extColor := fileExtBadgeColor(chPath, tc)
+
+					chRow := ui.Row(c.Key("tchg-"+chPath)).Radius(6).Padding(5, 8).Gap(8).AlignItems(ui.Center)
+					chRow.Children(func() {
+						ui.Text(c, fileExtBadgeLabel(chPath)).FontSize(10).FontWeight(700).TextColor(extColor).Width(24)
+						ui.Text(c, base).FontSize(12).FontWeight(500).TextColor(tc.Text).SingleLine()
+						if dir != "" {
+							ui.Text(c, dir+"/").FontSize(11).TextColor(tc.TextMuted).SingleLine()
+						}
+						if ch.Additions > 0 {
+							ui.Text(c, fmt.Sprintf("+%d", ch.Additions)).FontSize(11).TextColor(tc.DiffAdditionForeground)
+						}
+						if ch.Deletions > 0 {
+							ui.Text(c, fmt.Sprintf("-%d", ch.Deletions)).FontSize(11).TextColor(tc.DiffDeletionForeground)
+						}
+						ui.Box(c).Grow(1)
+
+						// [ Review ] pill
+						reviewBtn := ui.Row(c.Key("tchg-rev-"+chPath)).Height(24).Radius(6).Padding(0, 10).
+							AlignItems(ui.Center).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+						reviewBtn.Children(func() {
+							ui.Text(c, "Review").FontSize(11).FontWeight(500).TextColor(tc.Text)
+						})
+						if reviewBtn.Hovered() {
+							reviewBtn.Background(tc.Text.Alpha(0.06))
+						}
+						if reviewBtn.Clicked() {
+							a.SelectedDiffPath = chPath
+							a.ShowRightDrawer = true
+							a.RightDrawerTab = RightTabChanges
+						}
+
+						// [ Open ▾ ] pill
+						openBtn := ui.Row(c.Key("tchg-open-"+chPath)).Height(24).Radius(6).Padding(0, 8).Gap(4).
+							AlignItems(ui.Center).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+						openBtn.Children(func() {
+							ui.Text(c, "Open").FontSize(11).FontWeight(500).TextColor(tc.Text)
+							ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+						})
+						if openBtn.Hovered() {
+							openBtn.Background(tc.Text.Alpha(0.06))
+						}
+						openBtn.Menu(func(menu *ui.Menu) {
+							if menu.Item("Open in Editor").Chosen() {
+								a.openFileInEditor(chPath)
+							}
+							if menu.Item("Open in Side Viewer").Chosen() {
+								a.openSidePreviewFile(c, chPath)
+							}
+						})
 					})
-					if editBtn.Hovered() {
-						editBtn.Background(tc.Text.Alpha(0.08))
+					if chRow.Hovered() {
+						chRow.Background(tc.Text.Alpha(0.04))
 					}
-					if editBtn.Clicked() {
-						edited = true
-						a.openFileInEditor(chPath)
-					}
-					// Open the file's working-tree diff (Review Diff parity).
-					ui.Icon(c, icons.TablerFileDiff).Width(13).Height(13).TextColor(tc.TextMuted)
-				})
-				if chRow.Hovered() {
-					chRow.Background(tc.Text.Alpha(0.05))
 				}
-				if !edited && chRow.Clicked() {
-					a.SelectedDiffPath = chPath
-					a.ShowRightDrawer = true
-					a.RightDrawerTab = RightTabChanges
-				}
-			}
-		})
+			})
+		}
 	})
-	_ = as
 }
 
 // respondApproval routes an approval decision to the right backend: internal
@@ -1320,14 +1266,17 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 		return
 	}
 	inset, rightInset := a.chatLaneInset(c)
+	rightPad := inset
+	if a.showFloatingInspector(c) {
+		rightPad = maxF(inset, 324)
+	}
 
 	// ZCode layout: the composer card only — workspace/branch context lives
 	// in the sidebar and status surfaces, not below the composer.
-	ui.Column(c).Padding(0, inset, 12, rightInset).Gap(6).Children(func() {
+	ui.Column(c).Padding(0, rightPad, 12, rightInset).Gap(6).Children(func() {
 		a.renderComposerCard(c, tc, false)
 	})
 	_ = sess
-	_ = rightInset
 }
 
 func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome bool) {
@@ -1579,7 +1528,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			case agent.ModePlan:
 				modeIcon, modeLabel = icons.TablerShieldCheck, "Auto"
 			default:
-				modeIcon, modeLabel = icons.TablerShieldAlert, "Full"
+				modeIcon, modeLabel = icons.TablerShieldAlert, "Full access"
 				modeColor = tc.FullAccess
 			}
 			modeBtn := chipRow(c, tc)
@@ -1594,27 +1543,69 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				as.CycleExecutionMode()
 			}
 
-			// Model Selector Button (Triggers full ModelProviderPaletteModal)
-			disp := shortModelLabel(as.ActiveModel)
-			modelBtn := chipRow(c, tc)
-			modelBtn.Children(func() {
-				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-					icons.RenderProviderIcon(c, as.ActiveModel, 13)
-					ui.Text(c, disp).FontSize(12).FontWeight(500).SingleLine()
-					if as.ReasoningEffort != agent.EffortOff {
-						ui.Row(c).Radius(4).Padding(1, 4).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
-							ui.Text(c, as.ReasoningEffortLabel()).FontSize(9).FontWeight(600).TextColor(tc.TextMuted)
-						})
-					}
-					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
-				})
+			// ZCode terminal counter pill [ >_ N ]
+			termCount := a.terminalSessionCount()
+			termChip := ui.Row(c.Key("composer-term-pill")).Height(28).Radius(8).Padding(0, 8).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			termColor := tc.TextMuted
+			if a.ShowBottomTerminal {
+				termColor = tc.Accent
+				termChip.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+			} else if termChip.Hovered() {
+				termChip.Background(tc.Text.Alpha(0.05)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4))
+			}
+			termChip.Children(func() {
+				ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(termColor)
+				ui.Text(c, fmt.Sprintf("%d", termCount)).FontSize(12).FontWeight(500).TextColor(termColor)
 			})
-			if modelBtn.Clicked() {
-				a.ShowModelPalette = true
-				a.ModelSearchQuery = ""
+			if termChip.Clicked() {
+				a.ShowBottomTerminal = !a.ShowBottomTerminal
 			}
 
-			// Auto-Verify Button
+			// Lead Persona / Orchestrator chip (only when using the internal RakitKode harness)
+			isInternalHarness := as.ActiveAgentID == "" || as.ActiveAgentID == "agent-internal" || as.ActiveAgentType == "internal"
+			if isInternalHarness && a.Engine != nil && a.Engine.AgentMgr != nil {
+				activeSess := as.ActiveSession()
+				personaID, personaName := as.EffectivePersona(activeSess)
+				shortPersona := strings.TrimSpace(strings.TrimSuffix(personaName, "Agent"))
+				if shortPersona == "" {
+					shortPersona = personaName
+				}
+				pColor := tc.Text
+				pIconColor := tc.IconMuted
+				if personaID == "orchestrator" {
+					pColor = tc.Accent
+					pIconColor = tc.Accent
+				}
+				personaBtn := chipRow(c, tc)
+				personaBtn.Children(func() {
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(pIconColor)
+						ui.Text(c, shortPersona).FontSize(12).FontWeight(500).TextColor(pColor).SingleLine()
+						ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+					})
+				})
+				personaBtn.Menu(func(m *ui.Menu) {
+					if m.Item("Auto (Follow Orchestration Lead)").Chosen() {
+						as.SetSessionPersona(as.ActiveSessionID, "")
+					}
+					m.Separator()
+					for _, def := range a.Engine.AgentMgr.ListAgentDefinitions() {
+						d := def
+						it := m.Item(d.Name)
+						if d.Role != "" {
+							it = it.Subtitle(string(d.Role))
+						}
+						if it.Chosen() {
+							as.SetSessionPersona(as.ActiveSessionID, d.ID)
+						}
+					}
+					m.Separator()
+					if m.Item("Orchestration & Personas Settings...").Chosen() {
+						a.openSettings(settings.SettingsTabSubagents)
+					}
+				})
+			}
+
 			// Prompt stash chip: appears when entries exist; popover lists
 			// stashed prompts (click restores into the composer).
 			if len(as.StashedPrompts) > 0 {
@@ -1669,19 +1660,20 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 
 			ui.Box(c).Grow(1)
 
-			// Context Window Usage Gauge (Right side) — landing shows the
-			// status dot only; the in-chat gauge adds the percent label.
+			// Context Window Usage Ring (ZCode-style indicator next to model)
 			_, pct := as.ContextUsage()
-			gaugeBtn := ui.Row(c).Height(24).Radius(999).Padding(0, 8).Gap(4).AlignItems(ui.Center)
+			gaugeBtn := ui.Row(c).Height(26).Radius(999).Padding(0, 6).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			gaugeBtn.Children(func() {
-				dotColor := tc.Success
+				ringColor := tc.TextMuted.Alpha(0.55)
 				if pct >= 80 {
-					dotColor = tc.Error
+					ringColor = tc.Error
 				} else if pct >= 60 {
-					dotColor = tc.Warning
+					ringColor = tc.Warning
+				} else if pct > 0 {
+					ringColor = tc.Success.Alpha(0.8)
 				}
-				ui.Box(c).Size(6, 6).Radius(3).Background(dotColor)
-				if !isHome {
+				ui.Box(c).Size(16, 16).Radius(8).BorderWidth(2).BorderColor(ringColor)
+				if !isHome && pct > 0 {
 					ui.Text(c, fmt.Sprintf("%d%%", pct)).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
 				}
 			})
@@ -1690,6 +1682,24 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			}
 			if gaugeBtn.Clicked() {
 				a.openUsageModal()
+			}
+
+			// Model + Effort Selector Button (Triggers ModelProviderPaletteModal)
+			disp := shortModelLabel(as.ActiveModel)
+			modelBtn := chipRow(c, tc)
+			modelBtn.Children(func() {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					icons.RenderProviderIcon(c, as.ActiveModel, 13)
+					ui.Text(c, disp).FontSize(12).FontWeight(500).SingleLine()
+					if as.ReasoningEffort != agent.EffortOff {
+						ui.Text(c, as.ReasoningEffortLabel()).FontSize(12).FontWeight(400).TextColor(tc.TextMuted)
+					}
+					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+				})
+			})
+			if modelBtn.Clicked() {
+				a.ShowModelPalette = true
+				a.ModelSearchQuery = ""
 			}
 
 			// Send / Steer / Queue / Stop controls
@@ -1722,24 +1732,23 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				}
 
 				// Stop Button (Destructive Red)
-				stopBtn := ui.Row(c).Size(32, 32).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
+				stopBtn := ui.Row(c).Size(28, 28).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
 					Background(tc.Error.Alpha(0.9)).
 					Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.2))
 				stopBtn.Children(func() {
-					ui.Icon(c, icons.TablerSquare).Width(13).Height(13).TextColor(tc.ErrorForeground)
+					ui.Icon(c, icons.TablerSquare).Width(12).Height(12).TextColor(tc.ErrorForeground)
 				})
 				if stopBtn.Clicked() {
 					as.CancelStreaming()
 				}
 			} else {
 				hasInput := strings.TrimSpace(as.InputText) != "" || len(as.AttachedFiles) > 0
-				sendBtn := ui.Row(c).Size(32, 32).Radius(999).AlignItems(ui.Center).Justify(ui.Center)
+				sendBtn := ui.Row(c).Size(28, 28).Radius(999).AlignItems(ui.Center).Justify(ui.Center)
 				if hasInput {
-					sendBtn.Background(tc.MessageAction).
-						Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.25)).
-						InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.2))
+					sendBtn.Background(tc.Text).
+						Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.2))
 					sendBtn.Children(func() {
-						ui.Icon(c, icons.TablerArrowUp).Width(16).Height(16).TextColor(tc.MessageActionForeground)
+						ui.Icon(c, icons.TablerArrowUp).Width(15).Height(15).TextColor(tc.Canvas)
 					})
 					if sendBtn.Clicked() {
 						trimmed := strings.TrimSpace(as.InputText)
@@ -1751,7 +1760,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				} else {
 					sendBtn.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
 					sendBtn.Children(func() {
-						ui.Icon(c, icons.TablerArrowUp).Width(15).Height(15).TextColor(tc.IconMuted)
+						ui.Icon(c, icons.TablerArrowUp).Width(14).Height(14).TextColor(tc.IconMuted)
 					})
 				}
 			}
@@ -1803,15 +1812,22 @@ func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
 	current := ""
 	if a.Workspace != nil {
 		current = a.Workspace.RootDir
+		if !strings.HasPrefix(current, "ssh://") {
+			current = agentsession.NormalizeWorkspacePath(current)
+		}
 	}
 	seen := make(map[string]bool)
 	var projects []string
 	for _, ws := range a.RecentWorkspaces {
-		if ws == "" || seen[ws] {
+		norm := ws
+		if !strings.HasPrefix(norm, "ssh://") {
+			norm = agentsession.NormalizeWorkspacePath(norm)
+		}
+		if norm == "" || agentsession.IsTempTestPath(norm) || seen[norm] {
 			continue
 		}
-		seen[ws] = true
-		projects = append(projects, ws)
+		seen[norm] = true
+		projects = append(projects, norm)
 	}
 	for _, ws := range a.recentWorkspacePaths() {
 		if ws == "" || seen[ws] {
@@ -1822,7 +1838,7 @@ func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
 	}
 	for _, ws := range projects {
 		path := ws
-		if m.Item(menuChecked(path == current, resolveProjectName(path))).Chosen() {
+		if m.Item(menuChecked(sameWorkspacePath(path, current), resolveProjectName(path))).Chosen() {
 			a.switchWorkspace(path)
 		}
 	}
@@ -1849,9 +1865,13 @@ func (a *AppUI) recentWorkspacePaths() []string {
 			if sess.WorkspacePath == "" || strings.HasPrefix(sess.WorkspacePath, "ssh://") {
 				continue
 			}
+			normWs := agentsession.NormalizeWorkspacePath(sess.WorkspacePath)
+			if normWs == "" || agentsession.IsTempTestPath(normWs) {
+				continue
+			}
 			found := false
 			for i := range entries {
-				if entries[i].path == sess.WorkspacePath {
+				if entries[i].path == normWs {
 					if sess.UpdatedAt.After(entries[i].latestAt) {
 						entries[i].latestAt = sess.UpdatedAt
 					}
@@ -1860,7 +1880,7 @@ func (a *AppUI) recentWorkspacePaths() []string {
 				}
 			}
 			if !found {
-				entries = append(entries, entry{path: sess.WorkspacePath, latestAt: sess.UpdatedAt})
+				entries = append(entries, entry{path: normWs, latestAt: sess.UpdatedAt})
 			}
 		}
 	}
@@ -1932,10 +1952,7 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 	if as == nil {
 		return
 	}
-	projectName := filepath.Base(as.WorkspacePath())
-	if projectName == "" || projectName == "." || projectName == "/" {
-		projectName = "General"
-	}
+	projectName := resolveProjectName(as.WorkspacePath())
 
 	ui.Column(c).Grow(1).Fill().Center().Gap(28).Padding(24, 32).Background(tc.Canvas).Children(func() {
 		ui.Column(c).AlignItems(ui.Center).Gap(16).Children(func() {
@@ -2076,19 +2093,31 @@ func (a *AppUI) renderModelPickerModal(c *ui.Context) {
 	})
 }
 
-// renderTaskTracker draws forge-ade's FloatingTaskTracker: a collapsed pill
-// at the chat's top-right that expands into a floating progress card.
+func (a *AppUI) terminalSessionCount() int {
+	if a.Terminal == nil {
+		return 0
+	}
+	count := a.Terminal.TabCount()
+	if count == 0 && a.Terminal.ActiveSessionID != "" {
+		return 1
+	}
+	return count
+}
+
+// renderTaskTracker draws the ZCode floating Right Inspector Card (Plans,
+// Progress, Terminals, Agents), or a compact top-right pill when collapsed.
 func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
-	tm := a.Agent.TaskManager
-	if tm == nil {
+	if a.Agent == nil {
 		return
 	}
-	tasks := tm.GetTasks()
-	if len(tasks) == 0 {
-		return
+	tm := a.Agent.TaskManager
+	var tasks []agent.TaskItem
+	var completed, total int
+	if tm != nil {
+		tasks = tm.GetTasks()
+		completed, total = tm.Progress()
 	}
 
-	completed, total := tm.Progress()
 	var current *agent.TaskItem
 	for i := range tasks {
 		if tasks[i].Status == agent.TaskInProgress {
@@ -2098,10 +2127,14 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	}
 	allDone := completed == total && total > 0
 
-	if !tm.IsExpanded {
-		// Collapsed pill: status glyph, N/M, current task, chevron.
-		pill := ui.Row(c).Absolute().Top(54).Right(20).Height(30).Radius(999).
-			Padding(0, 12).Gap(6).AlignItems(ui.Center).
+	// In narrow viewports or when the right drawer is open, keep only a compact
+	// progress pill when tasks exist so it doesn't collide with the drawer.
+	if !a.showFloatingInspector(c) || a.InspectorCollapsed {
+		if len(tasks) == 0 {
+			return
+		}
+		pill := ui.Row(c.Key("inspector-pill")).Absolute().Top(12).Right(16).Height(30).Radius(999).
+			Padding(0, 12).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).
 			Background(tc.SurfaceRaised.Alpha(0.95)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
 			Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.18))
 		pill.Children(func() {
@@ -2126,87 +2159,207 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 			ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
 		})
 		if pill.Clicked() {
-			tm.ToggleExpanded()
+			if a.ShowRightDrawer {
+				a.ShowRightDrawer = false
+			}
+			a.InspectorCollapsed = false
 		}
 		return
 	}
 
-	// Expanded floating card, anchored under the pill.
-	card := ui.Column(c).Absolute().Top(92).Right(24).Width(352).Radius(16).
+	// ZCode Floating Right Inspector Card
+	card := ui.Column(c.Key("zcode-inspector-card")).Absolute().Top(14).Right(16).Width(296).Radius(12).
 		Padding(14).Gap(10).
-		Background(tc.SurfaceRaised.Alpha(0.97)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
-		Shadow(0, 12, 32, -8, ui.RGBA(0, 0, 0, 0.35))
+		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
+		Shadow(0, 8, 24, -6, ui.RGBA(0, 0, 0, 0.28))
 	card.Children(func() {
-		// Header: goal + progress count + collapse chevron
-		header := ui.Row(c).Gap(8).AlignItems(ui.Center)
-		header.Children(func() {
-			ui.Icon(c, icons.TablerChecklist).Width(14).Height(14).TextColor(tc.IconMuted)
-			ui.Column(c).Gap(1).Grow(1).Children(func() {
-				goal := tm.Goal
-				ui.Text(c, "Runtime & Tasks").FontSize(13).FontWeight(600).SingleLine()
-				if goal != "" {
-					ui.Text(c, goal).FontSize(11).TextColor(tc.TextMuted).SingleLine()
+		// 1. Plans header + active goal
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Plans").FontSize(13).FontWeight(600).Grow(1)
+				menuBtn := ui.Row(c.Key("insp-plans-more")).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+				menuBtn.Children(func() {
+					ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
+				})
+				if menuBtn.Hovered() {
+					menuBtn.Background(tc.Text.Alpha(0.06))
 				}
-			})
-			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600).TextColor(tc.Accent)
-			menuBtn := ui.Row(c).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-			menuBtn.Children(func() {
-				ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
-			})
-			if menuBtn.Hovered() {
-				menuBtn.Background(tc.Text.Alpha(0.06))
-			}
-			menuBtn.ContextMenu(func(m *ui.Menu) {
-				if m.Item("Clear tasks").Danger().Chosen() {
-					tm.Clear()
-				}
-			})
-			ui.Icon(c, icons.TablerMinimize).Width(13).Height(13).TextColor(tc.IconMuted)
-		})
-		if header.Hovered() {
-			header.Background(tc.Text.Alpha(0.04)).Radius(6)
-		}
-		if header.Clicked() {
-			tm.ToggleExpanded()
-		}
-
-		// Progress bar: fill = foreground, as forge-ade's tracker does.
-		pct := float32(0)
-		if total > 0 {
-			pct = float32(completed) / float32(total) * 100
-		}
-		track := ui.Box(c).FillWidth().Height(4).Radius(2).Background(tc.Border.Alpha(0.6))
-		track.Children(func() {
-			ui.Box(c).WidthPercent(pct).Height(4).Radius(2).Background(tc.Text)
-		})
-
-		// Task rows
-		ui.Column(c).Gap(6).Children(func() {
-			for _, task := range tasks {
-				tid := task.ID
-				isDone := task.Status == agent.TaskCompleted
-				isCurrent := task.Status == agent.TaskInProgress
-				row := ui.Row(c.Key("trk-" + tid)).Gap(8).AlignItems(ui.Center).MinHeight(24)
-				row.Children(func() {
-					if isDone {
-						ui.Icon(c, icons.TablerCircleCheck).Width(14).Height(14).TextColor(tc.TextMuted)
-					} else if isCurrent {
-						ui.Icon(c, icons.TablerArrowRight).Width(14).Height(14).TextColor(tc.Accent)
-					} else {
-						ui.Icon(c, icons.TablerCircle).Width(14).Height(14).TextColor(tc.IconMuted)
+				menuBtn.Menu(func(m *ui.Menu) {
+					if m.Item("Open Agents Drawer").Chosen() {
+						a.ShowRightDrawer = true
+						a.RightDrawerTab = RightTabSubagent
 					}
-					txt := ui.Text(c, task.Title).FontSize(12).Grow(1).SingleLine()
-					if isDone {
-						txt.TextColor(tc.TextMuted)
-					} else if isCurrent {
-						txt.FontWeight(600).TextColor(tc.Accent)
+					if tm != nil && len(tasks) > 0 {
+						m.Separator()
+						if m.Item("Clear tasks").Danger().Chosen() {
+							tm.Clear()
+						}
 					}
 				})
-				if row.Hovered() {
-					row.Background(tc.Text.Alpha(0.03)).Radius(6)
+
+				collapseBtn := ui.Row(c.Key("insp-collapse")).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+				collapseBtn.Children(func() {
+					ui.Icon(c, icons.TablerMinimize2).Width(13).Height(13).TextColor(tc.IconMuted)
+				})
+				if collapseBtn.Hovered() {
+					collapseBtn.Background(tc.Text.Alpha(0.06))
 				}
-				if row.Clicked() {
-					tm.ToggleTask(tid)
+				if collapseBtn.Clicked() {
+					a.InspectorCollapsed = true
+				}
+			})
+
+			goal := ""
+			if tm != nil {
+				goal = tm.Goal
+			}
+			if goal == "" {
+				if activeSess := a.Agent.ActiveSession(); activeSess != nil && activeSess.Title != "" && activeSess.Title != "New Task" {
+					goal = activeSess.Title
+				} else {
+					goal = "No active plan"
+				}
+			}
+			ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerList).Width(13).Height(13).TextColor(tc.IconMuted)
+				ui.Text(c, goal).FontSize(12).TextColor(tc.Text).SingleLine().Grow(1)
+			})
+		})
+
+		// 2. Progress section
+		ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Progress").FontSize(13).FontWeight(600)
+				countColor := tc.Success
+				if total == 0 {
+					countColor = tc.TextMuted
+				}
+				ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(12).FontWeight(600).TextColor(countColor)
+			})
+
+			if len(tasks) == 0 {
+				ui.Text(c, "No tasks tracked yet").FontSize(12).TextColor(tc.TextMuted)
+			} else {
+				ui.Column(c).Gap(6).Children(func() {
+					for _, task := range tasks {
+						tid := task.ID
+						isDone := task.Status == agent.TaskCompleted
+						isCurrent := task.Status == agent.TaskInProgress
+						row := ui.Row(c.Key("trk-"+tid)).Gap(8).AlignItems(ui.Center).MinHeight(22).Padding(2, 4).Radius(6).Cursor(ui.CursorPointer)
+						row.Children(func() {
+							if isDone {
+								ui.Icon(c, icons.TablerCircleCheck).Width(14).Height(14).TextColor(tc.Success)
+							} else if isCurrent {
+								ui.Icon(c, icons.TablerArrowRight).Width(14).Height(14).TextColor(tc.Accent)
+							} else {
+								ui.Icon(c, icons.TablerCircle).Width(14).Height(14).TextColor(tc.TextMuted)
+							}
+							txt := ui.Text(c, task.Title).FontSize(12).LineHeight(16).Grow(1)
+							if isDone {
+								txt.TextColor(tc.TextMuted)
+							} else if isCurrent {
+								txt.FontWeight(600).TextColor(tc.Accent)
+							}
+						})
+						if row.Hovered() {
+							row.Background(tc.Text.Alpha(0.04))
+						}
+						if row.Clicked() && tm != nil {
+							tm.ToggleTask(tid)
+						}
+					}
+				})
+			}
+		})
+
+		// 3. Terminals section
+		ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+		termCount := a.terminalSessionCount()
+		termRow := ui.Row(c.Key("insp-terminals")).Padding(4, 4).Radius(6).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+		termRow.Children(func() {
+			ui.Text(c, "Terminals").FontSize(13).FontWeight(600).Grow(1)
+			termMeta := "0 background"
+			if termCount > 0 {
+				termMeta = fmt.Sprintf("%d background", termCount)
+			}
+			ui.Text(c, termMeta).FontSize(12).TextColor(tc.TextMuted)
+		})
+		if termRow.Hovered() {
+			termRow.Background(tc.Text.Alpha(0.04))
+		}
+		if termRow.Clicked() {
+			a.ShowBottomTerminal = !a.ShowBottomTerminal
+		}
+
+		// 4. Agents / Orchestrator Personas section
+		ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
+		subs := a.Agent.Subagents(a.Agent.ActiveSessionID)
+		ui.Column(c).Gap(6).Children(func() {
+			agentsHdr := ui.Row(c.Key("insp-agents-hdr")).Padding(2, 4).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			agentsHdr.Children(func() {
+				ui.Text(c, "Agents").FontSize(13).FontWeight(600).Grow(1)
+				if len(subs) > 0 {
+					ui.Text(c, fmt.Sprintf("%d", len(subs))).FontSize(12).TextColor(tc.TextMuted)
+				}
+			})
+			if agentsHdr.Hovered() {
+				agentsHdr.Background(tc.Text.Alpha(0.04))
+			}
+			if agentsHdr.Clicked() {
+				if len(subs) > 0 {
+					a.ShowRightDrawer = true
+					a.RightDrawerTab = RightTabSubagent
+				} else {
+					a.openSettings(settings.SettingsTabSubagents)
+				}
+			}
+
+			if len(subs) > 0 {
+				limit := len(subs)
+				if limit > 5 {
+					limit = 5
+				}
+				for i := 0; i < limit; i++ {
+					sub := subs[i]
+					_, statusColor := subagentStatus(sub.State, tc)
+					subRow := ui.Row(c.Key("insp-sub-"+sub.ID)).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					subRow.Children(func() {
+						ui.Box(c).Size(6, 6).Radius(3).Background(statusColor)
+						name := sub.Name
+						if name == "" {
+							name = "Subagent"
+						}
+						ui.Text(c, name).FontSize(12).SingleLine().Grow(1)
+						if sub.RoleFilter != "" {
+							ui.Text(c, string(sub.RoleFilter)).FontSize(11).TextColor(tc.TextMuted)
+						}
+					})
+					if subRow.Hovered() {
+						subRow.Background(tc.Text.Alpha(0.04))
+					}
+					if subRow.Clicked() {
+						a.SelectedSubagentID = sub.ID
+						a.ShowRightDrawer = true
+						a.RightDrawerTab = RightTabSubagent
+					}
+				}
+			} else {
+				_, personaName := a.Agent.EffectivePersona(a.Agent.ActiveSession())
+				if personaName == "" {
+					personaName = "Orchestrator"
+				}
+				leadRow := ui.Row(c.Key("insp-lead-persona")).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				leadRow.Children(func() {
+					ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.IconMuted)
+					ui.Text(c, personaName).FontSize(12).TextColor(tc.TextMuted).SingleLine().Grow(1)
+					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
+				})
+				if leadRow.Hovered() {
+					leadRow.Background(tc.Text.Alpha(0.04))
+				}
+				if leadRow.Clicked() {
+					a.openSettings(settings.SettingsTabSubagents)
 				}
 			}
 		})

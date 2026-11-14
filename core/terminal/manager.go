@@ -256,12 +256,10 @@ func (m *Manager) Stop(id string) error {
 	// Also via cmd.Process
 	if session.cmd != nil && session.cmd.Process != nil {
 		_ = session.cmd.Process.Kill()
-		_ = session.cmd.Wait()
 	}
+	session.waitCmd()
 	// Close PTY
-	if session.pty != nil {
-		_ = session.pty.Close()
-	}
+	session.closePTY()
 
 	m.bus.Publish(events.Event{
 		Type: events.TerminalClosed,
@@ -411,9 +409,7 @@ func (m *Manager) readOutput(session *Session) {
 }
 
 func (m *Manager) reap(session *Session) {
-	if session.cmd != nil {
-		_ = session.cmd.Wait()
-	}
+	session.waitCmd()
 
 	session.mu.Lock()
 	if session.closed {
@@ -424,9 +420,7 @@ func (m *Manager) reap(session *Session) {
 	session.Status = "stopped"
 	session.mu.Unlock()
 
-	if session.pty != nil {
-		_ = session.pty.Close()
-	}
+	session.closePTY()
 
 	m.mu.Lock()
 	delete(m.sessions, session.ID)

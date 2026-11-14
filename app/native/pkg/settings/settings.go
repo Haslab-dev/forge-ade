@@ -92,10 +92,13 @@ type SettingsManager struct {
 
 	// Role form state
 	RoleFormOpen  bool
+	RoleEditingID string
 	RoleName      string
+	RoleDesc      string
 	RoleFilter    string
 	RoleModel     string
 	RolePrompt    string
+	RoleRules     string
 	RoleReadOnly  bool
 	RoleAllowBash bool
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/search"
@@ -25,6 +26,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
+	"github.com/hasdev/forge-ade/core/agentsession"
 	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
@@ -61,7 +63,7 @@ const (
 
 // Layout metrics of ForgeADE's CSS
 const (
-	WorkspaceTopBarHeight = float32(52)
+	WorkspaceTopBarHeight = float32(42)
 	RightDrawerDefault    = float32(360)
 	LeftSidebarDefault    = float32(288)
 	TerminalHeaderHeight  = float32(36)
@@ -181,6 +183,13 @@ type AppUI struct {
 	ThreadFindMatches   []int
 	ThreadFindIdx       int
 
+	// Navigation history & ZCode inspector/card UI state.
+	SessionHistory       []string
+	SessionHistoryIdx    int
+	navigatingHistory    bool
+	ChangesCardCollapsed map[int]bool
+	InspectorCollapsed   bool
+
 	ShowNewFileModal        bool
 	NewFileName             string
 	ShowNewFolderModal      bool
@@ -203,6 +212,8 @@ type AppUI struct {
 	ShowTaskMenuModal       bool
 	ShowRenameModal         bool
 	RenameSessionTitle      string
+	RenameSessionID         string
+	RenameSessionIsCLI      bool
 	ShowRenameFileModal     bool
 	RenameFileOldPath       string
 	RenameFilePath          string
@@ -310,6 +321,12 @@ type AppUI struct {
 	DeckMode         string
 	DeckFiles        []string
 	DeckFilesScanned bool
+
+	closeCh       chan struct{}
+	closeOnce     sync.Once
+	tickerDone    chan struct{}
+	lastPrefsAt   time.Time
+	lastPrefsSnap string
 }
 
 // NewAppUI constructs the complete AppUI state tree.
@@ -368,6 +385,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SidebarListView:         "project",
 		DeckSlideCount:          1,
 		Snippets:                terminal.NewSnippetManager(engine.DataDir),
+		closeCh:                 make(chan struct{}),
+		tickerDone:              make(chan struct{}),
 	}
 
 	appUI.Editor.WorkspaceDir = rootDir
@@ -448,19 +467,19 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	// Live elapsed indicators ("Working for 12s", spinners): repaint once a
-	// second while any session is streaming; the same tick coalesces UI-pref
-	// persistence (cheap JSON write, only when the snapshot changed).
+	// second while any session is streaming.
 	go func() {
+		defer close(appUI.tickerDone)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-		var last string
-		for range ticker.C {
-			if appUI.Agent.HasRunningSession() && appUI.Window != nil {
-				appUI.Window.Invalidate()
-			}
-			if snap := appUI.prefsSnapshot(); snap != last {
-				last = snap
-				appUI.SaveUIPrefs()
+		for {
+			select {
+			case <-appUI.closeCh:
+				return
+			case <-ticker.C:
+				if appUI.Agent.HasRunningSession() && appUI.Window != nil {
+					appUI.Window.Invalidate()
+				}
 			}
 		}
 	}()
@@ -494,7 +513,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	if rootDir == "" {
 		gitEng = nil
 	}
-	appUI.Git = git.NewGitManager(gitEng, rootDir, func(path string, showDiff bool) {
+	appUI.Git = git.NewGitManagerLazy(gitEng, rootDir, func(path string, showDiff bool) {
 		fullPath := appUI.Workspace.ResolveFullPath(path)
 		_, _ = appUI.Editor.OpenFile(fullPath, path)
 		appUI.SelectedFile = path
@@ -506,12 +525,16 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 			appUI.Window.Invalidate()
 		}
 	}
+	initGit := appUI.Git
 
 	if engine != nil {
+		initWS := appUI.Workspace
 		engine.StartWatcher(rootDir, func() {
-			appUI.Workspace.Refresh()
-			if appUI.Git != nil {
-				appUI.Git.Refresh()
+			if initWS != nil {
+				initWS.Refresh()
+			}
+			if initGit != nil {
+				initGit.Refresh()
 			}
 			if appUI.Window != nil {
 				appUI.Window.Invalidate()
@@ -543,8 +566,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		return out, nil
 	})
 
-	if len(appUI.Workspace.Files) > 0 {
-		first := appUI.Workspace.Files[0]
+	if first, ok := appUI.Workspace.FirstFile(); ok {
 		appUI.SelectedFile = first.RelativePath
 		_, _ = appUI.Editor.OpenFile(first.FullPath, first.RelativePath)
 	}
@@ -561,6 +583,10 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Editor.RemoteFS = engine.RemoteFS
 	}
 	appUI.LoadSavedSSHConfigs()
+
+	if rootDir != "" && initGit != nil {
+		go initGit.Refresh()
+	}
 
 	return appUI
 }
@@ -893,6 +919,35 @@ func (a *AppUI) View(c *ui.Context) {
 
 	// Overlays & Modals
 	a.renderModals(c)
+
+	if time.Since(a.lastPrefsAt) >= time.Second {
+		a.lastPrefsAt = time.Now()
+		if snap := a.prefsSnapshot(); snap != a.lastPrefsSnap {
+			a.lastPrefsSnap = snap
+			a.SaveUIPrefs()
+		}
+	}
+}
+
+// Close releases background tickers and terminal processes owned by AppUI.
+func (a *AppUI) Close() {
+	if a == nil {
+		return
+	}
+	a.closeOnce.Do(func() {
+		if a.closeCh != nil {
+			close(a.closeCh)
+		}
+	})
+	if a.tickerDone != nil {
+		<-a.tickerDone
+	}
+	if a.Engine != nil {
+		a.Engine.StopWatcher()
+	}
+	if a.Terminal != nil {
+		a.Terminal.Close()
+	}
 }
 
 func (a *AppUI) toggleAppearance() {
@@ -928,11 +983,68 @@ func (a *AppUI) NewAgentTask(workspacePath string) {
 	}
 }
 
+// NewAgentTaskInProject switches to Agent Mode and opens the New Agent UI
+// pre-targeted to the given sidebar project group ("General" resets to empty RootDir).
+func (a *AppUI) NewAgentTaskInProject(projectName, folderPath string) {
+	targetWs := folderPath
+	if !strings.HasPrefix(targetWs, "ssh://") {
+		targetWs = agentsession.NormalizeWorkspacePath(targetWs)
+	}
+	if strings.EqualFold(projectName, "General") {
+		targetWs = ""
+	}
+	curWs := ""
+	if a.Workspace != nil {
+		curWs = a.Workspace.RootDir
+		if !strings.HasPrefix(curWs, "ssh://") {
+			curWs = agentsession.NormalizeWorkspacePath(curWs)
+		}
+	}
+
+	a.Mode = ModeAgent
+	a.AgentViewMode = AgentViewChat
+	a.ActiveTaskKind = "agent"
+	a.ShowNewTaskModal = false
+	if projectName != "" && a.CollapsedProjectGroups != nil {
+		delete(a.CollapsedProjectGroups, projectName)
+	}
+
+	if a.Workspace == nil || targetWs != curWs {
+		a.switchWorkspace(targetWs)
+	}
+
+	if a.Agent != nil {
+		a.Agent.ClearActiveSession()
+		if a.Agent.ActiveAgentID != "" && a.Agent.ActiveAgentID != "agent-internal" {
+			a.Agent.ActiveModel = a.Agent.ResolveModelForAgent(a.Agent.ActiveAgentID, a.Agent.ActiveModel)
+			a.SelectedAgentModel = a.Agent.ActiveModel
+		}
+	}
+
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+func (a *AppUI) openRenameSessionModal(sessID, currentTitle string, isCLI bool) {
+	a.RenameSessionID = sessID
+	a.RenameSessionIsCLI = isCLI
+	a.RenameSessionTitle = currentTitle
+	a.ShowRenameModal = true
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
 // selectACPAgentForNewTask switches the workspace if needed, resets the composer to
 // a fresh New Task state without stopping running background sessions, and auto-selects
 // the default model and reasoning effort defined by agentID.
 func (a *AppUI) selectACPAgentForNewTask(agentID, wsPath string) {
-	if wsPath != "" && wsPath != a.Workspace.RootDir {
+	curWs := ""
+	if a.Workspace != nil {
+		curWs = a.Workspace.RootDir
+	}
+	if wsPath != "" && !sameWorkspacePath(wsPath, curWs) {
 		a.switchWorkspace(wsPath)
 	}
 	if a.Agent != nil {
@@ -977,6 +1089,7 @@ func (a *AppUI) handleNewTask() {
 
 func (a *AppUI) OpenNewTaskModal() {
 	a.ShowNewTaskModal = true
+	a.NewTaskWorkspacePath = ""
 	a.NewTaskTitle = ""
 	a.NewTaskSearchQuery = ""
 	a.NewTaskFilterTab = "all"
@@ -999,6 +1112,9 @@ func (a *AppUI) OpenNewTaskModal() {
 // folder, as forge-ade's group-level "+ New task" does.
 func (a *AppUI) OpenNewTaskModalFor(folderPath string) {
 	a.OpenNewTaskModal()
+	if !strings.HasPrefix(folderPath, "ssh://") {
+		folderPath = agentsession.NormalizeWorkspacePath(folderPath)
+	}
 	a.NewTaskWorkspacePath = folderPath
 }
 
@@ -1051,11 +1167,24 @@ func loadRecentWorkspaces() []string {
 	if err != nil {
 		return nil
 	}
-	var list []string
-	if err := json.Unmarshal(data, &list); err != nil {
+	var raw []string
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil
 	}
-	return list
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, p := range raw {
+		norm := p
+		if !strings.HasPrefix(norm, "ssh://") {
+			norm = agentsession.NormalizeWorkspacePath(norm)
+		}
+		if norm == "" || norm == "/" || agentsession.IsTempTestPath(norm) || seen[norm] {
+			continue
+		}
+		seen[norm] = true
+		out = append(out, norm)
+	}
+	return out
 }
 
 func saveRecentWorkspaces(list []string) {
@@ -1070,18 +1199,23 @@ func saveRecentWorkspaces(list []string) {
 }
 
 // recordRecentWorkspace moves dir to the front of the history (deduped) and
-// persists it. Empty paths (General) are not recorded.
+// persists it. Empty paths (General) and temporary test paths are not recorded.
 func (a *AppUI) recordRecentWorkspace(dir string) {
 	if dir == "" || dir == "/" || strings.HasPrefix(dir, "ssh://") {
 		return
 	}
+	norm := agentsession.NormalizeWorkspacePath(dir)
+	if norm == "" || norm == "/" || agentsession.IsTempTestPath(norm) {
+		return
+	}
 	rest := make([]string, 0, len(a.RecentWorkspaces))
 	for _, p := range a.RecentWorkspaces {
-		if p != dir {
-			rest = append(rest, p)
+		normP := agentsession.NormalizeWorkspacePath(p)
+		if normP != "" && normP != norm && !agentsession.IsTempTestPath(normP) {
+			rest = append(rest, normP)
 		}
 	}
-	a.RecentWorkspaces = append([]string{dir}, rest...)
+	a.RecentWorkspaces = append([]string{norm}, rest...)
 	if len(a.RecentWorkspaces) > recentWorkspacesCap {
 		a.RecentWorkspaces = a.RecentWorkspaces[:recentWorkspacesCap]
 	}
@@ -1140,30 +1274,66 @@ func (a *AppUI) closeSideFile(relPath string) {
 }
 
 // deleteWorkspaceGroup removes every task session bound to a project folder
-// and releases the workspace (back to General) when it is the active one —
-// forge-ade's "Delete workspace" group action. Files on disk are untouched.
+// across all tabs and removes it from recent workspaces (switching back to General
+// when it is the active workspace). Files inside the project directory are untouched.
 func (a *AppUI) deleteWorkspaceGroup(c *ui.Context, groupName, folderPath string) {
-	if groupName == "General" || folderPath == "" {
+	normFolder := folderPath
+	if !strings.HasPrefix(normFolder, "ssh://") {
+		normFolder = agentsession.NormalizeWorkspacePath(folderPath)
+	}
+	if strings.EqualFold(groupName, "General") || (groupName == "" && normFolder == "") {
 		return
 	}
 	if a.Agent != nil {
-		for _, sess := range a.Agent.FilteredSessions() {
-			if resolveProjectName(sess.WorkspacePath) == groupName {
-				a.Agent.DeleteSession(sess.ID)
-			}
-		}
+		a.Agent.DeleteSessionsByProject(groupName, normFolder)
 	}
 	if a.CLIMgr != nil {
-		for id, cs := range a.CLIMgr.Sessions {
-			if resolveProjectName(cs.Cwd) == groupName {
-				a.CLIMgr.DeleteSession(id)
+		for _, cs := range a.CLIMgr.SortedSessions() {
+			if cs == nil {
+				continue
+			}
+			csWs := agentsession.NormalizeWorkspacePath(cs.Cwd)
+			if (normFolder != "" && csWs == normFolder) || (normFolder == "" && resolveProjectName(csWs) == groupName) {
+				a.CLIMgr.DeleteSession(cs.ID)
 			}
 		}
 	}
-	if a.Workspace != nil && a.Workspace.RootDir == folderPath {
-		a.switchWorkspace("")
+	if len(a.RecentWorkspaces) > 0 {
+		kept := make([]string, 0, len(a.RecentWorkspaces))
+		for _, p := range a.RecentWorkspaces {
+			normP := p
+			if !strings.HasPrefix(normP, "ssh://") {
+				normP = agentsession.NormalizeWorkspacePath(p)
+			}
+			if normP == "" {
+				continue
+			}
+			if (normFolder != "" && normP == normFolder) || (groupName != "" && resolveProjectName(normP) == groupName) {
+				continue
+			}
+			kept = append(kept, normP)
+		}
+		a.RecentWorkspaces = kept
+		saveRecentWorkspaces(a.RecentWorkspaces)
 	}
-	c.AddToast(ui.Toast{Title: "Workspace Removed", Description: groupName, Type: "info"})
+	if a.ProjectFilter == groupName {
+		a.ProjectFilter = "all"
+	}
+	if a.Workspace != nil {
+		curWs := a.Workspace.RootDir
+		if !strings.HasPrefix(curWs, "ssh://") {
+			curWs = agentsession.NormalizeWorkspacePath(curWs)
+		}
+		if (normFolder != "" && curWs == normFolder) || (normFolder == "" && resolveProjectName(curWs) == groupName) {
+			a.switchWorkspace("")
+		}
+	}
+	if c != nil {
+		c.AddToast(ui.Toast{Title: "Workspace Removed", Description: groupName, Type: "info"})
+	}
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
 }
 
 func (a *AppUI) openWorkspaceFolder() {
@@ -1183,45 +1353,152 @@ func (a *AppUI) openWorkspaceFolder() {
 	}()
 }
 
-// selectAgentSession switches the active workspace to match the session's
-// project (if different) and activates the agent chat session.
+func sameWorkspacePath(aDir, bDir string) bool {
+	normA := aDir
+	if !strings.HasPrefix(normA, "ssh://") {
+		normA = agentsession.NormalizeWorkspacePath(aDir)
+	}
+	normB := bDir
+	if !strings.HasPrefix(normB, "ssh://") {
+		normB = agentsession.NormalizeWorkspacePath(bDir)
+	}
+	return normA == normB
+}
+
+// selectAgentSession activates the agent chat session first and switches the
+// active workspace to match (if different) without clearing the newly selected session.
 func (a *AppUI) selectAgentSession(s *agent.AgentSession) {
 	if s == nil {
 		return
 	}
-	if a.Workspace == nil || a.Workspace.RootDir != s.WorkspacePath {
-		a.switchWorkspace(s.WorkspacePath)
+	if !a.navigatingHistory {
+		a.recordSessionHistory(s.ID)
 	}
 	a.ActiveTaskKind = "agent"
 	a.AgentViewMode = AgentViewChat
 	if a.Agent != nil {
 		a.Agent.SelectSession(s.ID)
 	}
+	targetWs := agentsession.NormalizeWorkspacePath(s.WorkspacePath)
+	curWs := ""
+	if a.Workspace != nil {
+		curWs = a.Workspace.RootDir
+	}
+	if a.Workspace == nil || !sameWorkspacePath(curWs, targetWs) {
+		a.switchWorkspaceInternal(targetWs, true)
+	} else if a.Window != nil {
+		a.Window.Invalidate()
+	}
 }
 
-// selectCLISession switches the active workspace to match the CLI session's
-// working directory (if different) and activates the CLI session.
+func (a *AppUI) recordSessionHistory(id string) {
+	if id == "" {
+		return
+	}
+	if a.SessionHistoryIdx >= 0 && a.SessionHistoryIdx < len(a.SessionHistory) {
+		if a.SessionHistory[a.SessionHistoryIdx] == id {
+			return
+		}
+		a.SessionHistory = append(a.SessionHistory[:a.SessionHistoryIdx+1], id)
+	} else {
+		a.SessionHistory = append(a.SessionHistory, id)
+	}
+	if len(a.SessionHistory) > 40 {
+		a.SessionHistory = a.SessionHistory[len(a.SessionHistory)-40:]
+	}
+	a.SessionHistoryIdx = len(a.SessionHistory) - 1
+}
+
+// cycleAgentSession steps backward (delta < 0) or forward (delta > 0) through
+// visited sessions or, when history has <2 entries, through active sessions.
+func (a *AppUI) cycleAgentSession(delta int) {
+	if a.Agent == nil {
+		return
+	}
+	if len(a.SessionHistory) >= 2 {
+		nextIdx := a.SessionHistoryIdx + delta
+		if nextIdx >= 0 && nextIdx < len(a.SessionHistory) {
+			targetID := a.SessionHistory[nextIdx]
+			if s := a.findSessionByID(targetID); s != nil {
+				a.SessionHistoryIdx = nextIdx
+				a.navigatingHistory = true
+				a.selectAgentSession(s)
+				a.navigatingHistory = false
+				return
+			}
+		}
+	}
+	a.Agent.Lock()
+	sessions := append([]*agent.AgentSession(nil), a.Agent.Sessions...)
+	activeID := a.Agent.ActiveSessionID
+	a.Agent.Unlock()
+	if len(sessions) == 0 {
+		return
+	}
+	cur := 0
+	for i, s := range sessions {
+		if s.ID == activeID {
+			cur = i
+			break
+		}
+	}
+	next := (cur + delta + len(sessions)) % len(sessions)
+	a.selectAgentSession(sessions[next])
+}
+
+func (a *AppUI) findSessionByID(id string) *agent.AgentSession {
+	if a.Agent == nil || id == "" {
+		return nil
+	}
+	a.Agent.Lock()
+	defer a.Agent.Unlock()
+	for _, s := range a.Agent.Sessions {
+		if s != nil && s.ID == id {
+			return s
+		}
+	}
+	return nil
+}
+
+// selectCLISession activates the CLI session first and switches the active
+// workspace to match its working directory (if different).
 func (a *AppUI) selectCLISession(cs *agent.AgentCLISession) {
 	if cs == nil {
 		return
-	}
-	if a.Workspace == nil || a.Workspace.RootDir != cs.Cwd {
-		a.switchWorkspace(cs.Cwd)
 	}
 	a.ActiveTaskKind = "cli"
 	a.AgentViewMode = AgentViewChat
 	if a.CLIMgr != nil {
 		a.CLIMgr.ActiveID = cs.ID
 	}
+	targetWs := agentsession.NormalizeWorkspacePath(cs.Cwd)
+	curWs := ""
+	if a.Workspace != nil {
+		curWs = a.Workspace.RootDir
+	}
+	if a.Workspace == nil || !sameWorkspacePath(curWs, targetWs) {
+		a.switchWorkspaceInternal(targetWs, true)
+	} else if a.Window != nil {
+		a.Window.Invalidate()
+	}
 }
 
 func (a *AppUI) switchWorkspace(dir string) {
+	a.switchWorkspaceInternal(dir, false)
+}
+
+func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 	rawDir := dir
+	if !strings.HasPrefix(rawDir, "ssh://") {
+		rawDir = agentsession.NormalizeWorkspacePath(dir)
+	}
 	a.Workspace = workspace.NewWorkspaceState(rawDir)
 	a.recordRecentWorkspace(rawDir)
 	if a.Engine != nil {
 		a.Workspace.RemoteFS = a.Engine.RemoteFS
-		a.Workspace.Refresh()
+		if strings.HasPrefix(rawDir, "ssh://") {
+			a.Workspace.Refresh()
+		}
 	}
 	if a.Editor != nil {
 		a.Editor.WorkspaceDir = rawDir
@@ -1230,8 +1507,10 @@ func (a *AppUI) switchWorkspace(dir string) {
 		}
 	}
 	if a.Agent != nil {
-		if sess := a.Agent.ActiveSession(); sess != nil && sess.WorkspacePath != rawDir {
-			a.Agent.ClearActiveSession()
+		if !keepActiveSession {
+			if sess := a.Agent.ActiveSession(); sess != nil && agentsession.NormalizeWorkspacePath(sess.WorkspacePath) != rawDir {
+				a.Agent.ClearActiveSession()
+			}
 		}
 		a.Agent.SetWorkspacePath(rawDir)
 	}
@@ -1243,11 +1522,13 @@ func (a *AppUI) switchWorkspace(dir string) {
 	if a.Terminal != nil {
 		if strings.HasPrefix(rawDir, "ssh://") {
 			a.Terminal.Cwd = rawDir
-		} else {
+		} else if a.Terminal.Cwd != termDir {
 			_ = a.Terminal.ResetShell(termDir)
 		}
 	}
-	a.Editor.CloseAll()
+	if a.Editor != nil {
+		a.Editor.CloseAll()
+	}
 	a.SelectedFile = ""
 	a.SelectedDiffPath = ""
 	a.DeckFiles = nil
@@ -1264,8 +1545,7 @@ func (a *AppUI) switchWorkspace(dir string) {
 		if a.Database != nil {
 			a.Database.Workspace = a.Workspace
 		}
-		if len(a.Workspace.Files) > 0 {
-			first := a.Workspace.Files[0]
+		if first, ok := a.Workspace.FirstFile(); a.Editor != nil && ok {
 			a.SelectedFile = first.RelativePath
 			_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
 		}
@@ -1276,15 +1556,14 @@ func (a *AppUI) switchWorkspace(dir string) {
 	}
 
 	if a.Database != nil {
-		a.Database.Workspace = a.Workspace
-		go a.Database.ScanDatabases()
+		a.Database.SetWorkspaceAndScan(a.Workspace)
 	}
 	if a.Git != nil {
 		gitEng := a.Engine
 		if rawDir == "" {
 			gitEng = nil
 		}
-		a.Git = git.NewGitManager(gitEng, rawDir, a.Git.OnFileSelect)
+		a.Git = git.NewGitManagerLazy(gitEng, rawDir, a.Git.OnFileSelect)
 		a.Git.OnNeedRedraw = func() {
 			if a.Window != nil {
 				a.Window.Invalidate()
@@ -1295,18 +1574,21 @@ func (a *AppUI) switchWorkspace(dir string) {
 		}
 	}
 	if rawDir != "" && a.Engine != nil {
+		ws := a.Workspace
+		gm := a.Git
 		a.Engine.StartWatcher(rawDir, func() {
-			a.Workspace.Refresh()
-			if a.Git != nil {
-				a.Git.Refresh()
+			if ws != nil {
+				ws.Refresh()
+			}
+			if gm != nil {
+				gm.Refresh()
 			}
 			if a.Window != nil {
 				a.Window.Invalidate()
 			}
 		})
 	}
-	if len(a.Workspace.Files) > 0 {
-		first := a.Workspace.Files[0]
+	if first, ok := a.Workspace.FirstFile(); a.Editor != nil && ok {
 		a.SelectedFile = first.RelativePath
 		_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
 	}

@@ -596,7 +596,11 @@ func (a *AppUI) renderNewFolderModal(c *ui.Context) {
 
 func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	projectName := filepath.Base(a.Workspace.RootDir)
+	wsTarget := a.NewTaskWorkspacePath
+	if wsTarget == "" && a.Workspace != nil {
+		wsTarget = a.Workspace.RootDir
+	}
+	projectName := resolveProjectName(wsTarget)
 
 	// Gather ACP agents
 	type acpItem struct {
@@ -1078,9 +1082,10 @@ func (a *AppUI) renderTaskActionsMenu(c *ui.Context) {
 
 				menuItem(icons.TablerPencil, "Rename task", false, func() {
 					a.ShowTaskMenuModal = false
-					a.ShowRenameModal = true
 					if sess != nil {
-						a.RenameSessionTitle = sess.Title
+						a.openRenameSessionModal(sess.ID, sess.Title, false)
+					} else {
+						a.ShowRenameModal = true
 					}
 				})
 
@@ -1187,13 +1192,25 @@ func (a *AppUI) renderRenameModal(c *ui.Context) {
 				ui.Text(c, "Rename Task").FontSize(14).FontWeight(600)
 				in := ui.TextInput(c, &a.RenameSessionTitle).Grow(1).AutoFocus()
 				save := func() {
-					if a.RenameSessionTitle == "" {
+					title := strings.TrimSpace(a.RenameSessionTitle)
+					if title == "" {
 						return
 					}
-					if sess := a.Agent.ActiveSession(); sess != nil {
-						sess.Title = a.RenameSessionTitle
-						a.Agent.SaveSessionToDisk(sess)
+					if a.RenameSessionIsCLI && a.CLIMgr != nil && a.RenameSessionID != "" {
+						a.CLIMgr.RenameSession(a.RenameSessionID, title)
+					} else if a.Agent != nil {
+						targetID := a.RenameSessionID
+						if targetID == "" {
+							if sess := a.Agent.ActiveSession(); sess != nil {
+								targetID = sess.ID
+							}
+						}
+						if targetID != "" {
+							a.Agent.RenameSession(targetID, title)
+						}
 					}
+					a.RenameSessionID = ""
+					a.RenameSessionIsCLI = false
 					a.ShowRenameModal = false
 				}
 				if in.Submitted() {

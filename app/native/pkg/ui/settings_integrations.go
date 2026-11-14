@@ -443,68 +443,314 @@ func (a *AppUI) renderSettingsTabAutomations(c *ui.Context, tc theme.ThemeColors
 	})
 }
 
-// ── Sub-Agents & Roles ─────────────────────────────────────────────────────
+// ── Orchestration & Sub-Agent Personas ─────────────────────────────────────
+
+func renderOrchOptionPill(c *ui.Context, tc theme.ThemeColors, key, label string, active bool) ui.Element {
+	bg := tc.Surface
+	fg := tc.TextMuted
+	bdr := tc.Border.Alpha(0.7)
+	fw := 500
+	if active {
+		bg = tc.Accent.Alpha(0.14)
+		fg = tc.Accent
+		bdr = tc.Accent.Alpha(0.45)
+		fw = 600
+	}
+	pill := ui.Row(c.Key(key)).Height(24).Radius(6).Padding(0, 9).AlignItems(ui.Center).
+		Background(bg).BorderWidth(1).BorderColor(bdr).Cursor(ui.CursorPointer)
+	pill.Children(func() {
+		ui.Text(c, label).FontSize(11).FontWeight(fw).TextColor(fg)
+	})
+	if !active && pill.Hovered() {
+		pill.Background(tc.Text.Alpha(0.05))
+	}
+	return pill
+}
+
+func clearRoleForm(sm *settings.SettingsManager) {
+	sm.RoleEditingID = ""
+	sm.RoleName = ""
+	sm.RoleDesc = ""
+	sm.RoleFilter = ""
+	sm.RoleModel = ""
+	sm.RolePrompt = ""
+	sm.RoleRules = ""
+	sm.RoleReadOnly = false
+	sm.RoleAllowBash = false
+}
 
 func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Sub-Agents & Roles", "Delegated agent definitions with dedicated models, prompts, and permissions.")
+	settingsSectionHeader(c, tc, "Orchestration & Sub-Agent Personas", "Configure the primary lead orchestrator, model tiering, concurrency, and specialist personas.")
 
 	if a.Engine == nil || a.Engine.AgentMgr == nil {
 		ui.Text(c, "Agent engine unavailable").FontSize(12).TextColor(tc.TextMuted)
 		return
 	}
+
+	orchCfg := a.Engine.AgentMgr.GetOrchestrationConfig()
+	saveOrch := func(next rakitagent.OrchestrationConfig) {
+		if err := a.Engine.AgentMgr.SaveOrchestrationConfig(next); err != nil {
+			c.AddToast(ui.Toast{Title: "Failed to save orchestration config", Description: err.Error(), Type: "error"})
+			return
+		}
+		orchCfg = next
+	}
+
+	// 1. Orchestrator Harness Card
+	settingsCard(c, tc, func() {
+		ui.Column(c).Gap(10).Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerCpu).Width(15).Height(15).TextColor(tc.Accent)
+				ui.Column(c).Grow(1).Gap(1).Children(func() {
+					ui.Text(c, "Multi-Agent Orchestrator Harness").FontSize(13).FontWeight(600)
+					ui.Text(c, "Lead orchestrator delegates specialized work across planning, research, coding, review, and QA personas.").FontSize(11).TextColor(tc.TextMuted)
+				})
+				if orchCfg.Enabled {
+					Badge(c, tc, "Active", tc.Success)
+				} else {
+					Badge(c, tc, "Direct Mode", tc.TextMuted)
+				}
+			})
+
+			ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+				enabled := orchCfg.Enabled
+				if ui.Checkbox(c, &enabled, "Enable Multi-Agent Orchestration").FontSize(12).Clicked() {
+					orchCfg.Enabled = enabled
+					saveOrch(orchCfg)
+				}
+				autoRoute := orchCfg.AutoRoute
+				if ui.Checkbox(c, &autoRoute, "Auto-Route Tasks to Sub-Agents").FontSize(12).Clicked() {
+					orchCfg.AutoRoute = autoRoute
+					saveOrch(orchCfg)
+				}
+				parallel := orchCfg.ParallelExploration
+				if ui.Checkbox(c, &parallel, "Parallel Exploration").FontSize(12).Clicked() {
+					orchCfg.ParallelExploration = parallel
+					saveOrch(orchCfg)
+				}
+			})
+
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, "Default Lead Agent Role").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+				leadRoles := []struct {
+					label string
+					role  rakitagent.RoleFilter
+				}{
+					{"Orchestrator", rakitagent.RoleOrchestrator},
+					{"Coding", rakitagent.RoleCoding},
+					{"Planning", rakitagent.RolePlanning},
+					{"Research", rakitagent.RoleResearch},
+					{"Reviewer", rakitagent.RoleReviewer},
+					{"Testing", rakitagent.RoleTesting},
+				}
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					for _, lr := range leadRoles {
+						active := orchCfg.DefaultRole == lr.role || (orchCfg.DefaultRole == "" && lr.role == rakitagent.RoleOrchestrator)
+						if renderOrchOptionPill(c, tc, "lead-"+string(lr.role), lr.label, active).Clicked() {
+							orchCfg.DefaultRole = lr.role
+							saveOrch(orchCfg)
+						}
+					}
+				})
+			})
+
+			ui.Row(c).Gap(18).AlignItems(ui.Center).Children(func() {
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Sub-Agent Model Tiering").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(5).Children(func() {
+						tiers := []string{"auto", "weak", "strong", "inherit"}
+						for _, t := range tiers {
+							cur := strings.ToLower(strings.TrimSpace(orchCfg.DefaultSubagentTier))
+							if cur == "" {
+								cur = "auto"
+							}
+							if renderOrchOptionPill(c, tc, "tier-"+t, strings.ToUpper(t[:1])+t[1:], cur == t).Clicked() {
+								orchCfg.DefaultSubagentTier = t
+								saveOrch(orchCfg)
+							}
+						}
+					})
+				})
+
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Max Concurrent").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(5).Children(func() {
+						for _, n := range []int{1, 2, 4, 6, 8} {
+							if renderOrchOptionPill(c, tc, fmt.Sprintf("conc-%d", n), fmt.Sprintf("%d", n), orchCfg.MaxConcurrent == n).Clicked() {
+								orchCfg.MaxConcurrent = n
+								saveOrch(orchCfg)
+							}
+						}
+					})
+				})
+
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Max Depth").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(5).Children(func() {
+						for _, d := range []int{1, 2, 3, 4, 5} {
+							if renderOrchOptionPill(c, tc, fmt.Sprintf("depth-%d", d), fmt.Sprintf("%d", d), orchCfg.MaxDepth == d).Clicked() {
+								orchCfg.MaxDepth = d
+								saveOrch(orchCfg)
+							}
+						}
+					})
+				})
+			})
+		})
+	})
+
 	defs := a.Engine.AgentMgr.ListAgentDefinitions()
 
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		addBtn := ui.Button(c, "+ Create Role")
+		addLabel := "+ Create Persona"
+		if sm.RoleFormOpen {
+			addLabel = "Close Form"
+		}
+		addBtn := ui.Button(c, addLabel)
 		if addBtn.Clicked() {
-			sm.RoleFormOpen = !sm.RoleFormOpen
+			if sm.RoleFormOpen {
+				clearRoleForm(sm)
+				sm.RoleFormOpen = false
+			} else {
+				clearRoleForm(sm)
+				sm.RoleFormOpen = true
+			}
 		}
 		ui.Box(c).Grow(1)
-		ui.Text(c, fmt.Sprintf("%d roles", len(defs))).FontSize(11).TextColor(tc.TextMuted)
+		ui.Text(c, fmt.Sprintf("%d personas configured", len(defs))).FontSize(11).TextColor(tc.TextMuted)
 	})
 
+	// 2. Create / Edit Persona Form
 	if sm.RoleFormOpen {
 		settingsCard(c, tc, func() {
 			ui.Column(c).Gap(8).Children(func() {
-				ui.Text(c, "Define Subagent Role").FontSize(12).FontWeight(600)
-				ui.Row(c).Gap(6).Children(func() {
-					ui.TextInput(c, &sm.RoleName).Placeholder("Role name (e.g. security-auditor)").Grow(1)
-					ui.TextInput(c, &sm.RoleFilter).Placeholder("Role category (coder/architect/reviewer/researcher)").Width(200)
+				formTitle := "Create Sub-Agent Persona"
+				saveLabel := "Save Persona"
+				if sm.RoleEditingID != "" {
+					formTitle = "Edit Sub-Agent Persona"
+					saveLabel = "Save Changes"
+				}
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, formTitle).FontSize(12).FontWeight(600)
+					if sm.RoleEditingID != "" {
+						ui.Box(c).Width(8)
+						Badge(c, tc, sm.RoleEditingID, tc.Info)
+					}
 				})
-				ui.TextInput(c, &sm.RoleModel).Placeholder("Model override (leave blank to inherit default)").Grow(1)
-				ui.TextInput(c, &sm.RolePrompt).Placeholder("System instructions / Custom prompt").Grow(1)
+
+				// Quick Role Presets
+				presets := []struct {
+					label     string
+					role      string
+					desc      string
+					prompt    string
+					readOnly  bool
+					allowBash bool
+				}{
+					{"Orchestrator", "orchestrator", "Coordinates specialized sub-agents and synthesizes final results", "Decompose complex requests, delegate exploration/planning/coding/review/testing to specialists, and verify outcomes before responding.", false, false},
+					{"Planner", "planning", "Designs implementation plans, architecture, and verification steps", "Analyze requirements and architecture, then produce an ordered step-by-step plan without modifying files.", true, false},
+					{"Researcher", "research", "Explores codebases, traces call paths, and gathers facts quickly", "Perform fast read-only codebase research and report exact file paths, symbols, and behavior.", true, false},
+					{"Coder", "coding", "Implements focused code changes cleanly and runs targeted tests", "Implement the scoped code changes following repository conventions and verify with relevant tests.", false, true},
+					{"Reviewer", "reviewer", "Audits diffs for correctness, regressions, edge cases, and security", "Review changes critically for bugs, race conditions, security flaws, and missing test coverage.", true, true},
+					{"QA & Test", "testing", "Writes and executes verification suites and reproduction scripts", "Design and execute tests and verification commands to validate behavior end-to-end.", false, true},
+				}
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Presets:").FontSize(11).TextColor(tc.TextMuted)
+					for _, p := range presets {
+						p := p
+						if renderOrchOptionPill(c, tc, "preset-"+p.role, p.label, strings.EqualFold(strings.TrimSpace(sm.RoleFilter), p.role)).Clicked() {
+							sm.RoleFilter = p.role
+							if strings.TrimSpace(sm.RoleName) == "" {
+								sm.RoleName = p.label + " Agent"
+							}
+							sm.RoleDesc = p.desc
+							sm.RolePrompt = p.prompt
+							sm.RoleReadOnly = p.readOnly
+							sm.RoleAllowBash = p.allowBash
+						}
+					}
+				})
+
+				ui.Row(c).Gap(6).Children(func() {
+					ui.TextInput(c, &sm.RoleName).Placeholder("Persona name (e.g. Security Auditor)").Grow(1)
+					ui.TextInput(c, &sm.RoleFilter).Placeholder("Role (orchestrator/planning/research/coding/reviewer/testing/custom)").Width(240)
+				})
+				ui.TextInput(c, &sm.RoleDesc).Placeholder("Short description").Grow(1)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.TextInput(c, &sm.RoleModel).Placeholder("Model override or tier (blank=inherit, auto, weak, strong, or model ID)").Grow(1)
+					for _, tier := range []string{"inherit", "auto", "weak", "strong"} {
+						t := tier
+						active := strings.EqualFold(strings.TrimSpace(sm.RoleModel), t) || (t == "inherit" && strings.TrimSpace(sm.RoleModel) == "")
+						if renderOrchOptionPill(c, tc, "form-tier-"+t, t, active).Clicked() {
+							if t == "inherit" {
+								sm.RoleModel = ""
+							} else {
+								sm.RoleModel = t
+							}
+						}
+					}
+				})
+				ui.TextInput(c, &sm.RolePrompt).Placeholder("System instructions / Persona prompt").Grow(1)
+				ui.TextInput(c, &sm.RoleRules).Placeholder("Additional rules / constraints (optional)").Grow(1)
 
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Checkbox(c, &sm.RoleReadOnly, "Read-Only (no filesystem writes)").FontSize(11)
 					ui.Checkbox(c, &sm.RoleAllowBash, "Allow Terminal Commands").FontSize(11)
 					ui.Box(c).Grow(1)
 					if ui.Button(c, "Cancel").Clicked() {
+						clearRoleForm(sm)
 						sm.RoleFormOpen = false
 					}
-					saveBtn := ContrastCTA(c, tc, "Save Role")
+					saveBtn := ContrastCTA(c, tc, saveLabel)
 					if saveBtn.Clicked() && strings.TrimSpace(sm.RoleName) != "" {
+						defID := sm.RoleEditingID
+						if defID == "" {
+							defID = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(sm.RoleName), " ", "-"))
+						}
+						desc := strings.TrimSpace(sm.RoleDesc)
+						if desc == "" {
+							desc = strings.TrimSpace(sm.RolePrompt)
+						}
+						roleVal := rakitagent.RoleFilter(strings.TrimSpace(sm.RoleFilter))
+						if roleVal == "" {
+							roleVal = rakitagent.RoleCustom
+						}
 						newDef := rakitagent.AgentDefinition{
-							ID:          strings.ToLower(strings.ReplaceAll(strings.TrimSpace(sm.RoleName), " ", "-")),
+							ID:          defID,
 							Name:        strings.TrimSpace(sm.RoleName),
-							Role:        rakitagent.RoleFilter(sm.RoleFilter),
-							Model:       sm.RoleModel,
+							Description: desc,
+							Role:        roleVal,
+							Model:       strings.TrimSpace(sm.RoleModel),
 							Prompt:      sm.RolePrompt,
+							Rules:       sm.RoleRules,
 							ReadOnly:    sm.RoleReadOnly,
 							AllowBash:   sm.RoleAllowBash,
-							Description: sm.RolePrompt,
-							CreatedAt:   time.Now(),
 							UpdatedAt:   time.Now(),
+						}
+						if sm.RoleEditingID != "" {
+							if existing, ok := a.Engine.AgentMgr.FindDefinition(sm.RoleEditingID); ok {
+								newDef.ID = existing.ID
+								newDef.Builtin = existing.Builtin
+								newDef.Tools = existing.Tools
+								newDef.MCPServers = existing.MCPServers
+								newDef.Skills = existing.Skills
+								newDef.CreatedAt = existing.CreatedAt
+							}
+						}
+						if newDef.CreatedAt.IsZero() {
+							newDef.CreatedAt = time.Now()
 						}
 						_, err := a.Engine.AgentMgr.SaveAgentDefinition(newDef)
 						if err == nil {
-							sm.RoleName = ""
-							sm.RoleFilter = ""
-							sm.RoleModel = ""
-							sm.RolePrompt = ""
+							toastTitle := "Persona Created"
+							if sm.RoleEditingID != "" {
+								toastTitle = "Persona Updated"
+							}
+							clearRoleForm(sm)
 							sm.RoleFormOpen = false
-							c.AddToast(ui.Toast{Title: "Role Created", Type: "success"})
+							c.AddToast(ui.Toast{Title: toastTitle, Description: newDef.Name, Type: "success"})
 						} else {
-							c.AddToast(ui.Toast{Title: "Failed to save role", Description: err.Error(), Type: "error"})
+							c.AddToast(ui.Toast{Title: "Failed to save persona", Description: err.Error(), Type: "error"})
 						}
 					}
 				})
@@ -512,29 +758,90 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 		})
 	}
 
+	// 3. Configured Personas List
 	ui.Column(c).Gap(8).Children(func() {
 		for _, d := range defs {
 			thisD := d
+			isLead := orchCfg.Enabled && thisD.Role != "" && (thisD.Role == orchCfg.DefaultRole || (orchCfg.DefaultRole == "" && thisD.Role == rakitagent.RoleOrchestrator))
 			settingsCard(c, tc, func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerBot).Width(16).Height(16).TextColor(tc.Accent)
-					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					botColor := tc.TextMuted
+					if isLead {
+						botColor = tc.Accent
+					}
+					ui.Icon(c, icons.TablerBot).Width(16).Height(16).TextColor(botColor)
+					ui.Column(c).Grow(1).Gap(3).Children(func() {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 							ui.Text(c, thisD.Name).FontSize(13).FontWeight(600)
-							Badge(c, tc, string(thisD.Role), tc.Info)
+							if isLead {
+								Badge(c, tc, "Default Lead", tc.Success)
+							}
+							if thisD.Builtin {
+								Badge(c, tc, "builtin", tc.TextMuted)
+							}
+							if thisD.Role != "" {
+								Badge(c, tc, string(thisD.Role), tc.Info)
+							}
 							if thisD.ReadOnly {
 								Badge(c, tc, "read-only", tc.Warning)
+							} else {
+								Badge(c, tc, "read-write", tc.Success)
+							}
+							if thisD.AllowBash {
+								Badge(c, tc, "bash", tc.Info)
+							} else {
+								Badge(c, tc, "no bash", tc.TextMuted)
 							}
 							if thisD.Model != "" {
 								Badge(c, tc, thisD.Model, tc.Accent)
 							}
 						})
-						ui.Text(c, thisD.Description).FontSize(11).TextColor(tc.TextMuted)
+						if thisD.Description != "" {
+							ui.Text(c, thisD.Description).FontSize(11).TextColor(tc.TextMuted)
+						}
 					})
-					del := IconButton(c, tc, icons.TablerTrash, 13)
-					if del.Clicked() {
-						if err := a.Engine.AgentMgr.DeleteAgentDefinition(thisD.ID); err == nil {
-							c.AddToast(ui.Toast{Title: "Role Deleted", Description: thisD.Name, Type: "info"})
+
+					if !isLead && thisD.Role != "" && thisD.Role != rakitagent.RoleCustom {
+						if renderOrchOptionPill(c, tc, "setlead-"+thisD.ID, "Set Lead", false).Clicked() {
+							orchCfg.Enabled = true
+							orchCfg.DefaultRole = thisD.Role
+							saveOrch(orchCfg)
+							if a.Agent != nil {
+								a.Agent.SetSessionPersona(a.Agent.ActiveSessionID, thisD.ID)
+							}
+							c.AddToast(ui.Toast{Title: "Default Lead Updated", Description: thisD.Name, Type: "success"})
+						}
+					}
+
+					editBtn := IconButton(c, tc, icons.TablerPencil, 13)
+					if editBtn.Clicked() {
+						sm.RoleEditingID = thisD.ID
+						sm.RoleName = thisD.Name
+						sm.RoleDesc = thisD.Description
+						sm.RoleFilter = string(thisD.Role)
+						sm.RoleModel = thisD.Model
+						sm.RolePrompt = thisD.Prompt
+						sm.RoleRules = thisD.Rules
+						sm.RoleReadOnly = thisD.ReadOnly
+						sm.RoleAllowBash = thisD.AllowBash
+						sm.RoleFormOpen = true
+					}
+
+					if thisD.Builtin {
+						rst := IconButton(c, tc, icons.TablerRefresh, 13)
+						if rst.Clicked() {
+							if err := a.Engine.AgentMgr.ResetBuiltinDefinition(thisD.ID); err == nil {
+								c.AddToast(ui.Toast{Title: "Builtin Persona Reset", Description: thisD.Name, Type: "info"})
+							} else {
+								c.AddToast(ui.Toast{Title: "Failed to reset persona", Description: err.Error(), Type: "error"})
+							}
+						}
+					} else {
+						del := IconButton(c, tc, icons.TablerTrash, 13)
+						if del.Clicked() {
+							if err := a.Engine.AgentMgr.DeleteAgentDefinition(thisD.ID); err == nil {
+								c.AddToast(ui.Toast{Title: "Persona Deleted", Description: thisD.Name, Type: "info"})
+							}
 						}
 					}
 				})
@@ -542,7 +849,7 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 		}
 		if len(defs) == 0 {
 			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Text(c, "No custom roles defined").FontSize(12).TextColor(tc.TextMuted)
+				ui.Text(c, "No personas defined").FontSize(12).TextColor(tc.TextMuted)
 			})
 		}
 	})

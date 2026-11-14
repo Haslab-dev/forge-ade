@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	rakitagent "github.com/Haslab-dev/RakitKode/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 )
 
@@ -104,5 +105,62 @@ func TestInternalAgentNoDeadlock(t *testing.T) {
 		// Passed
 	case <-time.After(2 * time.Second):
 		t.Fatalf("HandleTurnDone deadlocked!")
+	}
+}
+
+func TestInternalAgentOrchestratorAndPersona(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	eng := engine.NewEngine(tempDir)
+	as := NewAgentState(eng, tempDir, func() {})
+	sess := as.NewSession("Orchestrator Test")
+	sess.AgentID = "agent-internal"
+	sess.AgentType = "internal"
+
+	as.mu.Lock()
+	as.ActiveAgentID = "agent-internal"
+	as.ActiveAgentType = "internal"
+	as.mu.Unlock()
+
+	if pid, _ := as.EffectivePersona(sess); pid != "orchestrator" {
+		t.Fatalf("expected default EffectivePersona orchestrator, got %q", pid)
+	}
+
+	mgrID, err := as.ensureInternalManagerSession(sess)
+	if err != nil {
+		t.Fatalf("ensureInternalManagerSession failed: %v", err)
+	}
+	mgrSess, ok := eng.AgentMgr.GetSession(mgrID)
+	if !ok {
+		t.Fatalf("expected backing session %s to exist", mgrID)
+	}
+	if mgrSess.RoleFilter != rakitagent.RoleOrchestrator {
+		t.Fatalf("expected manager session role %q, got %q", rakitagent.RoleOrchestrator, mgrSess.RoleFilter)
+	}
+
+	// Switching to ModePlan resolves to planning without error.
+	as.mu.Lock()
+	as.ExecutionMode = ModePlan
+	as.mu.Unlock()
+	if pid, _ := as.EffectivePersona(sess); pid != "planning" {
+		t.Fatalf("expected ModePlan EffectivePersona planning, got %q", pid)
+	}
+
+	// Returning to ModeBypass and selecting reviewer persona applies reviewer definition.
+	as.mu.Lock()
+	as.ExecutionMode = ModeBypass
+	as.mu.Unlock()
+	as.SetSessionPersona(sess.ID, "reviewer")
+	as.mu.Lock()
+	as.syncInternalSessionState(mgrID, sess)
+	as.mu.Unlock()
+
+	mgrSess, _ = eng.AgentMgr.GetSession(mgrID)
+	if mgrSess.RoleFilter != rakitagent.RoleReviewer {
+		t.Fatalf("expected manager session role %q after SetSessionPersona, got %q", rakitagent.RoleReviewer, mgrSess.RoleFilter)
+	}
+	if !mgrSess.ReadOnly {
+		t.Fatalf("expected reviewer persona to set ReadOnly=true on manager session")
 	}
 }

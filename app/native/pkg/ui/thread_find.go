@@ -132,26 +132,27 @@ func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agen
 			turns = append(turns, i)
 		}
 	}
-	if len(turns) < 2 {
+	if len(turns) == 0 {
 		return
 	}
 
 	// Visible window (roughly mirrors the scrubber's viewport highlight).
 	first, last := as.ListState.Visible()
 
-	rail := ui.Row(c.Key("turn-scrubber")).Width(14).FillHeight().Padding(6, 4).Justify(ui.Center)
+	rail := ui.Row(c.Key("turn-scrubber")).Width(16).FillHeight().Padding(6, 4).Justify(ui.Center).AlignItems(ui.Center)
 	rail.Children(func() {
-		col := ui.Column(c).Gap(6).AlignItems(ui.Center)
+		col := ui.Column(c).Gap(7).AlignItems(ui.Start)
 		col.Children(func() {
 			for ti, msgIdx := range turns {
 				ti, msgIdx := ti, msgIdx
 				inView := msgIdx >= first && msgIdx <= last
-				tick := ui.Box(c.Key(fmt.Sprintf("tick-%d", ti))).Size(8, 4).Radius(2)
+				w := float32(7)
+				bg := tc.Border
 				if inView {
-					tick.Background(tc.Accent)
-				} else {
-					tick.Background(tc.Border)
+					w = 11
+					bg = tc.Text
 				}
+				tick := ui.Box(c.Key(fmt.Sprintf("tick-%d", ti))).Size(w, 2).Radius(1).Background(bg).Cursor(ui.CursorPointer)
 				preview := ""
 				if m := as.Messages[msgIdx]; m != nil {
 					preview = m.Text

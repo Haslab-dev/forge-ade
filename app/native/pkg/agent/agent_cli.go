@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -115,11 +116,17 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 		if r.StartedAt > 0 {
 			started = time.UnixMilli(r.StartedAt)
 		}
+		normCwd := agentsession.NormalizeWorkspacePath(r.WorkingDirectory)
+		spawnCwd := normCwd
+		if spawnCwd == "" {
+			spawnCwd, _ = os.UserHomeDir()
+		}
+
 		// Restored sessions have no live process: build a deferred terminal
 		// state (Restart relaunches the CLI on demand). The on-disk output log
 		// is PTY output — never feed it back as input, the shell would try to
 		// execute the raw escape sequences.
-		term := terminal.NewTerminalStateDeferred(r.WorkingDirectory)
+		term := terminal.NewTerminalStateDeferred(spawnCwd)
 		if r.Executable != "" {
 			term.Command = append([]string{r.Executable}, r.Args...)
 		}
@@ -141,7 +148,7 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 			Title:      r.Title,
 			Command:    r.Executable,
 			Args:       r.Args,
-			Cwd:        r.WorkingDirectory,
+			Cwd:        normCwd,
 			Status:     status,
 			StartedAt:  started,
 			EndedAt:    ended,
@@ -301,14 +308,19 @@ func (mgr *AgentCLIManager) CreateSessionWithTitle(agentID, agentName, command s
 func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, args []string, cwd string) *AgentCLISession {
 	mgr.mu.Lock()
 
-	if cwd == "" {
-		cwd = mgr.RootDir
+	normCwd := agentsession.NormalizeWorkspacePath(cwd)
+	if normCwd == "" {
+		normCwd = agentsession.NormalizeWorkspacePath(mgr.RootDir)
+	}
+	spawnCwd := normCwd
+	if spawnCwd == "" {
+		spawnCwd, _ = os.UserHomeDir()
 	}
 
 	sessionID := fmt.Sprintf("cli-%s-%d", agentID, time.Now().UnixNano()%100000)
 	title := fmt.Sprintf("%s Task", agentName)
 
-	term := terminal.NewTerminalStateDeferred(cwd)
+	term := terminal.NewTerminalStateDeferred(spawnCwd)
 	resolvedCmd, err := agentsession.LookPath(command)
 	if err == nil && resolvedCmd != "" {
 		term.Command = append([]string{resolvedCmd}, args...)
@@ -327,7 +339,7 @@ func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, ar
 		Title:     title,
 		Command:   command,
 		Args:      args,
-		Cwd:       cwd,
+		Cwd:       normCwd,
 		Status:    status,
 		StartedAt: time.Now(),
 		Terminal:  term,
@@ -346,6 +358,30 @@ func (mgr *AgentCLIManager) ActiveSession() *AgentCLISession {
 	mgr.mu.RLock()
 	defer mgr.mu.RUnlock()
 	return mgr.Sessions[mgr.ActiveID]
+}
+
+// SortedSessions returns all CLI sessions in deterministic order (newest
+// StartedAt first, tie-broken by ID descending).
+func (mgr *AgentCLIManager) SortedSessions() []*AgentCLISession {
+	if mgr == nil {
+		return nil
+	}
+	mgr.mu.RLock()
+	out := make([]*AgentCLISession, 0, len(mgr.Sessions))
+	for _, s := range mgr.Sessions {
+		if s != nil {
+			out = append(out, s)
+		}
+	}
+	mgr.mu.RUnlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.After(out[j].StartedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
+	return out
 }
 
 // StopSession stops a CLI session: Ctrl+C first (graceful for TUIs), then the
@@ -414,7 +450,10 @@ func (mgr *AgentCLIManager) RestartSession(sessionID string) {
 	} else {
 		cwd := sess.Cwd
 		if cwd == "" {
-			cwd = mgr.RootDir
+			cwd = agentsession.NormalizeWorkspacePath(mgr.RootDir)
+		}
+		if cwd == "" {
+			cwd, _ = os.UserHomeDir()
 		}
 		sess.Terminal = terminal.NewTerminalStateDeferred(cwd)
 	}
@@ -447,20 +486,50 @@ func (mgr *AgentCLIManager) RestartSession(sessionID string) {
 	mgr.SaveSessionsToDisk()
 }
 
+// RenameSession updates the title of a CLI session and persists it to disk.
+func (mgr *AgentCLIManager) RenameSession(sessionID, title string) {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" || mgr == nil {
+		return
+	}
+	mgr.mu.Lock()
+	if sess := mgr.Sessions[sessionID]; sess != nil {
+		sess.Title = trimmed
+	}
+	mgr.mu.Unlock()
+	mgr.SaveSessionsToDisk()
+	if mgr.OnNeedRedraw != nil {
+		mgr.OnNeedRedraw()
+	}
+}
+
 // DeleteSession removes a CLI session and terminates its process.
 func (mgr *AgentCLIManager) DeleteSession(sessionID string) {
+	if mgr == nil || sessionID == "" {
+		return
+	}
 	mgr.mu.Lock()
 	sess := mgr.Sessions[sessionID]
 	var term *terminal.TerminalState
+	var deletedCwd string
 	if sess != nil {
 		term = sess.Terminal
+		deletedCwd = sess.Cwd
 		delete(mgr.Sessions, sessionID)
 	}
 	if mgr.ActiveID == sessionID {
 		mgr.ActiveID = ""
-		for id := range mgr.Sessions {
-			mgr.ActiveID = id
-			break
+		var best *AgentCLISession
+		for _, cand := range mgr.Sessions {
+			if cand == nil || cand.Cwd != deletedCwd {
+				continue
+			}
+			if best == nil || cand.StartedAt.After(best.StartedAt) || (cand.StartedAt.Equal(best.StartedAt) && cand.ID > best.ID) {
+				best = cand
+			}
+		}
+		if best != nil {
+			mgr.ActiveID = best.ID
 		}
 	}
 	mgr.mu.Unlock()
@@ -469,6 +538,9 @@ func (mgr *AgentCLIManager) DeleteSession(sessionID string) {
 		term.Close()
 	}
 	mgr.SaveSessionsToDisk()
+	if mgr.OnNeedRedraw != nil {
+		mgr.OnNeedRedraw()
+	}
 }
 
 // SyncExitStatus flips a running session to completed once its PTY process

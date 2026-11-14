@@ -216,10 +216,19 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 					Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Cursor(ui.CursorPointer)
 				row.Children(func() {
 					ui.Box(c).Size(7, 7).Radius(4).Background(statusColor)
-					colRow := ui.Column(c).Gap(1)
+					colRow := ui.Column(c).Gap(2)
 					colRow.Children(func() {
-						ui.Text(c, sub.Name).FontSize(12).FontWeight(500).SingleLine()
-						ui.Text(c, fmt.Sprintf("%s · %d messages", statusLabel, len(sub.Messages))).FontSize(10).TextColor(tc.TextMuted)
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, sub.Name).FontSize(12).FontWeight(500).SingleLine()
+							if sub.RoleFilter != "" {
+								Badge(c, tc, string(sub.RoleFilter), tc.Info)
+							}
+						})
+						meta := fmt.Sprintf("%s · %d messages", statusLabel, len(sub.Messages))
+						if sub.Model != "" {
+							meta = fmt.Sprintf("%s · %s · %d msgs", statusLabel, sub.Model, len(sub.Messages))
+						}
+						ui.Text(c, meta).FontSize(10).TextColor(tc.TextMuted)
 					})
 					ui.Box(c).Grow(1)
 					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -269,6 +278,9 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *rakitagent.Session) {
 			nameText = "Child Agent"
 		}
 		ui.Text(c, nameText).FontSize(12).FontWeight(600).SingleLine().Grow(1)
+		if sub.RoleFilter != "" {
+			Badge(c, tc, string(sub.RoleFilter), tc.Info)
+		}
 		ui.Text(c, statusLabel).FontSize(10).TextColor(statusColor)
 
 		if sub.Model != "" {

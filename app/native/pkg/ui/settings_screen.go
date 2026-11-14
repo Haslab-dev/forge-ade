@@ -35,7 +35,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 			bar := c.TitleBar()
 			leftPad := float32(16)
 			if bar.Left > 0 {
-				leftPad = max(bar.Left+12, 78)
+				leftPad = max(bar.Left+10, 78)
 			} else if runtime.GOOS == "darwin" {
 				leftPad = 78
 			}
@@ -47,7 +47,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 			}
 
 			// 1. Header Bar: Back Button, Breadcrumb, Search Bar, Close Button
-			ui.Row(c).Height(48).Padding(0, rightPad, 0, leftPad).Gap(12).AlignItems(ui.Center).
+			ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, rightPad, 0, leftPad).Gap(12).AlignItems(ui.Center).
 				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).DragWindow().Children(func() {
 
 				backBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
@@ -105,7 +105,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Sub-Agents & Roles", icons.TablerBot, "")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerBot, "MULTI")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabCommands, "Slash Commands", icons.TablerCode, "")
 					})
 
@@ -199,7 +199,7 @@ func settingsSectionTitle(tab int) string {
 	case settings.SettingsTabAutos:
 		return "Automations"
 	case settings.SettingsTabSubagents:
-		return "Sub-Agents & Roles"
+		return "Orchestration & Sub-Agent Personas"
 	case settings.SettingsTabCommands:
 		return "Slash Commands"
 	case settings.SettingsTabGeneral:

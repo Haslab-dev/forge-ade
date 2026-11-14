@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
+	"github.com/hasdev/forge-ade/core/agentsession"
 )
 
 // renderAgentSidebar renders the full-height task sessions sidebar with filter tabs and profile row.
@@ -24,20 +26,20 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 	bar := c.TitleBar()
 	topPadLeft := float32(14)
 	if bar.Left > 0 {
-		topPadLeft = max(bar.Left+8, 76)
+		topPadLeft = max(bar.Left+10, 78)
 	} else if runtime.GOOS == "darwin" {
-		topPadLeft = 76
+		topPadLeft = 78
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
-		// Top window controls strip (48px, macOS traffic-light inset) drags
-		// the window, its collapse button stays clickable.
-		ui.Row(c).Height(48).Padding(0, 12, 0, topPadLeft).AlignItems(ui.Center).DragWindow().Children(func() {
+		// Top window controls strip (aligned with WorkspaceTopBarHeight & macOS traffic lights).
+		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, 10, 0, topPadLeft).Gap(6).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.SidebarBorder).DragWindow().Children(func() {
 			if IconButton(c, tc, icons.TablerPanelLeft, 15).Clicked() {
 				a.ShowLeftSidebar = false
 			}
-			ui.Row(c).Padding(0, 6).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.ForgeSparkSVG).Width(15).Height(15).TextColor(tc.Accent)
+			ui.Row(c).Padding(0, 4).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.ForgeSparkSVG).Width(14).Height(14).TextColor(tc.Accent)
 				ui.Text(c, "ForgeADE").FontSize(13).FontWeight(600).LetterSpacing(-0.2)
 			})
 			ui.Box(c).Grow(1)
@@ -81,7 +83,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			if a.Workspace != nil {
 				activeWsPath = a.Workspace.RootDir
 			}
-			activeProjectName := resolveProjectName(activeWsPath)
 
 			// Project selector dropdown + quick actions, as forge-ade's
 			// "All projects ⌄" row: project filter + sort menu on the left,
@@ -217,72 +218,13 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				}
 			})
 
-			// Scrollable Task Sessions List grouped by Project/Folder
-			type projectTaskGroup struct {
-				ProjectName string
-				FolderPath  string
-				Sessions    []*agent.AgentSession
-				CLISessions []*agent.AgentCLISession
+			// Scrollable Task Sessions List grouped deterministically by Project/Folder.
+			groups := a.sidebarProjectGroups()
+			tab := "active"
+			if a.Agent != nil && a.Agent.ActiveFilterTab != "" {
+				tab = a.Agent.ActiveFilterTab
 			}
-
-			groupMap := make(map[string]*projectTaskGroup)
-			var groupOrder []string
-
-			getOrCreateGroup := func(name, path string) *projectTaskGroup {
-				if g, exists := groupMap[name]; exists {
-					if g.FolderPath == "" && path != "" {
-						g.FolderPath = path
-					}
-					return g
-				}
-				g := &projectTaskGroup{
-					ProjectName: name,
-					FolderPath:  path,
-				}
-				groupMap[name] = g
-				groupOrder = append(groupOrder, name)
-				return g
-			}
-
-			// Always seed active workspace first, then General
-			getOrCreateGroup(activeProjectName, activeWsPath)
-			if activeProjectName != "General" {
-				getOrCreateGroup("General", "")
-			}
-
-			// 1. Group ACP Sessions
-			sessions := a.Agent.FilteredSessions()
-			for _, sess := range sessions {
-				s := sess
-				pName := resolveProjectName(s.WorkspacePath)
-				if s.WorkspacePath == activeWsPath || (activeWsPath != "" && strings.HasPrefix(s.WorkspacePath, activeWsPath)) {
-					pName = activeProjectName
-				}
-				g := getOrCreateGroup(pName, s.WorkspacePath)
-				g.Sessions = append(g.Sessions, s)
-			}
-
-			// 2. Group CLI Sessions
-			if a.CLIMgr != nil {
-				for _, cliSess := range a.CLIMgr.Sessions {
-					cs := cliSess
-					if a.Agent.SearchQuery != "" {
-						sq := strings.ToLower(a.Agent.SearchQuery)
-						if !strings.Contains(strings.ToLower(cs.Title), sq) && !strings.Contains(strings.ToLower(cs.AgentName), sq) {
-							continue
-						}
-					}
-					if a.Agent.ActiveFilterTab == "archived" {
-						continue
-					}
-					pName := resolveProjectName(cs.Cwd)
-					if cs.Cwd == activeWsPath || (activeWsPath != "" && strings.HasPrefix(cs.Cwd, activeWsPath)) {
-						pName = activeProjectName
-					}
-					g := getOrCreateGroup(pName, cs.Cwd)
-					g.CLISessions = append(g.CLISessions, cs)
-				}
-			}
+			searching := a.Agent != nil && strings.TrimSpace(a.Agent.SearchQuery) != ""
 
 			ui.Scroll(c).Grow(1).Children(func() {
 				ui.Column(c).Padding(2, 6).Gap(4).Children(func() {
@@ -290,6 +232,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 					if a.SidebarListView == "timeline" {
 						type timelineEntry struct {
 							Kind        string
+							ID          string
 							Session     *agent.AgentSession
 							CLISession  *agent.AgentCLISession
 							UpdatedTime time.Time
@@ -297,14 +240,14 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 							ProjectName string
 						}
 						var allEntries []timelineEntry
-						for _, name := range groupOrder {
-							group := groupMap[name]
+						for _, group := range groups {
 							if a.ProjectFilter != "all" && a.ProjectFilter != "" && group.ProjectName != a.ProjectFilter {
 								continue
 							}
 							for _, s := range group.Sessions {
 								allEntries = append(allEntries, timelineEntry{
 									Kind:        "agent",
+									ID:          s.ID,
 									Session:     s,
 									UpdatedTime: s.UpdatedAt,
 									Pinned:      s.Pinned,
@@ -314,6 +257,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 							for _, cs := range group.CLISessions {
 								allEntries = append(allEntries, timelineEntry{
 									Kind:        "cli",
+									ID:          cs.ID,
 									CLISession:  cs,
 									UpdatedTime: cs.StartedAt,
 									Pinned:      false,
@@ -323,26 +267,23 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						}
 
 						sort.SliceStable(allEntries, func(i, j int) bool {
-							if a.Agent.ActiveFilterTab == "active" {
-								if allEntries[i].Pinned && !allEntries[j].Pinned {
-									return true
-								}
-								if !allEntries[i].Pinned && allEntries[j].Pinned {
-									return false
-								}
+							if tab == "active" && allEntries[i].Pinned != allEntries[j].Pinned {
+								return allEntries[i].Pinned
 							}
+							iTime := allEntries[i].UpdatedTime
+							jTime := allEntries[j].UpdatedTime
 							if a.TaskSortBy == "created" {
-								iTime := allEntries[i].UpdatedTime
-								jTime := allEntries[j].UpdatedTime
 								if allEntries[i].Session != nil {
 									iTime = allEntries[i].Session.CreatedAt
 								}
 								if allEntries[j].Session != nil {
 									jTime = allEntries[j].Session.CreatedAt
 								}
+							}
+							if !iTime.Equal(jTime) {
 								return iTime.After(jTime)
 							}
-							return allEntries[i].UpdatedTime.After(allEntries[j].UpdatedTime)
+							return allEntries[i].ID > allEntries[j].ID
 						})
 
 						if len(allEntries) == 0 {
@@ -380,6 +321,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnFork:      func() { a.Agent.ForkSessionByID(s.ID) },
 										OnArchive:   func() { a.Agent.ToggleArchive(s.ID) },
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
+										OnRename:    func() { a.openRenameSessionModal(s.ID, s.Title, false) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
 										OnOpen: func() {
 											a.selectAgentSession(s)
@@ -410,6 +352,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										UpdatedTime: cs.StartedAt,
 										OnStop:      func() { a.CLIMgr.StopSession(cs.ID) },
 										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
+										OnRename:    func() { a.openRenameSessionModal(cs.ID, cs.Title, true) },
 										OnDelete:    func() { a.CLIMgr.DeleteSession(cs.ID) },
 										OnOpen: func() {
 											a.selectCLISession(cs)
@@ -421,27 +364,21 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						return
 					}
 
-					for _, name := range groupOrder {
-						group := groupMap[name]
+					renderedAnyGroup := false
+					for _, group := range groups {
 						// "All projects ⌄" filter: only the chosen project renders.
 						if a.ProjectFilter != "all" && a.ProjectFilter != "" && group.ProjectName != a.ProjectFilter {
 							continue
 						}
 						totalCount := len(group.Sessions) + len(group.CLISessions)
 
-						// forge-ade renders no group at all when it has no
-						// visible sessions (its groups derive from sessions).
-						if totalCount == 0 {
+						// Empty groups stay visible on the Active tab (when not searching)
+						// so General, the active folder, and recent folders can start tasks
+						// directly; hide empty groups under Pinned/Snoozed/Archived/Search.
+						if totalCount == 0 && (tab != "active" || searching) {
 							continue
 						}
-
-						// Sort within the group: updated (recent) or created date.
-						sort.SliceStable(group.Sessions, func(i, j int) bool {
-							if a.TaskSortBy == "created" {
-								return group.Sessions[i].CreatedAt.After(group.Sessions[j].CreatedAt)
-							}
-							return group.Sessions[i].UpdatedAt.After(group.Sessions[j].UpdatedAt)
-						})
+						renderedAnyGroup = true
 
 						isCollapsed := a.CollapsedProjectGroups[group.ProjectName]
 
@@ -449,6 +386,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						// hover actions (Explore project files / New task / Delete
 						// workspace) that forge-ade shows on group hover.
 						canExplore := group.ProjectName != "General" && group.FolderPath != ""
+						headerActionClicked := false
 						pHeader := ui.Row(c.Key("pheader-"+group.ProjectName)).Height(28).Radius(6).
 							Padding(0, 6).Gap(5).AlignItems(ui.Center)
 						pHeader.Children(func() {
@@ -460,7 +398,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								ui.Icon(c, icons.TablerFolderOpen).Width(14).Height(14).TextColor(tc.Accent)
 							}
 
-							ui.Text(c, group.ProjectName).FontSize(12).FontWeight(600).Grow(1).SingleLine()
+							ui.Text(c, group.ProjectName).FontSize(12).FontWeight(600).Grow(1).MinWidth(0).SingleLine()
 
 							// Hover-only actions, as forge-ade's opacity-0
 							// group-hover actions.
@@ -482,25 +420,28 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										btn.Background(tc.Text.Alpha(0.05))
 									}
 									if btn.Clicked() {
+										headerActionClicked = true
 										onPick()
 									}
 								}
 
 								if canExplore {
 									groupAction("explore-"+group.ProjectName, icons.TablerFolderTree, false, func() {
-										if group.FolderPath != "" && group.FolderPath != a.Workspace.RootDir {
+										curWs := ""
+										if a.Workspace != nil {
+											curWs = a.Workspace.RootDir
+										}
+										if group.FolderPath != "" && !sameWorkspacePath(curWs, group.FolderPath) {
 											a.switchWorkspace(group.FolderPath)
 										}
-										a.Workspace.Refresh()
+										if a.Workspace != nil {
+											a.Workspace.Refresh()
+										}
 										a.LeftSidebarView = "files"
 									})
 								}
 								groupAction("new-"+group.ProjectName, icons.TablerPlus, false, func() {
-									if group.ProjectName == "General" || group.FolderPath == "" {
-										a.handleNewTask()
-									} else {
-										a.OpenNewTaskModalFor(group.FolderPath)
-									}
+									a.NewAgentTaskInProject(group.ProjectName, group.FolderPath)
 								})
 								if canExplore {
 									groupAction("delws-"+group.ProjectName, icons.TablerTrash, true, func() {
@@ -513,9 +454,44 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						if pHeader.Hovered() {
 							pHeader.Background(tc.SidebarRowHover)
 						}
-						if pHeader.Clicked() {
+						if pHeader.Clicked() && !headerActionClicked {
 							a.CollapsedProjectGroups[group.ProjectName] = !isCollapsed
 						}
+						pHeader.ContextMenu(func(m *ui.Menu) {
+							if m.Item("New task in " + group.ProjectName).Chosen() {
+								a.NewAgentTaskInProject(group.ProjectName, group.FolderPath)
+							}
+							if m.Item("New task with Agent / CLI…").Chosen() {
+								if group.ProjectName == "General" || group.FolderPath == "" {
+									a.OpenNewTaskModal()
+								} else {
+									a.OpenNewTaskModalFor(group.FolderPath)
+								}
+							}
+							if canExplore {
+								m.Separator()
+								if m.Item("Explore project files").Chosen() {
+									curWs := ""
+									if a.Workspace != nil {
+										curWs = a.Workspace.RootDir
+									}
+									if !sameWorkspacePath(curWs, group.FolderPath) {
+										a.switchWorkspace(group.FolderPath)
+									}
+									if a.Workspace != nil {
+										a.Workspace.Refresh()
+									}
+									a.LeftSidebarView = "files"
+								}
+								if m.Item("Open in Finder").Chosen() {
+									mygo.Shell.ShowItemInFolder(group.FolderPath)
+								}
+								m.Separator()
+								if m.Item("Remove workspace").Danger().Chosen() {
+									a.deleteWorkspaceGroup(c, group.ProjectName, group.FolderPath)
+								}
+							}
+						})
 
 						// Expanded Project Tasks — forge-ade renders empty groups
 						// as just their header row, no placeholder text.
@@ -557,6 +533,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										OnFork:      func() { a.Agent.ForkSessionByID(s.ID) },
 										OnArchive:   func() { a.Agent.ToggleArchive(s.ID) },
 										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
+										OnRename:    func() { a.openRenameSessionModal(s.ID, s.Title, false) },
 										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
 										OnOpen: func() {
 											a.selectAgentSession(s)
@@ -601,6 +578,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										UpdatedTime: cs.StartedAt,
 										OnStop:      func() { a.CLIMgr.StopSession(cs.ID) },
 										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
+										OnRename:    func() { a.openRenameSessionModal(cs.ID, cs.Title, true) },
 										OnDelete:    func() { a.CLIMgr.DeleteSession(cs.ID) },
 										OnOpen: func() {
 											a.selectCLISession(cs)
@@ -609,6 +587,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								}
 							})
 						}
+					}
+					if !renderedAnyGroup {
+						ui.Column(c).Center().Padding(30).Gap(4).Children(func() {
+							ui.Text(c, "No sessions found").FontSize(12).TextColor(tc.TextMuted)
+						})
 					}
 				})
 			})
@@ -727,13 +710,180 @@ func (a *AppUI) renderSidebarFileExplorer(c *ui.Context, tc theme.ThemeColors) {
 	})
 }
 
+// sidebarProjectGroup holds sessions grouped under one workspace project.
+type sidebarProjectGroup struct {
+	ProjectName string
+	FolderPath  string
+	Sessions    []*agent.AgentSession
+	CLISessions []*agent.AgentCLISession
+}
+
+// sidebarProjectGroups returns deterministically ordered workspace groups:
+// "General" is always first, followed by all other workspace groups sorted
+// case-insensitively alphabetically. Within each group, sessions are sorted
+// deterministically so selection, streaming, or reloads never shuffle rows.
+func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
+	activeWsPath := ""
+	if a.Workspace != nil {
+		activeWsPath = a.Workspace.RootDir
+		if !strings.HasPrefix(activeWsPath, "ssh://") {
+			activeWsPath = agentsession.NormalizeWorkspacePath(activeWsPath)
+		}
+	}
+	activeProjectName := resolveProjectName(activeWsPath)
+
+	groupMap := make(map[string]*sidebarProjectGroup)
+	getOrCreateGroup := func(name, path string) *sidebarProjectGroup {
+		if strings.EqualFold(name, "General") || name == "" {
+			name = "General"
+			path = ""
+		}
+		normPath := path
+		if normPath != "" && !strings.HasPrefix(normPath, "ssh://") {
+			normPath = agentsession.NormalizeWorkspacePath(normPath)
+		}
+		if g, exists := groupMap[name]; exists {
+			if g.FolderPath == "" && normPath != "" && name != "General" {
+				g.FolderPath = normPath
+			}
+			return g
+		}
+		g := &sidebarProjectGroup{
+			ProjectName: name,
+			FolderPath:  normPath,
+		}
+		groupMap[name] = g
+		return g
+	}
+
+	// Always seed General and the active workspace.
+	getOrCreateGroup("General", "")
+	getOrCreateGroup(activeProjectName, activeWsPath)
+
+	tab := "active"
+	searchQuery := ""
+	if a.Agent != nil {
+		if a.Agent.ActiveFilterTab != "" {
+			tab = a.Agent.ActiveFilterTab
+		}
+		searchQuery = strings.TrimSpace(a.Agent.SearchQuery)
+	}
+
+	// On the Active tab without search, seed valid existing non-temp opened folders.
+	if tab == "active" && searchQuery == "" {
+		for _, rp := range a.RecentWorkspaces {
+			normRP := rp
+			if !strings.HasPrefix(normRP, "ssh://") {
+				normRP = agentsession.NormalizeWorkspacePath(normRP)
+			}
+			if normRP == "" || agentsession.IsTempTestPath(normRP) {
+				continue
+			}
+			if !strings.HasPrefix(normRP, "ssh://") {
+				if info, err := os.Stat(normRP); err != nil || !info.IsDir() {
+					continue
+				}
+			}
+			getOrCreateGroup(resolveProjectName(normRP), normRP)
+		}
+	}
+
+	// 1. Group filtered ACP Sessions.
+	if a.Agent != nil {
+		for _, s := range a.Agent.FilteredSessions() {
+			if s == nil {
+				continue
+			}
+			wsPath := s.WorkspacePath
+			if !strings.HasPrefix(wsPath, "ssh://") {
+				wsPath = agentsession.NormalizeWorkspacePath(wsPath)
+			}
+			pName := resolveProjectName(wsPath)
+			g := getOrCreateGroup(pName, wsPath)
+			g.Sessions = append(g.Sessions, s)
+		}
+	}
+
+	// 2. Group CLI Sessions deterministically on the Active tab.
+	if a.CLIMgr != nil && tab == "active" {
+		sq := strings.ToLower(searchQuery)
+		for _, cs := range a.CLIMgr.SortedSessions() {
+			if cs == nil {
+				continue
+			}
+			if sq != "" &&
+				!strings.Contains(strings.ToLower(cs.Title), sq) &&
+				!strings.Contains(strings.ToLower(cs.AgentName), sq) &&
+				!strings.Contains(strings.ToLower(cs.Command), sq) {
+				continue
+			}
+			wsPath := cs.Cwd
+			if !strings.HasPrefix(wsPath, "ssh://") {
+				wsPath = agentsession.NormalizeWorkspacePath(wsPath)
+			}
+			pName := resolveProjectName(wsPath)
+			g := getOrCreateGroup(pName, wsPath)
+			g.CLISessions = append(g.CLISessions, cs)
+		}
+	}
+
+	names := make([]string, 0, len(groupMap))
+	for name := range groupMap {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if names[i] == "General" {
+			return true
+		}
+		if names[j] == "General" {
+			return false
+		}
+		li, lj := strings.ToLower(names[i]), strings.ToLower(names[j])
+		if li != lj {
+			return li < lj
+		}
+		return names[i] < names[j]
+	})
+
+	groups := make([]*sidebarProjectGroup, 0, len(names))
+	for _, name := range names {
+		g := groupMap[name]
+		sort.SliceStable(g.Sessions, func(i, j int) bool {
+			si, sj := g.Sessions[i], g.Sessions[j]
+			if tab == "active" && si.Pinned != sj.Pinned {
+				return si.Pinned
+			}
+			if a.TaskSortBy == "created" {
+				if !si.CreatedAt.Equal(sj.CreatedAt) {
+					return si.CreatedAt.After(sj.CreatedAt)
+				}
+			} else {
+				if !si.UpdatedAt.Equal(sj.UpdatedAt) {
+					return si.UpdatedAt.After(sj.UpdatedAt)
+				}
+			}
+			return si.ID > sj.ID
+		})
+		groups = append(groups, g)
+	}
+	return groups
+}
+
 // resolveProjectName extracts a clean human-readable workspace project name.
 func resolveProjectName(folderPath string) string {
 	clean := strings.TrimSpace(folderPath)
-	if clean == "" || clean == "general" || strings.HasSuffix(clean, "/.forge-ade/general") || strings.HasSuffix(clean, "/.forge-ade/general/") {
+	if strings.HasPrefix(clean, "ssh://") {
+		base := filepath.Base(filepath.Clean(clean))
+		if base == "." || base == "/" || base == "" {
+			return "General"
+		}
+		return base
+	}
+	norm := agentsession.NormalizeWorkspacePath(clean)
+	if norm == "" {
 		return "General"
 	}
-	base := filepath.Base(filepath.Clean(clean))
+	base := filepath.Base(filepath.Clean(norm))
 	if base == "." || base == "/" || base == "" {
 		return "General"
 	}
@@ -749,61 +899,60 @@ func menuChecked(checked bool, label string) string {
 	return label
 }
 
-// sidebarProjectNames lists the distinct project group names across all
-// agent + CLI sessions, most recently updated first — the "All projects"
-// filter menu entries.
+// sidebarProjectNames returns deterministic project filter options: "General"
+// first, followed by all remaining projects sorted case-insensitively alphabetically.
 func (a *AppUI) sidebarProjectNames(activeProject string) []string {
-	seen := map[string]bool{activeProject: true, "General": true}
-	type entry struct {
-		name     string
-		latestAt time.Time
+	seen := map[string]bool{"General": true}
+	if activeProject != "" {
+		seen[activeProject] = true
 	}
-	var entries []entry
-	touch := func(name string, at time.Time) {
-		for i := range entries {
-			if entries[i].name == name {
-				if at.After(entries[i].latestAt) {
-					entries[i].latestAt = at
-				}
-				return
+	for _, rp := range a.RecentWorkspaces {
+		normRP := rp
+		if !strings.HasPrefix(normRP, "ssh://") {
+			normRP = agentsession.NormalizeWorkspacePath(normRP)
+		}
+		if normRP == "" || agentsession.IsTempTestPath(normRP) {
+			continue
+		}
+		if !strings.HasPrefix(normRP, "ssh://") {
+			if info, err := os.Stat(normRP); err != nil || !info.IsDir() {
+				continue
 			}
 		}
-		entries = append(entries, entry{name: name, latestAt: at})
+		seen[resolveProjectName(normRP)] = true
 	}
 	if a.Agent != nil {
-		for _, sess := range a.Agent.FilteredSessions() {
-			name := resolveProjectName(sess.WorkspacePath)
-			if sess.WorkspacePath == "" {
-				name = "General"
+		for _, sess := range a.Agent.AllSessions() {
+			if sess == nil {
+				continue
 			}
-			at := sess.UpdatedAt
-			if a.TaskSortBy == "created" {
-				at = sess.CreatedAt
-			}
-			touch(name, at)
+			seen[resolveProjectName(sess.WorkspacePath)] = true
 		}
 	}
 	if a.CLIMgr != nil {
-		for _, cs := range a.CLIMgr.Sessions {
-			touch(resolveProjectName(cs.Cwd), time.Now())
+		for _, cs := range a.CLIMgr.SortedSessions() {
+			if cs == nil {
+				continue
+			}
+			seen[resolveProjectName(cs.Cwd)] = true
 		}
 	}
-	delete(seen, activeProject) // active project is seeded by the caller order
-	delete(seen, "General")
-	sort.SliceStable(entries, func(i, j int) bool { return entries[i].latestAt.After(entries[j].latestAt) })
-	var names []string
-	if activeProject != "" {
-		names = append(names, activeProject)
-	}
-	names = append(names, "General")
-	for _, e := range entries {
-		if e.name == activeProject || e.name == "General" || seen[e.name] {
+
+	others := make([]string, 0, len(seen))
+	for name := range seen {
+		if name == "General" || name == "" {
 			continue
 		}
-		seen[e.name] = true
-		names = append(names, e.name)
+		others = append(others, name)
 	}
-	return names
+	sort.Slice(others, func(i, j int) bool {
+		li, lj := strings.ToLower(others[i]), strings.ToLower(others[j])
+		if li != lj {
+			return li < lj
+		}
+		return others[i] < others[j]
+	})
+	return append([]string{"General"}, others...)
 }
 
 // collapseOtherProjects collapses every sidebar project group except the

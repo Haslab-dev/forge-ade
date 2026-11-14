@@ -39,16 +39,34 @@ type Session struct {
 	PID       int       `json:"pid"`
 	CreatedAt time.Time `json:"createdAt"`
 
-	pty    *os.File   `json:"-"`
-	cmd    *exec.Cmd  `json:"-"`
-	mu     sync.Mutex `json:"-"`
-	closed bool       `json:"-"`
-	onData func(data string)
+	pty      *os.File   `json:"-"`
+	cmd      *exec.Cmd  `json:"-"`
+	mu       sync.Mutex `json:"-"`
+	closed   bool       `json:"-"`
+	waitOnce sync.Once  `json:"-"`
+	ptyOnce  sync.Once  `json:"-"`
+	onData   func(data string)
 
 	// outMu/out buffer recent output so the agent's persistent-shell Exec can
 	// capture command results without racing the UI stream.
 	outMu sync.Mutex `json:"-"`
 	out   []byte     `json:"-"`
+}
+
+func (s *Session) waitCmd() {
+	s.waitOnce.Do(func() {
+		if s.cmd != nil {
+			_ = s.cmd.Wait()
+		}
+	})
+}
+
+func (s *Session) closePTY() {
+	s.ptyOnce.Do(func() {
+		if s.pty != nil {
+			_ = s.pty.Close()
+		}
+	})
 }
 
 // GetID satisfies the agent engine's ShellSession interface.

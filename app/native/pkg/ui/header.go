@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
@@ -74,10 +76,7 @@ func (a *AppUI) sessionNeedsApproval(sess *agent.AgentSession) bool {
 func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
-	projectName := filepath.Base(a.Workspace.RootDir)
-	if a.Workspace.RootDir == "" {
-		projectName = "General"
-	}
+	projectName := resolveProjectName(a.Workspace.RootDir)
 
 	// Derive display title
 	title := projectName
@@ -104,50 +103,95 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 	boardTasks := a.boardTaskCount()
 
 	bar := c.TitleBar()
-	leftPad := float32(14)
+	leftPad := float32(12)
 	showToggleInHeader := true
 	if a.Mode == ModeAgent && a.ShowLeftSidebar {
-		// Full-height sidebar is visible on the left; header sits beside it
+		// Full-height sidebar is visible on the left; header sits beside it.
 		showToggleInHeader = false
-		leftPad = 12
+		leftPad = 10
 	} else if bar.Left > 0 {
-		// Sidebar is collapsed or in editor mode; clear traffic lights / window controls
-		leftPad = max(bar.Left+12, 78)
+		// Clear macOS close/minimize/maximize traffic lights cleanly on the same Y baseline.
+		leftPad = max(bar.Left+10, 78)
 	} else if runtime.GOOS == "darwin" {
 		leftPad = 78
 	}
 
-	rightPad := float32(12)
+	rightPad := float32(10)
 	if bar.Right > 0 {
-		rightPad = max(bar.Right+12, 135)
+		rightPad = max(bar.Right+10, 135)
 	} else if bar.Left == 0 && (runtime.GOOS == "linux" || runtime.GOOS == "windows") {
 		// On Linux/Windows window buttons are on the right (minimize, maximize, close)
 		rightPad = 135
 	}
 
-	ui.Row(c).Height(WorkspaceTopBarHeight).Gap(8).Padding(0, rightPad, 0, leftPad).
+	ui.Row(c).Height(WorkspaceTopBarHeight).Gap(6).Padding(0, rightPad, 0, leftPad).
 		AlignItems(ui.Center).
 		Background(tc.Chrome).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).
 		DragWindow().
 		Children(func() {
-			// Left cluster (can shrink cleanly before crowding right controls)
-			ui.Row(c).Grow(1).MinWidth(0).Gap(8).AlignItems(ui.Center).Clip().Children(func() {
+			// Left cluster (ZCode navigation & context controls)
+			ui.Row(c).Grow(1).MinWidth(0).Gap(5).AlignItems(ui.Center).Clip().Children(func() {
 				if showToggleInHeader {
-					if IconButton(c, tc, icons.TablerPanelLeft, 16).Shrink(0).Clicked() {
+					if IconButton(c, tc, icons.TablerPanelLeft, 15).Shrink(0).Clicked() {
 						a.ShowLeftSidebar = !a.ShowLeftSidebar
 					}
 				}
 
-				ui.Text(c, title).FontSize(13).FontWeight(600).MaxWidth(220).MinWidth(0).SingleLine()
+				// Back / Forward session history buttons
+				if IconButton(c, tc, icons.TablerArrowLeft, 14).Shrink(0).Clicked() {
+					a.cycleAgentSession(-1)
+				}
+				if IconButton(c, tc, icons.TablerArrowRight, 14).Shrink(0).Clicked() {
+					a.cycleAgentSession(1)
+				}
 
-				// Always-visible Project Switcher chip (both Agent & Editor modes)
-				projectBtn := ui.Row(c.Key("hdr-project")).Height(26).Radius(6).Padding(0, 8).Gap(5).
-					AlignItems(ui.Center).Shrink(0).Background(tc.ToolbarControl).Cursor(ui.CursorPointer)
+				// New Task (+) circle button
+				if IconButton(c, tc, icons.TablerCirclePlus, 15).Shrink(0).Clicked() {
+					a.handleNewTask()
+				}
+
+				// Compact agent/turn status circle badge
+				isStreaming := a.Agent != nil && a.Agent.IsStreaming
+				var activeSess *agent.AgentSession
+				if a.Agent != nil {
+					activeSess = a.Agent.ActiveSession()
+				}
+				needsApproval := a.sessionNeedsApproval(activeSess)
+				badgeBg := tc.Success.Alpha(0.18)
+				badgeColor := tc.Success
+				if needsApproval {
+					badgeBg = tc.Warning.Alpha(0.18)
+					badgeColor = tc.Warning
+				} else if isStreaming {
+					badgeBg = tc.Accent.Alpha(0.18)
+					badgeColor = tc.Accent
+				}
+				statusCircle := ui.Row(c.Key("hdr-status-circle")).Size(18, 18).Radius(9).
+					Shrink(0).AlignItems(ui.Center).Justify(ui.Center).Background(badgeBg).Cursor(ui.CursorPointer)
+				statusCircle.Children(func() {
+					if isStreaming {
+						ui.Spinner(c).Size(10, 10).Label("running")
+					} else if needsApproval {
+						ui.Icon(c, icons.TablerAlertTriangle).Width(10).Height(10).TextColor(badgeColor)
+					} else {
+						ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(badgeColor)
+					}
+				})
+				if statusCircle.Clicked() {
+					a.Mode = ModeAgent
+					a.IsGitClientOpen = false
+					a.AgentViewMode = AgentViewChat
+				}
+
+				// Project switcher button + active title
+				projectBtn := ui.Row(c.Key("hdr-project")).Height(24).Radius(6).Padding(0, 6).Gap(5).
+					AlignItems(ui.Center).Shrink(0).Cursor(ui.CursorPointer)
 				projectBtn.Children(func() {
-					ui.Icon(c, icons.TablerFolder).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, projectName).FontSize(12).FontWeight(500).MaxWidth(130).SingleLine()
-					ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
+					ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
+					if a.Mode != ModeAgent {
+						ui.Text(c, projectName).FontSize(12).FontWeight(500).MaxWidth(110).SingleLine()
+					}
 				})
 				if projectBtn.Hovered() {
 					projectBtn.Background(tc.ToolbarControlHover)
@@ -156,24 +200,32 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					a.workspaceMenuItems(m)
 				})
 
-				// Always-visible Git Branch Switcher chip (when a workspace is open)
+				ui.Text(c, title).FontSize(13).FontWeight(600).MaxWidth(220).MinWidth(0).SingleLine()
+
+				// Task "…" menu (Agent mode with an active session)
+				if a.Mode == ModeAgent && a.Agent != nil && activeSess != nil {
+					if IconButton(c, tc, icons.TablerDots, 14).Shrink(0).Clicked() {
+						a.ShowTaskMenuModal = true
+					}
+				}
+
+				// Compact Git Branch badge (when a workspace is open)
 				if a.Workspace != nil && a.Workspace.RootDir != "" {
 					branchName := "main"
 					if a.Git != nil && a.Git.Branch != "" {
 						branchName = a.Git.Branch
 					}
-					branchBtn := ui.Row(c.Key("hdr-branch")).Height(26).Radius(6).Padding(0, 8).Gap(5).
+					branchBtn := ui.Row(c.Key("hdr-branch")).Height(24).Radius(6).Padding(0, 6).Gap(4).
 						AlignItems(ui.Center).Shrink(0).Background(tc.ToolbarControl).Cursor(ui.CursorPointer)
 					branchBtn.Children(func() {
-						ui.Icon(c, icons.TablerGitBranch).Width(13).Height(13).TextColor(tc.Accent)
-						ui.Text(c, branchName).FontSize(12).FontWeight(500).TextColor(tc.Accent).MaxWidth(110).SingleLine()
+						ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
+						ui.Text(c, branchName).FontSize(11).FontWeight(500).TextColor(tc.Accent).MaxWidth(90).SingleLine()
 						if dirtyFiles > 0 {
-							ui.Row(c).Height(16).Radius(4).Padding(0, 5).AlignItems(ui.Center).
+							ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
 								Background(tc.Warning.Alpha(0.16)).Children(func() {
-								ui.Text(c, fmt.Sprintf("%d", dirtyFiles)).FontSize(10).FontWeight(600).TextColor(tc.Warning)
+								ui.Text(c, fmt.Sprintf("%d", dirtyFiles)).FontSize(9).FontWeight(600).TextColor(tc.Warning)
 							})
 						}
-						ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
 					})
 					if branchBtn.Hovered() {
 						branchBtn.Background(tc.ToolbarControlHover)
@@ -184,13 +236,6 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						if a.Git != nil {
 							a.Git.Refresh()
 						}
-					}
-				}
-
-				// Task "…" menu (Agent mode with an active session)
-				if a.Mode == ModeAgent && a.Agent != nil && a.Agent.ActiveSession() != nil {
-					if IconButton(c, tc, icons.TablerDots, 15).Shrink(0).Clicked() {
-						a.ShowTaskMenuModal = true
 					}
 				}
 			})
@@ -210,7 +255,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						pillLabel = "Approval needed"
 						bgAlpha = 0.16
 					}
-					livePill := ui.Row(c.Key("hdr-agent-live")).Height(26).Radius(999).Padding(0, 9).Gap(6).
+					livePill := ui.Row(c.Key("hdr-agent-live")).Height(24).Radius(999).Padding(0, 8).Gap(5).
 						AlignItems(ui.Center).Shrink(0).Cursor(ui.CursorPointer).
 						Background(dotColor.Alpha(bgAlpha)).BorderWidth(1).BorderColor(dotColor.Alpha(0.35))
 					livePill.Children(func() {
@@ -229,9 +274,73 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				}
 			}
 
+			// ZCode Split Quick-Action Pill: [ >_ | ▾ ]
+			splitPill := ui.Row(c.Key("hdr-split-term")).Height(26).Radius(7).Shrink(0).AlignItems(ui.Center).
+				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder)
+			splitPill.Children(func() {
+				termHalf := ui.Row(c.Key("hdr-split-left")).Height(24).Padding(0, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				termIconColor := tc.ToolbarControlForeground
+				if a.ShowBottomTerminal {
+					termIconColor = tc.Accent
+				}
+				termHalf.Children(func() {
+					ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(termIconColor)
+				})
+				if termHalf.Hovered() {
+					termHalf.Background(tc.ToolbarControlHover)
+				}
+				if termHalf.Clicked() {
+					a.ShowBottomTerminal = !a.ShowBottomTerminal
+				}
+
+				ui.Box(c).Size(1, 14).Background(tc.ToolbarBorder)
+
+				dropHalf := ui.Row(c.Key("hdr-split-drop")).Height(24).Padding(0, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				dropHalf.Children(func() {
+					ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
+				})
+				if dropHalf.Hovered() {
+					dropHalf.Background(tc.ToolbarControlHover)
+				}
+				dropHalf.Menu(func(m *ui.Menu) {
+					if m.Item("Toggle Bottom Terminal").Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
+						a.ShowBottomTerminal = !a.ShowBottomTerminal
+					}
+					if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+						sessID := ""
+						if a.Terminal != nil {
+							sessID = a.Terminal.ActiveSessionID
+						}
+						a.OpenTerminalSnippetsModal(sessID, "", "")
+					}
+					m.Separator()
+					if m.Item("Switch to Editor Mode").Shortcut(ui.Cmd, ui.Key2).Chosen() {
+						a.Mode = ModeEditor
+						a.IsGitClientOpen = false
+					}
+					if m.Item("Switch to Agent Chat").Shortcut(ui.Cmd, ui.Key1).Chosen() {
+						a.Mode = ModeAgent
+						a.IsGitClientOpen = false
+						a.AgentViewMode = AgentViewChat
+					}
+					if m.Item("Open Workflow Board").Chosen() {
+						a.openBoardSurface()
+					}
+					if m.Item("Open Git Client").Chosen() {
+						a.openGitClientSurface()
+					}
+					if a.Workspace != nil && a.Workspace.RootDir != "" {
+						m.Separator()
+						if m.Item("Reveal Project in Finder").Chosen() {
+							mygo.Shell.ShowItemInFolder(a.Workspace.RootDir)
+						}
+					}
+				})
+			})
+
 			// Agent Surface Quick-Switcher in ModeAgent: [Chat | Board | Git]
 			if a.Mode == ModeAgent {
-				ui.Row(c.Key("hdr-agent-surfaces")).Height(28).Gap(2).Padding(2).Radius(8).Shrink(0).
+				ui.Row(c.Key("hdr-agent-surfaces")).Height(26).Gap(2).Padding(2).Radius(7).Shrink(0).
 					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
 					AlignItems(ui.Center).Children(func() {
 					chatActive := !a.IsGitClientOpen && a.AgentViewMode == AgentViewChat && a.ActiveTaskKind != "cli"
@@ -256,7 +365,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			}
 
 			// Primary Segmented Mode Switcher: [✨ Agent] | [💻 Editor] (⌘1 / ⌘2)
-			ui.Row(c).Height(28).Gap(2).Padding(2).Radius(8).Shrink(0).
+			ui.Row(c).Height(26).Gap(2).Padding(2).Radius(7).Shrink(0).
 				Background(tc.ToolbarControl).
 				BorderWidth(1).BorderColor(tc.ToolbarBorder).
 				AlignItems(ui.Center).Children(func() {
@@ -273,22 +382,44 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			})
 
 			// 1px×16px divider
-			ui.Box(c).Size(1, 16).Shrink(0).Background(tc.ToolbarBorder)
+			ui.Box(c).Size(1, 14).Shrink(0).Background(tc.ToolbarBorder)
 
-			// Workspace & panel controls: Reveal in Finder, Terminal, Right Pane, Appearance, Settings
-			if IconButton(c, tc, icons.TablerFolder, 15).Shrink(0).Clicked() {
-				mygo.Shell.ShowItemInFolder(a.Workspace.RootDir)
+			// Trailing ZCode utility icons: Export/Copy, Help, Terminal, Inspector/Drawer, Palette, Settings
+			if IconButton(c, tc, icons.TablerUpload, 14).Shrink(0).Clicked() {
+				if a.Agent != nil {
+					var sb strings.Builder
+					for _, msg := range a.Agent.Messages {
+						if msg != nil && msg.Text != "" {
+							sb.WriteString(msg.Role)
+							sb.WriteString(": ")
+							sb.WriteString(msg.Text)
+							sb.WriteString("\n\n")
+						}
+					}
+					if out := strings.TrimSpace(sb.String()); out != "" {
+						mygo.Clipboard.WriteText(out)
+						c.AddToast(ui.Toast{Title: "Thread Copied", Description: title, Type: "success"})
+					}
+				}
 			}
-			if ToggleIconButton(c, tc, icons.TablerTerminal, 15, a.ShowBottomTerminal).Shrink(0).Clicked() {
+			if IconButton(c, tc, icons.TablerHelp, 14).Shrink(0).Clicked() {
+				a.openSettings(settings.SettingsTabShortcuts)
+			}
+			if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.ShowBottomTerminal).Shrink(0).Clicked() {
 				a.ShowBottomTerminal = !a.ShowBottomTerminal
 			}
-			if ToggleIconButton(c, tc, icons.TablerPanelRight, 15, a.ShowRightDrawer).Shrink(0).Clicked() {
-				a.ShowRightDrawer = !a.ShowRightDrawer
+			inspectorActive := a.ShowRightDrawer || (a.Mode == ModeAgent && !a.InspectorCollapsed)
+			if ToggleIconButton(c, tc, icons.TablerPanelRight, 14, inspectorActive).Shrink(0).Clicked() {
+				if a.Mode == ModeAgent && a.AgentViewMode == AgentViewChat && !a.ShowRightDrawer {
+					a.InspectorCollapsed = !a.InspectorCollapsed
+				} else {
+					a.ShowRightDrawer = !a.ShowRightDrawer
+				}
 			}
-			if IconButton(c, tc, icons.TablerPalette, 15).Shrink(0).Clicked() {
+			if IconButton(c, tc, icons.TablerPalette, 14).Shrink(0).Clicked() {
 				a.ThemeMgr.Toggle()
 			}
-			if IconButton(c, tc, icons.TablerSettings, 15).Shrink(0).Clicked() {
+			if IconButton(c, tc, icons.TablerSettings, 14).Shrink(0).Clicked() {
 				a.openSettings()
 			}
 			_ = t

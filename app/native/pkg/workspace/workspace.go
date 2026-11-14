@@ -66,6 +66,19 @@ func (ws *WorkspaceState) SnapshotVersion() uint64 {
 	return ws.Version
 }
 
+// FirstFile returns the first indexed workspace file thread-safely.
+func (ws *WorkspaceState) FirstFile() (WorkspaceFile, bool) {
+	if ws == nil {
+		return WorkspaceFile{}, false
+	}
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+	if len(ws.Files) == 0 {
+		return WorkspaceFile{}, false
+	}
+	return ws.Files[0], true
+}
+
 // NewWorkspaceState creates and initializes a new workspace state for rootDir.
 // An empty rootDir means NO workspace: files stay empty until the user opens
 // a folder ("" is also what CWD=/ collapses to for Finder-launched bundles).

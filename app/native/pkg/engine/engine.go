@@ -323,6 +323,23 @@ func (e *Engine) StartWatcher(rootDir string, onChange func()) {
 	}
 }
 
+// StopWatcher cancels any pending debounce timer and stops the filesystem watcher.
+func (e *Engine) StopWatcher() {
+	if e == nil {
+		return
+	}
+	e.watcherMu.Lock()
+	e.watcherOnChange = nil
+	if e.watcherTimer != nil {
+		e.watcherTimer.Stop()
+		e.watcherTimer = nil
+	}
+	e.watcherMu.Unlock()
+	if e.Watcher != nil {
+		e.Watcher.Stop()
+	}
+}
+
 // GetLLMConfig returns the persisted LLM profile.
 func (e *Engine) GetLLMConfig() llm.Profile {
 	if e.LLMClient == nil {
