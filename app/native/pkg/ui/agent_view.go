@@ -64,10 +64,25 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 	}
 }
 
-// chatLaneInset returns the chat content insets: ZCode-style left-aligned
-// full-width content with a fixed gutter on both sides (no centered lane).
+// chatLaneInset returns the chat content insets, honoring the Appearance
+// "Chat Lane Width" setting: comfortable/wide center a 736/928px lane in
+// the chat column; "full" (default) is ZCode-style left-aligned content
+// with a fixed 32px gutter.
 func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
-	return 32, 32
+	const gutter = float32(32)
+	colW := a.chatColumnWidth(c)
+	lane := float32(0)
+	if a.ThemeMgr != nil {
+		lane = a.ThemeMgr.ChatLaneWidth()
+	}
+	if lane <= 0 || colW-lane < 128 {
+		return gutter, gutter
+	}
+	inset := (colW - lane) / 2
+	if inset < 24 {
+		inset = 24
+	}
+	return inset, inset
 }
 
 // renderAgentChat renders the active conversation view, message bubbles, task checklist, and prompt composer.
@@ -212,7 +227,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 												ui.Text(c, filepath.Base(att)).FontSize(11).FontWeight(500)
 											})
 											if chip.Clicked() {
-												a.openSideFile(att)
+												a.openSidePreviewFile(c, att)
 											}
 										}
 									})
@@ -844,13 +859,25 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 		})
 		ui.Column(c).Padding(8).Gap(4).Children(func() {
 			for _, ch := range m.Changes {
-				ui.Row(c.Key("tchg-"+ch.Path)).Radius(6).Padding(6, 10).Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.FileIconSVG(ch.Path)).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, ch.Path).FontSize(12).Grow(1)
+				chPath := ch.Path
+				chRow := ui.Row(c.Key("tchg-"+chPath)).Radius(6).Padding(6, 10).Gap(6).AlignItems(ui.Center)
+				chRow.Children(func() {
+					ui.Icon(c, icons.FileIconSVG(chPath)).Width(13).Height(13).TextColor(tc.IconMuted)
+					ui.Text(c, chPath).FontSize(12).Grow(1)
 					if ch.Additions >= 0 {
 						DiffStatText(c, tc, ch.Additions, ch.Deletions)
 					}
+					// Open the file's working-tree diff (Review Diff parity).
+					ui.Icon(c, icons.TablerFileDiff).Width(13).Height(13).TextColor(tc.TextMuted)
 				})
+				if chRow.Hovered() {
+					chRow.Background(tc.Text.Alpha(0.05))
+				}
+				if chRow.Clicked() {
+					a.SelectedDiffPath = chPath
+					a.ShowRightDrawer = true
+					a.RightDrawerTab = RightTabChanges
+				}
 			}
 		})
 	})
@@ -950,6 +977,7 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 							as.Lock()
 							if thisIdx < len(as.SteerQueue) {
 								as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+								as.SaveSteerQueues()
 							}
 							as.Unlock()
 							if as.Invalidate != nil {
@@ -965,6 +993,7 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 				if edit.Clicked() {
 					as.InputText = thisItem
 					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					as.SaveSteerQueues()
 				}
 				del := ui.Row(c.Key("steer-del")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
 				del.Children(func() {
@@ -975,6 +1004,7 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 				}
 				if del.Clicked() {
 					as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+					as.SaveSteerQueues()
 				}
 			})
 			if row.Hovered() {
@@ -1111,6 +1141,16 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						return true
 					}
 				}
+				// Alt+S: stash the current prompt + clear (promptStashStore).
+				if k.Key == ui.KeyS && k.Mods&ui.Alt != 0 {
+					if txt := strings.TrimSpace(as.InputText); txt != "" {
+						as.StashPrompt()
+						as.SavePromptStash()
+						as.InputText = ""
+						c.AddToast(ui.Toast{Title: "Prompt Stashed", Description: "Alt+S restores via the stash chip", Type: "info"})
+					}
+					return true
+				}
 				// Prompt history: up/down while the composer is single-line
 				// and no autocomplete menu is active (promptHistoryStore).
 				if k.Key == ui.KeyUp || k.Key == ui.KeyDown {
@@ -1246,6 +1286,37 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			}
 
 			// Auto-Verify Button
+			// Prompt stash chip: appears when entries exist; popover lists
+			// stashed prompts (click restores into the composer).
+			if len(as.StashedPrompts) > 0 {
+				stashChip := ui.Row(c.Key("stash-chip")).Height(28).Radius(8).Padding(0, 9).Gap(5).AlignItems(ui.Center).
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				stashChip.Children(func() {
+					ui.Icon(c, icons.TablerBookmark).Width(12).Height(12).TextColor(tc.Accent)
+					ui.Text(c, fmt.Sprintf("Stash %d", len(as.StashedPrompts))).FontSize(12).FontWeight(500)
+				})
+				stashChip.Menu(func(m *ui.Menu) {
+					for i, st := range as.StashedPrompts {
+						idx := i
+						title := strings.ReplaceAll(st, "\n", " ")
+						if len(title) > 60 {
+							title = title[:57] + "…"
+						}
+						if m.Item(title).Chosen() {
+							as.RestoreStash(idx)
+							as.SavePromptStash()
+						}
+					}
+					if len(as.StashedPrompts) > 0 {
+						m.Separator()
+						if m.Item("Clear stash").Danger().Chosen() {
+							as.StashedPrompts = nil
+							as.SavePromptStash()
+						}
+					}
+				})
+			}
+
 			verifyBtn := chipRow(c, tc)
 			if as.AutoVerify {
 				verifyBtn.Background(tc.Success.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
@@ -1303,6 +1374,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					})
 					if queueBtn.Clicked() {
 						as.SteerQueue = append(as.SteerQueue, as.InputText)
+						as.SaveSteerQueues()
 						as.InputText = ""
 						c.AddToast(ui.Toast{Title: "Queued", Description: "Prompt queued for next turn", Type: "info"})
 					}
@@ -1782,84 +1854,6 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 				}
 			}
 		})
-	})
-}
-
-func (a *AppUI) renderTaskChecklist(c *ui.Context) {
-	tm := a.Agent.TaskManager
-	if tm == nil {
-		return
-	}
-	tasks := tm.GetTasks()
-	if len(tasks) == 0 {
-		return
-	}
-
-	t := c.Theme()
-	completed, total := tm.Progress()
-
-	ui.Column(c).Margin(8, 16).Padding(10, 14).Radius(8).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, icons.TablerChecklist, 13)
-				ui.Text(c, "ACTIVE GOAL").FontSize(10).Bold().TextColor(t.TextMuted)
-			})
-			ui.Box(c).Grow(1)
-			ui.Text(c, fmt.Sprintf("%d/%d completed", completed, total)).FontSize(11).TextColor(t.Accent)
-			toggleBtn := ui.Button(c, "")
-			toggleBtn.Children(func() {
-				if tm.IsExpanded {
-					TablerIcon(c, icons.TablerChevronUp, 12)
-				} else {
-					TablerIcon(c, icons.TablerChevronDown, 12)
-				}
-			})
-			if toggleBtn.Clicked() {
-				tm.ToggleExpanded()
-			}
-		})
-
-		if tm.Goal != "" {
-			ui.Text(c, tm.Goal).Bold().FontSize(13).Padding(2, 0, 6, 0)
-		}
-
-		if tm.IsExpanded {
-			ui.Column(c).Gap(4).Padding(4, 0).Children(func() {
-				for _, task := range tasks {
-					tid := task.ID
-					isDone := task.Status == agent.TaskCompleted
-					isCurrent := task.Status == agent.TaskInProgress
-
-					ui.Row(c.Key("task-" + tid)).Gap(8).AlignItems(ui.Center).Children(func() {
-						checkBtn := ui.Button(c, "")
-						checkBtn.Children(func() {
-							if isDone {
-								TablerIcon(c, icons.TablerCircleCheck, 13)
-							} else if isCurrent {
-								TablerIcon(c, icons.TablerLoader, 13)
-							} else {
-								TablerIcon(c, icons.TablerCircle, 13)
-							}
-						})
-						if checkBtn.Clicked() {
-							tm.ToggleTask(tid)
-						}
-
-						textElement := ui.Text(c, task.Title).FontSize(12)
-						if isDone {
-							textElement.TextColor(t.TextMuted)
-						} else if isCurrent {
-							textElement.Bold().TextColor(t.Accent)
-						}
-
-						if isCurrent && task.ActiveForm != "" {
-							ui.Box(c).Grow(1)
-							ui.Text(c, task.ActiveForm).FontSize(11).TextColor(t.TextMuted)
-						}
-					})
-				}
-			})
-		}
 	})
 }
 

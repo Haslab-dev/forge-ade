@@ -296,6 +296,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SideFileDiffMode:        make(map[string]bool),
 	}
 
+	appUI.loadUIPrefs()
+
 	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
@@ -362,13 +364,19 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	// Live elapsed indicators ("Working for 12s", spinners): repaint once a
-	// second while a turn is streaming.
+	// second while a turn is streaming; the same tick coalesces UI-pref
+	// persistence (cheap JSON write, only when the snapshot changed).
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		var last string
 		for range ticker.C {
 			if appUI.Agent.IsStreaming && appUI.Window != nil {
 				appUI.Window.Invalidate()
+			}
+			if snap := appUI.prefsSnapshot(); snap != last {
+				last = snap
+				appUI.SaveUIPrefs()
 			}
 		}
 	}()
@@ -494,8 +502,8 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		{ID: "theme", Label: "Pick Theme Palette", Run: func() { a.ThemeMgr.Toggle() }},
 		{ID: "open-folder", Label: "Open Workspace Folder", Shortcut: "⌘O", Run: a.openWorkspaceFolder},
 		{ID: "board", Label: "Show Workflow Board", Run: func() {
-			a.ShowRightDrawer = true
-			a.RightDrawerTab = RightTabBoard
+			a.Mode = ModeAgent
+			a.AgentViewMode = AgentViewBoard
 			a.RefreshBoard()
 		}},
 		{ID: "new-board-task", Label: "Board: Create New Task", Detail: "Add task to workflow kanban board", Run: func() {

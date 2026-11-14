@@ -464,6 +464,28 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 			ui.Icon(c, icons.TablerMessage).Width(28).Height(28).TextColor(tc.IconMuted)
 			ui.Text(c, "Side Conversation").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
 			ui.Text(c, "Run quick queries or ask fast code questions without interrupting your main task session.").FontSize(12).TextColor(tc.TextMuted).MaxWidth(240)
+			// Quick-start prompts, as the webview side chat's empty state.
+			ui.Column(c).Gap(4).Padding(6, 0, 0, 0).Children(func() {
+				for _, qp := range []string{
+					"Explain all changed files",
+					"Check for potential edge cases",
+					"How can I test the modified code?",
+				} {
+					qp := qp
+					chip := ui.Row(c.Key("scq-"+qp)).Height(26).Radius(6).Padding(0, 9).AlignItems(ui.Center).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					chip.Children(func() {
+						ui.Text(c, qp).FontSize(11)
+					})
+					if chip.Hovered() {
+						chip.Background(tc.Text.Alpha(0.05))
+					}
+					if chip.Clicked() {
+						a.SideChatInput = qp
+						a.sendSideChat(qp)
+					}
+				}
+			})
 		})
 	} else {
 		ui.List(c, &ui.ListState{FollowEnd: true}, len(a.SideChatMessages), func(i int) {

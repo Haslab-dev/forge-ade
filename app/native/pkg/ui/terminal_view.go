@@ -45,6 +45,13 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			})
 
 			ui.Box(c).Grow(1)
+			// Clear (\x0c reset), Restart, close — ZCode terminal dock actions.
+			if IconButton(c, tc, icons.TablerEraser, 13).Clicked() && a.Terminal != nil {
+				a.Terminal.SendInput("\x0c")
+			}
+			if IconButton(c, tc, icons.TablerRefresh, 13).Clicked() && a.Terminal != nil {
+				_ = a.Terminal.Restart()
+			}
 			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && a.Terminal != nil {
 				_ = a.Terminal.Restart()
 			}

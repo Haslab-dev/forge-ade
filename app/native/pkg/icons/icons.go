@@ -247,3 +247,12 @@ var (
 var (
 	TablerPuzzle = tablerSVG(`<path d="M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1"/>`)
 )
+
+// Stash chip icon.
+var (
+	TablerBookmark = tablerSVG(`<path d="M6 4h12a1 1 0 0 1 1 1v16l-7 -4l-7 4v-16a1 1 0 0 1 1 -1z"/>`)
+)
+
+var (
+	TablerEraser = tablerSVG(`<path d="M7 21h10"/><path d="M5 13l7.5 -7.5a2 2 0 0 1 2.83 0l5.17 5.17a2 2 0 0 1 0 2.83l-7.59 7.59a2 2 0 0 1 -2.83 0l-5.08 -5.08a2 2 0 0 1 0 -2.83z"/><path d="M11 9l6 6"/>`)
+)

@@ -244,6 +244,8 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 	// Load real sessions from ~/.forge/sessions/ and ~/.forge-ade/sessions/
 	as.LoadSessionsFromDisk(workspacePath)
 	as.LoadPromptHistory()
+	as.LoadPromptStash()
+	as.LoadSteerQueues()
 
 	return as
 }
@@ -543,6 +545,7 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 	if len(as.SteerQueue) > 0 {
 		nextSteer = as.SteerQueue[0]
 		as.SteerQueue = as.SteerQueue[1:]
+		as.SaveSteerQueues()
 	}
 	as.mu.Unlock()
 	_ = start
@@ -909,6 +912,122 @@ func (as *AgentState) StashPrompt() {
 	if txt != "" {
 		as.StashedPrompts = append(as.StashedPrompts, txt)
 		as.InputText = ""
+	}
+}
+
+// draftStore paths for per-session composer drafts and steer queues.
+func (as *AgentState) draftStorePath(name string) string {
+	path, err := promptHistoryPath(as.engine)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), name)
+}
+
+func readStringMap(path string) map[string]string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+func writeStringMap(path string, m map[string]string) {
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	if data, err := json.MarshalIndent(m, "", "  "); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// SaveComposerDraft persists the in-progress prompt of a session
+// (forge:composer-drafts parity) and restores the target session's draft.
+func (as *AgentState) SwapComposerDraft(fromSessionID, toSessionID string) {
+	if fromSessionID == toSessionID {
+		return
+	}
+	path := as.draftStorePath("composer-drafts.json")
+	if path == "" {
+		return
+	}
+	m := readStringMap(path)
+	if m == nil {
+		m = map[string]string{}
+	}
+	if cur := strings.TrimSpace(as.InputText); cur != "" {
+		m[fromSessionID] = cur
+	} else {
+		delete(m, fromSessionID)
+	}
+	as.InputText = m[toSessionID]
+	writeStringMap(path, m)
+}
+
+// SaveSteerQueues persists per-session steer queues (forge:steer-queues parity).
+func (as *AgentState) SaveSteerQueues() {
+	path := as.draftStorePath("steer-queues.json")
+	if path == "" {
+		return
+	}
+	as.mu.Lock()
+	q := append([]string(nil), as.SteerQueue...)
+	as.mu.Unlock()
+	data, err := json.MarshalIndent(q, "", "  ")
+	if err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// LoadSteerQueues restores the persisted global steer queue.
+func (as *AgentState) LoadSteerQueues() {
+	path := as.draftStorePath("steer-queues.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var q []string
+	if err := json.Unmarshal(data, &q); err != nil {
+		return
+	}
+	as.mu.Lock()
+	as.SteerQueue = q
+	as.mu.Unlock()
+}
+
+// LoadPromptStash reads persisted stashed prompts (max 20).
+func (as *AgentState) LoadPromptStash() {
+	path, err := promptHistoryPath(as.engine)
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(path), "prompt-stash.json"))
+	if err != nil {
+		return
+	}
+	var stash []string
+	if err := json.Unmarshal(data, &stash); err != nil || len(stash) == 0 {
+		return
+	}
+	as.mu.Lock()
+	as.StashedPrompts = stash
+	as.mu.Unlock()
+}
+
+// SavePromptStash persists the stash list.
+func (as *AgentState) SavePromptStash() {
+	as.mu.Lock()
+	stash := append([]string(nil), as.StashedPrompts...)
+	as.mu.Unlock()
+	path, err := promptHistoryPath(as.engine)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	if data, err := json.Marshal(stash); err == nil {
+		_ = os.WriteFile(filepath.Join(filepath.Dir(path), "prompt-stash.json"), data, 0644)
 	}
 }
 
@@ -1490,6 +1609,7 @@ func (as *AgentState) TriggerTurn(prompt string) {
 
 // SelectSession activates the given session by ID.
 func (as *AgentState) SelectSession(id string) {
+	as.SwapComposerDraft(as.ActiveSessionID, id)
 	as.mu.Lock()
 	as.ActiveSessionID = id
 	as.syncActiveSession()
@@ -1802,6 +1922,7 @@ func (as *AgentState) SubmitMessage() {
 
 		as.mu.Lock()
 		as.SteerQueue = append(as.SteerQueue, text)
+		as.SaveSteerQueues()
 		as.InputText = ""
 		as.mu.Unlock()
 		if as.Invalidate != nil {

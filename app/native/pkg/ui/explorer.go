@@ -126,7 +126,7 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 						if a.LeftSidebarView == "files" {
 							// The agent sidebar's explorer previews files in the
 							// right sidebar, as forge-ade's side preview does.
-							a.openSideFile(node.RelativePath)
+							a.openSidePreviewFile(c, node.RelativePath)
 						} else {
 							a.openExplorerNode(node)
 						}
@@ -196,7 +196,7 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 		if !node.IsDir {
 			if a.LeftSidebarView == "files" {
 				if m.Item("Open in Side Preview").Chosen() {
-					a.openSideFile(node.RelativePath)
+					a.openSidePreviewFile(c, node.RelativePath)
 				}
 				if m.Item("Open in Editor").Chosen() {
 					_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)

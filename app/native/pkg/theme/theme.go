@@ -144,7 +144,7 @@ func NewThemeManager() *ThemeManager {
 		PaletteID:  ThemePaletteDefault,
 		FontSize:   DefaultFontSize,
 		FontFamily: FontSans,
-		ChatWidth:  "comfortable",
+		ChatWidth:  "full",
 		DiffScheme: "classic",
 		IsOpen:     false,
 	}
@@ -402,4 +402,13 @@ func (tm *ThemeManager) RenderThemePicker(c *ui.Context) {
 				})
 			})
 	})
+}
+
+// IsKnownPalette reports whether a palette id is one of the built-in packs.
+func IsKnownPalette(id string) bool {
+	switch id {
+	case "forge-default", "blossom", "grove", "ocean", "ember", "iris":
+		return true
+	}
+	return false
 }
