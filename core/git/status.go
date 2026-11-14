@@ -605,6 +605,9 @@ func (e *Engine) GetWorkingTreeDiffStat(ctx context.Context, repoPath string) (s
 // GetFileDiff returns the unified diff for a single file against HEAD
 // (combines staged + unstaged working-tree changes).
 func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) (string, error) {
+	if root, ok := FindRepoRoot(repoPath); ok {
+		repoPath = root
+	}
 	if strings.TrimSpace(path) == "" || path == "all" || path == "Working Tree Changes" {
 		cmd := gitCmd(ctx, repoPath, "diff", "HEAD")
 		out, err := cmd.CombinedOutput()
@@ -625,33 +628,63 @@ func (e *Engine) GetFileDiff(ctx context.Context, repoPath string, path string) 
 
 	cmd := gitCmd(ctx, repoPath, "diff", "HEAD", "--", path)
 	out, err := cmd.CombinedOutput()
-	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
-		cmd2 := gitCmd(ctx, repoPath, "diff", "--", path)
-		out2, _ := cmd2.CombinedOutput()
-		if len(strings.TrimSpace(string(out2))) > 0 {
-			return string(out2), nil
+	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		return string(out), nil
+	}
+
+	cmd2 := gitCmd(ctx, repoPath, "diff", "--", path)
+	out2, _ := cmd2.CombinedOutput()
+	if len(strings.TrimSpace(string(out2))) > 0 {
+		return string(out2), nil
+	}
+
+	// Try top-level repo pathspec or wildcard if not matched yet
+	if !strings.HasPrefix(path, ":") {
+		topPath := ":/" + strings.TrimPrefix(path, "/")
+		cmdTop := gitCmd(ctx, repoPath, "diff", "HEAD", "--", topPath)
+		if outTop, errTop := cmdTop.CombinedOutput(); errTop == nil && len(strings.TrimSpace(string(outTop))) > 0 {
+			return string(outTop), nil
 		}
-		// If untracked file, show whole file content as additions (capped at 1MB, non-binary)
-		fullPath := filepath.Join(repoPath, path)
-		if info, statErr := os.Stat(fullPath); statErr == nil && !info.IsDir() && info.Size() <= 1<<20 {
-			if fileData, readErr := os.ReadFile(fullPath); readErr == nil {
-				head := fileData
-				if len(head) > 8000 {
-					head = head[:8000]
-				}
-				if bytes.IndexByte(head, 0) < 0 {
-					lines := strings.Split(string(fileData), "\n")
-					var b strings.Builder
-					b.Grow(len(fileData) + len(lines) + 64)
-					b.WriteString(fmt.Sprintf("--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", path, len(lines)))
-					for _, l := range lines {
-						b.WriteString("+" + l + "\n")
-					}
-					return b.String(), nil
-				}
+		cmdTop2 := gitCmd(ctx, repoPath, "diff", "--", topPath)
+		if outTop2, errTop2 := cmdTop2.CombinedOutput(); errTop2 == nil && len(strings.TrimSpace(string(outTop2))) > 0 {
+			return string(outTop2), nil
+		}
+		if !strings.Contains(path, "/") {
+			cmdWild := gitCmd(ctx, repoPath, "diff", "HEAD", "--", ":/**/"+path)
+			if outWild, errWild := cmdWild.CombinedOutput(); errWild == nil && len(strings.TrimSpace(string(outWild))) > 0 {
+				return string(outWild), nil
+			}
+			cmdWild2 := gitCmd(ctx, repoPath, "diff", "--", ":/**/"+path)
+			if outWild2, errWild2 := cmdWild2.CombinedOutput(); errWild2 == nil && len(strings.TrimSpace(string(outWild2))) > 0 {
+				return string(outWild2), nil
 			}
 		}
 	}
+
+	// If untracked file, show whole file content as additions (capped at 1MB, non-binary)
+	fullPath := path
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(repoPath, path)
+	}
+	if info, statErr := os.Stat(fullPath); statErr == nil && !info.IsDir() && info.Size() <= 1<<20 {
+		if fileData, readErr := os.ReadFile(fullPath); readErr == nil {
+			head := fileData
+			if len(head) > 8000 {
+				head = head[:8000]
+			}
+			if bytes.IndexByte(head, 0) < 0 {
+				lines := strings.Split(string(fileData), "\n")
+				var b strings.Builder
+				b.Grow(len(fileData) + len(lines) + 64)
+				b.WriteString(fmt.Sprintf("--- /dev/null\n+++ b/%s\n@@ -0,0 +1,%d @@\n", path, len(lines)))
+				for _, l := range lines {
+					b.WriteString("+" + l + "\n")
+				}
+				return b.String(), nil
+			}
+		}
+	}
+
 	return string(out), nil
 }
 

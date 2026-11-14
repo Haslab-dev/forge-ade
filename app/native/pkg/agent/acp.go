@@ -316,8 +316,9 @@ func (mgr *ACPManager) StartSession(agentID, cwd string, model string) (*acp.Ses
 
 // StartSessionWithID launches or attaches an ACP agent session with a specific
 // session ID. permissionMode is one of forge-ade's SessionOpts values:
-// "supervised" | "auto" | "auto_edits" | "full".
-func (mgr *ACPManager) StartSessionWithID(sessionID, agentID, cwd, model, permissionMode string) (*acp.Session, error) {
+// "supervised" | "auto" | "auto_edits" | "full". Optional resumeSessionID
+// specifies a remote conversation ID to resume.
+func (mgr *ACPManager) StartSessionWithID(sessionID, agentID, cwd, model, permissionMode string, resumeSessionID ...string) (*acp.Session, error) {
 	mgr.mu.Lock()
 	var targetDef *ACPAgentDefinition
 	for i := range mgr.Agents {
@@ -378,14 +379,20 @@ func (mgr *ACPManager) StartSessionWithID(sessionID, agentID, cwd, model, permis
 		permissionMode = "supervised"
 	}
 
+	var resumeID string
+	if len(resumeSessionID) > 0 {
+		resumeID = strings.TrimSpace(resumeSessionID[0])
+	}
+
 	opts := acp.SessionOpts{
-		SessionID:      sessionID,
-		AgentID:        targetDef.ID,
-		Command:        targetDef.Command,
-		Args:           targetDef.Args,
-		Cwd:            cwd,
-		Model:          model,
-		PermissionMode: permissionMode,
+		SessionID:       sessionID,
+		AgentID:         targetDef.ID,
+		Command:         targetDef.Command,
+		Args:            targetDef.Args,
+		Cwd:             cwd,
+		Model:           model,
+		PermissionMode:  permissionMode,
+		ResumeSessionID: resumeID,
 	}
 
 	if mgr.manager != nil {
@@ -598,12 +605,18 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		if sessionID == "" || mgr.OnTurnDone == nil {
 			return
 		}
+		remID := str(e.Data, "remoteSessionId", "remote_session_id", "conversation_id")
+		if remID == "" && mgr.manager != nil {
+			if s, ok := mgr.manager.GetSession(sessionID); ok && s != nil {
+				remID = s.RemoteSessionID
+			}
+		}
 		info := TurnEndInfo{
 			Status:          str(e.Data, "status"),
 			Error:           str(e.Data, "error"),
 			TotalSteps:      num(e.Data, "total_steps", "totalSteps"),
 			StepCount:       num(e.Data, "step_count", "stepCount"),
-			RemoteSessionID: str(e.Data, "remoteSessionId", "remote_session_id", "conversation_id"),
+			RemoteSessionID: remID,
 		}
 		if u, ok := e.Data["usage"].(map[string]interface{}); ok {
 			mgr.deliverUsage(sessionID, u, num, stringify)

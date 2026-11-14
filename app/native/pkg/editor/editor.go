@@ -26,42 +26,46 @@ type OpenDocument struct {
 
 // EditorManager manages all open file buffers, active tabs, split layouts, and editor settings.
 type EditorManager struct {
-	mu           sync.RWMutex
-	docs         map[string]*OpenDocument
-	patchDiffs   map[string]*mygoeditor.DiffState
-	OpenTabPaths []string
-	ActivePath   string
-	SoftWrap     bool
-	IsSplit      bool
+	mu             sync.RWMutex
+	docs           map[string]*OpenDocument
+	patchDiffs     map[string]*mygoeditor.DiffState
+	readOnlyStates map[string]*mygoeditor.State
+	OpenTabPaths   []string
+	ActivePath     string
+	SoftWrap       bool
+	IsSplit        bool
 	// PinnedTabs survive bulk close actions; ReadOnlyTabs render an italic
 	// title and a non-editable buffer (CodeEditorPane parity).
 	PinnedTabs   map[string]bool
 	ReadOnlyTabs map[string]bool
 	// Panes holds each split pane's document path (EditorPaneState parity);
 	// PaneWeights are per-pane flex weights for the drag handles.
-	Panes       []string
-	PaneWeights []float32
-	IsDiffView  bool
-	DiffLayout  int    // 0: Split, 1: Unified
-	DiffInline  string // "Words", "Characters", "Off"
-	StatusMsg   string
-	Theme       *theme.ThemeManager
-	RemoteFS    *remotefs.Manager
+	Panes                 []string
+	PaneWeights           []float32
+	IsDiffView            bool
+	DiffLayout            int    // 0: Split, 1: Unified
+	DiffInline            string // "Words", "Characters", "Off"
+	StatusMsg             string
+	Theme                 *theme.ThemeManager
+	RemoteFS              *remotefs.Manager
+	WorkspaceDir          string
+	OnDefinitionRequested func(symbol string, matches []PeekMatch)
 }
 
 // NewEditorManager creates and initializes an EditorManager.
 func NewEditorManager() *EditorManager {
 	return &EditorManager{
-		docs:         make(map[string]*OpenDocument),
-		patchDiffs:   make(map[string]*mygoeditor.DiffState),
-		OpenTabPaths: make([]string, 0),
-		SoftWrap:     false,
-		IsSplit:      false,
-		PinnedTabs:   make(map[string]bool),
-		ReadOnlyTabs: make(map[string]bool),
-		IsDiffView:   false,
-		DiffLayout:   0,
-		DiffInline:   "Words",
+		docs:           make(map[string]*OpenDocument),
+		patchDiffs:     make(map[string]*mygoeditor.DiffState),
+		readOnlyStates: make(map[string]*mygoeditor.State),
+		OpenTabPaths:   make([]string, 0),
+		SoftWrap:       false,
+		IsSplit:        false,
+		PinnedTabs:     make(map[string]bool),
+		ReadOnlyTabs:   make(map[string]bool),
+		IsDiffView:     false,
+		DiffLayout:     0,
+		DiffInline:     "Words",
 	}
 }
 
@@ -223,6 +227,79 @@ func (em *EditorManager) OpenPatchDiff(relPath, patch string, tm *theme.ThemeMan
 	em.ApplyDiffTheme(d)
 	em.patchDiffs[relPath] = d
 	return d
+}
+
+// GetOrCreateBufferDiff builds or returns the cached diff between old and new text buffers.
+func (em *EditorManager) GetOrCreateBufferDiff(key, oldStr, newStr string, tm *theme.ThemeManager) *mygoeditor.DiffState {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if tm != nil {
+		em.Theme = tm
+	}
+	if d, ok := em.patchDiffs[key]; ok {
+		return d
+	}
+	oldBuf := mygoeditor.NewBuffer(oldStr)
+	newBuf := mygoeditor.NewBuffer(newStr)
+	d := &mygoeditor.DiffState{
+		Old:             oldBuf,
+		New:             newBuf,
+		Layout:          mygoeditor.DiffUnified,
+		Inline:          mygoeditor.DiffInlineWordAlt,
+		ContextLines:    3,
+		ExpandUnchanged: true,
+		FitContent:      true,
+		HunkActions:     true,
+		LineSelection:   true,
+	}
+	em.ApplyDiffTheme(d)
+	em.patchDiffs[key] = d
+	return d
+}
+
+// GetOrCreatePatchDiff builds or returns the cached diff for a parsed FilePatch.
+func (em *EditorManager) GetOrCreatePatchDiff(key string, patch mygoeditor.FilePatch, tm *theme.ThemeManager) *mygoeditor.DiffState {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if tm != nil {
+		em.Theme = tm
+	}
+	if d, ok := em.patchDiffs[key]; ok {
+		return d
+	}
+	d := &mygoeditor.DiffState{
+		Layout:        mygoeditor.DiffLayout(em.DiffLayout),
+		HunkActions:   true,
+		LineSelection: true,
+		FitContent:    true,
+	}
+	d.SetPatch(patch)
+	em.ApplyDiffTheme(d)
+	em.patchDiffs[key] = d
+	return d
+}
+
+// GetOrCreateReadOnlyEditor builds or returns a cached read-only syntax highlighted editor state.
+func (em *EditorManager) GetOrCreateReadOnlyEditor(key, path, content string, tm *theme.ThemeManager) *mygoeditor.State {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if em.readOnlyStates == nil {
+		em.readOnlyStates = make(map[string]*mygoeditor.State)
+	}
+	if st, ok := em.readOnlyStates[key]; ok {
+		return st
+	}
+	buf := mygoeditor.NewBuffer(content)
+	buf.SetLanguage(mygoeditor.LanguageFor(filepath.Base(path)))
+	st := &mygoeditor.State{
+		Buffer:     buf,
+		ReadOnly:   true,
+		FitContent: true,
+		LineHeight: 1.45,
+	}
+	em.ApplyTheme(st)
+	em.readOnlyStates[key] = st
+	return st
 }
 
 // CloseTab removes an open tab.
@@ -436,6 +513,133 @@ func (em *EditorManager) setupEditorCallbacks(doc *OpenDocument) {
 		count := strings.Count(st.Buffer.String(), word)
 		st.ShowHover(start, end, fmt.Sprintf("Symbol '%s' (%d occurrences)", word, count), nil)
 	}
+
+	st.OnDefinition = func(offset int) {
+		word, _, _ := WordAtOffset(st.Buffer, offset)
+		if word == "" {
+			return
+		}
+		matches := em.FindDefinitions(word, em.WorkspaceDir)
+		if len(matches) == 1 {
+			_, _ = em.OpenFile(matches[0].Path, filepath.Base(matches[0].Path))
+			if active := em.ActiveDoc(); active != nil {
+				active.Editor.GoTo(mygoeditor.Pos{Line: matches[0].Line, Col: matches[0].Col})
+			}
+		} else if len(matches) > 1 {
+			if em.OnDefinitionRequested != nil {
+				em.OnDefinitionRequested(word, matches)
+			}
+		}
+	}
+}
+
+// PeekMatch represents a symbol definition found in workspace files.
+type PeekMatch struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line"`
+	Col     int    `json:"col"`
+	Preview string `json:"preview"`
+	Symbol  string `json:"symbol"`
+}
+
+// FindDefinitions scans open files and workspace files for declarations matching the symbol.
+func (em *EditorManager) FindDefinitions(symbol, wsDir string) []PeekMatch {
+	if symbol == "" {
+		return nil
+	}
+	var matches []PeekMatch
+
+	// 1. Check open documents first
+	em.mu.RLock()
+	for p, doc := range em.docs {
+		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+			continue
+		}
+		lines := strings.Split(doc.Editor.Buffer.String(), "\n")
+		for i, line := range lines {
+			if isDeclaration(line, symbol) {
+				col := strings.Index(line, symbol)
+				if col < 0 {
+					col = 0
+				}
+				matches = append(matches, PeekMatch{
+					Path:    p,
+					Line:    i + 1,
+					Col:     col + 1,
+					Preview: strings.TrimSpace(line),
+					Symbol:  symbol,
+				})
+			}
+		}
+	}
+	em.mu.RUnlock()
+
+	// 2. If nothing found in open docs, search files in workspace dir
+	if len(matches) == 0 && wsDir != "" {
+		_ = filepath.WalkDir(wsDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d == nil {
+				return nil
+			}
+			if d.IsDir() {
+				if strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules" || d.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := filepath.Ext(path)
+			if ext != ".go" && ext != ".ts" && ext != ".tsx" && ext != ".js" && ext != ".py" && ext != ".rs" && ext != ".json" {
+				return nil
+			}
+			data, rErr := os.ReadFile(path)
+			if rErr != nil {
+				return nil
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				if isDeclaration(line, symbol) {
+					col := strings.Index(line, symbol)
+					if col < 0 {
+						col = 0
+					}
+					matches = append(matches, PeekMatch{
+						Path:    path,
+						Line:    i + 1,
+						Col:     col + 1,
+						Preview: strings.TrimSpace(line),
+						Symbol:  symbol,
+					})
+					if len(matches) >= 20 {
+						return filepath.SkipAll
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return matches
+}
+
+func isDeclaration(line, symbol string) bool {
+	patterns := []string{
+		"func " + symbol,
+		"type " + symbol,
+		"var " + symbol,
+		"const " + symbol,
+		"class " + symbol,
+		"interface " + symbol,
+		"function " + symbol,
+		"def " + symbol,
+		"fn " + symbol,
+		"let " + symbol + " =",
+		"const " + symbol + " =",
+	}
+	for _, p := range patterns {
+		if strings.Contains(line, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // WordCompletions scans the buffer for words matching the prefix.
@@ -508,4 +712,24 @@ func WordAtOffset(buf *mygoeditor.Buffer, offset int) (string, int, int) {
 		return "", 0, 0
 	}
 	return text[start:end], start, end
+}
+
+// SetSuggestion displays ghost-text prediction at offset in the document's editor state.
+func (em *EditorManager) SetSuggestion(path string, offset int, text string) {
+	em.mu.RLock()
+	doc, ok := em.docs[path]
+	em.mu.RUnlock()
+	if ok && doc.Editor != nil {
+		doc.Editor.SetSuggestion(offset, text)
+	}
+}
+
+// SetInlays displays inline type and reference annotations in the document's editor state.
+func (em *EditorManager) SetInlays(path string, inlays []mygoeditor.Inlay) {
+	em.mu.RLock()
+	doc, ok := em.docs[path]
+	em.mu.RUnlock()
+	if ok && doc.Editor != nil {
+		doc.Editor.SetInlays(inlays)
+	}
 }

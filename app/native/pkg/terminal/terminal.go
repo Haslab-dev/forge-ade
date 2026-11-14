@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"strings"
 	"sync"
 
 	termplugin "github.com/egoist/mygo/plugins/terminal"
@@ -8,12 +9,13 @@ import (
 
 // TerminalState manages the Ghostty terminal instance and shell lifecycle.
 type TerminalState struct {
-	mu       sync.Mutex
-	term     *termplugin.Terminal
-	Cwd      string
-	Title    string
-	ExitCode int
-	Exited   bool
+	mu              sync.Mutex
+	term            *termplugin.Terminal
+	Cwd             string
+	Title           string
+	ActiveSessionID string
+	ExitCode        int
+	Exited          bool
 	// Command and Env override the spawned program; empty runs the user's
 	// shell (a local shell, or an ssh remote shell for remote workspaces).
 	Command []string
@@ -104,6 +106,33 @@ func (ts *TerminalState) SendInput(data string) {
 	if ts.term != nil {
 		ts.term.Send([]byte(data))
 	}
+}
+
+// WriteInput delivers input command to the terminal process.
+func (ts *TerminalState) WriteInput(sessionID, data string) error {
+	ts.SendInput(data)
+	return nil
+}
+
+// RecentOutput returns the most recent lines of terminal scrollback/screen text.
+func (ts *TerminalState) RecentOutput(maxLines int) string {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if ts.term == nil {
+		return ""
+	}
+	txt := ts.term.Text()
+	if txt == "" {
+		txt = string(ts.term.Snapshot())
+	}
+	if maxLines <= 0 {
+		return txt
+	}
+	lines := strings.Split(txt, "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetTitle returns the current window or tab title of the terminal.

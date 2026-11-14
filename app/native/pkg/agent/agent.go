@@ -113,6 +113,7 @@ type ChatMessage struct {
 	// stdout — forge-ade parses these in-band; native must not show them.
 	SkipHarnessDumps bool      `json:"-"`
 	TotalSteps       int       // steps reported by agent:turn_end
+	Feedback         string    // "up" or "down" (user message feedback)
 	TurnStartedAt    time.Time `json:"-"` // live elapsed while streaming
 }
 
@@ -470,6 +471,10 @@ func (as *AgentState) HandleTurnStart(sessionID, prompt string) {
 // returns the next queued steer prompt, if any.
 func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSteer string) {
 	start := time.Now()
+	// Turn changes: query git status outside the held lock so Git CLI subprocess
+	// never stalls UI frame rendering or lock acquisition.
+	turnEndFiles := as.gitStatusPaths()
+
 	as.mu.Lock()
 	for _, s := range as.Sessions {
 		if s.ID != sessionID {
@@ -478,6 +483,8 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		msg := as.ensureStreamingMessage(s)
 		msg.Done = true
 		msg.IsThinking = false
+		msg.ShowThinking = false
+		msg.ShowTools = false
 		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(msg.Text)))
 		msg.Thinking = cleanRawToolTags(msg.Thinking)
 		if !msg.TurnStartedAt.IsZero() {
@@ -494,9 +501,6 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 			s.RemoteSessionID = info.RemoteSessionID
 		}
 
-		// Turn changes: files git newly reports as changed since the turn
-		// started, with real +/- counts from their diffs.
-		turnEndFiles := as.gitStatusPaths()
 		var turnChanges []*FileChange
 		for path := range turnEndFiles {
 			if s.turnStartFiles == nil || !s.turnStartFiles[path] {
@@ -1424,6 +1428,8 @@ func (as *AgentState) syncActiveSession() {
 		}
 		if active.Model != "" {
 			as.ActiveModel = active.Model
+		} else if as.ActiveModel != "" {
+			active.Model = as.ActiveModel
 		}
 		if active.AgentID != "" {
 			as.ActiveAgentID = active.AgentID
@@ -2132,7 +2138,7 @@ func (as *AgentState) CancelStreaming() {
 // turn-change diff (files modified during one turn).
 func (as *AgentState) gitStatusPaths() map[string]bool {
 	out := map[string]bool{}
-	if as.engine == nil || as.workspacePath == "" {
+	if as.engine == nil || as.engine.GitEngine == nil || as.workspacePath == "" {
 		return out
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2216,9 +2222,10 @@ func countPatchLines(patch string) (add, del int) {
 
 // triggerAgentTurn executes real streaming responses via LLMClient or ACPManager.
 func (as *AgentState) triggerAgentTurn(prompt string) {
+	turnStartFiles := as.gitStatusPaths()
+
 	as.mu.Lock()
 	as.IsStreaming = true
-	turnStartFiles := as.gitStatusPaths()
 
 	startTime := time.Now()
 	assistantMsg := &ChatMessage{
@@ -2290,18 +2297,31 @@ func (as *AgentState) triggerAgentTurn(prompt string) {
 		go func() {
 			var startErr error
 			if as.ACPMgr != nil {
-				_, startErr = as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model, permissionMode)
+				acpSess, err := as.ACPMgr.StartSessionWithID(activeSess.ID, activeSess.AgentID, as.workspacePath, activeSess.Model, permissionMode, activeSess.RemoteSessionID)
+				startErr = err
+				if startErr == nil && acpSess != nil && acpSess.RemoteSessionID != "" {
+					as.mu.Lock()
+					activeSess.RemoteSessionID = acpSess.RemoteSessionID
+					as.mu.Unlock()
+				}
 				if startErr == nil {
 					startErr = as.ACPMgr.Prompt(activeSess.ID, prompt)
 				}
 			} else if as.engine != nil && as.engine.ACPMgr != nil {
-				_, startErr = as.engine.ACPMgr.StartSession(acp.SessionOpts{
-					SessionID:      activeSess.ID,
-					AgentID:        activeSess.AgentID,
-					Cwd:            as.workspacePath,
-					Model:          activeSess.Model,
-					PermissionMode: permissionMode,
+				acpSess, err := as.engine.ACPMgr.StartSession(acp.SessionOpts{
+					SessionID:       activeSess.ID,
+					AgentID:         activeSess.AgentID,
+					Cwd:             as.workspacePath,
+					Model:           activeSess.Model,
+					PermissionMode:  permissionMode,
+					ResumeSessionID: activeSess.RemoteSessionID,
 				})
+				startErr = err
+				if startErr == nil && acpSess != nil && acpSess.RemoteSessionID != "" {
+					as.mu.Lock()
+					activeSess.RemoteSessionID = acpSess.RemoteSessionID
+					as.mu.Unlock()
+				}
 				if startErr == nil {
 					startErr = as.engine.ACPMgr.Prompt(activeSess.ID, prompt)
 				}

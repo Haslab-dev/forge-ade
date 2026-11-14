@@ -46,7 +46,6 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				{RightTabChanges, "Changes", icons.TablerFileDiff},
 				{RightTabTerminal, "Terminal", icons.TablerTerminal},
 				{RightTabChat, "Chat", icons.TablerMessage},
-				{RightTabFiles, "Files", icons.TablerFolder},
 			}
 			if len(a.SideFileTabs) > 0 {
 				tabs = append(tabs, struct {
@@ -55,20 +54,35 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					Icon *ui.SVG
 				}{RightTabSideFile, filepath.Base(a.ActiveSideFile), icons.TablerEye})
 			}
-			if a.BrowserWebView != nil && !a.BrowserWebView.IsDestroyed() {
+			tabs = append(tabs, struct {
+				Tab  int
+				Name string
+				Icon *ui.SVG
+			}{RightTabBrowser, "Browser", icons.TablerWorld})
+			hasSubagents := false
+			if a.SelectedSubagentID != "" {
+				hasSubagents = true
+			} else if a.Agent != nil && a.Agent.ActiveSessionID != "" {
+				hasSubagents = len(a.Agent.Subagents(a.Agent.ActiveSessionID)) > 0
+			}
+			if hasSubagents {
 				tabs = append(tabs, struct {
 					Tab  int
 					Name string
 					Icon *ui.SVG
-				}{RightTabBrowser, "Browser", icons.TablerWorld})
+				}{RightTabSubagent, "Agents", icons.TablerBot})
 			}
 			tabs = append(tabs, struct {
 				Tab  int
 				Name string
 				Icon *ui.SVG
-			}{RightTabSubagent, "Agents", icons.TablerBot})
+			}{RightTabDeck, "Deck", icons.TablerPresentation})
 
-			ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
+			if a.RightDrawerTab == RightTabFiles || (a.RightDrawerTab == RightTabSubagent && !hasSubagents) {
+				a.RightDrawerTab = RightTabTerminal
+			}
+
+			ui.Row(c).Grow(1).Gap(3).AlignItems(ui.Center).Clip().Children(func() {
 				for _, tab := range tabs {
 					tTab := tab
 					active := a.RightDrawerTab == tTab.Tab
@@ -94,6 +108,9 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					}
 					if pill.Clicked() {
 						a.RightDrawerTab = tTab.Tab
+						if tTab.Tab == RightTabBrowser && (a.BrowserWebView == nil || a.BrowserWebView.IsDestroyed()) {
+							a.openBrowserTab("")
+						}
 					}
 					// Active pill shows the tab close ×, as ZCode's panel
 					// tabs do: dynamic tabs close themselves, fixed tabs
@@ -145,6 +162,10 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					a.RightDrawerTab = RightTabSubagent
 					a.ShowRightDrawer = true
 				}
+				if m.Item("Presentation & Motion (Deck)").Chosen() {
+					a.RightDrawerTab = RightTabDeck
+					a.ShowRightDrawer = true
+				}
 			})
 			if plus.Clicked() {
 				a.RightDrawerTab = RightTabSubagent
@@ -162,6 +183,41 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderChangesPane(c)
 			case RightTabTerminal:
 				if a.Terminal != nil {
+					ui.Row(c).Height(32).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+						ui.Text(c, "Terminal").FontSize(11).FontWeight(600).TextColor(tc.Text)
+						ui.Box(c).Grow(1)
+						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+						askBtn.Children(func() {
+							ui.Icon(c, icons.TablerSparkles).Width(10).Height(10).TextColor(tc.Accent)
+							ui.Text(c, "Ask Agent").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+						})
+						if askBtn.Clicked() {
+							a.askAgentFromTerminal()
+						}
+
+						snipBtn := ui.Row(c.Key("drawer-term-snip")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+						snipBtn.Children(func() {
+							ui.Icon(c, icons.TablerBook).Width(10).Height(10).TextColor(tc.IconMuted)
+							ui.Text(c, "Snippets").FontSize(10).TextColor(tc.Text)
+						})
+						if snipBtn.Clicked() {
+							sessID := ""
+							if a.Terminal != nil {
+								sessID = a.Terminal.ActiveSessionID
+							}
+							a.OpenTerminalSnippetsModal(sessID, "", "")
+						}
+
+						if IconButton(c, tc, icons.TablerEraser, 11).Clicked() {
+							a.Terminal.SendInput("\x0c")
+						}
+						if IconButton(c, tc, icons.TablerRefresh, 11).Clicked() {
+							_ = a.Terminal.Restart()
+						}
+					})
 					a.renderTerminal(c, a.Terminal)
 				}
 			case RightTabChat:
@@ -174,6 +230,8 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderBrowserPane(c)
 			case RightTabSubagent:
 				a.renderSubagentPane(c)
+			case RightTabDeck:
+				a.renderDeckPane(c)
 			}
 		})
 	})
@@ -428,9 +486,16 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 				}
 			})
 
+			repoDir := a.Workspace.RootDir
+			if repoDir == "" && gm != nil {
+				repoDir = gm.RootDir
+			}
+			if repoDir == "" && a.Agent != nil {
+				repoDir = a.Agent.WorkspacePath()
+			}
 			patch := ""
 			if a.Engine != nil && diffTitle != "" {
-				patch = a.Engine.GetGitDiff(a.Workspace.RootDir, diffTitle)
+				patch = a.Engine.GetGitDiff(repoDir, diffTitle)
 			}
 			if patch == "" {
 				ui.Column(c).Grow(1).Center().Children(func() {
@@ -1127,11 +1192,24 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		return
 	}
 
-	// Editor view of the active file.
 	full := ""
 	if a.Workspace != nil {
 		full = a.Workspace.ResolveFullPath(a.ActiveSideFile)
 	}
+
+	// Native PDF viewer preview in side file tabs
+	if strings.HasSuffix(strings.ToLower(a.ActiveSideFile), ".pdf") {
+		a.renderPdfViewerPane(c, tc, full, filepath.Base(a.ActiveSideFile))
+		return
+	}
+
+	// Presentation & Motion preview in side file tabs
+	if isDeckOrMotionFile(a.ActiveSideFile) {
+		a.renderDeckPane(c)
+		return
+	}
+
+	// Editor view of the active file.
 	doc := a.Editor.GetDoc(full)
 	if doc == nil {
 		ui.Column(c).Grow(1).Center().Children(func() {
@@ -1144,9 +1222,16 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 	diffMode := a.SideFileDiffMode[a.ActiveSideFile]
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
 		if diffMode {
+			repoDir := a.Workspace.RootDir
+			if repoDir == "" && a.Git != nil {
+				repoDir = a.Git.RootDir
+			}
+			if repoDir == "" && a.Agent != nil {
+				repoDir = a.Agent.WorkspacePath()
+			}
 			patch := ""
 			if a.Engine != nil {
-				patch = a.Engine.GetGitDiff(a.Workspace.RootDir, a.ActiveSideFile)
+				patch = a.Engine.GetGitDiff(repoDir, a.ActiveSideFile)
 			}
 			if patch == "" {
 				ui.Column(c).Grow(1).Center().Children(func() {

@@ -30,13 +30,18 @@ func (a *AppUI) openBoardSurface() {
 	a.RefreshBoard()
 }
 
-// openGitClientSurface switches the agent area to the git client.
+// openGitClientSurface switches the agent area or editor to the git client.
 func (a *AppUI) openGitClientSurface() {
-	a.Mode = ModeAgent
-	a.AgentViewMode = AgentViewGit
+	if a.Mode == ModeEditor {
+		a.IsGitClientOpen = true
+	} else {
+		a.Mode = ModeAgent
+		a.AgentViewMode = AgentViewGit
+	}
 	if a.Git != nil {
 		go a.Git.Refresh()
 	}
+	a.loadGitRemoteURL()
 }
 
 // renderAgentView routes the agent area's main view, mirroring forge-ade's
@@ -395,15 +400,17 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 			for _, tab := range tabs {
 				t := tab
 				active := gm.ActiveTab == t.Tab
-				b := ui.Row(c.Key("gctab-"+t.Name)).Height(30).Radius(8).Padding(0, 12).AlignItems(ui.Center).Justify(ui.Center)
+				b := ui.Row(c.Key(fmt.Sprintf("gctab-%d", t.Tab))).Height(30).Radius(8).Padding(0, 12).AlignItems(ui.Center).Justify(ui.Center)
 				b.Children(func() {
-					ui.Text(c, t.Name).FontSize(12).FontWeight(500)
+					txt := ui.Text(c, t.Name).FontSize(12)
+					if active {
+						txt.FontWeight(600).TextColor(tc.Accent)
+					} else {
+						txt.FontWeight(500)
+					}
 				})
 				if active {
 					b.Background(tc.Accent.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-					b.Children(func() {
-						ui.Text(c, t.Name).FontSize(12).FontWeight(600).TextColor(tc.Accent)
-					})
 				} else if b.Hovered() {
 					b.Background(tc.Text.Alpha(0.05))
 				}
@@ -478,8 +485,15 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 			closeBtn.Children(func() {
 				ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
 			})
+			if closeBtn.Hovered() {
+				closeBtn.Background(tc.Text.Alpha(0.05))
+			}
 			if closeBtn.Clicked() {
-				a.AgentViewMode = AgentViewChat
+				if a.Mode == ModeEditor {
+					a.IsGitClientOpen = false
+				} else {
+					a.AgentViewMode = AgentViewChat
+				}
 			}
 		})
 

@@ -20,8 +20,12 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 	// 1. Left Activity Bar + Sidebar
 	if a.ShowLeftSidebar {
 		activityButton := func(icon *ui.SVG, tab int, badgeCount int, onPick func()) {
-			active := (tab >= 0 && a.EditorActivity == tab)
-			if tab == -1 && a.Settings != nil && a.Settings.IsOpen {
+			active := false
+			if tab == ActivityGit {
+				active = a.IsGitClientOpen
+			} else if tab >= 0 {
+				active = (!a.IsGitClientOpen && a.EditorActivity == tab)
+			} else if tab == -1 && a.Settings != nil && a.Settings.IsOpen {
 				active = true
 			}
 			btn := ui.Row(c).Size(ActivityBarWidth-8, 40).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
@@ -67,10 +71,29 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 
 		ui.Column(c).Width(ActivityBarWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).
 			Padding(8, 0).AlignItems(ui.Center).Gap(4).Children(func() {
-			activityButton(icons.TablerFiles, ActivityExplorer, 0, nil)
-			activityButton(icons.TablerSearch, ActivitySearch, len(a.FileSearchHits), nil)
-			activityButton(icons.TablerGitBranch, ActivityGit, gitChanges, nil)
-			activityButton(icons.TablerDatabase, ActivityDatabase, 0, nil)
+			activityButton(icons.TablerFiles, ActivityExplorer, 0, func() {
+				a.IsGitClientOpen = false
+				a.EditorActivity = ActivityExplorer
+			})
+			activityButton(icons.TablerSearch, ActivitySearch, len(a.FileSearchHits), func() {
+				a.IsGitClientOpen = false
+				a.EditorActivity = ActivitySearch
+			})
+			activityButton(icons.TablerGitBranch, ActivityGit, gitChanges, func() {
+				if a.IsGitClientOpen {
+					a.IsGitClientOpen = false
+				} else {
+					a.IsGitClientOpen = true
+					if a.Git != nil {
+						go a.Git.Refresh()
+					}
+					a.loadGitRemoteURL()
+				}
+			})
+			activityButton(icons.TablerDatabase, ActivityDatabase, 0, func() {
+				a.IsGitClientOpen = false
+				a.EditorActivity = ActivityDatabase
+			})
 			ui.Box(c).Grow(1)
 
 			// Remote SSH Button on ActivityBar
@@ -105,18 +128,20 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			})
 		})
 
-		ui.Column(c).Width(FileTreeDefaultWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
-			switch a.EditorActivity {
-			case ActivityExplorer:
-				a.renderFileTree(c)
-			case ActivitySearch:
-				a.renderFileSearch(c)
-			case ActivityGit:
-				a.renderGitPane(c)
-			case ActivityDatabase:
-				a.renderDatabasePane(c)
-			}
-		})
+		if !a.IsGitClientOpen {
+			ui.Column(c).Width(FileTreeDefaultWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
+				switch a.EditorActivity {
+				case ActivityExplorer:
+					a.renderFileTree(c)
+				case ActivitySearch:
+					a.renderFileSearch(c)
+				case ActivityGit:
+					a.renderGitPane(c)
+				case ActivityDatabase:
+					a.renderDatabasePane(c)
+				}
+			})
+		}
 	}
 
 	// 2. Center Column: Editor Tabs + Virtualized Code Buffer / Diff +
@@ -125,9 +150,13 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 	// right drawer off-screen (same flex-shrink protection as agent mode).
 	ui.Box(c).Grow(1).FillHeight().Clip().Children(func() {
 		ui.Column(c).Grow(1).FillHeight().Children(func() {
-			ui.Column(c).Grow(1).FillHeight().Children(func() {
-				a.renderEditorView(c)
-			})
+			if a.IsGitClientOpen {
+				a.renderGitClientSurface(c)
+			} else {
+				ui.Column(c).Grow(1).FillHeight().Children(func() {
+					a.renderEditorView(c)
+				})
+			}
 
 			if a.ShowBottomTerminal {
 				TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
@@ -263,6 +292,19 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 					em.CloseAll()
 				}
 				m.Separator()
+				if len(em.Panes) > 1 {
+					if m.Item("Move to Right Pane").Chosen() {
+						em.MoveTabToPane(path, 1)
+					}
+					if m.Item("Move to Left Pane").Chosen() {
+						em.MoveTabToPane(path, 0)
+					}
+				} else {
+					if m.Item("Split Editor Right").Chosen() {
+						em.SplitRight()
+					}
+				}
+				m.Separator()
 				if m.Item("Copy Path").Chosen() {
 					mygo.Clipboard.WriteText(path)
 				}
@@ -336,6 +378,20 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 
 	ui.Column(c).Fill().Children(func() {
 		a.renderEditorTabBar(c)
+
+		if em.ActivePath != "" && strings.HasSuffix(strings.ToLower(em.ActivePath), ".pdf") {
+			full := em.ActivePath
+			if a.Workspace != nil && !filepath.IsAbs(full) {
+				full = a.Workspace.ResolveFullPath(full)
+			}
+			a.renderPdfViewerPane(c, tc, full, filepath.Base(em.ActivePath))
+			return
+		}
+
+		if em.ActivePath != "" && isDeckOrMotionFile(em.ActivePath) {
+			a.renderDeckPane(c)
+			return
+		}
 
 		if em.IsDiffView {
 			a.renderEditorDiff(c)

@@ -26,6 +26,9 @@ var hunkHeaderRe = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? 
 // GetFileDiffHunks parses the unified diff of a single file against HEAD into
 // structured hunks. Untracked files (no diff) return an empty slice.
 func (e *Engine) GetFileDiffHunks(ctx context.Context, repoPath string, path string) ([]DiffHunk, error) {
+	if root, ok := FindRepoRoot(repoPath); ok {
+		repoPath = root
+	}
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("file path cannot be empty")
 	}

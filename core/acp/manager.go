@@ -271,6 +271,13 @@ func (m *Manager) StartSession(opts SessionOpts) (*Session, error) {
 	agentKey = strings.TrimPrefix(agentKey, "agent-")
 
 	resumeID := strings.TrimSpace(opts.ResumeSessionID)
+	if resumeID == "" && opts.SessionID != "" {
+		m.mu.RLock()
+		if existing, ok := m.sessions[opts.SessionID]; ok && existing != nil {
+			resumeID = strings.TrimSpace(existing.RemoteSessionID)
+		}
+		m.mu.RUnlock()
+	}
 	// Internal Forge ADE session handles (starting with session- or acp-) must never be forwarded
 	// to external CLI agents as resume identifiers.
 	if strings.HasPrefix(resumeID, "session-") || strings.HasPrefix(resumeID, "acp-") {
@@ -1324,6 +1331,13 @@ func (m *Manager) CloseSession(sessionID string) error {
 	})
 
 	return nil
+}
+
+func (m *Manager) GetSession(sessionID string) (*Session, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sess, ok := m.sessions[sessionID]
+	return sess, ok
 }
 
 func (m *Manager) ListSessions() []*Session {

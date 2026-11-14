@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
@@ -40,7 +41,27 @@ const (
 	SettingsTabMemory     = 8  // Memory
 	SettingsTabAutos      = 9  // Automations (bots)
 	SettingsTabSubagents  = 10 // Sub-Agents & Roles
+	SettingsTabBrowser    = 11 // Browser Use
+	SettingsTabComputer   = 12 // Computer Use
+	SettingsTabCommands   = 13 // Slash Commands
+	SettingsTabHooks      = 14 // Lifecycle Hooks
+	SettingsTabIndexing   = 15 // Codebase Indexing
 )
+
+// CustomSlashCommand represents a user-defined prompt expansion.
+type CustomSlashCommand struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+}
+
+// HookEntry represents a configured lifecycle hook.
+type HookEntry struct {
+	ID      string `json:"id"`
+	Event   string `json:"event"`
+	Matcher string `json:"matcher"`
+	Command string `json:"command"`
+}
 
 // SettingsManager manages provider credentials, models, and application preferences.
 type SettingsManager struct {
@@ -53,14 +74,58 @@ type SettingsManager struct {
 	DefaultShell string
 
 	// Integration form state (MCP / Memory / Automations sections).
-	MCPFormOpen     bool
-	MCPName         string
-	MCPCommand      string
-	MCPType         string
-	MemoryNew       string
-	AutoName        string
-	AutoCron        string
-	AutoPrompt      string
+	MCPFormOpen bool
+	MCPName     string
+	MCPCommand  string
+	MCPType     string
+	MemoryNew   string
+	AutoName    string
+	AutoCron    string
+	AutoPrompt  string
+
+	// Skills form state
+	SkillFormOpen    bool
+	SkillName        string
+	SkillDescription string
+	SkillPrompt      string
+	SkillScope       string
+
+	// Role form state
+	RoleFormOpen  bool
+	RoleName      string
+	RoleFilter    string
+	RoleModel     string
+	RolePrompt    string
+	RoleReadOnly  bool
+	RoleAllowBash bool
+
+	// Custom slash commands state
+	CmdFormOpen    bool
+	CmdName        string
+	CmdDescription string
+	CmdPrompt      string
+	CustomCommands []CustomSlashCommand
+
+	// Lifecycle hooks state
+	HookFormOpen bool
+	HookEvent    string
+	HookMatcher  string
+	HookCommand  string
+	HooksList    []HookEntry
+
+	// Browser Use state
+	BrowserHeadless bool
+	BrowserAllowJS  bool
+	BrowserEngine   string
+	BrowserViewport string
+
+	// Computer Use state
+	ComputerPermissionMode string
+
+	// Indexing state
+	IndexingStatus  string
+	IndexedFiles    int
+	IndexedSymbols  int
 	engine          *engine.Engine
 	ThemeMgr        *theme.ThemeManager
 	Provider        string
@@ -76,6 +141,19 @@ type SettingsManager struct {
 	FetchingModels  bool
 	ModelSelection  map[string]bool
 	SearchModels    string
+
+	// Custom provider profiles state
+	SelectedProviderID      string
+	IsAddingProvider        bool
+	NewProviderProtocol     string // "openai" or "anthropic"
+	NewProviderName         string
+	NewProviderBaseURL      string
+	NewProviderAPIKey       string
+	NewProviderInitialModel string
+	IsAddingModel           bool
+	NewModelName            string
+	ModelSearchQuery        string
+	IsFetchingModels        bool
 }
 
 // DefaultBaseURL returns the OpenAI-compatible base URL assumed per provider.
@@ -209,18 +287,49 @@ func (sm *SettingsManager) SaveSelectedModel(model string) {
 	}
 }
 
+// GetProfiles returns the custom provider profiles from LLMClient.
+func (sm *SettingsManager) GetProfiles() []llm.ProviderProfile {
+	if sm.engine != nil && sm.engine.LLMClient != nil {
+		return sm.engine.LLMClient.GetProviderProfiles()
+	}
+	return nil
+}
+
+// SaveProfiles saves the updated custom provider profiles to LLMClient.
+func (sm *SettingsManager) SaveProfiles(profiles []llm.ProviderProfile) error {
+	if sm.engine != nil && sm.engine.LLMClient != nil {
+		return sm.engine.LLMClient.SaveProviderProfiles(profiles)
+	}
+	return nil
+}
+
+// DeleteProfile deletes a custom provider profile by ID.
+func (sm *SettingsManager) DeleteProfile(id string) error {
+	if sm.engine != nil && sm.engine.LLMClient != nil {
+		return sm.engine.LLMClient.DeleteProviderProfile(id)
+	}
+	return nil
+}
+
 // NewSettingsManager creates a SettingsManager initialized from backend configurations.
 func NewSettingsManager(engine *engine.Engine, onSaved func(provider, model string)) *SettingsManager {
 	sm := &SettingsManager{
-		engine:       engine,
-		Provider:     "",
-		Model:        "",
-		MaxTokens:    4096,
-		DefaultShell: "/bin/bash",
-		AutoSave:     true,
-		OnModelSaved: onSaved,
+		engine:              engine,
+		Provider:            "",
+		Model:               "",
+		MaxTokens:           4096,
+		DefaultShell:        "/bin/bash",
+		AutoSave:            true,
+		OnModelSaved:        onSaved,
+		NewProviderProtocol: "openai",
 	}
 	sm.Load()
+	if sm.SelectedProviderID == "" {
+		profiles := sm.GetProfiles()
+		if len(profiles) > 0 {
+			sm.SelectedProviderID = profiles[0].ID
+		}
+	}
 	return sm
 }
 

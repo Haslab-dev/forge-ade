@@ -20,35 +20,37 @@ type AgentCLIDefinition struct {
 	Name        string   `json:"name"`
 	Executable  string   `json:"executable"`
 	Args        []string `json:"args"`
+	ResumeArgs  []string `json:"resumeArgs,omitempty"`
 	Description string   `json:"description"`
 	Available   bool     `json:"available"`
 }
 
 // DefaultAgentCLIs registers the official fallback agent CLIs from ForgeADE.
 var DefaultAgentCLIs = []AgentCLIDefinition{
-	{ID: "antigravity", Name: "Antigravity CLI", Executable: "agy", Args: []string{}, Description: "Official Google Antigravity CLI agent"},
-	{ID: "claude-code", Name: "Claude Code", Executable: "claude", Args: []string{}, Description: "Anthropic Claude Code terminal agent"},
-	{ID: "codex", Name: "Codex", Executable: "codex", Args: []string{}, Description: "OpenAI Codex CLI coding assistant"},
-	{ID: "opencode", Name: "OpenCode", Executable: "opencode", Args: []string{}, Description: "OpenCode terminal coding assistant"},
-	{ID: "commandcode", Name: "Command Code", Executable: "cmd", Args: []string{}, Description: "Command Code terminal agent with taste learning"},
-	{ID: "ohmypi", Name: "OhMyPi", Executable: "omp", Args: []string{}, Description: "OhMyPi terminal agent framework"},
-	{ID: "pi", Name: "Pi", Executable: "pi", Args: []string{}, Description: "Minimalist autonomous terminal agent"},
-	{ID: "gemini", Name: "Gemini CLI", Executable: "gemini", Args: []string{}, Description: "Google Gemini terminal AI assistant"},
+	{ID: "antigravity", Name: "Antigravity CLI", Executable: "agy", Args: []string{}, ResumeArgs: []string{"--continue"}, Description: "Official Google Antigravity CLI agent"},
+	{ID: "claude-code", Name: "Claude Code", Executable: "claude", Args: []string{}, ResumeArgs: []string{"--continue"}, Description: "Anthropic Claude Code terminal agent"},
+	{ID: "codex", Name: "Codex", Executable: "codex", Args: []string{}, ResumeArgs: []string{"resume", "--last"}, Description: "OpenAI Codex CLI coding assistant"},
+	{ID: "opencode", Name: "OpenCode", Executable: "opencode", Args: []string{}, ResumeArgs: []string{"--continue"}, Description: "OpenCode terminal coding assistant"},
+	{ID: "commandcode", Name: "Command Code", Executable: "cmd", Args: []string{}, ResumeArgs: []string{"--resume"}, Description: "Command Code terminal agent with taste learning"},
+	{ID: "ohmypi", Name: "OhMyPi", Executable: "omp", Args: []string{}, ResumeArgs: []string{"--continue"}, Description: "OhMyPi terminal agent framework"},
+	{ID: "pi", Name: "Pi", Executable: "pi", Args: []string{}, ResumeArgs: []string{"--continue"}, Description: "Minimalist autonomous terminal agent"},
+	{ID: "gemini", Name: "Gemini CLI", Executable: "gemini", Args: []string{}, ResumeArgs: []string{"--continue"}, Description: "Google Gemini terminal AI assistant"},
 }
 
 // AgentCLISession represents an interactive agent terminal task session.
 type AgentCLISession struct {
-	ID        string
-	AgentID   string
-	AgentName string
-	Title     string
-	Command   string
-	Args      []string
-	Cwd       string
-	Status    string // "running", "completed", "error"
-	ExitCode  int
-	StartedAt time.Time
-	Terminal  *terminal.TerminalState
+	ID         string
+	AgentID    string
+	AgentName  string
+	Title      string
+	Command    string
+	Args       []string
+	Cwd        string
+	Status     string // "running", "completed", "error"
+	ExitCode   int
+	StartedAt  time.Time
+	Terminal   *terminal.TerminalState
+	ResumeHint []string
 }
 
 // AgentCLIManager manages interactive Agent CLI sessions and on-disk CLI configuration discovery.
@@ -87,16 +89,18 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 	}
 
 	var records []struct {
-		ID               string `json:"id"`
-		AgentID          string `json:"agentId"`
-		AgentName        string `json:"agentName"`
-		Title            string `json:"title"`
-		Executable       string `json:"executable"`
-		WorkingDirectory string `json:"workingDirectory"`
-		Status           string `json:"status"`
-		CreatedAt        int64  `json:"createdAt"`
-		StartedAt        int64  `json:"startedAt"`
-		EndedAt          int64  `json:"endedAt"`
+		ID               string   `json:"id"`
+		AgentID          string   `json:"agentId"`
+		AgentName        string   `json:"agentName"`
+		Title            string   `json:"title"`
+		Executable       string   `json:"executable"`
+		Args             []string `json:"args"`
+		WorkingDirectory string   `json:"workingDirectory"`
+		Status           string   `json:"status"`
+		CreatedAt        int64    `json:"createdAt"`
+		StartedAt        int64    `json:"startedAt"`
+		EndedAt          int64    `json:"endedAt"`
+		ResumeHint       []string `json:"resumeHint"`
 	}
 	if err := json.Unmarshal(bytes, &records); err != nil {
 		return
@@ -116,7 +120,7 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 		// execute the raw escape sequences.
 		term := terminal.NewTerminalStateDeferred(r.WorkingDirectory)
 		if r.Executable != "" {
-			term.Command = []string{r.Executable}
+			term.Command = append([]string{r.Executable}, r.Args...)
 		}
 
 		status := r.Status
@@ -125,15 +129,17 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 		}
 
 		mgr.Sessions[r.ID] = &AgentCLISession{
-			ID:        r.ID,
-			AgentID:   r.AgentID,
-			AgentName: r.AgentName,
-			Title:     r.Title,
-			Command:   r.Executable,
-			Cwd:       r.WorkingDirectory,
-			Status:    status,
-			StartedAt: started,
-			Terminal:  term,
+			ID:         r.ID,
+			AgentID:    r.AgentID,
+			AgentName:  r.AgentName,
+			Title:      r.Title,
+			Command:    r.Executable,
+			Args:       r.Args,
+			Cwd:        r.WorkingDirectory,
+			Status:     status,
+			StartedAt:  started,
+			Terminal:   term,
+			ResumeHint: r.ResumeHint,
 		}
 		if mgr.ActiveID == "" && status == "running" {
 			mgr.ActiveID = r.ID
@@ -241,7 +247,12 @@ func (mgr *AgentCLIManager) CreateSession(agentID, agentName, command string, ar
 	title := fmt.Sprintf("%s Task", agentName)
 
 	term := terminal.NewTerminalStateDeferred(cwd)
-	term.Command = append([]string{command}, args...)
+	resolvedCmd, err := agentsession.LookPath(command)
+	if err == nil && resolvedCmd != "" {
+		term.Command = append([]string{resolvedCmd}, args...)
+	} else {
+		term.Command = append([]string{command}, args...)
+	}
 	status := "running"
 	if err := term.Restart(); err != nil {
 		status = "error"
@@ -302,18 +313,60 @@ func (mgr *AgentCLIManager) StopSession(sessionID string) {
 	mgr.mu.Unlock()
 }
 
-// RestartSession relaunches the session's CLI within the same record, as
-// forge-ade's Restart does — the executable becomes the new PTY program again.
+// getResumeArgs finds continuation flags for an agent CLI on restart.
+func (mgr *AgentCLIManager) getResumeArgs(agentID, command string) []string {
+	for _, def := range DefaultAgentCLIs {
+		if strings.EqualFold(def.ID, agentID) || strings.EqualFold(def.Executable, command) {
+			if len(def.ResumeArgs) > 0 {
+				return def.ResumeArgs
+			}
+		}
+	}
+
+	norm := strings.ToLower(agentID + " " + command)
+	if strings.Contains(norm, "codex") {
+		return []string{"resume", "--last"}
+	}
+	if strings.Contains(norm, "commandcode") || strings.Contains(norm, "cmd") {
+		return []string{"--resume"}
+	}
+	return []string{"--continue"}
+}
+
+// RestartSession relaunches the session's CLI within the same record, appending
+// ResumeArgs (e.g. --continue) or captured ResumeHint so the conversation carries over in the same workspace.
 func (mgr *AgentCLIManager) RestartSession(sessionID string) {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 
 	sess := mgr.Sessions[sessionID]
-	if sess == nil || sess.Terminal == nil || strings.TrimSpace(sess.Command) == "" {
+	if sess == nil || strings.TrimSpace(sess.Command) == "" {
 		return
 	}
-	sess.Terminal.Close()
-	sess.Terminal.Command = append([]string{sess.Command}, sess.Args...)
+	if sess.Terminal != nil {
+		sess.Terminal.Close()
+	} else {
+		cwd := sess.Cwd
+		if cwd == "" {
+			cwd = mgr.RootDir
+		}
+		sess.Terminal = terminal.NewTerminalStateDeferred(cwd)
+	}
+
+	resumeArgs := sess.ResumeHint
+	if len(resumeArgs) == 0 {
+		resumeArgs = mgr.getResumeArgs(sess.AgentID, sess.Command)
+	}
+	cmdArgs := append([]string{}, sess.Args...)
+	cmdArgs = append(cmdArgs, resumeArgs...)
+
+	resolvedCmd, err := agentsession.LookPath(sess.Command)
+	if err == nil && resolvedCmd != "" {
+		sess.Terminal.Command = append([]string{resolvedCmd}, cmdArgs...)
+	} else {
+		sess.Terminal.Command = append([]string{sess.Command}, cmdArgs...)
+	}
+
 	if err := sess.Terminal.Restart(); err != nil {
 		sess.Status = "error"
 		return

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -465,7 +466,27 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 			}
 			if a.prPane().DetailDiff != "" {
 				ui.Text(c, "Diff").FontSize(12).FontWeight(600)
-				renderToolOutputBox(c, tc, a.prPane().DetailDiff, false)
+				files, err := mygoeditor.ParsePatch(a.prPane().DetailDiff)
+				if err == nil && len(files) > 0 {
+					for idx, fp := range files {
+						fp := fp
+						fileName := fp.NewName
+						if fileName == "" {
+							fileName = fp.OldName
+						}
+						key := fmt.Sprintf("pr-%d-f-%d-%s", d.Number, idx, fileName)
+						diffState := a.Editor.GetOrCreatePatchDiff(key, fp, a.ThemeMgr)
+						ui.Column(c.Key("prdiff-"+key)).Radius(6).BorderWidth(1).BorderColor(tc.Border).Clip().Margin(0, 0, 8, 0).Children(func() {
+							ui.Row(c).Padding(6, 10).Background(tc.SurfaceRaised).AlignItems(ui.Center).Children(func() {
+								ui.Icon(c, icons.FileIconSVG(fileName)).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Text(c, fileName).FontSize(11).Font("monospace").FontWeight(600).Margin(0, 0, 0, 6)
+							})
+							mygoeditor.DiffView(c, diffState).FillWidth()
+						})
+					}
+				} else {
+					renderToolOutputBox(c, tc, a.prPane().DetailDiff, false)
+				}
 			}
 			// Comments
 			if len(d.Comments) > 0 {

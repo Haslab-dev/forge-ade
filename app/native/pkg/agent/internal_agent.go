@@ -67,28 +67,46 @@ func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, 
 		}
 	}
 	role := agent.RoleCoding
-	mgrSess, err := as.engine.AgentMgr.CreateSession(sess.Title, role, sess.WorkspacePath)
+	ws := sess.WorkspacePath
+	if ws == "" {
+		ws = as.workspacePath
+	}
+	if ws == "" && as.engine != nil {
+		ws = as.engine.DataDir
+	}
+	mgrSess, err := as.engine.AgentMgr.CreateSession(sess.Title, role, ws)
 	if err != nil {
 		return "", err
 	}
+	as.mu.Lock()
 	sess.RemoteSessionID = mgrSess.ID
+	as.mu.Unlock()
 	return mgrSess.ID, nil
 }
 
 // syncInternalSessionState pushes the current model / execution mode onto the
-// backing manager session before each turn, as SetAgentSessionModel and
-// agentExecutionMode do in forge-ade. The MODEL always comes from the ACTIVE
-// provider profile: stale per-session models (set under a previous provider)
-// would 401 against the current provider's key.
+// backing manager session before each turn. Must be called while as.mu is held.
 func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession) {
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return
 	}
-	activeModel := ""
+	activeModel := sess.Model
+	if activeModel == "" && as.ActiveModel != "" {
+		activeModel = as.ActiveModel
+	}
 	customProvider := false
 	if as.engine.LLMClient != nil {
 		cfg := as.engine.LLMClient.GetConfig()
-		activeModel = cfg.Model
+		if activeModel == "" {
+			activeModel = cfg.Model
+		} else {
+			prov := as.engine.LLMClient.FindProviderForModel(activeModel)
+			if prov != "" {
+				as.engine.LLMClient.SetActiveModel(prov, activeModel)
+			} else {
+				as.engine.LLMClient.SetActiveModelByID(activeModel)
+			}
+		}
 		// Custom OpenAI-compatible gateways (kenari, etc.) often serve models
 		// whose chat templates emit in-band XML tool calls instead of native
 		// tool_calls — the manager's xml dialect parses those.
@@ -98,14 +116,9 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 			!strings.Contains(cfg.BaseURL, "api.deepseek.com") &&
 			!strings.Contains(cfg.BaseURL, "localhost") && !strings.Contains(cfg.BaseURL, "127.0.0.1")
 	}
-	if activeModel == "" {
-		activeModel = sess.Model
-	}
 	if activeModel != "" {
 		_ = as.engine.AgentMgr.SetSessionModel(mgrID, activeModel)
-		as.mu.Lock()
 		sess.Model = activeModel
-		as.mu.Unlock()
 	}
 	if customProvider {
 		_ = as.engine.AgentMgr.SetDialect(mgrID, "xml")

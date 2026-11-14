@@ -177,6 +177,17 @@ func (em *EditorManager) SetPaneWeight(i int, w float32) {
 	em.PaneWeights[i] = w
 }
 
+// MoveTabToPane moves a document path to a destination pane index.
+func (em *EditorManager) MoveTabToPane(path string, targetPane int) {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if len(em.Panes) <= targetPane || targetPane < 0 {
+		return
+	}
+	em.Panes[targetPane] = path
+	em.ActivePath = path
+}
+
 // EnsurePanes seeds single-pane layout from the legacy IsSplit flag.
 func (em *EditorManager) EnsurePanes() {
 	em.mu.Lock()

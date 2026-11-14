@@ -13,6 +13,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -239,9 +240,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						// Agent message: full lane width (centered via the insets),
 						// work blocks and markdown spanning the lane like forge-ade.
 						ui.Column(c.Key("arow")).Padding(8, leftInset, 8, leftInset).Gap(6).Children(func() {
-							// Hover copy action for the whole message (ZCode parity).
+							// Message action bar: Copy, ThumbsUp, ThumbsDown, Checkpoint (1:1 with AgentActiveSessionView)
 							if m.Done && (m.Text != "" || len(m.Tools) > 0) {
-								ui.Row(c).Justify(ui.End).Children(func() {
+								ui.Row(c).Justify(ui.End).Gap(4).AlignItems(ui.Center).Children(func() {
+									// Copy
 									acopy := ui.Row(c.Key("acopy-"+fmt.Sprint(m.ID))).Height(22).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
 									acopy.Children(func() {
 										ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.TextMuted)
@@ -254,6 +256,59 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										mygo.Clipboard.WriteText(messagePlainText(m))
 										c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
 									}
+
+									// Thumbs Up
+									upBtn := ui.Row(c.Key("thumb-up-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+									upColor := tc.IconMuted
+									if m.Feedback == "up" {
+										upColor = tc.Success
+									}
+									upBtn.Children(func() {
+										ui.Icon(c, icons.TablerThumbUp).Width(12).Height(12).TextColor(upColor)
+									})
+									if upBtn.Clicked() {
+										if m.Feedback == "up" {
+											m.Feedback = ""
+										} else {
+											m.Feedback = "up"
+											c.AddToast(ui.Toast{Title: "Response rated helpful", Type: "success"})
+										}
+									}
+
+									// Thumbs Down
+									downBtn := ui.Row(c.Key("thumb-down-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+									downColor := tc.IconMuted
+									if m.Feedback == "down" {
+										downColor = tc.Error
+									}
+									downBtn.Children(func() {
+										ui.Icon(c, icons.TablerThumbDown).Width(12).Height(12).TextColor(downColor)
+									})
+									if downBtn.Clicked() {
+										if m.Feedback == "down" {
+											m.Feedback = ""
+										} else {
+											m.Feedback = "down"
+											c.AddToast(ui.Toast{Title: "Response rated unhelpful", Type: "info"})
+										}
+									}
+
+									// Restore turn checkpoint (if available)
+									if sess != nil && sess.LastCheckpointTurnID != "" {
+										cpBtn := ui.Row(c.Key("cp-restore-"+fmt.Sprint(m.ID))).Height(22).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center)
+										cpBtn.Children(func() {
+											ui.Icon(c, icons.TablerRotate).Width(11).Height(11).TextColor(tc.IconMuted)
+											ui.Text(c, "Checkpoint").FontSize(10).TextColor(tc.TextMuted)
+										})
+										if cpBtn.Hovered() {
+											cpBtn.Background(tc.Text.Alpha(0.06))
+										}
+										if cpBtn.Clicked() {
+											if err := as.RestoreLastTurnCheckpoint(sess.ID); err == nil {
+												c.AddToast(ui.Toast{Title: "Checkpoint Restored", Type: "success"})
+											}
+										}
+									}
 								})
 							}
 
@@ -261,16 +316,19 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
 							if hasWork {
 								a.renderWorkPill(c, tc, m)
-								work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
-									BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
-								work.Children(func() {
-									if m.Thinking != "" || m.IsThinking {
-										a.renderThinkingBlock(c, tc, m)
-									}
-									if len(m.Tools) > 0 {
-										a.renderFoldedToolTraces(c, tc, m)
-									}
-								})
+								open := m.ShowTools || (!m.Done && m.IsThinking)
+								if open {
+									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+									work.Children(func() {
+										if m.Thinking != "" || m.IsThinking {
+											a.renderThinkingBlock(c, tc, m)
+										}
+										if len(m.Tools) > 0 {
+											a.renderFoldedToolTraces(c, tc, m)
+										}
+									})
+								}
 							}
 
 							// Turn Changes Card
@@ -472,7 +530,8 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 			m.ShowThinking = !m.ShowThinking
 		}
 
-		if m.ShowThinking && m.Thinking != "" {
+		showCoT := m.ShowThinking || (!m.Done && isThinking)
+		if showCoT && m.Thinking != "" {
 			card := ui.Column(c).Padding(10, 12).Radius(8).
 				Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Gap(8)
 			card.Children(func() {
@@ -556,7 +615,7 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 		}
 
 		// Individual tool rows
-		if m.ShowTools || len(ordinary) == 1 {
+		if m.ShowTools || (!m.Done && len(ordinary) > 0) {
 			for _, tool := range ordinary {
 				thisTool := tool
 				args := parseToolArgs(thisTool.Command, thisTool.ToolName)
@@ -565,6 +624,7 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
 				isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
 				isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find")
+				isSubagent := strings.Contains(nl, "invoke_subagent") || strings.Contains(nl, "subagent") || nl == "task" || strings.Contains(nl, "spawn_subagent")
 				failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
 
 				toolIcon := icons.TablerTerminal
@@ -574,12 +634,38 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 					toolIcon = icons.TablerFilePen
 				} else if isSearch {
 					toolIcon = icons.TablerSearch
+				} else if isSubagent {
+					toolIcon = icons.TablerBot
 				}
 
 				// Row label + kind badge, as forge-ade's [Write]/[Read]/[$] chips.
 				badge := ""
 				displayLabel := thisTool.ToolName
-				if isEdit {
+				if isSubagent {
+					badge = "Subagent"
+					role := "Subagent"
+					taskPrompt := ""
+					var rawArgs map[string]interface{}
+					if json.Unmarshal([]byte(thisTool.Command), &rawArgs) == nil {
+						if r, ok := rawArgs["Role"].(string); ok && r != "" {
+							role = r
+						} else if r, ok := rawArgs["role"].(string); ok && r != "" {
+							role = r
+						} else if r, ok := rawArgs["TypeName"].(string); ok && r != "" {
+							role = r
+						}
+						if p, ok := rawArgs["Prompt"].(string); ok {
+							taskPrompt = p
+						} else if p, ok := rawArgs["prompt"].(string); ok {
+							taskPrompt = p
+						}
+					}
+					if taskPrompt != "" {
+						displayLabel = fmt.Sprintf("%s: %s", role, taskPrompt)
+					} else {
+						displayLabel = role
+					}
+				} else if isEdit {
 					badge = "Write"
 					if nl != "write" && (strings.Contains(nl, "edit") || strings.Contains(nl, "patch")) {
 						badge = "Edit"
@@ -663,12 +749,41 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 							}
 
 							switch {
+							case isSubagent:
+								ui.Column(c).Gap(6).Children(func() {
+									ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+										ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.Accent)
+										ui.Text(c, displayLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
+										openSubBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+											Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+										openSubBtn.Children(func() {
+											ui.Text(c, "View in Drawer").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+										})
+										if openSubBtn.Clicked() {
+											a.RightDrawerTab = RightTabSubagent
+											a.ShowRightDrawer = true
+										}
+									})
+									if cleanOut != "" {
+										renderToolOutputBox(c, tc, cleanOut, failed)
+									}
+								})
 							case isRead && args.Path != "":
 								a.renderToolReadBlock(c, tc, args.Path, cleanOut)
 							case isEdit && (args.OldString != "" || args.NewString != ""):
-								// Edit tool: colored old/new snippet, as the
-								// webview tool view's diff body.
-								renderToolEditDiff(c, tc, args.OldString, args.NewString)
+								a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
+							case strings.Contains(cleanOut, "@@ -") && (strings.Contains(cleanOut, "+++") || strings.Contains(cleanOut, "---")):
+								// Unified patch output: parse into MyGo DiffView
+								d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, cleanOut, a.ThemeMgr)
+								if d != nil {
+									d.FitContent = true
+									box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+									box.Children(func() {
+										mygoeditor.DiffView(c, d).FillWidth()
+									})
+								} else if cleanOut != "" {
+									renderToolOutputBox(c, tc, cleanOut, failed)
+								}
 							case isBash:
 								cmdStr := args.Cmd
 								if cmdStr == "" {
@@ -708,7 +823,8 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 }
 
 // renderToolReadBlock draws forge-ade's ToolReadBlock: a file header with
-// Open-in-Side-Viewer + Copy actions, then line-numbered content.
+// Open-in-Side-Viewer + Copy actions, then uses MyGo's internal read-only
+// editor component for syntax highlighting, line numbers, and selections.
 func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, output string) {
 	fileName := filepath.Base(path)
 
@@ -750,31 +866,15 @@ func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, o
 			}
 		})
 
-		// Line-numbered content (up to 40 lines), like the original's gutter.
-		ui.Column(c).Padding(6, 8).Children(func() {
-			lines := strings.Split(output, "\n")
-			maxLines := 40
-			shown := lines
-			truncated := false
-			if len(lines) > maxLines {
-				shown = lines[:maxLines]
-				truncated = true
-			}
-			for i, line := range shown {
-				idx := i
-				text := line
-				ui.Row(c.Key(fmt.Sprintf("rl-%d", idx))).Padding(1, 0).Gap(10).AlignItems(ui.Start).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d", idx+1)).Width(24).FontSize(10).Font("monospace").
-						TextColor(tc.TextMuted.Alpha(0.6))
-					ui.Text(c, text).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
+		// Internal MyGo Editor component (Read-only, syntax highlighted)
+		if a.Editor != nil && output != "" {
+			edState := a.Editor.GetOrCreateReadOnlyEditor("read-"+path, path, output, a.ThemeMgr)
+			if edState != nil {
+				ui.Box(c).Padding(4, 6).Children(func() {
+					mygoeditor.View(c, edState).FillWidth()
 				})
 			}
-			if truncated {
-				ui.Row(c).Padding(6, 2, 0, 2).Justify(ui.Center).Children(func() {
-					ui.Text(c, fmt.Sprintf("Truncated (+%d lines)", len(lines)-maxLines)).FontSize(10).TextColor(tc.TextMuted)
-				})
-			}
-		})
+		}
 	})
 }
 
@@ -1167,6 +1267,37 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					return false
 				}
 				if k.Key == ui.KeyEnter && k.Mods == 0 {
+					trimmed := strings.TrimSpace(as.InputText)
+					if trimmed == "/usage" {
+						a.openUsageModal()
+						as.InputText = ""
+						k.SetText("")
+						return true
+					}
+					if trimmed == "/settings" || trimmed == "/setup" {
+						a.Mode = ModeSettings
+						if a.Settings != nil {
+							a.Settings.IsOpen = true
+						}
+						as.InputText = ""
+						k.SetText("")
+						return true
+					}
+					if trimmed == "/model" {
+						a.ShowModelPalette = true
+						a.ModelSearchQuery = ""
+						as.InputText = ""
+						k.SetText("")
+						return true
+					}
+					if trimmed == "/clear" {
+						if sess := as.ActiveSession(); sess != nil {
+							sess.Messages = nil
+						}
+						as.InputText = ""
+						k.SetText("")
+						return true
+					}
 					as.SubmitMessage()
 					k.SetText("")
 					return true
@@ -1225,6 +1356,35 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				}
 				if m.Item("Attach Workspace File...").Chosen() {
 					a.Palette.Toggle()
+				}
+				m.Separator()
+				if m.Item("Skills Context (@skills)").Chosen() {
+					if as.InputText != "" && !strings.HasSuffix(as.InputText, " ") {
+						as.InputText += " "
+					}
+					as.InputText += "@skills "
+				}
+				if m.Item("MCP Tools Context (@mcp)").Chosen() {
+					if as.InputText != "" && !strings.HasSuffix(as.InputText, " ") {
+						as.InputText += " "
+					}
+					as.InputText += "@mcp "
+				}
+				if m.Item("Git Status & Diff (@git)").Chosen() {
+					if as.InputText != "" && !strings.HasSuffix(as.InputText, " ") {
+						as.InputText += " "
+					}
+					as.InputText += "@git "
+				}
+				if m.Item("Terminal Output (@terminal)").Chosen() {
+					if as.InputText != "" && !strings.HasSuffix(as.InputText, " ") {
+						as.InputText += " "
+					}
+					as.InputText += "@terminal "
+				}
+				m.Separator()
+				if m.Item("Stash Current Prompt").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+					as.StashPrompt()
 				}
 			})
 
@@ -1411,7 +1571,28 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						ui.Icon(c, icons.TablerArrowUp).Width(16).Height(16).TextColor(tc.MessageActionForeground)
 					})
 					if sendBtn.Clicked() {
-						as.SubmitMessage()
+						trimmed := strings.TrimSpace(as.InputText)
+						if trimmed == "/usage" {
+							a.openUsageModal()
+							as.InputText = ""
+						} else if trimmed == "/settings" || trimmed == "/setup" {
+							a.Mode = ModeSettings
+							if a.Settings != nil {
+								a.Settings.IsOpen = true
+							}
+							as.InputText = ""
+						} else if trimmed == "/model" {
+							a.ShowModelPalette = true
+							a.ModelSearchQuery = ""
+							as.InputText = ""
+						} else if trimmed == "/clear" {
+							if sess := as.ActiveSession(); sess != nil {
+								sess.Messages = nil
+							}
+							as.InputText = ""
+						} else {
+							as.SubmitMessage()
+						}
 					}
 				} else {
 					sendBtn.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
@@ -1873,6 +2054,7 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 
 	ui.Column(c).Fill().Children(func() {
 		a.CLIMgr.SyncExitStatus()
+		isRunning := sess.Status == "running" && sess.Terminal != nil && !sess.Terminal.IsExited()
 
 		// Session Top Bar: one title, real status, elapsed, Stop/Restart.
 		ui.Row(c).Gap(10).Padding(8, 14).AlignItems(ui.Center).Background(t.Surface).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
@@ -1888,7 +2070,6 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 
 			ui.Box(c).Grow(1)
 
-			isRunning := sess.Status == "running" && sess.Terminal != nil && !sess.Terminal.IsExited()
 			if isRunning {
 				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 					ui.Box(c).Size(7, 7).Radius(4).Background(t.Accent)
@@ -1933,9 +2114,54 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 		})
 
 		// Terminal viewport
-		ui.Column(c).Grow(1).FillHeight().Children(func() {
-			if sess.Terminal != nil {
+		ui.Box(c).Grow(1).FillHeight().Children(func() {
+			if sess.Terminal != nil && sess.Terminal.Term() != nil {
 				a.renderTerminal(c, sess.Terminal)
+			} else {
+				// Empty state for restored / ended CLI session
+				ui.Column(c).Grow(1).Fill().Center().Gap(14).Children(func() {
+					ui.Box(c).Size(56, 56).Radius(14).Background(t.Surface).BorderWidth(1).BorderColor(t.Border).
+						AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+						icons.RenderProviderIcon(c, sess.AgentID, 28)
+					})
+					ui.Column(c).AlignItems(ui.Center).Gap(4).Children(func() {
+						ui.Text(c, sess.Title).FontSize(16).FontWeight(600).TextColor(t.Text)
+						ui.Text(c, fmt.Sprintf("Agent CLI session in %s", sess.Cwd)).FontSize(12).TextColor(t.TextMuted)
+					})
+					resumeBtn := ui.Row(c.Key("cli-resume-btn")).Height(32).Radius(8).Padding(0, 16).Gap(6).
+						AlignItems(ui.Center).Background(t.Accent).Cursor(ui.CursorPointer)
+					resumeBtn.Children(func() {
+						ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(ui.Hex("#FFFFFF"))
+						ui.Text(c, "Resume Session").FontSize(12).FontWeight(600).TextColor(ui.Hex("#FFFFFF"))
+					})
+					if resumeBtn.Clicked() {
+						a.CLIMgr.RestartSession(sess.ID)
+					}
+				})
+			}
+
+			// Floating Session Ended Overlay matching webview's SessionEndedOverlay
+			if !isRunning {
+				ui.Row(c).Absolute().Bottom(16).FillWidth().Justify(ui.Center).Children(func() {
+					ui.Row(c.Key("cli-ended-overlay")).Radius(999).Padding(4, 12).Gap(8).AlignItems(ui.Center).
+						Background(t.Surface.Alpha(0.95)).BorderWidth(1).BorderColor(t.Border).
+						Shadow(0, 8, 24, 0, ui.RGBA(0, 0, 0, 0.35)).Children(func() {
+						statusText := "Session ended"
+						if sess.ExitCode != 0 {
+							statusText = fmt.Sprintf("Session ended · exit %d", sess.ExitCode)
+						}
+						ui.Text(c, statusText).FontSize(11).TextColor(t.TextMuted)
+						reBtn := ui.Row(c.Key("overlay-re-btn")).Height(22).Radius(999).Padding(0, 10).Gap(4).
+							AlignItems(ui.Center).Background(t.Accent).Cursor(ui.CursorPointer)
+						reBtn.Children(func() {
+							ui.Icon(c, icons.TablerRotate).Width(11).Height(11).TextColor(ui.Hex("#FFFFFF"))
+							ui.Text(c, "Restart").FontSize(11).FontWeight(600).TextColor(ui.Hex("#FFFFFF"))
+						})
+						if reBtn.Clicked() {
+							a.CLIMgr.RestartSession(sess.ID)
+						}
+					})
+				})
 			}
 		})
 	})
@@ -2347,49 +2573,18 @@ func userMessageAttachments(text string) []string {
 }
 
 // renderToolEditDiff draws the old/new strings of an edit tool call as a
-// colored diff snippet: red − lines for removed text, green + lines for
-// added text, capped like the webview's inline diff bodies.
-func renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, oldStr, newStr string) {
-	const maxRows = 24
-	rows := 0
-	truncated := false
-
+// native MyGo DiffView with syntax coloring, line numbers, and word-level diff highlights.
+func (a *AppUI) renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, key, oldStr, newStr string) {
+	if oldStr == "" && newStr == "" {
+		return
+	}
+	d := a.Editor.GetOrCreateBufferDiff("tool-edit-"+key, oldStr, newStr, a.ThemeMgr)
+	if d == nil {
+		return
+	}
 	box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
 	box.Children(func() {
-		emit := func(prefix string, text string, color ui.Color) {
-			if rows >= maxRows {
-				truncated = true
-				return
-			}
-			lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-			for _, ln := range lines {
-				if rows >= maxRows {
-					truncated = true
-					break
-				}
-				shown := ln
-				if len(shown) > 160 {
-					shown = shown[:157] + "…"
-				}
-				rowText := shown
-				row := ui.Row(c.Key(fmt.Sprintf("ed-%s-%d", prefix, rows))).Padding(1, 8).Background(color.Alpha(0.08))
-				row.Children(func() {
-					ui.Text(c, prefix+rowText).FontSize(11).Font("monospace").TextColor(color).SingleLine().Selectable()
-				})
-				rows++
-			}
-		}
-		if oldStr != "" {
-			emit("-", oldStr, tc.DiffDeletionForeground)
-		}
-		if newStr != "" {
-			emit("+", newStr, tc.DiffAdditionForeground)
-		}
-		if truncated {
-			ui.Row(c).Padding(2, 8).Children(func() {
-				ui.Text(c, fmt.Sprintf("… diff truncated at %d lines", maxRows)).FontSize(10).TextColor(tc.TextMuted)
-			})
-		}
+		mygoeditor.DiffView(c, d).FillWidth()
 	})
 }
 

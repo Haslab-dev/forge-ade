@@ -29,11 +29,15 @@ type uiPrefs struct {
 	FollowAgent          bool    `json:"follow_agent"`
 	AgentViewMode        string  `json:"agent_view_mode"`
 	LeftSidebarView      string  `json:"left_sidebar_view"`
+	SidebarListView      string  `json:"sidebar_list_view"`
 	ProjectFilter        string  `json:"project_filter"`
 	TaskSortBy           string  `json:"task_sort_by"`
 }
 
-func prefsPath() string {
+func (a *AppUI) prefsPath() string {
+	if a != nil && a.Engine != nil && a.Engine.DataDir != "" {
+		return filepath.Join(a.Engine.DataDir, "ui-prefs.json")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
@@ -43,7 +47,7 @@ func prefsPath() string {
 
 // loadUIPrefs applies persisted preferences onto the app state + theme.
 func (a *AppUI) loadUIPrefs() {
-	path := prefsPath()
+	path := a.prefsPath()
 	if path == "" {
 		return
 	}
@@ -99,6 +103,10 @@ func (a *AppUI) loadUIPrefs() {
 	case "tasks", "files":
 		a.LeftSidebarView = p.LeftSidebarView
 	}
+	switch p.SidebarListView {
+	case "project", "timeline":
+		a.SidebarListView = p.SidebarListView
+	}
 	if p.ProjectFilter != "" {
 		a.ProjectFilter = p.ProjectFilter
 	}
@@ -110,7 +118,7 @@ func (a *AppUI) loadUIPrefs() {
 
 // SaveUIPrefs snapshots the current preferences to disk (best effort).
 func (a *AppUI) SaveUIPrefs() {
-	path := prefsPath()
+	path := a.prefsPath()
 	if path == "" {
 		return
 	}
@@ -128,6 +136,7 @@ func (a *AppUI) SaveUIPrefs() {
 		FollowAgent:          a.FollowAgent,
 		AgentViewMode:        a.AgentViewMode,
 		LeftSidebarView:      a.LeftSidebarView,
+		SidebarListView:      a.SidebarListView,
 		ProjectFilter:        a.ProjectFilter,
 		TaskSortBy:           a.TaskSortBy,
 	}

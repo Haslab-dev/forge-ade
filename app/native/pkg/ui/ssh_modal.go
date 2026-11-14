@@ -769,7 +769,7 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 
 				actionItem(icons.TablerUpload, "Upload Files to Remote", "Pick local files and upload them over SFTP", "", false, func() {
 					a.ShowSSHQuickMenu = false
-					a.uploadFilesToRemote(c, remotePath)
+					a.OpenRemoteFileUploader(remotePath)
 				})
 
 				actionItem(icons.TablerUnplug, "Disconnect SSH Remote", "Close remote workspace and return to local files", "", true, func() {
@@ -820,4 +820,278 @@ func (a *AppUI) uploadFilesToRemote(c *ui.Context, remoteDir string) {
 		}
 		win.Invalidate()
 	}()
+}
+
+// renderRemoteFileUploaderModal renders the full SFTP file/folder upload modal (RemoteFileUploaderModal parity).
+func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
+	tc := a.ThemeMgr.Colors()
+
+	if c.Shortcut(0, ui.KeyEscape) {
+		a.ShowRemoteUploadModal = false
+	}
+
+	ui.Modal(c, &a.ShowRemoteUploadModal, func() {
+		ui.Column(c).Width(600).Radius(12).Background(tc.Surface).
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			// Header
+			ui.Row(c).Height(56).Padding(0, 16).AlignItems(ui.Center).
+				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+				ui.Row(c).Size(32, 32).Radius(8).Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerUpload).Width(16).Height(16).TextColor(tc.Accent)
+				})
+				ui.Box(c).Width(10)
+				ui.Column(c).Grow(1).Children(func() {
+					ui.Text(c, "Remote File Uploader").FontSize(13).FontWeight(600).TextColor(tc.Text)
+					ui.Text(c, "Upload local files or directories to remote server via SFTP").FontSize(10).TextColor(tc.TextMuted)
+				})
+				closeBtn := ui.Row(c).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+				closeBtn.Children(func() {
+					ui.Icon(c, icons.TablerX).Width(14).Height(14).TextColor(tc.IconMuted)
+				})
+				if closeBtn.Hovered() {
+					closeBtn.Background(tc.Text.Alpha(0.08))
+				}
+				if closeBtn.Clicked() {
+					a.ShowRemoteUploadModal = false
+				}
+			})
+
+			// Target Directory input
+			ui.Column(c).Padding(12, 16).Gap(4).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+				ui.Text(c, "Remote Target Directory").FontSize(11).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.Accent)
+					ui.TextInput(c, &a.RemoteUploadTargetDir).Placeholder("/remote/path/destination").Grow(1)
+				})
+			})
+
+			// Add Files / Browse area
+			ui.Column(c).Padding(12, 16).Gap(8).Children(func() {
+				dropBox := ui.Column(c).Radius(8).Padding(16, 20).Background(tc.Canvas.Alpha(0.5)).
+					BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).AlignItems(ui.Center).Gap(8)
+				dropBox.Children(func() {
+					ui.Icon(c, icons.TablerUpload).Width(24).Height(24).TextColor(tc.IconMuted)
+					ui.Text(c, "Select local files or whole directories to upload").FontSize(11).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(8).Children(func() {
+						addFilesBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 10).Background(tc.SurfaceRaised).
+							BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Gap(6)
+						addFilesBtn.Children(func() {
+							ui.Icon(c, icons.TablerFileText).Width(12).Height(12).TextColor(tc.Text)
+							ui.Text(c, "Browse Files…").FontSize(11).FontWeight(500).TextColor(tc.Text)
+						})
+						if addFilesBtn.Hovered() {
+							addFilesBtn.Background(tc.Text.Alpha(0.06))
+						}
+						if addFilesBtn.Clicked() && a.Window != nil {
+							win := a.Window
+							go func() {
+								paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+									Parent:   win,
+									Title:    "Select Files to Upload",
+									Multiple: true,
+								})
+								if err == nil && len(paths) > 0 {
+									for _, p := range paths {
+										info, _ := os.Stat(p)
+										var sz int64
+										if info != nil {
+											sz = info.Size()
+										}
+										name := filepath.Base(p)
+										dest := filepath.Join(a.RemoteUploadTargetDir, name)
+										a.RemoteUploadQueue = append(a.RemoteUploadQueue, RemoteUploadItem{
+											ID:        fmt.Sprintf("up-%d-%s", time.Now().UnixNano(), name),
+											LocalPath: p,
+											Name:      name,
+											Size:      sz,
+											DestPath:  dest,
+											Status:    "pending",
+										})
+									}
+									win.Invalidate()
+								}
+							}()
+						}
+
+						addFolderBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 10).Background(tc.SurfaceRaised).
+							BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Gap(6)
+						addFolderBtn.Children(func() {
+							ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.Text)
+							ui.Text(c, "Browse Folder…").FontSize(11).FontWeight(500).TextColor(tc.Text)
+						})
+						if addFolderBtn.Hovered() {
+							addFolderBtn.Background(tc.Text.Alpha(0.06))
+						}
+						if addFolderBtn.Clicked() && a.Window != nil {
+							win := a.Window
+							go func() {
+								dirPaths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+									Parent:    win,
+									Title:     "Select Folder to Upload",
+									Directory: true,
+								})
+								if err == nil && len(dirPaths) > 0 && dirPaths[0] != "" {
+									dirPath := dirPaths[0]
+									name := filepath.Base(dirPath)
+									dest := filepath.Join(a.RemoteUploadTargetDir, name)
+									a.RemoteUploadQueue = append(a.RemoteUploadQueue, RemoteUploadItem{
+										ID:        fmt.Sprintf("up-%d-%s", time.Now().UnixNano(), name),
+										LocalPath: dirPath,
+										Name:      name,
+										Size:      0,
+										DestPath:  dest,
+										Status:    "pending",
+									})
+									win.Invalidate()
+								}
+							}()
+						}
+					})
+				})
+
+				// Queue items
+				if len(a.RemoteUploadQueue) == 0 {
+					ui.Row(c).Padding(12, 0).Justify(ui.Center).Children(func() {
+						ui.Text(c, "Upload queue is empty").FontSize(11).TextColor(tc.TextMuted)
+					})
+				} else {
+					ui.Row(c).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, fmt.Sprintf("Queue (%d items)", len(a.RemoteUploadQueue))).FontSize(11).FontWeight(600).TextColor(tc.Text).Grow(1)
+						clearBtn := ui.Row(c).Padding(2, 6).Radius(4)
+						clearBtn.Children(func() {
+							ui.Text(c, "Clear all").FontSize(10).TextColor(tc.TextMuted)
+						})
+						if clearBtn.Hovered() {
+							clearBtn.Background(tc.Text.Alpha(0.06))
+						}
+						if clearBtn.Clicked() && !a.RemoteUploadIsUploading {
+							a.RemoteUploadQueue = nil
+						}
+					})
+
+					scroll := ui.Scroll(c).MaxHeight(200)
+					scroll.Children(func() {
+						ui.Column(c).Gap(4).Children(func() {
+							for idx, item := range a.RemoteUploadQueue {
+								itemIdx := idx
+								it := item
+								row := ui.Row(c.Key("upq-"+it.ID)).Height(32).Padding(0, 8).Radius(6).
+									Background(tc.Canvas.Alpha(0.6)).AlignItems(ui.Center).Gap(8)
+								row.Children(func() {
+									ui.Icon(c, icons.FileIconSVG(it.Name)).Width(14).Height(14).TextColor(tc.IconMuted)
+									ui.Text(c, it.Name).FontSize(11).Font("monospace").TextColor(tc.Text).SingleLine().Grow(1)
+									if it.Size > 0 {
+										ui.Text(c, formatBytes(it.Size)).FontSize(10).TextColor(tc.TextMuted)
+									}
+									// Status pill
+									switch it.Status {
+									case "pending":
+										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).Children(func() {
+											ui.Text(c, "Pending").FontSize(9).TextColor(tc.TextMuted)
+										})
+									case "uploading":
+										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Accent.Alpha(0.15)).Children(func() {
+											ui.Text(c, "Uploading…").FontSize(9).FontWeight(600).TextColor(tc.Accent)
+										})
+									case "completed":
+										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Success.Alpha(0.15)).Children(func() {
+											ui.Text(c, "Uploaded").FontSize(9).FontWeight(600).TextColor(tc.Success)
+										})
+									case "error":
+										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Error.Alpha(0.15)).Children(func() {
+											ui.Text(c, "Failed").FontSize(9).FontWeight(600).TextColor(tc.Error)
+										})
+									}
+									if !a.RemoteUploadIsUploading {
+										rmBtn := ui.Row(c).Size(18, 18).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
+										rmBtn.Children(func() {
+											ui.Icon(c, icons.TablerX).Width(11).Height(11).TextColor(tc.IconMuted)
+										})
+										if rmBtn.Hovered() {
+											rmBtn.Background(tc.Text.Alpha(0.08))
+										}
+										if rmBtn.Clicked() {
+											a.RemoteUploadQueue = append(a.RemoteUploadQueue[:itemIdx], a.RemoteUploadQueue[itemIdx+1:]...)
+										}
+									}
+								})
+							}
+						})
+					})
+				}
+			})
+
+			// Footer Actions
+			ui.Row(c).Height(48).Padding(0, 16).AlignItems(ui.Center).
+				Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
+				cancelBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+					BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
+				cancelBtn.Children(func() {
+					ui.Text(c, "Close").FontSize(11).TextColor(tc.Text)
+				})
+				if cancelBtn.Hovered() {
+					cancelBtn.Background(tc.Text.Alpha(0.05))
+				}
+				if cancelBtn.Clicked() {
+					a.ShowRemoteUploadModal = false
+				}
+
+				ui.Box(c).Grow(1)
+
+				if len(a.RemoteUploadQueue) > 0 {
+					uploadBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 14).
+						Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+					uploadBtn.Children(func() {
+						if a.RemoteUploadIsUploading {
+							ui.Spinner(c).Size(12, 12).Label("Uploading")
+							ui.Text(c, "Uploading…").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+						} else {
+							ui.Icon(c, icons.TablerUpload).Width(12).Height(12).TextColor(tc.Canvas)
+							ui.Text(c, fmt.Sprintf("Upload All (%d)", len(a.RemoteUploadQueue))).FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+						}
+					})
+					if !a.RemoteUploadIsUploading && uploadBtn.Clicked() && a.Engine != nil && a.Engine.RemoteFS != nil {
+						a.RemoteUploadIsUploading = true
+						win := a.Window
+						targetDir := a.RemoteUploadTargetDir
+						go func() {
+							for i := range a.RemoteUploadQueue {
+								a.RemoteUploadQueue[i].Status = "uploading"
+								if win != nil {
+									win.Invalidate()
+								}
+								dest := filepath.Join(targetDir, a.RemoteUploadQueue[i].Name)
+								err := a.Engine.RemoteFS.UploadFileToRemote(a.RemoteUploadQueue[i].LocalPath, dest)
+								if err != nil {
+									a.RemoteUploadQueue[i].Status = "error"
+									a.RemoteUploadQueue[i].ErrorMsg = err.Error()
+								} else {
+									a.RemoteUploadQueue[i].Status = "completed"
+								}
+								if win != nil {
+									win.Invalidate()
+								}
+							}
+							a.RemoteUploadIsUploading = false
+							a.Workspace.Refresh()
+							if win != nil {
+								win.Invalidate()
+							}
+						}()
+					}
+				}
+			})
+		})
+	})
+}
+
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else if bytes < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	}
+	return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
 }

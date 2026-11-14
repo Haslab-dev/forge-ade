@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
@@ -204,6 +205,8 @@ type taskRowData struct {
 	Pinned      bool
 	Archived    bool
 	Snoozed     bool
+	IsCLI       bool
+	ProjectName string
 	AgentID     string
 	Model       string // provider/model used, drives the brand icon lookup
 	UpdatedTime time.Time
@@ -241,57 +244,76 @@ func relativeTime(t time.Time) string {
 	}
 }
 
-// providerGlyph returns the small brand glyph of an agent harness, as
-// forge-ade's ProviderIcon does for the built-in agents.
-func providerGlyph(agentID string) (glyph rune, color ui.Color, ok bool) {
-	switch agentID {
-	case "agent-agy":
-		return '◆', ui.Hex("#4285f4"), true
-	case "agent-claude":
-		return '✳', ui.Hex("#d97757"), true
-	case "agent-codex":
-		return '✦', ui.Hex("#10a37f"), true
-	case "agent-gemini":
-		return '✦', ui.Hex("#8e44ec"), true
-	default:
-		return 0, ui.Color{}, false
-	}
-}
-
 // renderTaskRow draws AgentSidebar's TaskRow: rounded-[8px] py-1.5 pl-2.5
-// pr-2 gap-2, active bg-foreground/10, provider glyph with a status dot
+// pr-2 gap-2, active bg-foreground/10, real provider brand SVG icon with status dot
 // pinned to its corner (running/awaiting only — idle rows show no dot),
+// CLI sessions display agent brand icon + terminal icon group,
 // single-line title with inline pin, relative time, hover-only actions.
 func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	row := ui.Row(c.Key(d.Key)).Radius(8).Padding(6, 8, 6, 10).Gap(8).AlignItems(ui.Center)
 	isRunning := d.Status == "running" || d.Status == "working"
 	isAwaiting := d.Status == "awaiting-approval" || d.Status == "waiting"
+
+	if d.Active {
+		row.Background(tc.SidebarRowActive)
+	} else if row.Hovered() {
+		row.Background(tc.SidebarRowHover)
+	}
+
+	if d.Archived && !d.Active {
+		row.Opacity(0.65)
+	} else if d.Snoozed && !d.Active {
+		row.Opacity(0.5)
+	}
+
 	row.Children(func() {
-		// Provider glyph with the status dot overlaid at its top-right corner,
-		// as forge-ade's ProviderIcon + state badge — unknown agents fall back
-		// to the ForgeADE brand glyph, so the slot always renders.
-		g := ui.Box(c).Size(16, 16).AlignItems(ui.Center).Justify(ui.Center)
-		g.Children(func() {
-			// Real provider brand icon (claude/openai/gemini/...), matched by
-			// agent id + model like forge-ade's ProviderIcon.
-			lookup := d.AgentID + " " + d.Model
-			if glyph, color, ok := providerGlyph(d.AgentID); ok && d.Model == "" {
-				ui.Text(c, string(glyph)).FontSize(10).TextColor(color)
-			} else if d.Model != "" || d.AgentID != "" {
-				pSvg, pcolor := icons.ProviderSVG(lookup)
-				ui.Icon(c, pSvg).Width(14).Height(14).TextColor(pcolor)
-			} else {
-				ui.Icon(c, icons.ForgeSparkSVG).Width(12).Height(12).TextColor(tc.Accent)
-			}
-			if isAwaiting {
-				ui.Box(c).Absolute().Top(-3).Right(-3).Size(8, 8).Radius(4).Background(tc.Warning)
-			} else if isRunning {
-				ui.Box(c).Absolute().Top(-2).Right(-2).Size(6, 6).Radius(3).Background(tc.Accent)
+		// Dynamic agent brand icon group:
+		// ACP: agent brand icon + status dot overlay
+		// CLI: agent brand icon + terminal icon group (+ status dot)
+		iconGroup := ui.Row(c).Gap(3).AlignItems(ui.Center)
+		iconGroup.Children(func() {
+			agBox := ui.Box(c).Size(16, 16).AlignItems(ui.Center).Justify(ui.Center)
+			agBox.Children(func() {
+				lookup := d.AgentID
+				if d.Model != "" {
+					lookup = d.AgentID + " " + d.Model
+				}
+				if lookup == "" {
+					ui.Icon(c, icons.ForgeSparkSVG).Width(13).Height(13).TextColor(tc.Accent)
+				} else {
+					icons.RenderProviderIcon(c, lookup, 13)
+				}
+				if !d.IsCLI {
+					if isAwaiting {
+						ui.Box(c).Absolute().Top(-3).Right(-3).Size(8, 8).Radius(4).Background(tc.Warning)
+					} else if isRunning {
+						ui.Box(c).Absolute().Top(-2).Right(-2).Size(6, 6).Radius(3).Background(tc.Accent)
+					}
+				}
+			})
+			if d.IsCLI {
+				termBox := ui.Box(c).Size(14, 14).AlignItems(ui.Center).Justify(ui.Center)
+				termBox.Children(func() {
+					termIcon := ui.Icon(c, icons.TablerTerminal).Width(11).Height(11)
+					if d.Active {
+						termIcon.TextColor(tc.Text)
+					} else {
+						termIcon.TextColor(tc.SidebarMutedForeground)
+					}
+					if isRunning {
+						ui.Box(c).Absolute().Top(-2).Right(-2).Size(5, 5).Radius(2.5).Background(tc.Accent)
+					}
+				})
 			}
 		})
 		// Title with the inline filled pin, as the original's title span.
 		titleRow := ui.Row(c).Grow(1).Gap(5).AlignItems(ui.Center)
 		titleRow.Children(func() {
+			if d.ProjectName != "" {
+				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.Border.Alpha(0.6)).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, d.ProjectName).FontSize(8).FontWeight(600).TextColor(tc.TextMuted)
+				})
+			}
 			title := ui.Text(c, d.Title).FontSize(13).SingleLine()
 			if d.Active {
 				title.FontWeight(500).TextColor(tc.Text)
@@ -456,6 +478,20 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 		if m.Item("Open").Chosen() && d.OnOpen != nil {
 			d.OnOpen()
 		}
+		if d.OnFork != nil {
+			if m.Item("Fork Session").Chosen() {
+				d.OnFork()
+			}
+		}
+		if m.Item("Copy Session ID").Chosen() {
+			mygo.Clipboard.WriteText(d.Key)
+			c.AddToast(ui.Toast{Title: "Session ID Copied", Description: d.Key, Type: "info"})
+		}
+		if m.Item("Copy Title").Chosen() {
+			mygo.Clipboard.WriteText(d.Title)
+			c.AddToast(ui.Toast{Title: "Title Copied", Description: d.Title, Type: "info"})
+		}
+		m.Separator()
 		if d.OnStop != nil && isRunning {
 			if m.Item("Stop Session").Chosen() {
 				d.OnStop()

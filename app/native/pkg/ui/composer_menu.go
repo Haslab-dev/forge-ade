@@ -60,6 +60,11 @@ var internalSlashCommands = []composerSuggestion{
 	{Name: "/schedule", Description: "Schedule this prompt to run later", Category: "mode"},
 	{Name: "/browser", Description: "Drive the embedded browser", Category: "mode"},
 	{Name: "/boost", Description: "Boost this task's model effort", Category: "custom"},
+	{Name: "/model", Description: "Choose LLM model and provider", Category: "mode"},
+	{Name: "/settings", Description: "Open settings and configuration", Category: "custom"},
+	{Name: "/setup", Description: "Configure API keys and providers", Category: "custom"},
+	{Name: "/usage", Description: "View token usage, quota and stats", Category: "custom"},
+	{Name: "/clear", Description: "Clear active conversation history", Category: "custom"},
 }
 
 // slashCatalog merges the internal commands with the active session's ACP
@@ -263,8 +268,61 @@ func (a *AppUI) composerMentionState(as *agent.AgentState) ([]composerSuggestion
 	return items, query, len(items) > 0
 }
 
-// applyComposerSuggestion inserts the suggestion into the composer.
+// applyComposerSuggestion inserts the suggestion into the composer or executes built-in slash actions.
 func (a *AppUI) applyComposerSuggestion(item composerSuggestion) {
+	switch item.Name {
+	case "/settings", "/setup":
+		a.Mode = ModeSettings
+		if a.Settings != nil {
+			a.Settings.IsOpen = true
+		}
+		a.Agent.InputText = ""
+		a.SlashDismissedAt = ""
+		a.MentionDismissedAt = ""
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	case "/model":
+		a.ShowModelPalette = true
+		a.ModelSearchQuery = ""
+		a.Agent.InputText = ""
+		a.SlashDismissedAt = ""
+		a.MentionDismissedAt = ""
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	case "/usage":
+		a.openUsageModal()
+		a.Agent.InputText = ""
+		a.SlashDismissedAt = ""
+		a.MentionDismissedAt = ""
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	case "/clear":
+		if sess := a.Agent.ActiveSession(); sess != nil {
+			sess.Messages = nil
+		}
+		a.Agent.InputText = ""
+		a.SlashDismissedAt = ""
+		a.MentionDismissedAt = ""
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	case "/compact":
+		a.Agent.InputText = "Please compact our conversation context: synthesize all progress, decisions, architectural constraints, and pending tasks into a dense, high-signal summary, and discard superseded back-and-forth turns."
+		a.SlashDismissedAt = ""
+		a.MentionDismissedAt = ""
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	}
+
 	insert := item.Insert
 	if insert == "" {
 		insert = item.Name + " "

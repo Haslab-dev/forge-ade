@@ -131,10 +131,12 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				AlignItems(ui.Center).Children(func() {
 				segmentedModeButton(c, tc, icons.TablerSparkles, "Agent", a.Mode == ModeAgent, func() {
 					a.Mode = ModeAgent
+					a.IsGitClientOpen = false
 					a.AgentViewMode = AgentViewChat
 				})
 				segmentedModeButton(c, tc, icons.TablerCode, "Editor", a.Mode == ModeEditor, func() {
 					a.Mode = ModeEditor
+					a.IsGitClientOpen = false
 					a.AgentViewMode = AgentViewChat
 				})
 			})

@@ -6,19 +6,17 @@ package ui
 // Child Agents (subagent) pane reading agent.Manager.GetSubagents.
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	rakitagent "github.com/Haslab-dev/RakitKode/agent"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
-)
-
-// Right drawer tabs beyond the fixed set (drawer.go).
-const (
-	RightTabBrowser  = 9
-	RightTabSubagent = 10
 )
 
 // openBrowserTab creates the native web view (singleton, as the webview's
@@ -166,6 +164,28 @@ func clampZoom(z float64) float64 {
 func (a *AppUI) renderSubagentPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
+	sessionID := ""
+	if a.Agent != nil {
+		sessionID = a.Agent.ActiveSessionID
+	}
+	subs := a.Agent.Subagents(sessionID)
+
+	// If a specific subagent is selected, display its live chat/steering view
+	if a.SelectedSubagentID != "" {
+		var activeSub *rakitagent.Session
+		for _, s := range subs {
+			if s.ID == a.SelectedSubagentID {
+				activeSub = s
+				break
+			}
+		}
+		if activeSub != nil {
+			a.renderSubagentChatView(c, activeSub)
+			return
+		}
+		a.SelectedSubagentID = ""
+	}
+
 	ui.Row(c).Height(36).Padding(0, 12).Gap(6).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 		ui.Icon(c, icons.TablerBot).Width(14).Height(14).TextColor(tc.Accent)
@@ -176,11 +196,6 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 		}
 	})
 
-	sessionID := ""
-	if a.Agent != nil {
-		sessionID = a.Agent.ActiveSessionID
-	}
-	subs := a.Agent.Subagents(sessionID)
 	if len(subs) == 0 {
 		ui.Column(c).Grow(1).Center().Gap(8).Padding(20).Children(func() {
 			ui.Icon(c, icons.TablerBot).Width(30).Height(30).TextColor(tc.IconMuted)
@@ -198,7 +213,7 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 				sub := sub
 				statusLabel, statusColor := subagentStatus(sub.State, tc)
 				row := ui.Row(c.Key("sub-"+sub.ID)).Radius(8).Padding(8, 10).Gap(8).AlignItems(ui.Center).
-					Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+					Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Cursor(ui.CursorPointer)
 				row.Children(func() {
 					ui.Box(c).Size(7, 7).Radius(4).Background(statusColor)
 					colRow := ui.Column(c).Gap(1)
@@ -207,13 +222,209 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 						ui.Text(c, fmt.Sprintf("%s · %d messages", statusLabel, len(sub.Messages))).FontSize(10).TextColor(tc.TextMuted)
 					})
 					ui.Box(c).Grow(1)
+					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
 				})
 				if row.Hovered() {
 					row.Background(tc.Text.Alpha(0.05))
 				}
+				if row.Clicked() {
+					a.SelectedSubagentID = sub.ID
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
+				}
 			}
 		})
 	}).Grow(1)
+}
+
+// renderSubagentChatView renders the detailed subagent conversation, thoughts, tool calls, and steering input.
+func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *rakitagent.Session) {
+	tc := a.ThemeMgr.Colors()
+
+	// Top bar: back button, name, status dot, model badge, and stop turn button
+	statusLabel, statusColor := subagentStatus(sub.State, tc)
+	ui.Row(c).Height(36).Padding(0, 8).Gap(6).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		backBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+			Background(tc.SurfaceRaised.Alpha(0.6)).Cursor(ui.CursorPointer)
+		backBtn.Children(func() {
+			ui.Icon(c, icons.TablerArrowLeft).Width(12).Height(12).TextColor(tc.TextMuted)
+			ui.Text(c, "All agents").FontSize(11).TextColor(tc.TextMuted)
+		})
+		if backBtn.Hovered() {
+			backBtn.Background(tc.SurfaceRaised)
+		}
+		if backBtn.Clicked() {
+			a.SelectedSubagentID = ""
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+			return
+		}
+
+		ui.Box(c).Size(6, 6).Radius(3).Background(statusColor)
+		nameText := sub.Name
+		if nameText == "" {
+			nameText = "Child Agent"
+		}
+		ui.Text(c, nameText).FontSize(12).FontWeight(600).SingleLine().Grow(1)
+		ui.Text(c, statusLabel).FontSize(10).TextColor(statusColor)
+
+		if sub.Model != "" {
+			ui.Row(c).Height(18).Radius(3).Padding(0, 5).AlignItems(ui.Center).
+				Background(tc.Border.Alpha(0.3)).Children(func() {
+				ui.Text(c, sub.Model).FontSize(9).TextColor(tc.TextMuted).SingleLine()
+			})
+		}
+
+		isWorking := sub.State == "running" || sub.State == "working"
+		if isWorking {
+			stopBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+				Background(tc.Error.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.3)).Cursor(ui.CursorPointer)
+			stopBtn.Children(func() {
+				ui.Icon(c, icons.TablerPlayerStop).Width(10).Height(10).TextColor(tc.Error)
+				ui.Text(c, "Stop").FontSize(10).FontWeight(600).TextColor(tc.Error)
+			})
+			if stopBtn.Clicked() && a.Engine != nil && a.Engine.AgentMgr != nil {
+				a.Engine.AgentMgr.StopTurn(sub.ID)
+				if a.Window != nil {
+					a.Window.Invalidate()
+				}
+			}
+		}
+	})
+
+	ui.Column(c).Grow(1).Children(func() {
+		// Tool approval request if pending
+		if len(sub.PendingTools) > 0 {
+			ui.Column(c).Padding(8, 10).Gap(6).Background(tc.Warning.Alpha(0.1)).
+				BorderWidth(0, 0, 1, 0).BorderColor(tc.Warning.Alpha(0.3)).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Warning)
+					ui.Text(c, "Action requires approval").FontSize(11).FontWeight(600).TextColor(tc.Warning)
+				})
+				for _, pt := range sub.PendingTools {
+					ptName := pt.Name
+					if ptName == "" {
+						ptName = "Tool Action"
+					}
+					ui.Text(c, ptName).FontSize(11).FontWeight(500)
+					if len(pt.Arguments) > 0 {
+						if raw, err := json.Marshal(pt.Arguments); err == nil {
+							ui.Text(c, string(raw)).FontSize(10).TextColor(tc.TextMuted).SingleLine()
+						}
+					}
+				}
+				ui.Row(c).Gap(8).Children(func() {
+					appr := ContrastCTA(c, tc, "Approve")
+					if appr.Clicked() && a.Engine != nil && a.Engine.AgentMgr != nil {
+						go func() {
+							_ = a.Engine.AgentMgr.RespondApproval(context.Background(), sub.ID, true, false)
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+						}()
+					}
+					deny := ui.Button(c, "Deny")
+					if deny.Clicked() && a.Engine != nil && a.Engine.AgentMgr != nil {
+						go func() {
+							_ = a.Engine.AgentMgr.RespondApproval(context.Background(), sub.ID, false, false)
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+						}()
+					}
+				})
+			})
+		}
+
+		// Message history
+		scroll := ui.Scroll(c)
+		scroll.Children(func() {
+			ui.Column(c).Gap(10).Padding(10).Children(func() {
+				if len(sub.Messages) == 0 {
+					ui.Column(c).Center().Padding(20).Gap(6).Children(func() {
+						ui.Icon(c, icons.TablerMessage).Width(24).Height(24).TextColor(tc.IconMuted)
+						ui.Text(c, "No messages yet").FontSize(12).TextColor(tc.TextMuted)
+					})
+				}
+				for i, msg := range sub.Messages {
+					msgKey := fmt.Sprintf("submsg-%d", i)
+					isUser := msg.Role == "user"
+					bubble := ui.Column(c.Key(msgKey)).Radius(8).Padding(8, 10).Gap(4)
+					if isUser {
+						bubble.Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
+					} else {
+						bubble.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+					}
+					bubble.Children(func() {
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							roleLabel := "Assistant"
+							roleColor := tc.TextMuted
+							if isUser {
+								roleLabel = "You"
+								roleColor = tc.Accent
+							}
+							ui.Text(c, roleLabel).FontSize(10).FontWeight(600).TextColor(roleColor)
+							if !msg.Timestamp.IsZero() {
+								ui.Text(c, msg.Timestamp.Format("15:04")).FontSize(9).TextColor(tc.TextMuted)
+							}
+						})
+
+						thinking := msg.Thinking()
+						if thinking != "" {
+							ui.Column(c).Radius(4).Padding(6).Gap(2).Background(tc.Surface.Alpha(0.6)).
+								BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Children(func() {
+								ui.Text(c, "Thought Process").FontSize(9).FontWeight(600).TextColor(tc.TextMuted)
+								ui.Text(c, thinking).FontSize(10).TextColor(tc.TextMuted)
+							})
+						}
+
+						txt := strings.TrimSpace(msg.Text())
+						if txt != "" {
+							markdown.View(c, txt, &a.SideChatMd)
+						}
+
+						for _, tb := range msg.ToolCallBlocks() {
+							toolRow := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center).
+								Background(tc.Surface.Alpha(0.8)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4))
+							toolRow.Children(func() {
+								ui.Icon(c, icons.TablerWrench).Width(10).Height(10).TextColor(tc.Accent)
+								ui.Text(c, tb.Name).FontSize(10).FontWeight(500)
+							})
+						}
+					})
+				}
+			})
+		}).Grow(1)
+
+		// Steering bottom bar
+		ui.Row(c).Height(40).Padding(6, 8).Gap(6).AlignItems(ui.Center).
+			BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Background(tc.Surface).Children(func() {
+			input := ui.TextInput(c, &a.SubagentChatInput).Placeholder("Steer or message subagent...").Grow(1)
+			sendAction := func() {
+				text := strings.TrimSpace(a.SubagentChatInput)
+				if text == "" || a.Engine == nil || a.Engine.AgentMgr == nil {
+					return
+				}
+				a.SubagentChatInput = ""
+				go func() {
+					_ = a.Engine.AgentMgr.SendMessage(context.Background(), sub.ID, text, nil)
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
+				}()
+			}
+			if input.Submitted() {
+				sendAction()
+			}
+			sendBtn := ContrastCTA(c, tc, "Send")
+			if sendBtn.Clicked() {
+				sendAction()
+			}
+		})
+	})
 }
 
 // subagentStatus maps the engine's session state to a label + color.

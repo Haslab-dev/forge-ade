@@ -74,12 +74,57 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 
 	// Build configured internal models
 	var internalModels []ModelMetadata
+	seenInternal := make(map[string]bool)
+	addInternalModel := func(m ModelMetadata) {
+		if !seenInternal[m.ID] {
+			seenInternal[m.ID] = true
+			internalModels = append(internalModels, m)
+		}
+	}
+
+	// 1. Load models from all Custom Provider Profiles configured in Settings (e.g. Kenari, Ollama, OpenAI, Anthropic)
+	if a.Settings != nil {
+		for _, prof := range a.Settings.GetProfiles() {
+			if !prof.Enabled && len(a.Settings.GetProfiles()) > 1 {
+				continue
+			}
+			proto := "openai"
+			if strings.Contains(strings.ToLower(prof.BaseURL), "anthropic") || strings.EqualFold(prof.ID, "anthropic") {
+				proto = "anthropic"
+			}
+			// Load both selected models and available models from this profile
+			for _, mName := range prof.SelectedModels {
+				addInternalModel(ModelMetadata{
+					ID:            mName,
+					DisplayName:   mName,
+					Provider:      prof.Name,
+					ProviderKey:   proto,
+					HarnessID:     "agent-internal",
+					HarnessName:   "ForgeADE Internal",
+					ContextWindow: prof.Name,
+				})
+			}
+			for _, mName := range prof.AvailableModels {
+				addInternalModel(ModelMetadata{
+					ID:            mName,
+					DisplayName:   mName,
+					Provider:      prof.Name,
+					ProviderKey:   proto,
+					HarnessID:     "agent-internal",
+					HarnessName:   "ForgeADE Internal",
+					ContextWindow: prof.Name,
+				})
+			}
+		}
+	}
+
+	// 2. Active configured model in Settings
 	if a.Settings != nil && a.Settings.Model != "" {
 		provName := a.Settings.Provider
 		if provName == "" {
 			provName = "Configured"
 		}
-		internalModels = append(internalModels, ModelMetadata{
+		addInternalModel(ModelMetadata{
 			ID:            a.Settings.Model,
 			DisplayName:   a.Settings.Model,
 			Provider:      provName,
@@ -89,9 +134,27 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 			ContextWindow: "Configured",
 		})
 	}
+
+	// 3. Engine LLMClient active config model
+	if a.Engine != nil && a.Engine.LLMClient != nil {
+		cfg := a.Engine.LLMClient.GetConfig()
+		if cfg.Model != "" {
+			addInternalModel(ModelMetadata{
+				ID:            cfg.Model,
+				DisplayName:   cfg.Model,
+				Provider:      cfg.ProviderID,
+				ProviderKey:   cfg.ProviderID,
+				HarnessID:     "agent-internal",
+				HarnessName:   "ForgeADE Internal",
+				ContextWindow: "Active",
+			})
+		}
+	}
+
+	// 4. Agent available models
 	if a.Agent != nil {
 		for _, m := range a.Agent.AvailableModels {
-			internalModels = append(internalModels, ModelMetadata{
+			addInternalModel(ModelMetadata{
 				ID:            m,
 				DisplayName:   m,
 				Provider:      "custom",
@@ -103,7 +166,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		}
 	}
 	for _, m := range defaultInternalModels {
-		internalModels = append(internalModels, m)
+		addInternalModel(m)
 	}
 
 	// If internal models are empty and user hasn't explicitly picked a harness, default to first ACP harness
@@ -143,8 +206,20 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 			}
 		}
 	} else if a.SelectedHarnessID == "agent-internal" {
+		tabLower := strings.ToLower(a.SelectedProviderTab)
 		for _, m := range internalModels {
-			if a.SelectedProviderTab == "all" || strings.EqualFold(m.Provider, a.SelectedProviderTab) {
+			mProv := strings.ToLower(m.Provider)
+			mKey := strings.ToLower(m.ProviderKey)
+			mID := strings.ToLower(m.ID)
+			matches := tabLower == "all" ||
+				strings.EqualFold(m.Provider, a.SelectedProviderTab) ||
+				strings.EqualFold(m.ProviderKey, a.SelectedProviderTab) ||
+				(tabLower == "anthropic" && (strings.Contains(mID, "claude") || strings.Contains(mProv, "anthropic"))) ||
+				(tabLower == "openai" && (strings.Contains(mID, "gpt") || strings.Contains(mKey, "openai") || strings.Contains(mProv, "openai"))) ||
+				(tabLower == "google" || tabLower == "gemini") && (strings.Contains(mID, "gemini") || strings.Contains(mProv, "gemini") || strings.Contains(mProv, "google")) ||
+				(tabLower == "deepseek" && (strings.Contains(mID, "deepseek") || strings.Contains(mProv, "deepseek"))) ||
+				(tabLower == "ollama" && (strings.Contains(mProv, "ollama") || m.IsLocal))
+			if matches {
 				visibleModels = append(visibleModels, m)
 			}
 		}
@@ -205,6 +280,47 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				}
 			}
 			a.Agent.SaveSessionToDisk(sess)
+		}
+		if harnessID == "agent-internal" {
+			if a.Settings != nil {
+				a.Settings.Model = displayName
+				// Sync provider profile if found
+				for _, prof := range a.Settings.GetProfiles() {
+					matched := false
+					for _, am := range prof.AvailableModels {
+						if am == displayName {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						for _, sm := range prof.SelectedModels {
+							if sm == displayName {
+								matched = true
+								break
+							}
+						}
+					}
+					if matched {
+						a.Settings.SelectedProviderID = prof.ID
+						a.Settings.Provider = prof.ID
+						a.Settings.BaseURL = prof.BaseURL
+						a.Settings.APIKey = prof.APIKey
+						if a.Engine != nil && a.Engine.LLMClient != nil {
+							a.Engine.LLMClient.SetActiveModel(prof.ID, displayName)
+						}
+						break
+					}
+				}
+			}
+			if a.Engine != nil && a.Engine.LLMClient != nil {
+				prov := a.Engine.LLMClient.FindProviderForModel(displayName)
+				if prov != "" {
+					a.Engine.LLMClient.SetActiveModel(prov, displayName)
+				} else {
+					a.Engine.LLMClient.SetActiveModelByID(displayName)
+				}
+			}
 		}
 		a.ShowModelPalette = false
 		c.AddToast(ui.Toast{
@@ -311,6 +427,32 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 								{"Google", "Gemini", "gemini"},
 								{"DeepSeek", "DeepSeek", "deepseek"},
 								{"Ollama", "Ollama", "ollama"},
+							}
+							if a.Settings != nil {
+								for _, prof := range a.Settings.GetProfiles() {
+									pName := prof.Name
+									if pName == "" {
+										pName = prof.ID
+									}
+									dup := false
+									for _, p := range pills {
+										if strings.EqualFold(p.Label, pName) || strings.EqualFold(p.ID, pName) {
+											dup = true
+											break
+										}
+									}
+									if !dup && (len(prof.AvailableModels) > 0 || len(prof.SelectedModels) > 0) {
+										proto := "openai"
+										if strings.Contains(strings.ToLower(prof.BaseURL), "anthropic") || strings.EqualFold(prof.ID, "anthropic") {
+											proto = "anthropic"
+										}
+										pills = append(pills, struct {
+											ID    string
+											Label string
+											Icon  string
+										}{prof.Name, pName, proto})
+									}
+								}
 							}
 							for _, pill := range pills {
 								thisPill := pill

@@ -53,7 +53,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
 				newTask := SidebarActionButton(c, tc, icons.TablerPlus, "New task", "⌘N", isNewTaskActive)
 				if newTask.Clicked() {
-					a.OpenNewTaskModal()
+					a.handleNewTask()
 				}
 				autos := SidebarActionButton(c, tc, icons.TablerClock, "Automations", "", false)
 				if autos.Clicked() {
@@ -110,6 +110,15 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						if m.Item(menuChecked(a.ProjectFilter == thisName, thisName)).Chosen() {
 							a.ProjectFilter = thisName
 						}
+					}
+					m.Separator()
+					if m.Item(menuChecked(a.SidebarListView != "timeline", "Group by project")).Chosen() {
+						a.SidebarListView = "project"
+						a.SaveUIPrefs()
+					}
+					if m.Item(menuChecked(a.SidebarListView == "timeline", "Chronological timeline")).Chosen() {
+						a.SidebarListView = "timeline"
+						a.SaveUIPrefs()
 					}
 					m.Separator()
 					if m.Item(menuChecked(a.TaskSortBy == "updated", "Updated (recent)")).Chosen() {
@@ -281,6 +290,145 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 
 			ui.Scroll(c).Grow(1).Children(func() {
 				ui.Column(c).Padding(2, 6).Gap(4).Children(func() {
+					// Flat Chronological Timeline mode (1:1 with webview AgentSidebar timeline mode)
+					if a.SidebarListView == "timeline" {
+						type timelineEntry struct {
+							Kind        string
+							Session     *agent.AgentSession
+							CLISession  *agent.AgentCLISession
+							UpdatedTime time.Time
+							Pinned      bool
+							ProjectName string
+						}
+						var allEntries []timelineEntry
+						for _, name := range groupOrder {
+							group := groupMap[name]
+							if a.ProjectFilter != "all" && a.ProjectFilter != "" && group.ProjectName != a.ProjectFilter {
+								continue
+							}
+							for _, s := range group.Sessions {
+								allEntries = append(allEntries, timelineEntry{
+									Kind:        "agent",
+									Session:     s,
+									UpdatedTime: s.UpdatedAt,
+									Pinned:      s.Pinned,
+									ProjectName: group.ProjectName,
+								})
+							}
+							for _, cs := range group.CLISessions {
+								allEntries = append(allEntries, timelineEntry{
+									Kind:        "cli",
+									CLISession:  cs,
+									UpdatedTime: cs.StartedAt,
+									Pinned:      false,
+									ProjectName: group.ProjectName,
+								})
+							}
+						}
+
+						sort.SliceStable(allEntries, func(i, j int) bool {
+							if a.Agent.ActiveFilterTab == "active" {
+								if allEntries[i].Pinned && !allEntries[j].Pinned {
+									return true
+								}
+								if !allEntries[i].Pinned && allEntries[j].Pinned {
+									return false
+								}
+							}
+							if a.TaskSortBy == "created" {
+								iTime := allEntries[i].UpdatedTime
+								jTime := allEntries[j].UpdatedTime
+								if allEntries[i].Session != nil {
+									iTime = allEntries[i].Session.CreatedAt
+								}
+								if allEntries[j].Session != nil {
+									jTime = allEntries[j].Session.CreatedAt
+								}
+								return iTime.After(jTime)
+							}
+							return allEntries[i].UpdatedTime.After(allEntries[j].UpdatedTime)
+						})
+
+						if len(allEntries) == 0 {
+							ui.Column(c).Center().Padding(30).Gap(4).Children(func() {
+								ui.Text(c, "No sessions found").FontSize(12).TextColor(tc.TextMuted)
+							})
+						} else {
+							for _, entry := range allEntries {
+								if entry.Kind == "agent" {
+									s := entry.Session
+									isActive := (a.ActiveTaskKind == "agent" && s.ID == a.Agent.ActiveSessionID)
+									added, removed := a.Agent.SessionDiffStats(s.ID)
+									progress := float32(0)
+									if s.Tasks != nil {
+										if done, total := s.Tasks.Progress(); total > 0 {
+											progress = float32(done) / float32(total)
+										}
+									}
+									renderTaskRow(c, tc, taskRowData{
+										Key:         "sess-" + s.ID,
+										Title:       s.Title,
+										Status:      s.Status,
+										Active:      isActive,
+										Pinned:      s.Pinned,
+										Archived:    s.Archived,
+										Snoozed:     s.Snoozed,
+										ProjectName: entry.ProjectName,
+										AgentID:     s.AgentID,
+										Model:       s.Model,
+										UpdatedTime: s.UpdatedAt,
+										DiffAdded:   added,
+										DiffRemoved: removed,
+										Progress:    progress,
+										OnPin:       func() { a.Agent.TogglePin(s.ID) },
+										OnFork:      func() { a.Agent.ForkSessionByID(s.ID) },
+										OnArchive:   func() { a.Agent.ToggleArchive(s.ID) },
+										OnSnooze:    func() { a.Agent.ToggleSnooze(s.ID) },
+										OnDelete:    func() { a.Agent.DeleteSession(s.ID) },
+										OnOpen: func() {
+											a.ActiveTaskKind = "agent"
+											a.AgentViewMode = AgentViewChat
+											a.Agent.SelectSession(s.ID)
+										},
+									})
+								} else {
+									cs := entry.CLISession
+									isActive := (a.ActiveTaskKind == "cli" && a.CLIMgr.ActiveID == cs.ID)
+									isCLIRunning := cs.Status == "running" && cs.Terminal != nil && !cs.Terminal.IsExited()
+									status := cs.Status
+									if isCLIRunning {
+										status = "running"
+									} else if status == "running" {
+										status = "completed"
+									}
+									cliAgentID := cs.AgentID
+									if cliAgentID == "" {
+										cliAgentID = cs.Command
+									}
+									renderTaskRow(c, tc, taskRowData{
+										Key:         "cli-sess-" + cs.ID,
+										Title:       cs.Title,
+										Status:      status,
+										Active:      isActive,
+										IsCLI:       true,
+										ProjectName: entry.ProjectName,
+										AgentID:     cliAgentID,
+										UpdatedTime: cs.StartedAt,
+										OnStop:      func() { a.CLIMgr.StopSession(cs.ID) },
+										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
+										OnDelete:    func() { a.CLIMgr.DeleteSession(cs.ID) },
+										OnOpen: func() {
+											a.ActiveTaskKind = "cli"
+											a.AgentViewMode = AgentViewChat
+											a.CLIMgr.ActiveID = cs.ID
+										},
+									})
+								}
+							}
+						}
+						return
+					}
+
 					for _, name := range groupOrder {
 						group := groupMap[name]
 						// "All projects ⌄" filter: only the chosen project renders.
@@ -357,7 +505,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								}
 								groupAction("new-"+group.ProjectName, icons.TablerPlus, false, func() {
 									if group.ProjectName == "General" || group.FolderPath == "" {
-										a.OpenNewTaskModal()
+										a.handleNewTask()
 									} else {
 										a.OpenNewTaskModalFor(group.FolderPath)
 									}
@@ -449,12 +597,17 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									} else if status == "running" {
 										status = "completed"
 									}
+									cliAgentID := cs.AgentID
+									if cliAgentID == "" {
+										cliAgentID = cs.Command
+									}
 									renderTaskRow(c, tc, taskRowData{
 										Key:         "cli-sess-" + cs.ID,
 										Title:       cs.Title,
 										Status:      status,
 										Active:      isActive,
-										AgentID:     "agent-agy",
+										IsCLI:       true,
+										AgentID:     cliAgentID,
 										UpdatedTime: cs.StartedAt,
 										OnStop:      func() { a.CLIMgr.StopSession(cs.ID) },
 										OnRestart:   func() { a.CLIMgr.RestartSession(cs.ID) },
@@ -479,7 +632,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				SectionLabel(c, tc, "BOTS")
 				ui.Box(c).Grow(1)
 				if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-					a.OpenNewTaskModal()
+					a.Mode = ModeSettings
+					if a.Settings != nil {
+						a.Settings.IsOpen = true
+						a.Settings.ActiveTab = settings.SettingsTabAutos
+					}
 				}
 			})
 			botRow := SidebarActionButton(c, tc, icons.TablerBot, "Add a bot or schedule", "", false)

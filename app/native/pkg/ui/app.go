@@ -54,6 +54,9 @@ const (
 	RightTabDatabase = 6
 	RightTabFiles    = 7
 	RightTabSideFile = 8
+	RightTabBrowser  = 9
+	RightTabSubagent = 10
+	RightTabDeck     = 11
 )
 
 // Layout metrics of ForgeADE's CSS
@@ -151,6 +154,10 @@ type AppUI struct {
 	BrowserURLCurrent string
 	BrowserZoom       float64
 
+	// Right-drawer / Editor PDF viewer
+	PDFWebView     *mygo.WebView
+	PDFCurrentPath string
+
 	// Thread find bar (⌘F) state — ThreadFindBar parity.
 	ShowThreadFind    bool
 	ThreadFindQuery   string
@@ -205,6 +212,10 @@ type AppUI struct {
 	SSHAuthType             string // "key_file", "password", "agent"
 	SSHKeyPath              string
 	SSHUploadStatus         string
+	ShowRemoteUploadModal   bool
+	RemoteUploadTargetDir   string
+	RemoteUploadQueue       []RemoteUploadItem
+	RemoteUploadIsUploading bool
 
 	// Follow Agent: auto-jump the editor to files the agent edits.
 	FollowAgent           bool
@@ -232,12 +243,48 @@ type AppUI struct {
 	BoardTaskStatus       string
 	BoardTaskTitle        string
 	AgentViewMode         string // AgentViewChat / AgentViewBoard / AgentViewGit
+	IsGitClientOpen       bool   // Full Git Client surface in Editor Mode
 	GitRemoteURL          string
 	ShowNewBoardTaskModal bool
 	NewBoardTaskTitle     string
 	NewBoardTaskDesc      string
 	NewBoardTaskPriority  string
 	NewBoardTaskStatus    string
+
+	// Terminal Snippets & Command History
+	Snippets                     *terminal.SnippetManager
+	ShowTerminalSnippetsModal    bool
+	TerminalSnippetTab           string // "snippets" | "history"
+	TerminalSnippetSearch        string
+	TerminalSnippetCategory      string
+	TerminalSnippetDraftTitle    string
+	TerminalSnippetDraftCmd      string
+	TerminalSnippetDraftCat      string
+	TerminalSnippetDraftDesc     string
+	TerminalSnippetEditID        string
+	TerminalSnippetFormOpen      bool
+	TerminalSnippetTargetSession string
+
+	// Timeline vs Project view in sidebar
+	SidebarListView string // "project" (default) or "timeline"
+
+	// Subagent chat pane & selection in right drawer
+	SelectedSubagentID string
+	SubagentChatInput  string
+
+	// Peek Definition modal
+	ShowPeekModal bool
+	PeekSymbol    string
+	PeekResults   []editor.PeekMatch
+
+	// Deck & Presentation tab
+	DeckActiveSlide int
+	DeckSlideCount  int
+	DeckIsPlaying   bool
+	DeckWebView     *mygo.WebView
+	DeckCurrentPath string
+	DeckMode        string
+	DeckFiles       []string
 }
 
 // NewAppUI constructs the complete AppUI state tree.
@@ -294,6 +341,19 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		InlineAI:                editor.NewInlineAI(),
 		FileSearchMode:          "files",
 		SideFileDiffMode:        make(map[string]bool),
+		SidebarListView:         "project",
+		DeckSlideCount:          1,
+		Snippets:                terminal.NewSnippetManager(engine.DataDir),
+	}
+
+	appUI.Editor.WorkspaceDir = rootDir
+	appUI.Editor.OnDefinitionRequested = func(symbol string, matches []editor.PeekMatch) {
+		appUI.ShowPeekModal = true
+		appUI.PeekSymbol = symbol
+		appUI.PeekResults = matches
+		if appUI.Window != nil {
+			appUI.Window.Invalidate()
+		}
 	}
 
 	appUI.loadUIPrefs()
@@ -479,8 +539,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 
 func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 	return []palette.PaletteCommand{
-		{ID: "new-task", Label: "New Task", Detail: "Start a new agent task (open New Agent UI)", Shortcut: "⌘N", Run: func() {
-			a.NewAgentTask("")
+		{ID: "new-task", Label: "New Task", Detail: "Start a new agent task", Shortcut: "⌘N", Run: func() {
+			a.handleNewTask()
 		}},
 		{ID: "new-task-agent", Label: "New Task with Agent / CLI...", Detail: "Select ACP Agent or CLI harness", Shortcut: "⇧⌘N", Run: func() {
 			a.OpenNewTaskModal()
@@ -541,6 +601,9 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		}},
 		{ID: "ssh-disconnect", Label: "SSH: Disconnect from Remote Host", Detail: "Close remote workspace and return to local files", Run: func() {
 			a.DisconnectSSH()
+		}},
+		{ID: "ssh-upload", Label: "SSH: Upload Files to Remote Host (SFTP)", Detail: "Upload local files or folders to active remote workspace", Run: func() {
+			a.OpenRemoteFileUploader("")
 		}},
 	}
 }
@@ -693,9 +756,17 @@ func (a *AppUI) View(c *ui.Context) {
 		a.Palette.Query = "@"
 	}
 	if cmdOrCtrlShift(ui.KeyG) {
-		a.Mode = ModeEditor
-		a.ShowLeftSidebar = true
-		a.EditorActivity = ActivityGit
+		if a.Mode == ModeEditor {
+			a.IsGitClientOpen = !a.IsGitClientOpen
+			if a.IsGitClientOpen {
+				if a.Git != nil {
+					go a.Git.Refresh()
+				}
+				a.loadGitRemoteURL()
+			}
+		} else {
+			a.openGitClientSurface()
+		}
 	}
 	if cmdOrCtrlShift(ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
@@ -710,8 +781,7 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowLeftSidebar = !a.ShowLeftSidebar
 	}
 	if cmdOrCtrl(ui.KeyN) {
-		// New task opens the ACP/CLI agent picker, as the user expects.
-		a.OpenNewTaskModal()
+		a.handleNewTask()
 	}
 	if cmdOrCtrlShift(ui.KeyN) {
 		a.OpenNewTaskModal()
@@ -793,6 +863,21 @@ func (a *AppUI) NewAgentTask(workspacePath string) {
 	}
 }
 
+// handleNewTask prepares a fresh task session in the current or general workspace
+// without opening any modal dialog, exactly matching AgentSidebar.tsx handleNewTask.
+func (a *AppUI) handleNewTask() {
+	if a.Agent != nil {
+		a.Agent.ActiveSessionID = ""
+	}
+	a.ActiveTaskKind = "agent"
+	a.Mode = ModeAgent
+	a.AgentViewMode = AgentViewChat
+	a.ShowNewTaskModal = false
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
 func (a *AppUI) OpenNewTaskModal() {
 	a.ShowNewTaskModal = true
 	a.NewTaskTitle = ""
@@ -818,6 +903,31 @@ func (a *AppUI) OpenNewTaskModal() {
 func (a *AppUI) OpenNewTaskModalFor(folderPath string) {
 	a.OpenNewTaskModal()
 	a.NewTaskWorkspacePath = folderPath
+}
+
+// RemoteUploadItem tracks a file or folder in the RemoteFileUploaderModal queue.
+type RemoteUploadItem struct {
+	ID        string
+	LocalPath string
+	Name      string
+	Size      int64
+	DestPath  string
+	Status    string // "pending" | "uploading" | "completed" | "error"
+	ErrorMsg  string
+}
+
+// OpenRemoteFileUploader opens the RemoteFileUploaderModal for the current remote workspace.
+func (a *AppUI) OpenRemoteFileUploader(targetDir string) {
+	if targetDir == "" && a.Workspace != nil {
+		targetDir = a.Workspace.RootDir
+	}
+	a.RemoteUploadTargetDir = targetDir
+	a.RemoteUploadQueue = nil
+	a.RemoteUploadIsUploading = false
+	a.ShowRemoteUploadModal = true
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
 }
 
 // ── Recent workspaces ────────────────────────────────────────────────────
@@ -885,8 +995,15 @@ func (a *AppUI) recordRecentWorkspace(dir string) {
 // forge-ade's explorer "Open in Side Preview" does.
 func (a *AppUI) openSideFile(relPath string) {
 	full := a.Workspace.ResolveFullPath(relPath)
-	if doc := a.Editor.GetDoc(full); doc == nil {
-		_, _ = a.Editor.OpenFile(full, relPath)
+	lower := strings.ToLower(relPath)
+	if strings.HasSuffix(lower, ".pdf") {
+		a.openPdfViewer(full)
+	} else if isDeckOrMotionFile(lower) {
+		a.openDeckViewer(full)
+	} else {
+		if doc := a.Editor.GetDoc(full); doc == nil {
+			_, _ = a.Editor.OpenFile(full, relPath)
+		}
 	}
 	for i, p := range a.SideFileTabs {
 		if p == relPath {
@@ -903,6 +1020,12 @@ func (a *AppUI) openSideFile(relPath string) {
 
 // closeSideFile removes a file tab from the right sidebar.
 func (a *AppUI) closeSideFile(relPath string) {
+	lower := strings.ToLower(relPath)
+	if strings.HasSuffix(lower, ".pdf") {
+		a.closePdfViewer()
+	} else if isDeckOrMotionFile(lower) {
+		a.closeDeckViewer()
+	}
 	for i, p := range a.SideFileTabs {
 		if p == relPath {
 			a.SideFileTabs = append(a.SideFileTabs[:i], a.SideFileTabs[i+1:]...)
