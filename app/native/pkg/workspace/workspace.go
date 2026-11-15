@@ -162,7 +162,7 @@ func (ws *WorkspaceState) Refresh() {
 	}
 
 	// Breadth-first walk so the budget spreads across the whole tree: a
-	// depth-first cap would let the first big subtree (e.g. app/webview/…)
+	// depth-first cap would let the first big subtree (e.g. node_modules/…)
 	// swallow the budget and leave the rest of the repo invisible.
 	type dirEntry struct {
 		path  string

@@ -43,7 +43,7 @@ checkout: clone `Haslab-dev/RakitKode` as `../rakitkode` next to this repo.
 
 ## Release
 
-Versions live in `app/webview/frontend/package.json` — bump with
+Versions live in `web/package.json` — bump with
 `make patch-version` / `minor-version` / `major-version`, then tag
-`vX.Y.Z`; the release workflow builds both desktop bundles and drafts a
+`vX.Y.Z`; the release workflow builds the desktop bundle and drafts a
 GitHub release.

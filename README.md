@@ -19,10 +19,9 @@
 >    - Dibangun menggunakan **MyGo** (`github.com/egoist/mygo`) dengan native GPU rendering, internal editor & diff component bawaan, native WKWebView/WebKit untuk web/PDF/presentation preview, dan direct PTY terminal.
 >    - Menghasilkan **single executable binary** tanpa ketergantungan pada runtime Node.js, Chromium, atau Electron.
 >
-> 2. **DEPRECATED / ARCHIVED / OBSOLETE TARGET: `app/webview/`**
->    - Versi Wails v3 + React 19 / Vite (`app/webview/`) sudah **OBSOLETE / ARCHIVED** dan tidak lagi dikembangkan secara aktif.
->    - Kode di `app/webview/` dipertahankan semata-mata sebagai **referensi historis dan benchmark parity 1:1** (lihat [app/native/PARITY.md](app/native/PARITY.md)).
->    - **DO NOT** menghabiskan waktu menambahkan fitur baru atau me-refactor `app/webview/` kecuali ada instruksi eksplisit. Semua pekerjaan harus langsung ditujukan ke `app/native/`.
+> 2. **ARCHIVED WEBVIEW BRANCH: `archive-webview`**
+>    - Versi Wails v3 + React 19 / Vite (`app/webview/`) telah **diarsipkan secara permanen ke branch `archive-webview`** untuk menjaga ukuran repository dan fokus penuh pada pure-Go native desktop.
+>    - Branch `main` sepenuhnya berfokus pada `app/native/` dan `core/`.
 
 ---
 
@@ -174,12 +173,12 @@ go test ./core/...
 
 ---
 
-## Status Folder `app/webview/` (Legacy Reference)
+## Status Branch & Direktori
 
-| Direktori | Status | Catatan |
+| Target / Direktori | Status | Catatan |
 |---|---|---|
-| `app/native/` | 🟢 **ACTIVE** | Target utama seluruh pengembangan aplikasi desktop. |
-| `app/webview/` | 🔴 **OBSOLETE** | Diarsipkan. Jangan menambah fitur ke sini. |
+| `app/native/` | 🟢 **ACTIVE** | Target utama seluruh pengembangan aplikasi desktop (Pure Go + MyGo GPU UI). |
+| `archive-webview` (branch) | 📦 **ARCHIVED** | Diarsipkan di branch `archive-webview`. |
 | `app/cli/` | 🟢 **ACTIVE** | Headless runner untuk integrasi CI dan sub-agent. |
 | `core/` | 🟢 **ACTIVE** | Shared domain logic untuk seluruh target. |
 

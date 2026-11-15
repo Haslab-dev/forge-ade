@@ -1,7 +1,7 @@
 # ForgeADE monorepo — build orchestration for all application targets.
 #
-# Layout: core/ (shared Go domain), app/native (MyGo UI), app/webview (Wails),
-# app/cli (headless tools), app/web (reserved). See docs/ARCHITECTURE.md.
+# Layout: core/ (shared Go domain), app/native (MyGo UI),
+# app/cli (headless tools), web (landing page). See docs/ARCHITECTURE.md.
 
 .DEFAULT_GOAL := help
 .SHELLFLAGS := -eu -o pipefail -c
@@ -10,22 +10,20 @@
 GO := $(shell command -v go 2>/dev/null || ls /usr/local/go/bin/go /opt/homebrew/opt/go/bin/go 2>/dev/null | head -1)
 GOPATH := $(shell $(GO) env GOPATH 2>/dev/null)
 export PATH := $(dir $(GO))$(GOPATH)/bin:$(PATH)
-WAILS := $(GOPATH)/bin/wails3
 
 # ── Current version (major.minor.patch) & build ──────────────────
-# frontend/package.json is the single source of truth for version bumps.
-PKG_JSON := app/webview/frontend/package.json
+# web/package.json is the single source of truth for version bumps.
+PKG_JSON := web/package.json
 VERSION := $(shell node -p "require('./$(PKG_JSON)').version")
 BUILD := $(shell node -p "require('./$(PKG_JSON)').build || 1")
 
 NATIVE_BIN   := dist/forge-native
 NATIVE_APP   := dist/forge-native.app
 NATIVE_DIR   := app/native
-WEBVIEW_DIR  := app/webview
 CLI_BIN_DIR  := dist
 
 define BUMP
-node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));const v=p.version.split('.').map(Number);$(1);p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');if(fs.existsSync('web/package.json')){const wp=JSON.parse(fs.readFileSync('web/package.json','utf8'));wp.version=p.version;fs.writeFileSync('web/package.json',JSON.stringify(wp,null,2)+'\n');}console.log('version ->',p.version,'(build',p.build+')')"
+node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));const v=p.version.split('.').map(Number);$(1);p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');console.log('version ->',p.version,'(build',p.build+')')"
 endef
 
 .PHONY: help
@@ -58,35 +56,6 @@ native-app: native ## Build the signed macOS .app bundle
 native-run: ## Run the native app from source
 	cd $(NATIVE_DIR) && $(GO) run ./cmd/forge-native
 
-# ── Webview (Wails) ───────────────────────────────────────────────
-.PHONY: webview-dev
-webview-dev: ## Run the Wails app in dev mode (hot reload)
-	cd $(WEBVIEW_DIR) && $(WAILS) dev
-
-.PHONY: webview-build
-webview-build: ## Build the Wails app (with devtools)
-	cd $(WEBVIEW_DIR) && $(WAILS) build -tags private_mac_apis
-
-.PHONY: webview-package
-webview-package: ## Build + package the Wails .app bundle
-	cd $(WEBVIEW_DIR) && $(WAILS) package
-
-.PHONY: webview-bindings
-webview-bindings: ## Regenerate Wails TS bindings from Go services
-	cd $(WEBVIEW_DIR) && $(WAILS) generate bindings
-
-.PHONY: frontend-install
-frontend-install: ## Install frontend dependencies (bun)
-	cd $(WEBVIEW_DIR)/frontend && bun install
-
-.PHONY: frontend-build
-frontend-build: ## Build the web frontend (tsc + vite)
-	cd $(WEBVIEW_DIR)/frontend && bun run build
-
-.PHONY: frontend-test
-frontend-test: ## Run frontend tests (vitest)
-	cd $(WEBVIEW_DIR)/frontend && bun run test
-
 # ── CLI ───────────────────────────────────────────────────────────
 .PHONY: cli
 cli: ## Build all CLI binaries (forge-agent, forge-mcp, shelltest)
@@ -109,9 +78,8 @@ vet: ## Run go vet on all packages
 	$(GO) vet ./...
 
 .PHONY: fmt
-fmt: ## Format Go + frontend code
+fmt: ## Format Go code
 	$(GO) fmt ./...
-	cd $(WEBVIEW_DIR)/frontend && bun run lint --fix && bunx prettier --write "src/**/*.{ts,tsx,css}"
 
 .PHONY: lint
 lint: ## Run golangci-lint (if installed)
@@ -123,41 +91,21 @@ version: ## Print the current version
 	@node -p "require('./$(PKG_JSON)').version + ' (build ' + (require('./$(PKG_JSON)').build || 1) + ')'"
 
 .PHONY: patch-version
-patch-version: ## Bump patch version (0.8.6 -> 0.8.7)
+patch-version: ## Bump patch version (1.0.19 -> 1.0.20)
 	@$(call BUMP,v[2]++)
 
 .PHONY: minor-version
-minor-version: ## Bump minor version (0.8.6 -> 0.9.0)
+minor-version: ## Bump minor version (1.0.19 -> 1.1.0)
 	@$(call BUMP,v[1]++;v[2]=0)
 
 .PHONY: major-version
-major-version: ## Bump major version (0.8.6 -> 1.0.0)
+major-version: ## Bump major version (1.0.19 -> 2.0.0)
 	@$(call BUMP,v[0]++;v[1]=0;v[2]=0)
 
 .PHONY: bump-build
 bump-build: ## Bump the build number only
 	@node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');console.log('build ->',p.build)"
 
-# ── Release (macOS) ───────────────────────────────────────────────
-.PHONY: sign
-sign: ## Sign the Wails app. Usage: make sign ID="Developer ID Application: Name (TEAMID)"
-	codesign --force --options runtime --sign "$(ID)" \
-		$(WEBVIEW_DIR)/build/bin/ForgeADE.app/Contents/MacOS/ForgeADE
-	codesign --force --options runtime --sign "$(ID)" \
-		$(WEBVIEW_DIR)/build/bin/ForgeADE.app
-	codesign -dv $(WEBVIEW_DIR)/build/bin/ForgeADE.app
-
-.PHONY: notarize
-notarize: ## Notarize. Usage: make notarize EMAIL=… TEAM=…
-	ditto -c -k --keepParent $(WEBVIEW_DIR)/build/bin/ForgeADE.app build/ForgeADE.zip
-	xcrun notarytool submit build/ForgeADE.zip \
-		--apple-id "$(EMAIL)" \
-		--team-id "$(TEAM)" \
-		--password @keychain:AC_PASSWORD \
-		--wait
-	xcrun stapler staple $(WEBVIEW_DIR)/build/bin/ForgeADE.app
-
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf dist coverage.out
-	rm -rf $(WEBVIEW_DIR)/build/bin $(WEBVIEW_DIR)/frontend/dist

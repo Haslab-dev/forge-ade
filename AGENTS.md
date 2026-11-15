@@ -5,7 +5,7 @@ Notes for AI coding agents working in this repository.
 > [!IMPORTANT]
 > **PRIMARY ACTIVE TARGET: `app/native/`**
 > All active development, UI/UX polishing, bug fixes, and feature additions MUST be done directly in **`app/native/`** (pure-Go MyGo desktop application).
-> The Wails v3 webview version (`app/webview/`) is **OBSOLETE / ARCHIVED** and serves only as a historical reference and 1:1 parity benchmark (see `app/native/PARITY.md`). Do NOT spend time developing for `app/webview/` unless explicitly requested.
+> The legacy Wails v3 webview version has been permanently archived to the branch **`archive-webview`**. The main branch is 100% focused on pure-Go native desktop architecture.
 
 ## Architecture
 
@@ -19,7 +19,7 @@ Notes for AI coding agents working in this repository.
   - Rule: `core/**` MUST NOT import `app/**` or GUI libraries.
 - **Agent Engine**: `github.com/Haslab-dev/RakitKode` (external module managing LLM streaming, tools, skills, plugins, memory, MCP, and events bus).
 - **Headless CLIs**: `app/cli/` (`forge-agent`, `forge-mcp`).
-- **Legacy Reference**: `app/webview/` (Wails v3 + React 19 / Vite — **ARCHIVED / OBSOLETE**).
+- **Archived Reference**: Branch `archive-webview` (legacy Wails v3 + React 19 / Vite).
 
 ## Non-negotiables
 

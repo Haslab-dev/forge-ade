@@ -1,7 +1,7 @@
 # core/
 
 Shared, UI-agnostic domain packages consumed by every application target
-(`app/native`, `app/webview`, `app/cli`, future `app/web`).
+(`app/native`, `app/cli`, `web`).
 
 ## Boundary rules
 

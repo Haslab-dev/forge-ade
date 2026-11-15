@@ -1,10 +1,8 @@
 package git
 
-// pr.go implements the pull-request / merge-request layer shared by the
-// webview and native apps. It shells out to the gh / glab CLIs (which carry
-// the user's authentication) and parses their JSON output. Ported from
-// app/webview/internal/app/git_api.go so both delivery targets share one
-// implementation.
+// pr.go implements the pull-request / merge-request layer for the native app.
+// It shells out to the gh / glab CLIs (which carry the user's authentication)
+// and parses their JSON output.
 
 import (
 	"bytes"

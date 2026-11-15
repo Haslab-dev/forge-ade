@@ -20,8 +20,6 @@ issues:
   exclude-dirs:
     - web
     - plugins
-  exclude-files:
-    - "app/webview/frontend/bindings/.*"
 
 output:
   show-stats: true
