@@ -354,19 +354,19 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				}
 			}
 
-			// ZCode Split Quick-Action Pill: [ >_ | ▾ ]
+			// ZCode Split Quick-Action Pill: [ Mode / Target | ▾ ]
 			target := a.ExternalOpenTarget
 			if target == "" {
-				target = "terminal"
+				target = "editor"
 			}
-			targetIcon := icons.TablerTerminal
+			targetIcon := icons.TablerCode
 			switch target {
 			case "finder":
 				targetIcon = icons.TablerFolder
-			case "zed":
-				targetIcon = icons.TablerCode
-			default:
+			case "terminal":
 				targetIcon = icons.TablerTerminal
+			default:
+				targetIcon = icons.TablerCode
 			}
 
 			splitPill := ui.Row(c.Key("hdr-split-term")).Height(26).Radius(7).Shrink(0).AlignItems(ui.Center).
@@ -383,10 +383,11 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					switch target {
 					case "finder":
 						a.openInFinder("")
-					case "zed":
-						a.openExternalEditor("")
-					default:
+					case "terminal":
 						a.openExternalTerminal("")
+					default:
+						a.Mode = ModeEditor
+						a.IsGitClientOpen = false
 					}
 				}
 
@@ -400,15 +401,30 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					dropHalf.Background(tc.ToolbarControlHover)
 				}
 				dropHalf.Menu(func(m *ui.Menu) {
+					// Mode Switcher in Header Dropdown
+					if m.Item(menuChecked(a.Mode == ModeAgent, "Agent Chat Mode")).Shortcut(ui.Cmd, ui.Key1).Chosen() {
+						a.Mode = ModeAgent
+						a.IsGitClientOpen = false
+						a.AgentViewMode = AgentViewChat
+						a.ActiveTaskKind = "agent"
+					}
+					if m.Item(menuChecked(a.Mode == ModeEditor, "Editor Mode")).Shortcut(ui.Cmd, ui.Key2).Chosen() {
+						a.Mode = ModeEditor
+						a.IsGitClientOpen = false
+					}
+					m.Separator()
+
+					// Quick Target Selectors / Launchers
+					if m.Item(menuChecked(target == "editor", "Editor Mode")).Chosen() {
+						a.ExternalOpenTarget = "editor"
+						a.Mode = ModeEditor
+						a.IsGitClientOpen = false
+					}
 					if m.Item(menuChecked(target == "finder", "Finder")).Chosen() {
 						a.ExternalOpenTarget = "finder"
 						a.openInFinder("")
 					}
-					if m.Item(menuChecked(target == "zed", "Zed")).Chosen() {
-						a.ExternalOpenTarget = "zed"
-						a.openExternalEditor("")
-					}
-					if m.Item(menuChecked(target == "terminal", "Terminal")).Chosen() {
+					if m.Item(menuChecked(target == "terminal", "Terminal (External)")).Chosen() {
 						a.ExternalOpenTarget = "terminal"
 						a.openExternalTerminal("")
 					}

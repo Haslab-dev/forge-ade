@@ -144,7 +144,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 		return
 	}
 
-	as.MdOpts.Theme = a.ThemeMgr.MarkdownTheme()
+	a.setupMarkdownOptions(as, tc)
 
 	as.ListState.Key = func(i int) any {
 		if i < len(as.Messages) {
@@ -245,14 +245,22 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								}
 							}
 
-							// 2. Response Markdown body
+							// 2. Response Markdown body & JSON block rendering
 							if m.Text != "" {
-								if m.Done {
+								trimmed := strings.TrimSpace(m.Text)
+								isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+									(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+								if isPureJSON && json.Valid([]byte(trimmed)) {
+									a.renderJSONResponseCard(c, tc, m, trimmed)
+								} else if m.Done {
 									markdown.View(c, m.Text, &as.MdOpts)
 								} else {
 									markdown.Stream(c, m.Text, &as.MdOpts)
 								}
 							}
+
+							// 2.5 Forge-Design Studio presentation / motion block
+							a.renderTurnDesignCard(c, tc, m)
 
 							// 3. ZCode Turn Changes Card
 							if len(m.Changes) > 0 {
@@ -558,13 +566,8 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 
 	summary, hasRunning, hasFailed := summarizeTools(m.Tools)
 
-	// Skill tools never render as rows (forge-ade filters isSkillTool).
-	ordinary := make([]*agent.ToolExecution, 0, len(m.Tools))
-	for _, t := range m.Tools {
-		if !strings.Contains(strings.ToLower(t.ToolName), "skill") {
-			ordinary = append(ordinary, t)
-		}
-	}
+	// All tools including skills, MCP calls, design tools, and subagents are rendered in traces
+	ordinary := m.Tools
 
 	ui.Column(c).FillWidth().Gap(3).Children(func() {
 		// Group summary row for multi-tool execution
@@ -619,6 +622,10 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				thisTool := tool
 				args := parseToolArgs(thisTool.Command, thisTool.ToolName)
 				nl := strings.ToLower(thisTool.ToolName)
+				isSkill := strings.Contains(nl, "skill")
+				isMCPLoad := strings.Contains(nl, "mcp_load") || strings.Contains(nl, "load_mcp") || strings.Contains(nl, "mcp_connect") || strings.Contains(nl, "connect_mcp") || strings.Contains(nl, "mcp_server") || strings.Contains(nl, "list_mcp")
+				isMCPTool := strings.HasPrefix(nl, "mcp__") || strings.HasPrefix(nl, "mcp_") || strings.Contains(nl, "mcp_tool") || strings.Contains(nl, "mcptool")
+				isDesignTool := strings.Contains(nl, "deck") || strings.Contains(nl, "motion") || strings.Contains(nl, "opendesign") || strings.Contains(nl, "open-design") || strings.Contains(nl, "forge-design") || strings.Contains(nl, "hyperframe") || isDeckOrMotionFile(args.Path)
 				isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
 				isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
 				isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
@@ -627,7 +634,15 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
 
 				toolIcon := icons.TablerTerminal
-				if isRead {
+				if isSkill {
+					toolIcon = icons.TablerSparkles
+				} else if isMCPLoad {
+					toolIcon = icons.TablerPlug
+				} else if isMCPTool {
+					toolIcon = icons.TablerCpu
+				} else if isDesignTool {
+					toolIcon = icons.TablerPalette
+				} else if isRead {
 					toolIcon = icons.TablerFileText
 				} else if isEdit {
 					toolIcon = icons.TablerFilePen
@@ -637,10 +652,31 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 					toolIcon = icons.TablerBot
 				}
 
-				// Row label + kind badge, as forge-ade's [Write]/[Read]/[$] chips.
+				// Row label + kind badge
 				badge := ""
 				displayLabel := thisTool.ToolName
-				if isSubagent {
+				if isSkill {
+					badge = "Skill"
+					displayLabel = extractSkillLabel(thisTool.Command, thisTool.ToolName)
+				} else if isMCPLoad {
+					badge = "MCP Server"
+					displayLabel = extractMCPServerLabel(thisTool.Command, thisTool.ToolName)
+				} else if isMCPTool {
+					server, tool := extractMCPToolParts(thisTool.ToolName)
+					if server != "" {
+						badge = "MCP: " + server
+					} else {
+						badge = "MCP"
+					}
+					displayLabel = tool
+				} else if isDesignTool {
+					badge = "Forge Design"
+					if args.Path != "" {
+						displayLabel = filepath.Base(args.Path)
+					} else {
+						displayLabel = "Presentation / Motion"
+					}
+				} else if isSubagent {
 					badge = "Subagent"
 					role := "Subagent"
 					taskPrompt := ""
@@ -755,6 +791,14 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 							}
 
 							switch {
+							case isSkill:
+								a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
+							case isMCPLoad:
+								a.renderToolMCPLoadBlock(c, tc, thisTool, cleanOut, failed)
+							case isMCPTool:
+								a.renderToolMCPCallBlock(c, tc, thisTool, cleanOut, failed)
+							case isDesignTool:
+								a.renderToolDesignBlock(c, tc, thisTool, cleanOut, failed)
 							case isSubagent:
 								ui.Column(c).Gap(6).Children(func() {
 									ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -1539,47 +1583,76 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				as.CycleExecutionMode()
 			}
 
-			// ZCode terminal counter pill [ >_ N ]
-			termCount := a.terminalSessionCount()
-			termChip := ui.Row(c.Key("composer-term-pill")).Height(28).Radius(8).Padding(0, 8).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-			termColor := tc.TextMuted
-			if a.ShowBottomTerminal {
-				termColor = tc.Accent
-				termChip.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
-			} else if termChip.Hovered() {
-				termChip.Background(tc.Text.Alpha(0.05)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4))
+			// Spawned sub-agent / background shell indicator pill.
+			// Default is hidden (0); only rendered when spawned subagents or extra background shells > 0.
+			subCount := 0
+			if as != nil && as.ActiveSession() != nil {
+				subCount = len(as.Subagents(as.ActiveSession().ID))
 			}
-			termChip.Children(func() {
-				ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(termColor)
-				ui.Text(c, fmt.Sprintf("%d", termCount)).FontSize(12).FontWeight(500).TextColor(termColor)
-			})
-			termChip.ContextMenu(func(m *ui.Menu) {
-				if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
-					sessID := ""
+			spawnedShells := 0
+			if a.Terminal != nil {
+				tabCount := a.Terminal.TabCount()
+				if tabCount > 1 {
+					spawnedShells = tabCount - 1
+				}
+			}
+			spawnedCount := subCount + spawnedShells
+
+			if spawnedCount > 0 {
+				termChip := ui.Row(c.Key("composer-spawned-pill")).Height(28).Radius(8).Padding(0, 8).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				termColor := tc.Accent
+				pillIcon := icons.TablerBot
+				if subCount == 0 {
+					pillIcon = icons.TablerTerminal
+				}
+				termChip.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+				if termChip.Hovered() {
+					termChip.Background(tc.Accent.Alpha(0.18)).BorderColor(tc.Accent.Alpha(0.5))
+				}
+				termChip.Children(func() {
+					ui.Icon(c, pillIcon).Width(13).Height(13).TextColor(termColor)
+					ui.Text(c, fmt.Sprintf("%d", spawnedCount)).FontSize(12).FontWeight(600).TextColor(termColor)
+				})
+				termChip.ContextMenu(func(m *ui.Menu) {
+					if subCount > 0 {
+						if m.Item("View Subagents in Drawer").Chosen() {
+							a.RightDrawerTab = RightTabSubagent
+							a.ShowRightDrawer = true
+						}
+						m.Separator()
+					}
+					if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+						sessID := ""
+						if a.Terminal != nil {
+							sessID = a.Terminal.ActiveSessionID
+						}
+						a.OpenTerminalSnippetsModal(sessID, "", "")
+					}
+					m.Separator()
+					if m.Item(menuChecked(a.ShowBottomTerminal, "Toggle Terminal Dock")).Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
+						a.ShowBottomTerminal = !a.ShowBottomTerminal
+					}
 					if a.Terminal != nil {
-						sessID = a.Terminal.ActiveSessionID
+						if m.Item("New Terminal Tab").Chosen() {
+							_ = a.Terminal.NewTab("")
+							a.ShowBottomTerminal = true
+						}
+						if m.Item("Clear Terminal").Chosen() {
+							a.Terminal.SendInput("\x0c")
+						}
+						if m.Item("Restart Shell").Chosen() {
+							_ = a.Terminal.Restart()
+						}
 					}
-					a.OpenTerminalSnippetsModal(sessID, "", "")
+				})
+				if termChip.Clicked() {
+					if subCount > 0 {
+						a.RightDrawerTab = RightTabSubagent
+						a.ShowRightDrawer = !a.ShowRightDrawer
+					} else {
+						a.ShowBottomTerminal = !a.ShowBottomTerminal
+					}
 				}
-				m.Separator()
-				if m.Item(menuChecked(a.ShowBottomTerminal, "Toggle Terminal Dock")).Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
-					a.ShowBottomTerminal = !a.ShowBottomTerminal
-				}
-				if a.Terminal != nil {
-					if m.Item("New Terminal Tab").Chosen() {
-						_ = a.Terminal.NewTab("")
-						a.ShowBottomTerminal = true
-					}
-					if m.Item("Clear Terminal").Chosen() {
-						a.Terminal.SendInput("\x0c")
-					}
-					if m.Item("Restart Shell").Chosen() {
-						_ = a.Terminal.Restart()
-					}
-				}
-			})
-			if termChip.Clicked() {
-				a.ShowBottomTerminal = !a.ShowBottomTerminal
 			}
 
 			// Lead Persona / Orchestrator chip (only when using the internal RakitKode harness)
@@ -2538,7 +2611,7 @@ func (a *AppUI) renderTerminalSessionSurface(c *ui.Context, sessionID string) {
 }
 
 func summarizeTools(tools []*agent.ToolExecution) (string, bool, bool) {
-	commands, reads, edits, searches, skills, others := 0, 0, 0, 0, 0, 0
+	commands, reads, edits, searches, skills, mcps, designs, others := 0, 0, 0, 0, 0, 0, 0, 0
 	hasRunning := false
 	hasFailed := false
 
@@ -2552,6 +2625,12 @@ func summarizeTools(tools []*agent.ToolExecution) (string, bool, bool) {
 
 		n := strings.ToLower(t.ToolName)
 		switch {
+		case strings.Contains(n, "skill"):
+			skills++
+		case strings.HasPrefix(n, "mcp__") || strings.HasPrefix(n, "mcp_") || strings.Contains(n, "mcp"):
+			mcps++
+		case strings.Contains(n, "deck") || strings.Contains(n, "motion") || strings.Contains(n, "opendesign") || strings.Contains(n, "open-design") || strings.Contains(n, "forge-design"):
+			designs++
 		case strings.Contains(n, "bash") || strings.Contains(n, "shell") || strings.Contains(n, "command") || strings.Contains(n, "exec") || strings.Contains(n, "terminal") || strings.Contains(n, "run_command"):
 			commands++
 		case strings.Contains(n, "read") || strings.Contains(n, "view") || strings.Contains(n, "cat"):
@@ -2560,14 +2639,29 @@ func summarizeTools(tools []*agent.ToolExecution) (string, bool, bool) {
 			edits++
 		case strings.Contains(n, "search") || strings.Contains(n, "grep") || strings.Contains(n, "find") || strings.Contains(n, "glob"):
 			searches++
-		case strings.Contains(n, "skill"):
-			skills++
 		default:
 			others++
 		}
 	}
 
 	var parts []string
+	if skills > 0 {
+		if skills == 1 {
+			parts = append(parts, "Loaded 1 skill")
+		} else {
+			parts = append(parts, fmt.Sprintf("Loaded %d skills", skills))
+		}
+	}
+	if mcps > 0 {
+		if mcps == 1 {
+			parts = append(parts, "Ran 1 MCP tool")
+		} else {
+			parts = append(parts, fmt.Sprintf("Ran %d MCP tools", mcps))
+		}
+	}
+	if designs > 0 {
+		parts = append(parts, "Generated design block")
+	}
 	if commands > 0 {
 		if commands == 1 {
 			parts = append(parts, "Ran 1 command")
@@ -2594,13 +2688,6 @@ func summarizeTools(tools []*agent.ToolExecution) (string, bool, bool) {
 			parts = append(parts, "Ran 1 search")
 		} else {
 			parts = append(parts, fmt.Sprintf("Ran %d searches", searches))
-		}
-	}
-	if skills > 0 {
-		if skills == 1 {
-			parts = append(parts, "Used 1 skill")
-		} else {
-			parts = append(parts, fmt.Sprintf("Used %d skills", skills))
 		}
 	}
 	if others > 0 && len(parts) == 0 {
