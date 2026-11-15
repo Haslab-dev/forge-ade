@@ -188,14 +188,29 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			ui.Row(c).Height(EditorTabBarHeight).AlignItems(ui.Center).Children(func() {
 				for _, tabPath := range em.OpenTabs() {
 					path := tabPath
-					doc := em.GetDoc(path)
-					if doc == nil {
-						continue
+					isTerm := strings.HasPrefix(path, "terminal://")
+					var doc *editor.OpenDocument
+					if !isTerm {
+						doc = em.GetDoc(path)
+						if doc == nil {
+							continue
+						}
 					}
 
 					isActive := (path == em.ActivePath)
-					isModified := doc.Editor.Buffer.Modified()
-					baseName := filepath.Base(doc.RelativePath)
+					isModified := false
+					if doc != nil && doc.Editor != nil && doc.Editor.Buffer != nil {
+						isModified = doc.Editor.Buffer.Modified()
+					}
+					baseName := ""
+					if isTerm {
+						baseName = strings.TrimPrefix(path, "terminal://")
+						if baseName == "" {
+							baseName = "Terminal"
+						}
+					} else {
+						baseName = filepath.Base(doc.RelativePath)
+					}
 					isPinned := em.IsPinned(path)
 					isReadOnly := em.IsReadOnly(path)
 					closedThisTab := false
@@ -203,7 +218,11 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 					tab := ui.Row(c.Key("tab-"+path)).Height(EditorTabBarHeight).Padding(0, 10).Gap(6).
 						AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
 					tab.Children(func() {
-						ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+						if isTerm {
+							ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
+						} else {
+							ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+						}
 						if isPinned {
 							ui.Icon(c, icons.TablerPinFilled).Width(9).Height(9).TextColor(tc.Accent)
 						}
@@ -254,6 +273,52 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 
 					// Zed-style tab context menu, as forge-ade's tab bar has.
 					tab.ContextMenu(func(m *ui.Menu) {
+						if isTerm {
+							if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+								sessID := ""
+								if a.Terminal != nil {
+									sessID = a.Terminal.ActiveSessionID
+								}
+								a.OpenTerminalSnippetsModal(sessID, "", "")
+							}
+							m.Separator()
+							if m.Item("New Terminal Tab in Editor").Chosen() {
+								a.openEditorTerminalTab("")
+							}
+							if a.Terminal != nil {
+								if m.Item("Clear Terminal").Chosen() {
+									a.Terminal.SendInput("\x0c")
+								}
+								if m.Item("Restart Shell").Chosen() {
+									_ = a.Terminal.Restart()
+								}
+							}
+							m.Separator()
+							if len(em.Panes) > 1 {
+								if m.Item("Move to Right Pane").Chosen() {
+									em.MoveTabToPane(path, 1)
+								}
+								if m.Item("Move to Left Pane").Chosen() {
+									em.MoveTabToPane(path, 0)
+								}
+							} else {
+								if m.Item("Split Editor Right").Chosen() {
+									em.SplitRight()
+								}
+							}
+							m.Separator()
+							if m.Item("Close Tab").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
+								em.CloseTab(path)
+							}
+							if m.Item("Close Others").Chosen() {
+								em.CloseOthers(path)
+							}
+							if m.Item("Close All").Chosen() {
+								em.CloseAll()
+							}
+							return
+						}
+
 						pinLabel := "Pin Tab"
 						if isPinned {
 							pinLabel = "Unpin Tab"
@@ -307,6 +372,17 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 							}
 						}
 						m.Separator()
+						if m.Item("New Terminal Tab in Editor").Chosen() {
+							a.openEditorTerminalTab("")
+						}
+						if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+							sessID := ""
+							if a.Terminal != nil {
+								sessID = a.Terminal.ActiveSessionID
+							}
+							a.OpenTerminalSnippetsModal(sessID, "", "")
+						}
+						m.Separator()
 						if m.Item("Copy Path").Chosen() {
 							mygo.Clipboard.WriteText(path)
 						}
@@ -317,17 +393,6 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 							if m.Item("Reveal in Finder").Chosen() {
 								mygo.Shell.ShowItemInFolder(path)
 							}
-						}
-						m.Separator()
-						if m.Item(menuChecked(a.EditorShellInPane, "Open Shell in Split Pane")).Chosen() {
-							a.EditorShellInPane = !a.EditorShellInPane
-						}
-						if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
-							sessID := ""
-							if a.Terminal != nil {
-								sessID = a.Terminal.ActiveSessionID
-							}
-							a.OpenTerminalSnippetsModal(sessID, "", "")
 						}
 					})
 				}
@@ -359,7 +424,9 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			}
 		}
 
-		actionBtn(icons.TablerTerminal, "Shell", a.EditorShellInPane, func() { a.EditorShellInPane = !a.EditorShellInPane })
+		actionBtn(icons.TablerTerminal, "Shell", strings.HasPrefix(em.ActivePath, "terminal://"), func() {
+			a.openEditorTerminalTab("")
+		})
 
 		splitLabel := "Split"
 		if len(em.Panes) > 1 {
@@ -388,29 +455,14 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 	if em == nil {
 		return
 	}
-	tc := a.ThemeMgr.Colors()
 
 	ui.Column(c).Fill().Children(func() {
 		a.renderEditorTabBar(c)
-
-		if a.EditorShellInPane {
-			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-				ui.Column(c).Grow(1).FillHeight().Children(func() {
-					a.renderEditorContent(c)
-				})
-
-				LeftResizeHandle(c, &a.EditorShellPaneWidth, 240, 900, 380)
-
-				a.renderEditorShellPane(c, tc)
-			})
-			return
-		}
-
 		a.renderEditorContent(c)
 	})
 }
 
-// renderEditorContent renders diff, PDF, deck, multi-pane or single editor buffer.
+// renderEditorContent renders diff, PDF, deck, terminal tab, multi-pane or single editor buffer.
 func (a *AppUI) renderEditorContent(c *ui.Context) {
 	em := a.Editor
 	if em == nil {
@@ -418,6 +470,11 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 	}
 	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
+
+	if strings.HasPrefix(em.ActivePath, "terminal://") {
+		a.renderEditorMainTerminal(c, tc, em.ActivePath)
+		return
+	}
 
 	if em.ActivePath != "" && strings.HasSuffix(strings.ToLower(em.ActivePath), ".pdf") {
 		full := em.ActivePath
@@ -466,6 +523,10 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 					}
 				}
 				ui.Column(c).Grow(em.PaneWeight(paneIdx)).FillHeight().Children(func() {
+					if strings.HasPrefix(panePath, "terminal://") {
+						a.renderEditorMainTerminal(c, tc, panePath)
+						return
+					}
 					paneDoc := em.GetDoc(panePath)
 					if paneDoc == nil {
 						ui.Column(c).Grow(1).Center().Children(func() {
@@ -514,6 +575,10 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 		return
 	}
 	tc := a.ThemeMgr.Colors()
+	if strings.HasPrefix(em.ActivePath, "terminal://") {
+		a.renderEditorMainTerminal(c, tc, em.ActivePath)
+		return
+	}
 	doc := em.ActiveDoc()
 	if doc == nil {
 		// No workspace opened: welcome pane with Open Folder + the recent
@@ -585,7 +650,7 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 						ui.Text(c, "Remote Terminal").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
 					})
 					if termBtn.Clicked() {
-						a.openRemoteTerminal()
+						a.openEditorTerminalTab("")
 					}
 
 					uploadBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
@@ -644,7 +709,7 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 					shellBtn.Background(tc.Text.Alpha(0.05))
 				}
 				if shellBtn.Clicked() {
-					a.EditorShellInPane = true
+					a.openEditorTerminalTab("")
 				}
 
 				snipBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
@@ -1019,18 +1084,47 @@ func editorPosAtLine(doc *editor.OpenDocument, line int) mygoeditor.Pos {
 	return mygoeditor.Pos{Line: line, Col: 0}
 }
 
-// renderEditorShellPane renders an interactive side terminal pane inside Editor mode.
-func (a *AppUI) renderEditorShellPane(c *ui.Context, tc theme.ThemeColors) {
-	width := a.EditorShellPaneWidth
-	if width < 240 {
-		width = 380
-		a.EditorShellPaneWidth = 380
+// openEditorTerminalTab opens a terminal tab directly in the main editor pane (CodeEditorPane parity).
+func (a *AppUI) openEditorTerminalTab(title string) {
+	if a.Editor == nil {
+		return
+	}
+	if title == "" && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		_, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+		folder := filepath.Base(remotePath)
+		if folder == "." || folder == "/" || folder == "" {
+			folder = "remote"
+		}
+		title = fmt.Sprintf("SSH: %s (%s)", displayHost, folder)
+	}
+	tabID := a.Editor.OpenTerminalTab(title)
+	if a.Terminal != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") && a.Engine != nil && a.Engine.RemoteFS != nil {
+		client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
+		if isRemote && client != nil {
+			prog, args, env := client.SSHCommand(remotePath)
+			a.Terminal.Command = append([]string{prog}, args...)
+			a.Terminal.Env = env
+			a.Terminal.Title = title
+			_ = a.Terminal.Restart()
+		}
+	}
+	_ = tabID
+	a.Mode = ModeEditor
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// renderEditorMainTerminal renders the interactive terminal directly in the main editor area (CodeEditorPane parity).
+func (a *AppUI) renderEditorMainTerminal(c *ui.Context, tc theme.ThemeColors, tabPath string) {
+	title := strings.TrimPrefix(tabPath, "terminal://")
+	if title == "" {
+		title = "Terminal"
 	}
 
-	ui.Column(c.Key("editor-shell-pane")).Width(width).FillHeight().
-		Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
-		// Shell pane header
-		hdr := ui.Row(c.Key("editor-shell-pane-hdr")).Height(28).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+	ui.Column(c.Key("editor-main-terminal-" + tabPath)).Fill().Background(tc.Canvas).Children(func() {
+		// Terminal in-pane header
+		hdr := ui.Row(c.Key("editor-term-hdr-"+tabPath)).Height(32).Padding(0, 14).Gap(10).AlignItems(ui.Center).
 			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border)
 		hdr.ContextMenu(func(m *ui.Menu) {
 			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
@@ -1041,38 +1135,41 @@ func (a *AppUI) renderEditorShellPane(c *ui.Context, tc theme.ThemeColors) {
 				a.OpenTerminalSnippetsModal(sessID, "", "")
 			}
 			m.Separator()
-			if m.Item("New Tab").Chosen() && a.Terminal != nil {
-				_ = a.Terminal.NewTab("")
+			if m.Item("New Terminal Tab in Editor").Chosen() {
+				a.openEditorTerminalTab("")
 			}
-			if m.Item("Clear Terminal").Chosen() && a.Terminal != nil {
-				a.Terminal.SendInput("\x0c")
-			}
-			if m.Item("Restart Shell").Chosen() && a.Terminal != nil {
-				_ = a.Terminal.Restart()
+			if a.Terminal != nil {
+				if m.Item("Clear Terminal").Chosen() {
+					a.Terminal.SendInput("\x0c")
+				}
+				if m.Item("Restart Shell").Chosen() {
+					_ = a.Terminal.Restart()
+				}
 			}
 			m.Separator()
-			if m.Item("Close Shell Pane").Chosen() {
-				a.EditorShellInPane = false
+			if m.Item("Close Tab").Chosen() {
+				a.Editor.CloseTab(tabPath)
 			}
 		})
 		hdr.Children(func() {
-			ui.Icon(c, icons.TablerTerminal).Width(12).Height(12).TextColor(tc.Accent)
-			ui.Text(c, "Shell").FontSize(11).FontWeight(600).TextColor(tc.Text)
+			ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
+			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
 
 			if a.Terminal != nil {
-				a.renderTerminalTabsStrip(c, tc, a.Terminal, "pane-shell")
+				a.renderTerminalTabsStrip(c, tc, a.Terminal, "main-term")
 			}
 
 			ui.Box(c).Grow(1)
 
-			if IconButton(c, tc, icons.TablerPlus, 11).Clicked() && a.Terminal != nil {
-				_ = a.Terminal.NewTab("")
+			if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
+				a.openEditorTerminalTab("")
 			}
-			snipBtn := ui.Row(c.Key("pane-shell-snip")).Height(20).Radius(4).Padding(0, 5).Gap(3).AlignItems(ui.Center).
+
+			snipBtn := ui.Row(c.Key("main-term-snip")).Height(22).Radius(5).Padding(0, 8).Gap(4).AlignItems(ui.Center).
 				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 			snipBtn.Children(func() {
-				ui.Icon(c, icons.TablerBook).Width(9).Height(9).TextColor(tc.IconMuted)
-				ui.Text(c, "Snippets").FontSize(10).TextColor(tc.Text)
+				ui.Icon(c, icons.TablerBook).Width(10).Height(10).TextColor(tc.IconMuted)
+				ui.Text(c, "Snippets (⌥S)").FontSize(10).TextColor(tc.Text)
 			})
 			if snipBtn.Hovered() {
 				snipBtn.Background(tc.Text.Alpha(0.08))
@@ -1084,23 +1181,24 @@ func (a *AppUI) renderEditorShellPane(c *ui.Context, tc theme.ThemeColors) {
 				}
 				a.OpenTerminalSnippetsModal(sessID, "", "")
 			}
-			if IconButton(c, tc, icons.TablerEraser, 11).Clicked() && a.Terminal != nil {
+
+			if IconButton(c, tc, icons.TablerEraser, 12).Clicked() && a.Terminal != nil {
 				a.Terminal.SendInput("\x0c")
 			}
-			if IconButton(c, tc, icons.TablerRefresh, 11).Clicked() && a.Terminal != nil {
+			if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() && a.Terminal != nil {
 				_ = a.Terminal.Restart()
 			}
-			if IconButton(c, tc, icons.TablerX, 11).Clicked() {
-				a.EditorShellInPane = false
+			if IconButton(c, tc, icons.TablerX, 12).Clicked() {
+				a.Editor.CloseTab(tabPath)
 			}
 		})
 
-		// Shell viewport
+		// Full-height interactive terminal viewport
 		if a.Terminal != nil {
 			a.renderTerminal(c, a.Terminal)
 		} else {
 			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, "Terminal not available").FontSize(12).TextColor(tc.TextMuted)
+				ui.Text(c, "Terminal initializing...").FontSize(12).TextColor(tc.TextMuted)
 			})
 		}
 	})

@@ -277,6 +277,47 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 	return doc, nil
 }
 
+// OpenTerminalTab opens or activates a terminal tab in the editor (CodeEditorPane parity).
+func (em *EditorManager) OpenTerminalTab(title string) string {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	termCount := 0
+	for _, p := range em.OpenTabPaths {
+		if strings.HasPrefix(p, "terminal://") {
+			termCount++
+		}
+	}
+	if title == "" {
+		if termCount > 0 {
+			title = fmt.Sprintf("Terminal %d", termCount+1)
+		} else {
+			title = "Terminal"
+		}
+	}
+	tabID := fmt.Sprintf("terminal://%s", title)
+
+	found := false
+	for _, p := range em.OpenTabPaths {
+		if p == tabID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		em.OpenTabPaths = append(em.OpenTabPaths, tabID)
+	}
+
+	em.ActivePath = tabID
+	if len(em.Panes) > 1 {
+		if em.ActivePane < 0 || em.ActivePane >= len(em.Panes) {
+			em.ActivePane = 0
+		}
+		em.Panes[em.ActivePane] = tabID
+	}
+	return tabID
+}
+
 func fnv64a(parts ...string) uint64 {
 	const (
 		offset64 = 14695981039346656037
