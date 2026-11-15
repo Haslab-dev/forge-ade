@@ -20,12 +20,18 @@ type Manager struct {
 	clients      map[string]*Client
 	activeConnID string
 	bus          *events.Bus
+	// hostKeyDir stores trust-on-first-use SSH host keys (one 0600 file per
+	// host:port). Empty means connections are refused — there is no mode
+	// that skips host key verification.
+	hostKeyDir string
 }
 
-// NewManager creates an instance of remotefs Manager.
-func NewManager() *Manager {
+// NewManager creates an instance of remotefs Manager. dataDir is the app data
+// directory; SSH host keys are pinned under <dataDir>/ssh_host_keys.
+func NewManager(dataDir string) *Manager {
 	return &Manager{
-		clients: make(map[string]*Client),
+		clients:    make(map[string]*Client),
+		hostKeyDir: filepath.Join(dataDir, "ssh_host_keys"),
 	}
 }
 
@@ -73,7 +79,7 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 	}
 	m.mu.Unlock()
 
-	client, err := DialWithProgress(cfg, func(phase, detail string) {
+	client, err := DialWithProgress(cfg, m.hostKeyDir, func(phase, detail string) {
 		m.emitEvent(events.SSHHandshake, map[string]interface{}{
 			"id":     cfg.ID,
 			"phase":  phase,

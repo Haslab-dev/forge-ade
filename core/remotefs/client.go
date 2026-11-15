@@ -1,6 +1,7 @@
 package remotefs
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -38,12 +39,68 @@ type Client struct {
 type ProgressFunc func(phase string, detail string)
 
 // Dial creates a new SSH and SFTP client from the provided configuration.
-func Dial(cfg SSHConfig) (*Client, error) {
-	return DialWithProgress(cfg, nil)
+// hostKeyDir is the trust-on-first-use host key store; passing an empty dir
+// is an error — there is deliberately no way to skip host key verification.
+func Dial(cfg SSHConfig, hostKeyDir string) (*Client, error) {
+	return DialWithProgress(cfg, hostKeyDir, nil)
+}
+
+// hostKeyPath returns the file pinning the host key for host:port. The host
+// part is sanitized to a safe filename.
+func hostKeyPath(keysDir, host string, port int) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, strings.ToLower(host))
+	return filepath.Join(keysDir, fmt.Sprintf("%s_%d.key", safe, port))
+}
+
+// formatHostKey renders a public key as "keytype base64key" — the same shape
+// stored in the key files.
+func formatHostKey(key ssh.PublicKey) string {
+	return key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal())
+}
+
+// tofuHostKeyCallback implements trust-on-first-use: the first connection to
+// a host:port pins its key in <keysDir>/<host>_<port>.key (0600, content
+// "keytype base64key"); later connections must present the exact same key.
+// On mismatch the error names the file to delete in order to re-trust.
+func tofuHostKeyCallback(keysDir, host string, port int) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		if key == nil {
+			return fmt.Errorf("ssh server %s:%d presented no host key", host, port)
+		}
+		if err := os.MkdirAll(keysDir, 0o700); err != nil {
+			return fmt.Errorf("ssh host key store %s: %w", keysDir, err)
+		}
+		keyPath := hostKeyPath(keysDir, host, port)
+		presented := formatHostKey(key)
+
+		if data, err := os.ReadFile(keyPath); err == nil {
+			if strings.TrimSpace(string(data)) == presented {
+				return nil
+			}
+			return fmt.Errorf(
+				"ssh host key mismatch for %s:%d: the server now presents %q but %q is pinned in %s. If you are sure the server legitimately changed its key, delete that file and reconnect",
+				host, port, presented, strings.TrimSpace(string(data)), keyPath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("read pinned ssh host key for %s:%d: %w", host, port, err)
+		}
+
+		// First contact with this host:port — pin the key for future connects.
+		if err := os.WriteFile(keyPath, []byte(presented+"\n"), 0o600); err != nil {
+			return fmt.Errorf("pin ssh host key for %s:%d: %w", host, port, err)
+		}
+		return nil
+	}
 }
 
 // DialWithProgress creates an SSH and SFTP client while emitting handshake progress phases.
-func DialWithProgress(cfg SSHConfig, onProgress ProgressFunc) (*Client, error) {
+func DialWithProgress(cfg SSHConfig, hostKeyDir string, onProgress ProgressFunc) (*Client, error) {
 	if cfg.Port <= 0 {
 		cfg.Port = 22
 	}
@@ -52,6 +109,9 @@ func DialWithProgress(cfg SSHConfig, onProgress ProgressFunc) (*Client, error) {
 	}
 	if cfg.Host == "" {
 		return nil, fmt.Errorf("ssh host is required")
+	}
+	if strings.TrimSpace(hostKeyDir) == "" {
+		return nil, fmt.Errorf("ssh host key store directory is not configured; refusing to connect without host key verification")
 	}
 
 	authMethods := []ssh.AuthMethod{}
@@ -139,7 +199,7 @@ func DialWithProgress(cfg SSHConfig, onProgress ProgressFunc) (*Client, error) {
 	sshConfig := &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // For ADE local workstation dev usage
+		HostKeyCallback: tofuHostKeyCallback(hostKeyDir, cfg.Host, cfg.Port),
 		Timeout:         12 * time.Second,
 	}
 

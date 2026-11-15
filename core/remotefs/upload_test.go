@@ -7,7 +7,7 @@ import (
 )
 
 func TestParseRemotePath(t *testing.T) {
-	mgr := NewManager()
+	mgr := NewManager(t.TempDir())
 
 	// Unregistered / local paths
 	_, _, isRemote := mgr.ParseRemotePath("/var/www/test")
@@ -44,7 +44,7 @@ func TestParseRemotePath(t *testing.T) {
 }
 
 func TestUploadFileToRemote_LocalFileMissing(t *testing.T) {
-	mgr := NewManager()
+	mgr := NewManager(t.TempDir())
 	client := &Client{
 		config: SSHConfig{
 			ID: "conn-1",
@@ -59,7 +59,7 @@ func TestUploadFileToRemote_LocalFileMissing(t *testing.T) {
 }
 
 func TestUploadFilesToRemote_LocalFileMissing(t *testing.T) {
-	mgr := NewManager()
+	mgr := NewManager(t.TempDir())
 	client := &Client{
 		config: SSHConfig{
 			ID: "conn-1",
@@ -74,7 +74,7 @@ func TestUploadFilesToRemote_LocalFileMissing(t *testing.T) {
 }
 
 func TestCopyPathRouting_LocalToRemoteMissingLocal(t *testing.T) {
-	mgr := NewManager()
+	mgr := NewManager(t.TempDir())
 	client := &Client{
 		config: SSHConfig{
 			ID: "conn-1",
@@ -92,7 +92,7 @@ func TestCopyPathRouting_LocalToRemoteMissingLocal(t *testing.T) {
 }
 
 func TestUploadFileToRemote_ActiveClientFallback(t *testing.T) {
-	mgr := NewManager()
+	mgr := NewManager(t.TempDir())
 	tmpFile := filepath.Join(t.TempDir(), "test.txt")
 	_ = os.WriteFile(tmpFile, []byte("hello"), 0644)
 
