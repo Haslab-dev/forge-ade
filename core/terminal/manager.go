@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/events"
@@ -156,9 +155,11 @@ func (m *Manager) Resize(id string, rows, cols uint16) error {
 
 // Exec runs a command in an existing persistent shell session and waits for a
 // completion marker, returning the captured output and exit code. On timeout
-// the shell is killed and recreated under the same id so the caller stays
+// the session is killed and rebuilt under the same id so the caller stays
 // ExecContext runs a command in an existing persistent shell session and waits for a
 // completion marker, respecting context cancellation for immediate stopping.
+// Concurrent execs on one session are serialized: they share the capture
+// buffer and marker stream, so interleaving them corrupts both runs.
 func (m *Manager) ExecContext(ctx context.Context, id, command string, timeout time.Duration) (string, int, error) {
 	m.mu.RLock()
 	sess, ok := m.sessions[id]
@@ -166,6 +167,12 @@ func (m *Manager) ExecContext(ctx context.Context, id, command string, timeout t
 	if !ok {
 		return "", 1, fmt.Errorf("terminal session %s not found", id)
 	}
+
+	// One exec at a time per session — the capture buffer and end-marker are
+	// shared, so two concurrent runs would see each other's markers.
+	sess.execMu.Lock()
+	defer sess.execMu.Unlock()
+
 	startMarker := "__FORGE_START_" + uuid.NewString()[:8] + "__"
 	endMarker := "__FORGE_END_" + uuid.NewString()[:8] + "__"
 	sess.resetOutput()
@@ -214,14 +221,16 @@ func (m *Manager) ExecContext(ctx context.Context, id, command string, timeout t
 		}
 		if time.Now().After(deadline) {
 			_ = m.Stop(id)
-			if sh, err := m.CreateShell(sess.Name, sess.Folder); err == nil {
+			// Rebuild the SAME kind of session (SSH/remote argv, env, provider)
+			// instead of falling back to a plain local shell.
+			if sh, err := m.start(sess.rebuildForRestart()); err == nil {
 				m.mu.Lock()
 				delete(m.sessions, sh.ID) // drop the auto-assigned key
 				sh.ID = id                // reuse the id so callers stay valid
 				m.sessions[id] = sh
 				m.mu.Unlock()
 			}
-			return strings.TrimSpace(out), 1, fmt.Errorf("command timed out after %s; shell restarted", timeout.Round(time.Second))
+			return strings.TrimSpace(out), 1, fmt.Errorf("command timed out after %s; session restarted", timeout.Round(time.Second))
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
@@ -249,9 +258,13 @@ func (m *Manager) Stop(id string) error {
 	pid := session.PID
 	session.mu.Unlock()
 
-	// Kill by PID
+	// Kill the whole process group first — children were started with
+	// Setpgid, so shells spawning grandchildren leave nothing behind. Fall
+	// back to the direct PID kill when the group kill fails.
 	if pid > 0 {
-		syscall.Kill(pid, syscall.SIGKILL)
+		if err := killProcessGroup(pid); err != nil {
+			_ = killDirect(pid)
+		}
 	}
 	// Also via cmd.Process
 	if session.cmd != nil && session.cmd.Process != nil {

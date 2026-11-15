@@ -78,7 +78,18 @@ func NewManager(dataDir string) (*Manager, error) {
 	m := &Manager{path: path}
 	data, err := os.ReadFile(path)
 	if err == nil {
-		_ = json.Unmarshal(data, &m.items)
+		if uerr := json.Unmarshal(data, &m.items); uerr != nil {
+			// Corrupt or mid-write file: never treat it as empty (the next
+			// persist would wipe it). Quarantine the raw bytes for recovery
+			// and start with an empty schedule.
+			backup := path + fmt.Sprintf(".corrupt-%d", time.Now().UnixNano())
+			if renameErr := os.Rename(path, backup); renameErr == nil {
+				m.items = []Automation{}
+				return m, fmt.Errorf("automations file corrupt; preserved as %s: %w", backup, uerr)
+			}
+			m.items = []Automation{}
+			return m, fmt.Errorf("automations file corrupt (could not preserve): %w", uerr)
+		}
 	}
 	if m.items == nil {
 		m.items = []Automation{}

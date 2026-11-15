@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,19 +17,29 @@ import (
 // any changes were made.
 var globalTaskCounter int64
 
+// maxADEKeyNumber scans task keys and returns the highest ADE-<n> number.
+// The suffix is parsed with strconv (after trimming), so keys written by
+// other tools or hand-edited files — "ade-12", "ADE- 7", " ADE-99 " — still
+// count and newly generated keys never collide.
+func maxADEKeyNumber(tasks []Task) int {
+	maxNum := 0
+	for _, t := range tasks {
+		key := strings.ToUpper(strings.TrimSpace(t.Key))
+		if !strings.HasPrefix(key, "ADE-") {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(key, "ADE-"))); err == nil && n > maxNum {
+			maxNum = n
+		}
+	}
+	return maxNum
+}
+
 func NormalizeTasks(tasks []Task) ([]Task, bool) {
 	modified := false
 	now := time.Now().UnixMilli()
 
-	maxNum := 0
-	for _, t := range tasks {
-		var num int
-		if _, err := fmt.Sscanf(t.Key, "ADE-%d", &num); err == nil {
-			if num > maxNum {
-				maxNum = num
-			}
-		}
-	}
+	maxNum := maxADEKeyNumber(tasks)
 
 	result := make([]Task, len(tasks))
 	for i, t := range tasks {
@@ -145,6 +156,18 @@ func (m *Manager) GetBoardTasksFilePath(wsFolder string) string {
 	return filepath.Join(dir, "board_tasks.json")
 }
 
+// quarantineCorruptBoardFile renames a corrupt board_tasks.json aside with a
+// nanosecond timestamp suffix so the raw bytes survive for manual recovery
+// instead of being destroyed by the next write. Returns the backup path
+// ("" on failure).
+func quarantineCorruptBoardFile(filePath string) string {
+	backup := fmt.Sprintf("%s.corrupt-%d", filePath, time.Now().UnixNano())
+	if err := os.Rename(filePath, backup); err != nil {
+		return ""
+	}
+	return backup
+}
+
 // ListTasks returns all tasks on the workflow board for the specified workspace.
 func (m *Manager) ListTasks(wsFolder string) ([]Task, error) {
 	m.mu.Lock()
@@ -171,7 +194,13 @@ func (m *Manager) ListTasks(wsFolder string) ([]Task, error) {
 
 	var tasks []Task
 	if err := json.Unmarshal(data, &tasks); err != nil {
-		return []Task{}, nil
+		// Corrupt or mid-write file: never treat it as an empty board (the
+		// next write would wipe it). Quarantine the raw bytes for recovery.
+		backup := quarantineCorruptBoardFile(filePath)
+		if backup != "" {
+			return []Task{}, fmt.Errorf("board file corrupt; preserved as %s: %w", backup, err)
+		}
+		return []Task{}, fmt.Errorf("board file corrupt (could not preserve): %w", err)
 	}
 
 	return tasks, nil
@@ -191,7 +220,10 @@ func (m *Manager) GetTask(wsFolder string, taskIDOrKey string) (Task, error) {
 	return Task{}, fmt.Errorf("task not found: %s", taskIDOrKey)
 }
 
-// SaveTask inserts or updates a task on the workflow board.
+// SaveTask inserts or updates a task on the workflow board. When the existing
+// board file is corrupt, it is quarantined as .corrupt-<timestamp> and the
+// save proceeds against a fresh list containing just the incoming task; a
+// descriptive error tells the caller the previous file was preserved.
 func (m *Manager) SaveTask(wsFolder string, task Task) (Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -201,8 +233,14 @@ func (m *Manager) SaveTask(wsFolder string, task Task) (Task, error) {
 	filePath := filepath.Join(dir, "board_tasks.json")
 
 	var tasks []Task
+	var corruptBackup string
 	if data, err := os.ReadFile(filePath); err == nil {
-		_ = json.Unmarshal(data, &tasks)
+		if uerr := json.Unmarshal(data, &tasks); uerr != nil {
+			// Never overwrite unreadable data: preserve the raw bytes, then
+			// restart the board with the incoming task only.
+			corruptBackup = quarantineCorruptBoardFile(filePath)
+			tasks = nil
+		}
 	}
 
 	now := time.Now().UnixMilli()
@@ -229,16 +267,7 @@ func (m *Manager) SaveTask(wsFolder string, task Task) (Task, error) {
 	}
 
 	if task.Key == "" {
-		maxNum := 0
-		for _, t := range tasks {
-			var num int
-			if _, err := fmt.Sscanf(t.Key, "ADE-%d", &num); err == nil {
-				if num > maxNum {
-					maxNum = num
-				}
-			}
-		}
-		task.Key = fmt.Sprintf("ADE-%d", maxNum+1)
+		task.Key = fmt.Sprintf("ADE-%d", maxADEKeyNumber(tasks)+1)
 	}
 
 	if task.CreatedAt == 0 {
@@ -278,6 +307,9 @@ func (m *Manager) SaveTask(wsFolder string, task Task) (Task, error) {
 		m.onUpdated(tasks, bytes)
 	}
 
+	if corruptBackup != "" {
+		return task, fmt.Errorf("board file was corrupt and has been preserved as %s; board restarted with the saved task only", corruptBackup)
+	}
 	return task, nil
 }
 
@@ -297,7 +329,14 @@ func (m *Manager) DeleteTask(wsFolder string, taskIDOrKey string) error {
 		}
 		return err
 	}
-	_ = json.Unmarshal(data, &tasks)
+	if err := json.Unmarshal(data, &tasks); err != nil {
+		// Corrupt file: quarantine it, never write over it.
+		backup := quarantineCorruptBoardFile(filePath)
+		if backup != "" {
+			return fmt.Errorf("board file corrupt; preserved as %s: %w", backup, err)
+		}
+		return fmt.Errorf("board file corrupt (could not preserve): %w", err)
+	}
 
 	filtered := make([]Task, 0, len(tasks))
 	for _, t := range tasks {
@@ -337,7 +376,12 @@ func (m *Manager) MoveTaskStatus(wsFolder string, taskIDOrKey string, status str
 		return Task{}, err
 	}
 	if err := json.Unmarshal(data, &tasks); err != nil {
-		return Task{}, err
+		// Corrupt file: quarantine it, never write over it.
+		backup := quarantineCorruptBoardFile(filePath)
+		if backup != "" {
+			return Task{}, fmt.Errorf("board file corrupt; preserved as %s: %w", backup, err)
+		}
+		return Task{}, fmt.Errorf("board file corrupt (could not preserve): %w", err)
 	}
 
 	status = strings.ToLower(status)

@@ -100,10 +100,14 @@ func FetchCommandCodeQuota() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to decode credits response: %w", err)
 	}
 
-	// 2. Fetch subscription details (plan name, renew date)
-	planTitle := "Go Plan"
-	status := "active"
-	daysToRenew := 17
+	// 2. Fetch subscription details (plan name, renew date). Nothing is
+	// fabricated when the fetch fails: unknown fields stay zero/empty and the
+	// *Known flags tell the UI to render "unavailable" instead of fake data.
+	planTitle := ""
+	planKnown := false
+	status := ""
+	daysToRenew := 0
+	daysKnown := false
 
 	reqSub, err := http.NewRequest("GET", "https://api.commandcode.ai/alpha/billing/subscriptions", nil)
 	if err == nil {
@@ -125,6 +129,7 @@ func FetchCommandCodeQuota() (map[string]interface{}, error) {
 				sub := subResp.Subscriptions[0]
 				if sub.Plan.Title != "" {
 					planTitle = sub.Plan.Title
+					planKnown = true
 				}
 				if sub.Status != "" {
 					status = sub.Status
@@ -133,6 +138,7 @@ func FetchCommandCodeQuota() (map[string]interface{}, error) {
 					days := int(time.Until(time.UnixMilli(sub.CurrentPeriodEnd)).Hours() / 24)
 					if days >= 0 {
 						daysToRenew = days
+						daysKnown = true
 					}
 				}
 			}
@@ -174,28 +180,31 @@ func FetchCommandCodeQuota() (map[string]interface{}, error) {
 	}
 	weeklyReset := FormatDurationMillis(creditsResp.WindowLimits.Weekly.ResetAt)
 
-	usagePct := 5.0
+	usagePct := 0.0
+	usageKnown := false
 	if creditsResp.Credits.MonthlyCredits > 0 && weeklyCap > 0 {
 		usagePct = (weeklyUsed / weeklyCap) * 100
-	}
-	if usagePct > 100 {
-		usagePct = 100
+		if usagePct > 100 {
+			usagePct = 100
+		}
+		usageKnown = true
 	}
 
+	// Username stays honest: empty when unknown (no hardcoded fallback).
 	userName := auth.UserName
-	if userName == "" {
-		userName = "lutfi-haslab"
-	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"agentId":       "agent-commandcode",
 		"agentName":     "Command Code",
 		"plan":          planTitle,
+		"planKnown":     planKnown,
 		"status":        status,
 		"userName":      userName,
 		"totalRequests": summaryResp.TotalCount,
 		"daysLeft":      daysToRenew,
+		"daysKnown":     daysKnown,
 		"usagePercent":  usagePct,
+		"usageKnown":    usageKnown,
 		"fiveHour": map[string]interface{}{
 			"used":     fiveHourUsed,
 			"cap":      fiveHourCap,
@@ -208,8 +217,13 @@ func FetchCommandCodeQuota() (map[string]interface{}, error) {
 			"percent":  weeklyPct,
 			"resetsIn": weeklyReset,
 		},
-		"breakdownUrl": fmt.Sprintf("https://commandcode.ai/%s/settings/usage", userName),
-	}, nil
+	}
+	// The usage breakdown page is per-user; only build it when the username
+	// is actually known (never from a guessed name).
+	if userName != "" {
+		result["breakdownUrl"] = fmt.Sprintf("https://commandcode.ai/%s/settings/usage", userName)
+	}
+	return result, nil
 }
 
 // FormatDurationMillis formats a duration until target timestamp in milliseconds.
@@ -450,9 +464,6 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 	agyQuotaCacheMu.RUnlock()
 
 	accessToken, accountEmail, authErr := getAntigravityCredentials()
-	if accountEmail == "" {
-		accountEmail = "lutfiikbalmajid2@gmail.com"
-	}
 
 	weeklyRemaining := 100.0
 	weeklyReset := "Quota available"

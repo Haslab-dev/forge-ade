@@ -136,10 +136,11 @@ func (w *Watcher) watchRecursive(root string, gi *gitignore.Matcher) error {
 			if rel != "." && strings.Count(rel, string(filepath.Separator)) >= maxWatchDepth {
 				return filepath.SkipDir
 			}
-			if isPathSkipped(path) {
+			forge := isForgePath(path)
+			if !forge && isPathSkipped(path) {
 				return filepath.SkipDir
 			}
-			if gi != nil && rel != "." && rel != "" {
+			if !forge && gi != nil && rel != "." && rel != "" {
 				parts := strings.Split(filepath.ToSlash(rel), "/")
 				if gi.Match(parts, true) {
 					return filepath.SkipDir
@@ -198,14 +199,18 @@ func (w *Watcher) isGitIgnored(path string, isDir bool) bool {
 }
 
 func (w *Watcher) handleEvent(event fsnotify.Event) {
-	if isPathSkipped(event.Name) {
+	// `.forge/` events are never filtered: board_tasks.json lives there and
+	// is typically gitignored, but the board watcher depends on its events.
+	forge := isForgePath(event.Name)
+
+	if !forge && isPathSkipped(event.Name) {
 		return
 	}
 
 	fi, err := os.Stat(event.Name)
 	isDir := err == nil && fi.IsDir()
 
-	if w.isGitIgnored(event.Name, isDir) {
+	if !forge && w.isGitIgnored(event.Name, isDir) {
 		return
 	}
 
@@ -219,7 +224,7 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	case event.Op&fsnotify.Create != 0:
 		evt.Type = events.FileCreated
 		// Watch newly created directories
-		if isDir && !isPathSkipped(event.Name) && !w.isGitIgnored(event.Name, true) {
+		if isDir && (forge || (!isPathSkipped(event.Name) && !w.isGitIgnored(event.Name, true))) {
 			w.mu.Lock()
 			if len(w.dirs) < maxWatchedDirs {
 				if err := w.watcher.Add(event.Name); err == nil {
@@ -276,6 +281,22 @@ func isPathSkipped(path string) bool {
 	parts := strings.Split(clean, "/")
 	for _, part := range parts {
 		if part != "" && isSkipped(part) {
+			return true
+		}
+	}
+	return false
+}
+
+// isForgePath reports whether path lives inside a `.forge/` directory (e.g.
+// `.forge/board_tasks.json`). Forge-owned files are often gitignored and sit
+// next to junk-skip names, but the board watcher and engine depend on their
+// events — they are never filtered out, only the .forge subtree itself.
+func isForgePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == ".forge" {
 			return true
 		}
 	}

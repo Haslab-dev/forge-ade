@@ -47,6 +47,11 @@ type Session struct {
 	ptyOnce  sync.Once  `json:"-"`
 	onData   func(data string)
 
+	// execMu serializes ExecContext runs on this session: concurrent execs
+	// share one capture buffer and one completion marker stream, so two
+	// interleaved runs would read each other's output and spuriously time out.
+	execMu sync.Mutex `json:"-"`
+
 	// outMu/out buffer recent output so the agent's persistent-shell Exec can
 	// capture command results without racing the UI stream.
 	outMu sync.Mutex `json:"-"`
@@ -71,6 +76,28 @@ func (s *Session) closePTY() {
 
 // GetID satisfies the agent engine's ShellSession interface.
 func (s *Session) GetID() string { return s.ID }
+
+// rebuildForRestart returns a fresh, unstarted Session carrying the exact
+// launch identity of this one (provider, folder, command override, argv and
+// env overrides, isolation flag). A timeout restart uses it so a remote/SSH
+// or AI session is recreated as itself — never silently replaced by a plain
+// local shell.
+func (s *Session) rebuildForRestart() *Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &Session{
+		Name:       s.Name,
+		Type:       s.Type,
+		Provider:   s.Provider,
+		Folder:     s.Folder,
+		Command:    s.Command,
+		Isolated:   s.Isolated,
+		Executable: s.Executable,
+		Args:       append([]string(nil), s.Args...),
+		Env:        append([]string(nil), s.Env...),
+		CreatedAt:  time.Now(),
+	}
+}
 
 // appendOutput stores recent output (capped) for Exec capture.
 func (s *Session) appendOutput(data string) {

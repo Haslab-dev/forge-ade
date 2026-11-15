@@ -111,6 +111,7 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 		if home, err := os.UserHomeDir(); err == nil {
 			cmd.Dir = home
 		}
+		setProcessGroup(cmd)
 		return cmd, nil
 	}
 
@@ -126,6 +127,7 @@ func BuildCommand(session *Session) (*exec.Cmd, error) {
 
 	cmd := exec.Command(provider.Executable, args...)
 	cmd.Dir = session.Folder
+	setProcessGroup(cmd)
 	// An empty folder, remote URI (ssh://), or non-existent path would cause
 	// pty.StartWithSize to fail with "chdir: no such file or directory" — drop
 	// shells at the user's home directory instead.
