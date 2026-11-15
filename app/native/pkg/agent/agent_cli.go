@@ -415,6 +415,39 @@ func (mgr *AgentCLIManager) StopSession(sessionID string) {
 	mgr.SaveSessionsToDisk()
 }
 
+// StopAll stops every running CLI session without the per-session grace
+// window. Intended for app shutdown so agent PTYs are not orphaned.
+func (mgr *AgentCLIManager) StopAll() {
+	if mgr == nil {
+		return
+	}
+	mgr.mu.RLock()
+	terms := make([]*terminal.TerminalState, 0, len(mgr.Sessions))
+	ids := make([]string, 0, len(mgr.Sessions))
+	for id, s := range mgr.Sessions {
+		if s == nil {
+			continue
+		}
+		ids = append(ids, id)
+		if s.Terminal != nil && !s.Terminal.IsExited() {
+			terms = append(terms, s.Terminal)
+		}
+	}
+	mgr.mu.RUnlock()
+	for _, t := range terms {
+		t.Close()
+	}
+	mgr.mu.Lock()
+	for _, id := range ids {
+		if s, ok := mgr.Sessions[id]; ok {
+			s.Status = "completed"
+			s.EndedAt = time.Now()
+		}
+	}
+	mgr.mu.Unlock()
+	mgr.SaveSessionsToDisk()
+}
+
 // getResumeArgs finds continuation flags for an agent CLI on restart.
 func (mgr *AgentCLIManager) getResumeArgs(agentID, command string) []string {
 	for _, def := range DefaultAgentCLIs {

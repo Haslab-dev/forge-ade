@@ -70,6 +70,14 @@ func main() {
 		appUI.SetWindow(win)
 
 		win.OnClosed(func() {
+			// Full teardown: AppUI.Close stops the UI ticker, the workspace
+			// watcher and flushes pending UI prefs; ShellMgr.StopAll kills the
+			// engine-owned PTY shells; the terminal state closes last so its
+			// Ghostty processes never outlive the window.
+			appUI.Close()
+			if appUI.Engine != nil && appUI.Engine.ShellMgr != nil {
+				appUI.Engine.ShellMgr.StopAll()
+			}
 			if appUI.Terminal != nil {
 				appUI.Terminal.Close()
 			}

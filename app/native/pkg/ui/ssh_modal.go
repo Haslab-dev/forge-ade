@@ -68,6 +68,10 @@ func (a *AppUI) OpenSSHModal() {
 	a.ShowSSHQuickMenu = false
 	a.SSHErrorMsg = ""
 	a.SSHIsConnecting = false
+	// Reopening (or resetting) the modal invalidates any in-flight connect:
+	// its goroutine abandons save/switch when the generation moved on.
+	a.sshConnectGen++
+	a.sshSFTPBusyID = ""
 	a.LoadSavedSSHConfigs()
 
 	if len(a.SSHSavedConfigs) > 0 && a.SSHSelectedConfigID == "" {
@@ -96,6 +100,9 @@ func (a *AppUI) ResetSSHForm() {
 	a.SSHRemotePath = "/var/www"
 	a.SSHErrorMsg = ""
 	a.SSHIsConnecting = false
+	// Starting over abandons any in-flight connect for the old form values.
+	a.sshConnectGen++
+	a.sshSFTPBusyID = ""
 }
 
 // LoadSSHConfig populates form fields from a saved profile.
@@ -150,15 +157,22 @@ func (a *AppUI) LoadSavedSSHConfigs() {
 	if err := json.Unmarshal(data, &list); err == nil {
 		a.SSHSavedConfigs = list
 	}
+	// The store holds plaintext passwords and key passphrases: repair files
+	// written by older builds with world-readable permissions.
+	if info, statErr := os.Stat(filePath); statErr == nil && info.Mode().Perm() != 0600 {
+		_ = os.Chmod(filePath, 0600)
+	}
 }
 
-// PersistSavedSSHConfigs writes saved host profiles to disk.
+// PersistSavedSSHConfigs writes saved host profiles to disk. The JSON stores
+// plaintext secrets (passwords, key passphrases), so it is written
+// owner-only: 0600 on the file, 0700 on the directory.
 func (a *AppUI) PersistSavedSSHConfigs() {
 	filePath := a.sshStoragePath()
-	_ = os.MkdirAll(filepath.Dir(filePath), 0755)
+	_ = os.MkdirAll(filepath.Dir(filePath), 0700)
 	data, err := json.MarshalIndent(a.SSHSavedConfigs, "", "  ")
 	if err == nil {
-		_ = os.WriteFile(filePath, data, 0644)
+		_ = os.WriteFile(filePath, data, 0600)
 	}
 }
 
@@ -191,14 +205,34 @@ func (a *AppUI) DeleteSSHConfig(id string) {
 }
 
 // ConnectCurrentSSH initiates connection using the current form values.
+// A generation counter guards the goroutine: cancelling or reopening the
+// modal invalidates in-flight results (no save, no workspace switch), and a
+// re-entrant click while a connect is running is ignored.
 func (a *AppUI) ConnectCurrentSSH() {
+	if a.SSHIsConnecting {
+		return // a connect is already in flight
+	}
 	if strings.TrimSpace(a.SSHHost) == "" || strings.TrimSpace(a.SSHUser) == "" {
 		a.SSHErrorMsg = "Host and Username are required."
 		return
 	}
 
-	a.SSHIsConnecting = true
-	a.SSHErrorMsg = ""
+	// Port validation: an unparsable port is surfaced instead of silently
+	// keeping the previous value.
+	port := 22
+	if txt := strings.TrimSpace(a.SSHPortText); txt != "" {
+		parsed, parseErr := strconv.Atoi(txt)
+		if parseErr != nil || parsed <= 0 || parsed > 65535 {
+			a.queueToast(ui.Toast{
+				Title:       "Invalid Port",
+				Description: fmt.Sprintf("“%s” is not a valid port (1–65535). Fix it and connect again.", txt),
+				Type:        "error",
+			})
+			return
+		}
+		port = parsed
+		a.SSHPort = parsed
+	}
 
 	configID := a.SSHSelectedConfigID
 	if configID == "" {
@@ -211,14 +245,6 @@ func (a *AppUI) ConnectCurrentSSH() {
 	remPath := strings.TrimSpace(a.SSHRemotePath)
 	if remPath == "" {
 		remPath = "/"
-	}
-	port := a.SSHPort
-	if parsed, err := strconv.Atoi(strings.TrimSpace(a.SSHPortText)); err == nil && parsed > 0 && parsed <= 65535 {
-		port = parsed
-		a.SSHPort = parsed
-	}
-	if port <= 0 {
-		port = 22
 	}
 
 	cfg := remotefs.SSHConfig{
@@ -234,42 +260,123 @@ func (a *AppUI) ConnectCurrentSSH() {
 		RemotePath:    remPath,
 	}
 
-	go func() {
-		status, err := a.Engine.ConnectSSH(cfg)
-		if err != nil {
-			a.SSHIsConnecting = false
-			a.SSHErrorMsg = err.Error()
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
-			return
-		}
-		if status == nil || !status.Connected {
-			a.SSHIsConnecting = false
-			errMsg := "Failed to connect to remote SSH server."
-			if status != nil && status.Error != "" {
-				errMsg = status.Error
-			}
-			a.SSHErrorMsg = errMsg
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
-			return
-		}
-
-		// Save profile and switch workspace
+	a.startSSHConnect(cfg, func(status *remotefs.ConnectionStatus) {
+		// Save profile and switch workspace on success.
 		a.SaveSSHConfig(cfg)
 		remoteURI := fmt.Sprintf("ssh://%s%s", status.ID, status.RemotePath)
-
-		a.SSHIsConnecting = false
 		a.ShowSSHModal = false
 		a.Mode = ModeEditor
 		a.switchWorkspace(remoteURI)
+	})
+}
 
-		if a.Window != nil {
-			a.Window.Invalidate()
-		}
+// startSSHConnect runs Engine.ConnectSSH off the UI thread and publishes the
+// result through runOnUI. onConnected (UI thread) runs only when the connect
+// succeeded AND the generation captured at start is still current.
+func (a *AppUI) startSSHConnect(cfg remotefs.SSHConfig, onConnected func(status *remotefs.ConnectionStatus)) {
+	if a.SSHIsConnecting {
+		return
+	}
+	if a.Engine == nil {
+		a.SSHErrorMsg = "Engine unavailable — cannot connect."
+		a.invalidateUI()
+		return
+	}
+	a.SSHIsConnecting = true
+	a.SSHErrorMsg = ""
+	a.sshConnectGen++
+	gen := a.sshConnectGen
+	a.invalidateUI()
+
+	go func() {
+		status, err := a.Engine.ConnectSSH(cfg)
+		a.runOnUI(func() {
+			if gen != a.sshConnectGen {
+				// Modal was cancelled/reopened while connecting: abandon the
+				// result entirely (no save, no switch, no error surface).
+				return
+			}
+			a.SSHIsConnecting = false
+			switch {
+			case err != nil:
+				// Includes TOFU host-key mismatch text from core/remotefs,
+				// which names the pinned-key file to delete.
+				a.SSHErrorMsg = err.Error()
+			case status == nil || !status.Connected:
+				errMsg := "Failed to connect to remote SSH server."
+				if status != nil && status.Error != "" {
+					errMsg = status.Error
+				}
+				a.SSHErrorMsg = errMsg
+			default:
+				if onConnected != nil {
+					onConnected(status)
+				}
+			}
+			a.invalidateUI()
+		})
 	}()
+}
+
+// connectAndOpenSFTP backs the saved-host SFTP buttons: uploads always run
+// against the ACTIVE connection, so a non-active host connects first and the
+// uploader only opens on success.
+func (a *AppUI) connectAndOpenSFTP(cfg remotefs.SSHConfig) {
+	if a.sshSFTPBusyID != "" {
+		return // a connect-then-upload chain is already running
+	}
+	if a.sshHostActive(cfg) {
+		a.OpenRemoteFileUploader(cfg.RemotePath)
+		return
+	}
+	if a.SSHIsConnecting || a.Engine == nil {
+		return
+	}
+	a.sshSFTPBusyID = cfg.ID
+	a.LoadSSHConfig(cfg)
+	a.startSSHConnect(cfg, func(status *remotefs.ConnectionStatus) {
+		a.sshSFTPBusyID = ""
+		a.SaveSSHConfig(cfg)
+		remoteURI := fmt.Sprintf("ssh://%s%s", status.ID, status.RemotePath)
+		a.ShowSSHModal = false
+		a.Mode = ModeEditor
+		a.switchWorkspace(remoteURI)
+		a.OpenRemoteFileUploader(cfg.RemotePath)
+	})
+}
+
+// sshHostActive reports whether the saved host owns the active remote
+// workspace connection.
+func (a *AppUI) sshHostActive(cfg remotefs.SSHConfig) bool {
+	root := ""
+	if a.Workspace != nil {
+		root = a.Workspace.RootDir
+	}
+	if !strings.HasPrefix(root, "ssh://") {
+		return false
+	}
+	connID, _, _, _ := parseSSHWorkspaceURI(root)
+	return connID == cfg.ID || connID == cfg.Host || strings.Contains(root, cfg.Host)
+}
+
+// cancelSSHModal dismisses the connection dialog and abandons any in-flight
+// connect by bumping the generation counter.
+func (a *AppUI) cancelSSHModal() {
+	a.ShowSSHModal = false
+	a.sshConnectGen++
+	a.sshSFTPBusyID = ""
+	if !a.SSHIsConnecting {
+		return
+	}
+	// The in-flight goroutine will abandon its result; clear the spinner now.
+	a.SSHIsConnecting = false
+	a.invalidateUI()
+}
+
+// quoteRemotePath single-quotes a remote path for POSIX shells so spaces and
+// metacharacters survive the ssh command line ('\' escaping included).
+func quoteRemotePath(p string) string {
+	return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
 }
 
 // DisconnectSSH closes the remote connection and reverts to default workspace.
@@ -312,7 +419,9 @@ func (a *AppUI) connectSSHShell(cfg remotefs.SSHConfig) {
 	}
 	args = append(args, userHost)
 	if cfg.RemotePath != "" && cfg.RemotePath != "/" {
-		args = append(args, "-t", fmt.Sprintf("cd %s && exec $SHELL -l", cfg.RemotePath))
+		// Single-quote the remote path so spaces and shell metacharacters in
+		// it survive the ssh command line intact.
+		args = append(args, "-t", fmt.Sprintf("cd %s && exec $SHELL -l", quoteRemotePath(cfg.RemotePath)))
 	}
 	a.ShowBottomTerminal = true
 	a.Terminal.Command = args
@@ -516,13 +625,20 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 												Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
 												AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 											sftpBtn.Children(func() {
-												ui.Icon(c, icons.TablerUpload).Width(10).Height(10).TextColor(tc.TextMuted)
+												// Uploads always use the ACTIVE connection, so a
+												// non-active host first connects (spinner on the
+												// button) and the uploader only opens on success.
+												if a.sshSFTPBusyID == itemCfg.ID {
+													ui.Spinner(c).Size(10, 10)
+												} else {
+													ui.Icon(c, icons.TablerUpload).Width(10).Height(10).TextColor(tc.TextMuted)
+												}
 											})
-											if sftpBtn.Hovered() {
+											if sftpBtn.Hovered() && a.sshSFTPBusyID != itemCfg.ID {
 												sftpBtn.Background(tc.Text.Alpha(0.08))
 											}
-											if sftpBtn.Clicked() {
-												a.OpenRemoteFileUploader(itemCfg.RemotePath)
+											if sftpBtn.Clicked() && a.sshSFTPBusyID != itemCfg.ID {
+												a.connectAndOpenSFTP(itemCfg)
 											}
 
 											ui.Box(c).Grow(1)
@@ -536,7 +652,14 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 												delBtn.Background(tc.Error.Alpha(0.18))
 											}
 											if delBtn.Clicked() {
-												a.DeleteSSHConfig(itemCfg.ID)
+												// Destructive: confirm before removing the saved profile.
+												title := itemCfg.Label
+												if title == "" {
+													title = itemCfg.Host
+												}
+												a.confirmDialogLabeled("Delete Saved Host?", fmt.Sprintf("“%s” will be removed from saved SSH hosts (including its stored credentials).", title), "Delete", func() {
+													a.DeleteSSHConfig(itemCfg.ID)
+												}, nil)
 											}
 										})
 									})
@@ -697,8 +820,11 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 														Multiple: false,
 													})
 													if err == nil && len(paths) > 0 {
-														a.SSHKeyPath = paths[0]
-														win.Invalidate()
+														// SSHKeyPath is rendered state: publish on the UI thread.
+														a.runOnUI(func() {
+															a.SSHKeyPath = paths[0]
+															a.invalidateUI()
+														})
 													}
 												}()
 											}
@@ -794,7 +920,9 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 							cancelBtn.Background(tc.Text.Alpha(0.04))
 						}
 						if cancelBtn.Clicked() {
-							a.ShowSSHModal = false
+							// Cancelling abandons any in-flight connect (generation bump),
+							// so it can no longer save or switch the workspace.
+							a.cancelSSHModal()
 						}
 
 						ui.Box(c).Width(8)
@@ -1014,39 +1142,57 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 	})
 }
 
-// uploadFilesToRemote opens a multi-file dialog and SFTP-uploads the picked
-// files to the active remote workspace (RemoteFileUploaderModal parity).
-// Progress surfaces through SSHUploadStatus on the quick menu header.
-func (a *AppUI) uploadFilesToRemote(c *ui.Context, remoteDir string) {
-	if a.Window == nil || a.Engine == nil || a.Engine.RemoteFS == nil {
-		return
-	}
-	win := a.Window
-	_, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
-	if !isRemote {
-		remotePath = remoteDir
-	}
-	go func() {
-		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-			Parent:   win,
-			Title:    "Upload Files to Remote",
-			Multiple: true,
-		})
-		if err != nil || len(paths) == 0 {
-			return
-		}
-		a.SSHUploadStatus = fmt.Sprintf("Uploading %d files…", len(paths))
-		win.Invalidate()
+// ── Remote upload queue ────────────────────────────────────────────────────
+// The queue is appended to by Browse dialog goroutines and rewritten by the
+// upload goroutine; every access goes through these mutex-guarded helpers.
 
-		uploaded, uerr := a.Engine.RemoteFS.UploadFilesToRemote(paths, remotePath)
-		if uerr != nil {
-			a.SSHUploadStatus = "Upload failed: " + uerr.Error()
-		} else {
-			a.SSHUploadStatus = fmt.Sprintf("Uploaded %d files", len(uploaded))
-			a.Workspace.Refresh()
+func (a *AppUI) enqueueRemoteUpload(item RemoteUploadItem) {
+	a.uploadQueueMu.Lock()
+	a.RemoteUploadQueue = append(a.RemoteUploadQueue, item)
+	a.uploadQueueMu.Unlock()
+}
+
+func (a *AppUI) remoteUploadQueueSnapshot() []RemoteUploadItem {
+	a.uploadQueueMu.Lock()
+	defer a.uploadQueueMu.Unlock()
+	out := make([]RemoteUploadItem, len(a.RemoteUploadQueue))
+	copy(out, a.RemoteUploadQueue)
+	return out
+}
+
+func (a *AppUI) remoteUploadQueueLen() int {
+	a.uploadQueueMu.Lock()
+	defer a.uploadQueueMu.Unlock()
+	return len(a.RemoteUploadQueue)
+}
+
+func (a *AppUI) setRemoteUploadStatus(id, status, errMsg string) {
+	a.uploadQueueMu.Lock()
+	for i := range a.RemoteUploadQueue {
+		if a.RemoteUploadQueue[i].ID == id {
+			a.RemoteUploadQueue[i].Status = status
+			a.RemoteUploadQueue[i].ErrorMsg = errMsg
+			break
 		}
-		win.Invalidate()
-	}()
+	}
+	a.uploadQueueMu.Unlock()
+}
+
+func (a *AppUI) removeRemoteUpload(id string) {
+	a.uploadQueueMu.Lock()
+	for i := range a.RemoteUploadQueue {
+		if a.RemoteUploadQueue[i].ID == id {
+			a.RemoteUploadQueue = append(a.RemoteUploadQueue[:i], a.RemoteUploadQueue[i+1:]...)
+			break
+		}
+	}
+	a.uploadQueueMu.Unlock()
+}
+
+func (a *AppUI) clearRemoteUploadQueue() {
+	a.uploadQueueMu.Lock()
+	a.RemoteUploadQueue = nil
+	a.uploadQueueMu.Unlock()
 }
 
 // renderRemoteFileUploaderModal renders the full SFTP file/folder upload modal (RemoteFileUploaderModal parity).
@@ -1092,6 +1238,14 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 				})
 			})
 
+			// Live upload status line (progress from the active SFTP run).
+			if a.SSHUploadStatus != "" {
+				ui.Row(c).Padding(0, 16, 8, 16).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerUpload).Width(12).Height(12).TextColor(tc.Accent)
+					ui.Text(c, a.SSHUploadStatus).FontSize(11).TextColor(tc.TextMuted).Grow(1)
+				})
+			}
+
 			// Add Files / Browse area
 			ui.Column(c).Padding(12, 16).Gap(8).Children(func() {
 				dropBox := ui.Column(c).Radius(8).Padding(16, 20).Background(tc.Canvas.Alpha(0.5)).
@@ -1126,7 +1280,7 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 										}
 										name := filepath.Base(p)
 										dest := filepath.Join(a.RemoteUploadTargetDir, name)
-										a.RemoteUploadQueue = append(a.RemoteUploadQueue, RemoteUploadItem{
+										a.enqueueRemoteUpload(RemoteUploadItem{
 											ID:        fmt.Sprintf("up-%d-%s", time.Now().UnixNano(), name),
 											LocalPath: p,
 											Name:      name,
@@ -1161,7 +1315,7 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 									dirPath := dirPaths[0]
 									name := filepath.Base(dirPath)
 									dest := filepath.Join(a.RemoteUploadTargetDir, name)
-									a.RemoteUploadQueue = append(a.RemoteUploadQueue, RemoteUploadItem{
+									a.enqueueRemoteUpload(RemoteUploadItem{
 										ID:        fmt.Sprintf("up-%d-%s", time.Now().UnixNano(), name),
 										LocalPath: dirPath,
 										Name:      name,
@@ -1176,14 +1330,16 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 					})
 				})
 
-				// Queue items
-				if len(a.RemoteUploadQueue) == 0 {
+				// Queue items (rendered from a mutex-guarded snapshot so Browse
+				// dialogs appending concurrently can never race the render).
+				queueSnap := a.remoteUploadQueueSnapshot()
+				if len(queueSnap) == 0 {
 					ui.Row(c).Padding(12, 0).Justify(ui.Center).Children(func() {
 						ui.Text(c, "Upload queue is empty").FontSize(11).TextColor(tc.TextMuted)
 					})
 				} else {
 					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, fmt.Sprintf("Queue (%d items)", len(a.RemoteUploadQueue))).FontSize(11).FontWeight(600).TextColor(tc.Text).Grow(1)
+						ui.Text(c, fmt.Sprintf("Queue (%d items)", len(queueSnap))).FontSize(11).FontWeight(600).TextColor(tc.Text).Grow(1)
 						clearBtn := ui.Row(c).Padding(2, 6).Radius(4)
 						clearBtn.Children(func() {
 							ui.Text(c, "Clear all").FontSize(10).TextColor(tc.TextMuted)
@@ -1192,15 +1348,14 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 							clearBtn.Background(tc.Text.Alpha(0.06))
 						}
 						if clearBtn.Clicked() && !a.RemoteUploadIsUploading {
-							a.RemoteUploadQueue = nil
+							a.clearRemoteUploadQueue()
 						}
 					})
 
 					scroll := ui.Scroll(c).MaxHeight(200)
 					scroll.Children(func() {
 						ui.Column(c).Gap(4).Children(func() {
-							for idx, item := range a.RemoteUploadQueue {
-								itemIdx := idx
+							for _, item := range queueSnap {
 								it := item
 								row := ui.Row(c.Key("upq-"+it.ID)).Height(32).Padding(0, 8).Radius(6).
 									Background(tc.Canvas.Alpha(0.6)).AlignItems(ui.Center).Gap(8)
@@ -1212,10 +1367,6 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 									}
 									// Status pill
 									switch it.Status {
-									case "pending":
-										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).Children(func() {
-											ui.Text(c, "Pending").FontSize(9).TextColor(tc.TextMuted)
-										})
 									case "uploading":
 										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Accent.Alpha(0.15)).Children(func() {
 											ui.Text(c, "Uploading…").FontSize(9).FontWeight(600).TextColor(tc.Accent)
@@ -1228,6 +1379,10 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Error.Alpha(0.15)).Children(func() {
 											ui.Text(c, "Failed").FontSize(9).FontWeight(600).TextColor(tc.Error)
 										})
+									default:
+										ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).Children(func() {
+											ui.Text(c, "Pending").FontSize(9).TextColor(tc.TextMuted)
+										})
 									}
 									if !a.RemoteUploadIsUploading {
 										rmBtn := ui.Row(c).Size(18, 18).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
@@ -1238,7 +1393,7 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 											rmBtn.Background(tc.Text.Alpha(0.08))
 										}
 										if rmBtn.Clicked() {
-											a.RemoteUploadQueue = append(a.RemoteUploadQueue[:itemIdx], a.RemoteUploadQueue[itemIdx+1:]...)
+											a.removeRemoteUpload(it.ID)
 										}
 									}
 								})
@@ -1265,7 +1420,8 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 
 				ui.Box(c).Grow(1)
 
-				if len(a.RemoteUploadQueue) > 0 {
+				queueSnap := a.remoteUploadQueueSnapshot()
+				if len(queueSnap) > 0 {
 					uploadBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 14).
 						Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6)
 					uploadBtn.Children(func() {
@@ -1274,36 +1430,47 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 							ui.Text(c, "Uploading…").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
 						} else {
 							ui.Icon(c, icons.TablerUpload).Width(12).Height(12).TextColor(tc.Canvas)
-							ui.Text(c, fmt.Sprintf("Upload All (%d)", len(a.RemoteUploadQueue))).FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+							ui.Text(c, fmt.Sprintf("Upload All (%d)", len(queueSnap))).FontSize(11).FontWeight(600).TextColor(tc.Canvas)
 						}
 					})
 					if !a.RemoteUploadIsUploading && uploadBtn.Clicked() && a.Engine != nil && a.Engine.RemoteFS != nil {
 						a.RemoteUploadIsUploading = true
-						win := a.Window
+						a.SSHUploadStatus = fmt.Sprintf("Uploading %d item(s)…", len(queueSnap))
 						targetDir := a.RemoteUploadTargetDir
+						// Iterate a snapshot: Browse dialogs may append to the
+						// live queue while this goroutine runs.
+						pending := a.remoteUploadQueueSnapshot()
 						go func() {
-							for i := range a.RemoteUploadQueue {
-								a.RemoteUploadQueue[i].Status = "uploading"
-								if win != nil {
-									win.Invalidate()
-								}
-								dest := filepath.Join(targetDir, a.RemoteUploadQueue[i].Name)
-								err := a.Engine.RemoteFS.UploadFileToRemote(a.RemoteUploadQueue[i].LocalPath, dest)
+							okCount, errCount := 0, 0
+							for _, item := range pending {
+								a.setRemoteUploadStatus(item.ID, "uploading", "")
+								a.invalidateUI()
+								dest := filepath.Join(targetDir, item.Name)
+								err := a.Engine.RemoteFS.UploadFileToRemote(item.LocalPath, dest)
 								if err != nil {
-									a.RemoteUploadQueue[i].Status = "error"
-									a.RemoteUploadQueue[i].ErrorMsg = err.Error()
+									a.setRemoteUploadStatus(item.ID, "error", err.Error())
+									errCount++
 								} else {
-									a.RemoteUploadQueue[i].Status = "completed"
+									a.setRemoteUploadStatus(item.ID, "completed", "")
+									okCount++
 								}
-								if win != nil {
-									win.Invalidate()
+								done := okCount + errCount
+								total := len(pending)
+								a.runOnUI(func() {
+									a.SSHUploadStatus = fmt.Sprintf("Uploading… %d/%d done", done, total)
+									a.invalidateUI()
+								})
+							}
+							a.runOnUI(func() {
+								a.RemoteUploadIsUploading = false
+								if errCount > 0 {
+									a.SSHUploadStatus = fmt.Sprintf("Uploaded %d item(s), %d failed", okCount, errCount)
+								} else {
+									a.SSHUploadStatus = fmt.Sprintf("Uploaded %d item(s)", okCount)
 								}
-							}
-							a.RemoteUploadIsUploading = false
-							a.Workspace.Refresh()
-							if win != nil {
-								win.Invalidate()
-							}
+								a.Workspace.Refresh()
+								a.invalidateUI()
+							})
 						}()
 					}
 				}

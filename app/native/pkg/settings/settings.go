@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -129,6 +131,7 @@ type SettingsManager struct {
 	IndexingStatus  string
 	IndexedFiles    int
 	IndexedSymbols  int
+	ReindexBusy     bool
 	engine          *engine.Engine
 	ThemeMgr        *theme.ThemeManager
 	Provider        string
@@ -302,6 +305,23 @@ func (sm *SettingsManager) GetProfiles() []llm.ProviderProfile {
 	return nil
 }
 
+// CopyProfiles deep-copies provider profiles. GetProviderProfiles hands back
+// the LLMClient's live internal slice; UI layers copy it before editing so
+// concurrent fetch/save goroutines never observe mid-mutation state, and
+// persistence happens only through SaveProfiles (atomic slice swap).
+func CopyProfiles(profiles []llm.ProviderProfile) []llm.ProviderProfile {
+	if profiles == nil {
+		return nil
+	}
+	out := make([]llm.ProviderProfile, len(profiles))
+	for i, p := range profiles {
+		p.AvailableModels = append([]string(nil), p.AvailableModels...)
+		p.SelectedModels = append([]string(nil), p.SelectedModels...)
+		out[i] = p
+	}
+	return out
+}
+
 // SaveProfiles saves the updated custom provider profiles to LLMClient.
 func (sm *SettingsManager) SaveProfiles(profiles []llm.ProviderProfile) error {
 	if sm.engine != nil && sm.engine.LLMClient != nil {
@@ -331,6 +351,7 @@ func NewSettingsManager(engine *engine.Engine, onSaved func(provider, model stri
 		NewProviderProtocol: "openai",
 	}
 	sm.Load()
+	sm.loadIntegrationLists()
 	if sm.SelectedProviderID == "" {
 		profiles := sm.GetProfiles()
 		if len(profiles) > 0 {
@@ -338,6 +359,73 @@ func NewSettingsManager(engine *engine.Engine, onSaved func(provider, model stri
 		}
 	}
 	return sm
+}
+
+// integrationLists is the persisted shape for custom slash commands and
+// lifecycle hooks (they round-trip through the settings data directory).
+type integrationLists struct {
+	CustomCommands []CustomSlashCommand `json:"custom_commands"`
+	Hooks          []HookEntry          `json:"hooks"`
+}
+
+func (sm *SettingsManager) integrationPath() string {
+	if sm.engine != nil && sm.engine.DataDir != "" {
+		return filepath.Join(sm.engine.DataDir, "integrations.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".forge-ade", "integrations.json")
+}
+
+// loadIntegrationLists reads persisted custom commands and hooks at startup.
+func (sm *SettingsManager) loadIntegrationLists() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	path := sm.integrationPath()
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var lists integrationLists
+	if err := json.Unmarshal(data, &lists); err != nil {
+		return
+	}
+	sm.CustomCommands = lists.CustomCommands
+	sm.HooksList = lists.Hooks
+}
+
+// persistIntegrationListsLocked writes the current lists (caller holds mu).
+func (sm *SettingsManager) persistIntegrationListsLocked() {
+	path := sm.integrationPath()
+	if path == "" {
+		return
+	}
+	payload := integrationLists{CustomCommands: sm.CustomCommands, Hooks: sm.HooksList}
+	if data, err := json.MarshalIndent(payload, "", "  "); err == nil {
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// SetCustomCommands replaces the custom slash command list and persists it.
+func (sm *SettingsManager) SetCustomCommands(list []CustomSlashCommand) {
+	sm.mu.Lock()
+	sm.CustomCommands = list
+	sm.persistIntegrationListsLocked()
+	sm.mu.Unlock()
+}
+
+// SetHooks replaces the lifecycle hook list and persists it.
+func (sm *SettingsManager) SetHooks(list []HookEntry) {
+	sm.mu.Lock()
+	sm.HooksList = list
+	sm.persistIntegrationListsLocked()
+	sm.mu.Unlock()
 }
 
 // Load reads current settings from the native engine.

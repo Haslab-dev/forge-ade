@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -278,7 +279,11 @@ func providerProtocol(p llm.ProviderProfile) string {
 func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
 	settingsSectionHeader(c, tc, "Providers & Models", "Configure LLM provider API credentials, endpoints, and default model selection.")
 
-	profiles := sm.GetProfiles()
+	// UI-owned deep copy: GetProviderProfiles returns the manager's live
+	// slice, so every edit below lands on the copy and persistence happens
+	// exclusively through SaveProfiles / DeleteProfile (atomic swaps under
+	// the manager lock). Re-synced each frame so fetch results show up.
+	profiles := settings.CopyProfiles(sm.GetProfiles())
 	if sm.SelectedProviderID == "" && len(profiles) > 0 {
 		sm.SelectedProviderID = profiles[0].ID
 	}
@@ -513,17 +518,20 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 								AvailableModels: models,
 								SelectedModels:  models,
 							}
-							allProfs := append(sm.GetProfiles(), newProf)
-							_ = sm.SaveProfiles(allProfs)
-							sm.SelectedProviderID = newID
-							sm.IsAddingProvider = false
-							if len(models) > 0 {
-								a.Agent.ActiveModel = models[0]
-								if a.Engine != nil && a.Engine.LLMClient != nil {
-									a.Engine.LLMClient.SetActiveModel(newID, models[0])
+							allProfs := append(settings.CopyProfiles(sm.GetProfiles()), newProf)
+							if err := sm.SaveProfiles(allProfs); err != nil {
+								c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+							} else {
+								sm.SelectedProviderID = newID
+								sm.IsAddingProvider = false
+								if len(models) > 0 {
+									a.Agent.ActiveModel = models[0]
+									if a.Engine != nil && a.Engine.LLMClient != nil {
+										a.Engine.LLMClient.SetActiveModel(newID, models[0])
+									}
 								}
+								c.AddToast(ui.Toast{Title: "Provider Added", Description: name, Type: "success"})
 							}
-							c.AddToast(ui.Toast{Title: "Provider Added", Description: name, Type: "success"})
 						}
 
 						cancelBtn := ui.Button(c, "Cancel")
@@ -564,8 +572,12 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 								})
 							}
 							if enBtn.Clicked() {
+								// Mutate the UI-owned copy, then persist the whole list.
 								selectedProfile.Enabled = !selectedProfile.Enabled
-								_ = sm.SaveProfiles(profiles)
+								if err := sm.SaveProfiles(profiles); err != nil {
+									selectedProfile.Enabled = !selectedProfile.Enabled // revert on failure
+									c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+								}
 							}
 						})
 
@@ -589,15 +601,18 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 						ui.Text(c, "Delete").FontSize(11).TextColor(tc.Error)
 					})
 					if delBtn.Clicked() {
-						_ = sm.DeleteProfile(selectedProfile.ID)
-						newProfs := sm.GetProfiles()
-						sm.EditingProfileID = ""
-						if len(newProfs) > 0 {
-							sm.SelectedProviderID = newProfs[0].ID
+						if err := sm.DeleteProfile(selectedProfile.ID); err != nil {
+							c.AddToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
 						} else {
-							sm.SelectedProviderID = ""
+							newProfs := settings.CopyProfiles(sm.GetProfiles())
+							sm.EditingProfileID = ""
+							if len(newProfs) > 0 {
+								sm.SelectedProviderID = newProfs[0].ID
+							} else {
+								sm.SelectedProviderID = ""
+							}
+							c.AddToast(ui.Toast{Title: "Provider Deleted", Description: selectedProfile.Name, Type: "info"})
 						}
-						c.AddToast(ui.Toast{Title: "Provider Deleted", Description: selectedProfile.Name, Type: "info"})
 					}
 				})
 
@@ -653,12 +668,15 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 							}
 							profiles[selectedIdx].BaseURL = strings.TrimSpace(sm.EditBaseURL)
 							profiles[selectedIdx].APIKey = strings.TrimSpace(sm.EditAPIKey)
-							_ = sm.SaveProfiles(profiles)
-							if sm.Provider == profiles[selectedIdx].ID {
-								sm.BaseURL = profiles[selectedIdx].BaseURL
-								sm.APIKey = profiles[selectedIdx].APIKey
+							if err := sm.SaveProfiles(profiles); err != nil {
+								c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+							} else {
+								if sm.Provider == profiles[selectedIdx].ID {
+									sm.BaseURL = profiles[selectedIdx].BaseURL
+									sm.APIKey = profiles[selectedIdx].APIKey
+								}
+								c.AddToast(ui.Toast{Title: "Saved", Description: profiles[selectedIdx].Name, Type: "success"})
 							}
-							c.AddToast(ui.Toast{Title: "Saved", Description: profiles[selectedIdx].Name, Type: "success"})
 						}
 					}
 				})
@@ -686,28 +704,41 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 						if fetchBtn.Clicked() && !sm.IsFetchingModels {
 							sm.IsFetchingModels = true
 							go func(profID, apiKey, baseURL string) {
-								defer func() { sm.IsFetchingModels = false }()
+								var (
+									models   []string
+									fetchErr error
+								)
 								if a.Engine != nil && a.Engine.LLMClient != nil {
 									ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 									defer cancel()
-									models, err := a.Engine.LLMClient.FetchModels(ctx, apiKey, baseURL)
-									if err == nil && len(models) > 0 {
-										allP := sm.GetProfiles()
+									models, fetchErr = a.Engine.LLMClient.FetchModels(ctx, apiKey, baseURL)
+								}
+								// Publish everything — spinner, toasts, and the
+								// persisted profile list — on the UI thread; the
+								// goroutine never touches the manager's live slice.
+								a.runOnUI(func() {
+									sm.IsFetchingModels = false
+									switch {
+									case fetchErr != nil:
+										a.queueToast(ui.Toast{Title: "Fetch Error", Description: fetchErr.Error(), Type: "error"})
+									case len(models) == 0:
+										a.queueToast(ui.Toast{Title: "No Models", Description: "The provider returned no models", Type: "error"})
+									default:
+										allP := settings.CopyProfiles(sm.GetProfiles())
 										for idx := range allP {
 											if allP[idx].ID == profID {
 												allP[idx].AvailableModels = models
-												_ = sm.SaveProfiles(allP)
 												break
 											}
 										}
-										c.AddToast(ui.Toast{Title: "Models Fetched", Description: fmt.Sprintf("Found %d models", len(models)), Type: "success"})
-									} else if err != nil {
-										c.AddToast(ui.Toast{Title: "Fetch Error", Description: err.Error(), Type: "error"})
+										if err := sm.SaveProfiles(allP); err != nil {
+											a.queueToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+										} else {
+											a.queueToast(ui.Toast{Title: "Models Fetched", Description: fmt.Sprintf("Found %d models", len(models)), Type: "success"})
+										}
 									}
-								}
-								if a.Window != nil {
-									a.Window.Invalidate()
-								}
+									a.invalidateUI()
+								})
 							}(selectedProfile.ID, sm.EditAPIKey, sm.EditBaseURL)
 						}
 					})
@@ -733,6 +764,14 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 					}
 
 					// Quick actions: select all / deselect all
+					saveProfiles := func() {
+						if selectedIdx >= 0 && selectedIdx < len(profiles) {
+							profiles[selectedIdx] = *selectedProfile
+							if err := sm.SaveProfiles(profiles); err != nil {
+								c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+							}
+						}
+					}
 					ui.Row(c).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, fmt.Sprintf("%d models", len(filtered))).FontSize(11).TextColor(tc.TextMuted)
 						ui.Box(c).Grow(1)
@@ -740,19 +779,13 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 						selAll := ui.Text(c, "Select all").FontSize(11).FontWeight(500).TextColor(tc.Success)
 						if selAll.Clicked() {
 							selectedProfile.SelectedModels = append([]string(nil), filtered...)
-							if selectedIdx >= 0 && selectedIdx < len(profiles) {
-								profiles[selectedIdx] = *selectedProfile
-								_ = sm.SaveProfiles(profiles)
-							}
+							saveProfiles()
 						}
 						ui.Text(c, " · ").FontSize(11).TextColor(tc.TextMuted)
 						deselAll := ui.Text(c, "Deselect all").FontSize(11).TextColor(tc.TextMuted)
 						if deselAll.Clicked() {
 							selectedProfile.SelectedModels = nil
-							if selectedIdx >= 0 && selectedIdx < len(profiles) {
-								profiles[selectedIdx] = *selectedProfile
-								_ = sm.SaveProfiles(profiles)
-							}
+							saveProfiles()
 						}
 					})
 
@@ -805,7 +838,9 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 											}
 											if selectedIdx >= 0 && selectedIdx < len(profiles) {
 												profiles[selectedIdx] = *selectedProfile
-												_ = sm.SaveProfiles(profiles)
+												if err := sm.SaveProfiles(profiles); err != nil {
+													c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+												}
 											}
 										}
 
@@ -884,7 +919,9 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 											selectedProfile.SelectedModels = nsm
 											if selectedIdx >= 0 && selectedIdx < len(profiles) {
 												profiles[selectedIdx] = *selectedProfile
-												_ = sm.SaveProfiles(profiles)
+												if err := sm.SaveProfiles(profiles); err != nil {
+													c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+												}
 											}
 										}
 									})
@@ -904,9 +941,14 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 							sm.NewModelName = ""
 							if selectedIdx >= 0 && selectedIdx < len(profiles) {
 								profiles[selectedIdx] = *selectedProfile
-								_ = sm.SaveProfiles(profiles)
+								if err := sm.SaveProfiles(profiles); err != nil {
+									c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+								} else {
+									c.AddToast(ui.Toast{Title: "Model Added", Description: mNew, Type: "success"})
+								}
+							} else {
+								c.AddToast(ui.Toast{Title: "Model Added", Description: mNew, Type: "success"})
 							}
-							c.AddToast(ui.Toast{Title: "Model Added", Description: mNew, Type: "success"})
 						}
 					})
 				})
@@ -920,13 +962,18 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 		})
 	})
 
-	// Local LLMs & Ollama Status
+	// Local LLMs & Ollama Status — probed for real against the well-known
+	// local endpoints (cached 30s), never a hardcoded ONLINE.
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "Local LLMs (Ollama / LM Studio)").FontSize(12).FontWeight(600)
 				ui.Box(c).Grow(1)
-				Badge(c, tc, "ONLINE", tc.Success)
+				if a.localLLMOnline() {
+					Badge(c, tc, "ONLINE", tc.Success)
+				} else {
+					Badge(c, tc, "OFFLINE", tc.TextMuted)
+				}
 			})
 			ui.Text(c, "ForgeADE automatically routes local prompts to Ollama (http://localhost:11434) and LM Studio (http://localhost:1234) when active.").
 				FontSize(11).TextColor(tc.TextMuted)
@@ -973,14 +1020,30 @@ func (a *AppUI) renderSettingsTabAgents(c *ui.Context, tc theme.ThemeColors, sm 
 			scanBtn := ui.Button(c, "Scan System PATH for Agents")
 			if scanBtn.Clicked() {
 				go func() {
-					for _, ag := range a.ACPMgr.Agents {
-						if _, err := exec.LookPath(ag.Command); err == nil {
-							ag.Available = true
+					// Probe off-thread, then apply by index on the UI thread —
+					// range copies would drop the writes, and publishing via
+					// runOnUI avoids racing concurrent render reads.
+					type probe struct {
+						idx int
+						ok  bool
+					}
+					agents := a.ACPMgr.Agents
+					results := make([]probe, 0, len(agents))
+					for i, ag := range agents {
+						if ag.ID == "agent-internal" || ag.Type == "internal" || strings.TrimSpace(ag.Command) == "" {
+							continue // built-in engine: availability is not PATH-derived
 						}
+						_, err := exec.LookPath(ag.Command)
+						results = append(results, probe{idx: i, ok: err == nil})
 					}
-					if a.Window != nil {
-						a.Window.Invalidate()
-					}
+					a.runOnUI(func() {
+						for _, r := range results {
+							if r.idx >= 0 && r.idx < len(a.ACPMgr.Agents) {
+								a.ACPMgr.Agents[r.idx].Available = r.ok
+							}
+						}
+						a.invalidateUI()
+					})
 				}()
 				c.AddToast(ui.Toast{Title: "Scanning", Description: "Probed PATH for installed ACP binaries", Type: "info"})
 			}
@@ -1008,7 +1071,7 @@ func (a *AppUI) renderSettingsTabGeneral(c *ui.Context, tc theme.ThemeColors, sm
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
 				ui.Text(c, "Auto Save Files").FontSize(13).FontWeight(600)
-				ui.Text(c, "Automatically persist modified buffers to disk on focus change.").FontSize(11).TextColor(tc.TextMuted)
+				ui.Text(c, "Automatically persist modified buffers to disk every 30 seconds.").FontSize(11).TextColor(tc.TextMuted)
 			})
 			ui.Switch(c, &sm.AutoSave)
 		})
@@ -1189,6 +1252,36 @@ func (a *AppUI) renderSettingsTabShortcuts(c *ui.Context, tc theme.ThemeColors, 
 			}
 		})
 	})
+}
+
+// localLLMOnline reports whether a local LLM server (Ollama or LM Studio)
+// answers on its well-known port. Probed off the render path with a 30s
+// cache; until the first probe returns it shows the previous result.
+func (a *AppUI) localLLMOnline() bool {
+	if time.Since(a.localLLMCheckedAt) < 30*time.Second {
+		return a.localLLMOnlineFlag
+	}
+	a.localLLMCheckedAt = time.Now()
+	go func() {
+		online := probeLocalEndpoint("http://localhost:11434/api/tags") ||
+			probeLocalEndpoint("http://localhost:1234/v1/models")
+		a.runOnUI(func() {
+			a.localLLMOnlineFlag = online
+			a.invalidateUI()
+		})
+	}()
+	return a.localLLMOnlineFlag
+}
+
+// probeLocalEndpoint performs a short HEAD/GET reachability check.
+func probeLocalEndpoint(url string) bool {
+	client := &http.Client{Timeout: 1200 * time.Millisecond}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode < 500
 }
 
 func settingsSectionHeader(c *ui.Context, tc theme.ThemeColors, title, desc string) {

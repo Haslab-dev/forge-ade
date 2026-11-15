@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/search"
@@ -145,6 +146,28 @@ type AppUI struct {
 	ShowQuestionModal bool
 	QuestionDrafts    map[string]*string
 
+	// Backing pointer for the ACP permission prompt: ui.Modal dereferences
+	// its open argument every frame, so it must point at stable state —
+	// passing nil panics on every permission request.
+	PermissionModalOpen bool
+
+	// Generic confirm dialog (confirmDialog / renderConfirmDialog): one
+	// pending destructive action at a time; Escape and outside click cancel.
+	ShowConfirmDialog  bool
+	ConfirmDialogTitle string
+	ConfirmDialogDesc  string
+	ConfirmDialogLabel string // confirm button label ("Delete", "Discard", ...)
+	confirmOnAccept    func()
+	confirmOnCancel    func()
+
+	// Editor data-loss confirmations staged by the EditorManager contract:
+	// discard-unsaved (PendingDiscard), overwrite-changed-on-disk, and
+	// workspace Replace All confirmations.
+	EditorPendingDiscard   []string
+	EditorPendingOverwrite string
+	EditorPendingReplaceN  int
+	editorReplaceDecide    func(proceed bool)
+
 	// Git client PRs / Worktrees pane states (git_pr_worktrees.go).
 	PRPane          *prPaneState
 	WTPane          *worktreePaneState
@@ -255,6 +278,9 @@ type AppUI struct {
 	RemoteUploadTargetDir   string
 	RemoteUploadQueue       []RemoteUploadItem
 	RemoteUploadIsUploading bool
+	uploadQueueMu           sync.Mutex // guards RemoteUploadQueue across dialog/upload goroutines
+	sshConnectGen           int        // SSH connect generation: cancel abandons in-flight results
+	sshSFTPBusyID           string     // saved host currently running the connect-then-SFTP chain
 
 	// External Open Target in header split button ("terminal" | "finder" | "zed")
 	ExternalOpenTarget string
@@ -286,6 +312,7 @@ type AppUI struct {
 	ShowRulesModal        bool
 	SelectedRulePath      string
 	RuleEditorContent     string
+	ruleLoadedContent     string // disk baseline for the selected rule (dirty checks)
 	RuleFilesRoot         string
 	RuleFilesCache        map[string]StandardRuleFile
 	BoardSearchQuery      string
@@ -353,11 +380,68 @@ type AppUI struct {
 	DeckFiles        []string
 	DeckFilesScanned bool
 
-	closeCh       chan struct{}
-	closeOnce     sync.Once
-	tickerDone    chan struct{}
-	lastPrefsAt   time.Time
-	lastPrefsSnap string
+	closeCh        chan struct{}
+	closeOnce      sync.Once
+	tickerDone     chan struct{}
+	lastPrefsAt    time.Time
+	lastPrefsSnap  string
+	prefsDirty     atomic.Bool // render detected a pref change; ticker persists it
+	prefsSaving    atomic.Bool // a SaveUIPrefs write is in flight
+	lastAutoSaveAt time.Time
+	shellWarned    bool // DefaultShell LookPath failure toasted once
+
+	localLLMOnlineFlag bool      // last probe result for Ollama / LM Studio
+	localLLMCheckedAt  time.Time // when localLLMOnlineFlag was last refreshed
+
+	// pendingToasts queues toasts raised from background goroutines; Context.AddToast
+	// silently drops calls made outside a frame, so View drains the queue in-frame.
+	toastMu       sync.Mutex
+	pendingToasts []ui.Toast
+}
+
+// queueToast records a toast from any goroutine and requests a frame so View
+// can show it. Never call Context.AddToast directly from a goroutine.
+func (a *AppUI) queueToast(t ui.Toast) {
+	a.toastMu.Lock()
+	a.pendingToasts = append(a.pendingToasts, t)
+	a.toastMu.Unlock()
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// drainToasts flushes queued goroutine toasts into the frame context.
+// Call once at the top of View.
+func (a *AppUI) drainToasts(c *ui.Context) {
+	a.toastMu.Lock()
+	if len(a.pendingToasts) == 0 {
+		a.toastMu.Unlock()
+		return
+	}
+	pending := a.pendingToasts
+	a.pendingToasts = nil
+	a.toastMu.Unlock()
+	for _, t := range pending {
+		c.AddToast(t)
+	}
+}
+
+// runOnUI runs fn on the UI/main thread and triggers a frame. Headless runs
+// (tests) have no window, so fn executes inline there.
+func (a *AppUI) runOnUI(fn func()) {
+	if a.Window != nil {
+		a.Window.Update(fn)
+	} else {
+		fn()
+	}
+}
+
+// invalidateUI requests a redraw; safe from any goroutine and from headless
+// runs (no window).
+func (a *AppUI) invalidateUI() {
+	if a != nil && a.Window != nil {
+		a.Window.Invalidate()
+	}
 }
 
 // NewAppUI constructs the complete AppUI state tree.
@@ -437,6 +521,52 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		}
 	}
 
+	// Data-loss contracts: never discard a dirty buffer, clobber a file that
+	// changed on disk, or run a workspace-wide replace without an explicit
+	// confirmation. Callbacks may fire off the UI thread (auto-save ticker,
+	// search goroutines), so all state hops through runOnUI.
+	appUI.Editor.ConfirmBeforeDiscard = true
+	appUI.Editor.OnConfirmDiscard = func(paths []string, decide func(discard bool)) {
+		appUI.runOnUI(func() {
+			appUI.EditorPendingDiscard = paths
+			appUI.invalidateUI()
+		})
+	}
+	appUI.Editor.OnConfirmOverwrite = func(path string, decide func(proceed bool)) {
+		appUI.runOnUI(func() {
+			appUI.EditorPendingOverwrite = path
+			appUI.invalidateUI()
+		})
+	}
+	appUI.Editor.OnConfirmReplace = func(matchCount int, decide func(proceed bool)) {
+		appUI.runOnUI(func() {
+			appUI.EditorPendingReplaceN = matchCount
+			appUI.editorReplaceDecide = decide
+			appUI.invalidateUI()
+		})
+	}
+	appUI.Editor.OnSaveError = func(path string, err error) {
+		appUI.queueToast(ui.Toast{
+			Title:       "Save Failed",
+			Description: fmt.Sprintf("%s: %v", filepath.Base(path), err),
+			Type:        "error",
+		})
+	}
+	appUI.Editor.OnTabClosed = func(path string) {
+		appUI.runOnUI(func() {
+			if path != "" && path == appUI.PDFCurrentPath {
+				appUI.closePdfViewer()
+			}
+			if path != "" && path == appUI.DeckCurrentPath {
+				appUI.closeDeckViewer()
+			}
+			appUI.invalidateUI()
+		})
+	}
+	appUI.Editor.OnStateChanged = func() {
+		appUI.invalidateUI()
+	}
+
 	appUI.loadUIPrefs()
 
 	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {
@@ -503,24 +633,6 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 			}
 		}
 	}
-
-	// Live elapsed indicators ("Working for 12s", spinners): repaint once a
-	// second while any session is streaming.
-	go func() {
-		defer close(appUI.tickerDone)
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-appUI.closeCh:
-				return
-			case <-ticker.C:
-				if appUI.Agent.HasRunningSession() && appUI.Window != nil {
-					appUI.Window.Invalidate()
-				}
-			}
-		}
-	}()
 
 	appUI.CLIMgr = agent.NewAgentCLIManager(rootDir, func() {
 		if appUI.Window != nil {
@@ -609,9 +721,13 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		_, _ = appUI.Editor.OpenFile(first.FullPath, first.RelativePath)
 	}
 
-	if appUI.Git != nil && appUI.Git.Branch != "" {
-		appUI.Workspace.GitBranch = appUI.Git.Branch
-		appUI.Workspace.GitDirty = len(appUI.Git.Staged)+len(appUI.Git.Unstaged)+len(appUI.Git.Untracked) > 0
+	if appUI.Git != nil {
+		// Render-adjacent reads go through Snapshot, never the live fields.
+		gitSnap := appUI.Git.Snapshot()
+		if gitSnap.Branch != "" {
+			appUI.Workspace.GitBranch = gitSnap.Branch
+			appUI.Workspace.GitDirty = len(gitSnap.Staged)+len(gitSnap.Unstaged)+len(gitSnap.Untracked) > 0
+		}
 	}
 
 	if appUI.Workspace != nil && engine != nil {
@@ -626,11 +742,43 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		go initGit.Refresh()
 	}
 
+	// Live elapsed indicators ("Working for 12s", spinners): repaint once a
+	// second while any session is streaming. The same tick persists pending
+	// UI preferences off the render path and runs AutoSave every ~30s.
+	// Spawned LAST so the ticker goroutine never observes partially
+	// constructed manager fields (Settings/Terminal/Editor are all set above).
+	go func() {
+		defer close(appUI.tickerDone)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-appUI.closeCh:
+				return
+			case <-ticker.C:
+				if appUI.Agent.HasRunningSession() && appUI.Window != nil {
+					appUI.Window.Invalidate()
+				}
+				if appUI.prefsDirty.CompareAndSwap(true, false) && !appUI.prefsSaving.Swap(true) {
+					go func() {
+						defer appUI.prefsSaving.Store(false)
+						appUI.SaveUIPrefs()
+					}()
+				}
+				appUI.syncTerminalShell()
+				if appUI.Settings != nil && appUI.Settings.AutoSave && time.Since(appUI.lastAutoSaveAt) >= 30*time.Second {
+					appUI.lastAutoSaveAt = time.Now()
+					appUI.Editor.SaveAllDirty()
+				}
+			}
+		}
+	}()
+
 	return appUI
 }
 
 func (a *AppUI) paletteCommands() []palette.PaletteCommand {
-	return []palette.PaletteCommand{
+	commands := []palette.PaletteCommand{
 		{ID: "new-task", Label: "New Task", Detail: "Start a new agent task", Shortcut: "⌘N", Run: func() {
 			a.handleNewTask()
 		}},
@@ -705,6 +853,23 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			a.OpenRemoteFileUploader("")
 		}},
 	}
+
+	// User-defined custom slash commands (Settings → Slash Commands) are
+	// runnable from the palette: selecting one seeds the composer with its
+	// prompt template.
+	if a.Settings != nil {
+		for _, cc := range a.Settings.CustomCommands {
+			name := cc.Name
+			prompt := cc.Prompt
+			commands = append(commands, palette.PaletteCommand{
+				ID:     "custom-command-" + name,
+				Label:  name,
+				Detail: cc.Description,
+				Run:    func() { a.runCustomCommand(prompt) },
+			})
+		}
+	}
+	return commands
 }
 
 // openUsageModal shows the usage modal and refreshes quota data
@@ -715,23 +880,23 @@ func (a *AppUI) openUsageModal() {
 	a.refreshQuotaAsync()
 }
 
-// refreshQuotaAsync fetches quota/usage data off the render path.
+// refreshQuotaAsync fetches quota/usage data off the render path. Results
+// publish back through runOnUI so the shared map pointer is never written
+// concurrently with a render reading it.
 func (a *AppUI) refreshQuotaAsync() {
 	if a.QuotaFetching || a.Engine == nil {
 		return
 	}
 	a.QuotaFetching = true
 	go func() {
-		defer func() {
-			a.QuotaFetching = false
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
-		}()
 		data := a.Engine.GetAgentQuota("agent-agy")
-		if data != nil {
-			a.QuotaData = data
-		}
+		a.runOnUI(func() {
+			a.QuotaFetching = false
+			if data != nil {
+				a.QuotaData = data
+			}
+			a.invalidateUI()
+		})
 	}()
 }
 
@@ -750,18 +915,16 @@ func (a *AppUI) loadGitRemoteURL() {
 	a.gitRemoteLoading = true
 	a.gitRemoteRoot = dir
 	go func(root string) {
-		defer func() {
-			a.gitRemoteLoading = false
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
-		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		out, err := exec.CommandContext(ctx, "git", "-C", root, "config", "--get", "remote.origin.url").Output()
-		if err == nil && a.Workspace != nil && a.Workspace.RootDir == root {
-			a.GitRemoteURL = strings.TrimSpace(string(out))
-		}
+		a.runOnUI(func() {
+			a.gitRemoteLoading = false
+			if err == nil && a.Workspace != nil && a.Workspace.RootDir == root {
+				a.GitRemoteURL = strings.TrimSpace(string(out))
+			}
+			a.invalidateUI()
+		})
 	}(dir)
 }
 
@@ -799,6 +962,7 @@ func (a *AppUI) View(c *ui.Context) {
 	if a.ThemeMgr != nil {
 		c.SetTheme(a.ThemeMgr.ActiveTheme())
 	}
+	a.drainToasts(c)
 
 	// Global Keyboard Shortcuts
 	if c.Shortcut(ui.Cmd, ui.KeyS) {
@@ -852,18 +1016,26 @@ func (a *AppUI) View(c *ui.Context) {
 		a.formatActiveDocument(c)
 	}
 	if c.Shortcut(0, ui.KeyF12) && a.Mode == ModeEditor {
+		// Peek definition runs the workspace symbol scan off the render path —
+		// FindDefinitions can take seconds on large codebases.
 		doc := a.Editor.ActiveDoc()
 		if doc != nil {
 			sym := a.symbolUnderCursor(doc)
 			if sym != "" {
-				matches := a.Editor.FindDefinitions(sym, a.Workspace.RootDir)
-				if len(matches) == 1 {
-					a.openSearchResult(matches[0].Path, matches[0].Line, "")
-				} else if len(matches) > 1 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = sym
-					a.PeekResults = matches
-				}
+				wsDir := a.Workspace.RootDir
+				go func() {
+					matches := a.Editor.FindDefinitions(sym, wsDir)
+					a.runOnUI(func() {
+						if len(matches) == 1 {
+							a.openSearchResult(matches[0].Path, matches[0].Line, "")
+						} else if len(matches) > 1 {
+							a.ShowPeekModal = true
+							a.PeekSymbol = sym
+							a.PeekResults = matches
+						}
+						a.invalidateUI()
+					})
+				}()
 			}
 		}
 	}
@@ -965,7 +1137,8 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if cmdOrCtrl(ui.KeyW) {
 		if a.Mode == ModeEditor && a.Editor.ActivePath != "" {
-			a.Editor.CloseTab(a.Editor.ActivePath)
+			// RequestClose asks before discarding unsaved changes.
+			a.Editor.RequestClose(a.Editor.ActivePath)
 		}
 	}
 
@@ -983,11 +1156,13 @@ func (a *AppUI) View(c *ui.Context) {
 	// Overlays & Modals
 	a.renderModals(c)
 
+	// Cheap change detection stays on the render path; the disk write happens
+	// on the ticker goroutine (prefsDirty) so View never does I/O.
 	if time.Since(a.lastPrefsAt) >= time.Second {
 		a.lastPrefsAt = time.Now()
 		if snap := a.prefsSnapshot(); snap != a.lastPrefsSnap {
 			a.lastPrefsSnap = snap
-			a.SaveUIPrefs()
+			a.prefsDirty.Store(true)
 		}
 	}
 }
@@ -1005,8 +1180,17 @@ func (a *AppUI) Close() {
 	if a.tickerDone != nil {
 		<-a.tickerDone
 	}
+	if a.prefsDirty.Swap(false) {
+		a.SaveUIPrefs()
+	}
 	if a.Engine != nil {
 		a.Engine.StopWatcher()
+	}
+	if a.CLIMgr != nil {
+		a.CLIMgr.StopAll()
+	}
+	if a.Engine != nil && a.Engine.ShellMgr != nil {
+		a.Engine.ShellMgr.StopAll()
 	}
 	if a.Terminal != nil {
 		a.Terminal.Close()
@@ -1019,6 +1203,92 @@ func (a *AppUI) toggleAppearance() {
 	} else {
 		a.ThemeMgr.Appearance = "dark"
 	}
+}
+
+// confirmDialog stages the reusable confirmation dialog. Escape and outside
+// click cancel it (renderConfirmDialog clears the state); onConfirm runs only
+// when the user accepts. Call from the UI thread; from goroutines wrap in
+// runOnUI.
+func (a *AppUI) confirmDialog(title, description string, onConfirm func()) {
+	a.confirmDialogLabeled(title, description, "Confirm", onConfirm, nil)
+}
+
+// confirmDialogLabeled is confirmDialog with a destructive-action button
+// label ("Delete", "Discard", "Sync") and an optional onCancel side effect
+// (the dialog itself always closes either way).
+func (a *AppUI) confirmDialogLabeled(title, description, confirmLabel string, onConfirm, onCancel func()) {
+	a.ShowConfirmDialog = true
+	a.ConfirmDialogTitle = title
+	a.ConfirmDialogDesc = description
+	a.ConfirmDialogLabel = confirmLabel
+	a.confirmOnAccept = onConfirm
+	a.confirmOnCancel = onCancel
+}
+
+// acceptConfirmDialog runs the staged confirm action and closes the dialog.
+func (a *AppUI) acceptConfirmDialog() {
+	action := a.confirmOnAccept
+	a.clearConfirmDialog()
+	if action != nil {
+		action()
+	}
+}
+
+// cancelConfirmDialog closes the dialog without running the staged action.
+func (a *AppUI) cancelConfirmDialog() {
+	onCancel := a.confirmOnCancel
+	a.clearConfirmDialog()
+	if onCancel != nil {
+		onCancel()
+	}
+}
+
+func (a *AppUI) clearConfirmDialog() {
+	a.ShowConfirmDialog = false
+	a.ConfirmDialogTitle = ""
+	a.ConfirmDialogDesc = ""
+	a.ConfirmDialogLabel = ""
+	a.confirmOnAccept = nil
+	a.confirmOnCancel = nil
+}
+
+// syncTerminalShell propagates the configured DefaultShell to the terminal
+// spawner. An invalid shell toasts once and falls back to the user's login
+// shell.
+func (a *AppUI) syncTerminalShell() {
+	if a.Settings == nil || a.Terminal == nil {
+		return
+	}
+	shell := strings.TrimSpace(a.Settings.DefaultShell)
+	if shell != "" {
+		if _, err := exec.LookPath(shell); err != nil {
+			if !a.shellWarned {
+				a.shellWarned = true
+				a.queueToast(ui.Toast{
+					Title:       "Default Shell Unavailable",
+					Description: shell + " was not found on PATH — using the system default shell",
+					Type:        "error",
+				})
+			}
+			shell = ""
+		}
+	}
+	a.Terminal.SetDefaultShell(shell)
+}
+
+// runCustomCommand seeds the agent composer with a custom slash command's
+// prompt template (Settings → Slash Commands, surfaced in the ⌘K palette).
+func (a *AppUI) runCustomCommand(prompt string) {
+	if strings.TrimSpace(prompt) == "" {
+		return
+	}
+	a.Mode = ModeAgent
+	a.AgentViewMode = AgentViewChat
+	a.ActiveTaskKind = "agent"
+	if a.Agent != nil {
+		a.Agent.InputText = prompt
+	}
+	a.invalidateUI()
 }
 
 // NewAgentTask switches to Agent Mode and opens the New Agent UI ("What should we do in <project>?")
@@ -1205,7 +1475,8 @@ func (a *AppUI) OpenRemoteFileUploader(targetDir string) {
 		targetDir = "/"
 	}
 	a.RemoteUploadTargetDir = targetDir
-	a.RemoteUploadQueue = nil
+	a.clearRemoteUploadQueue()
+	a.SSHUploadStatus = ""
 	a.RemoteUploadIsUploading = false
 	a.ShowRemoteUploadModal = true
 	if a.Window != nil {
@@ -1469,7 +1740,11 @@ func (a *AppUI) openWorkspaceFolder() {
 		if err != nil || len(paths) == 0 || paths[0] == "" {
 			return
 		}
-		a.switchWorkspace(paths[0])
+		// switchWorkspace mutates the whole state tree — it must run on the
+		// UI thread, not inside this dialog goroutine.
+		a.runOnUI(func() {
+			a.switchWorkspace(paths[0])
+		})
 	}()
 }
 
@@ -1647,18 +1922,41 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 		}
 	}
 	if a.Editor != nil {
-		a.Editor.CloseAll()
+		// Close only tabs from the outgoing workspace: files under the new
+		// root stay open (their buffers resolve against the new WorkspaceDir).
+		a.Editor.CloseAllForWorkspace(rawDir)
 	}
+	// Drop state bound to the old workspace so stale relative paths can never
+	// render the wrong files against the new root.
 	a.SelectedFile = ""
 	a.SelectedDiffPath = ""
+	a.SideFileTabs = nil
+	a.ActiveSideFile = ""
+	a.SideFilePreviewImage = ""
+	a.SideFilePreviewMd = ""
+	a.SideFileDiffMode = make(map[string]bool)
+	a.FileSearchQuery = ""
+	a.FileSearchHits = nil
+	a.FileSearchBusy = false
+	a.FileSearchReplaceOpen = false
+	a.ContentHits = nil
+	a.ContentHitsAt = ""
+	a.SearchStatusMsg = ""
+	a.ShowProjectSearch = false
 	a.DeckFiles = nil
 	a.DeckFilesScanned = false
 	a.GitRemoteURL = ""
 	a.gitRemoteRoot = ""
+	a.gitRemoteLoading = false
 	a.RuleFilesRoot = ""
 	a.RuleFilesCache = nil
 	a.PDFFileSize = 0
 	a.PDFFileSizePath = ""
+	a.closePdfViewer()
+	a.closeDeckViewer()
+	a.ShowThreadFind = false
+	a.ThreadFindQuery = ""
+	a.ThreadFindMatches = nil
 
 	if strings.HasPrefix(rawDir, "ssh://") {
 		// Remote SSH workspace

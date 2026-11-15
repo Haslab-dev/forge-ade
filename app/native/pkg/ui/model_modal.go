@@ -525,7 +525,11 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 
 							for _, model := range visibleModels {
 								m := model
-								isModelSelected := (a.Agent.ActiveModel == m.DisplayName || strings.HasPrefix(a.Agent.ActiveModel, m.DisplayName))
+								// Exact (or word-boundary prefix) match only: a plain
+								// HasPrefix highlighted "gpt-4" when "gpt-4o" was active.
+								active := a.Agent.ActiveModel
+								isModelSelected := active != "" &&
+									(active == m.DisplayName || strings.HasPrefix(active, m.DisplayName+" "))
 								row := ui.Row(c.Key("mod-row-"+m.ID)).Height(30).Radius(8).Padding(0, 8).Gap(8).AlignItems(ui.Center)
 								row.Children(func() {
 									icons.RenderProviderIcon(c, m.ProviderKey, 14)
@@ -570,10 +574,25 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 			ui.Row(c).Height(44).Padding(0, 12).AlignItems(ui.Center).
 				Background(tc.Surface.Alpha(0.4)).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 
-				// Local LLM & ACP Status
+				// Local LLM & ACP Status — reflects real agent availability
+				// rather than an unconditional green dot.
 				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success)
-					ui.Text(c, "ACP Agents & Local LLMs ready").FontSize(11).TextColor(tc.TextMuted)
+					acpReady := false
+					if a.ACPMgr != nil {
+						for _, ag := range a.ACPMgr.Agents {
+							if ag.ID != "agent-internal" && ag.Available {
+								acpReady = true
+								break
+							}
+						}
+					}
+					if acpReady {
+						ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success)
+						ui.Text(c, "ACP Agents & Local LLMs ready").FontSize(11).TextColor(tc.TextMuted)
+					} else {
+						ui.Box(c).Size(6, 6).Radius(3).Background(tc.TextMuted.Alpha(0.5))
+						ui.Text(c, "No external ACP agents detected — internal engine active").FontSize(11).TextColor(tc.TextMuted)
+					}
 				})
 
 				ui.Box(c).Grow(1)

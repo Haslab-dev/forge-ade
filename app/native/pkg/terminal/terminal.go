@@ -42,9 +42,32 @@ type TerminalState struct {
 	Command []string
 	Env     []string
 
+	// DefaultShell is the executable used for new local shell tabs when set
+	// (Settings → Default Shell); empty runs the user's login shell.
+	defaultShell string
+
 	Tabs         []*TerminalTab
 	ActiveTabIdx int
 	nextTabID    int
+}
+
+// SetDefaultShell configures the shell executable spawned by new local shell
+// tabs (Settings → Default Shell). Empty falls back to the user's login
+// shell. Safe from any goroutine.
+func (ts *TerminalState) SetDefaultShell(shell string) {
+	ts.mu.Lock()
+	ts.defaultShell = shell
+	ts.mu.Unlock()
+}
+
+// localShellCommand resolves the spawn command for a local shell tab: the
+// configured DefaultShell when set, otherwise nil (user's login shell).
+// Caller holds ts.mu.
+func (ts *TerminalState) localShellCommand() []string {
+	if sh := strings.TrimSpace(ts.defaultShell); sh != "" {
+		return []string{sh}
+	}
+	return nil
 }
 
 // NewTerminalState creates a new terminal manager for the given working directory.
@@ -197,6 +220,10 @@ func (ts *TerminalState) Restart() error {
 	}
 	tab.Cwd = ts.Cwd
 	tab.Command = cloneStrings(ts.Command)
+	if len(tab.Command) == 0 {
+		// No override (SSH etc.): honor the configured Default Shell.
+		tab.Command = ts.localShellCommand()
+	}
 	tab.Env = cloneStrings(ts.Env)
 	if ts.Title != "" {
 		tab.Title = ts.Title
@@ -226,7 +253,7 @@ func (ts *TerminalState) ResetShell(cwd string) error {
 		ts.term = nil
 	}
 	tab.Cwd = ts.Cwd
-	tab.Command = nil
+	tab.Command = ts.localShellCommand()
 	tab.Env = nil
 	tab.Title = "Terminal"
 	old, err := ts.spawnTabLocked(tab)
@@ -273,9 +300,10 @@ func (ts *TerminalState) NewTab(cwd string) error {
 	}
 	ts.nextTabID++
 	tab := &TerminalTab{
-		ID:    ts.nextTabID,
-		Title: "Terminal",
-		Cwd:   cwd,
+		ID:      ts.nextTabID,
+		Title:   "Terminal",
+		Cwd:     cwd,
+		Command: ts.localShellCommand(),
 	}
 	ts.Tabs = append(ts.Tabs, tab)
 	ts.ActiveTabIdx = len(ts.Tabs) - 1
@@ -306,7 +334,7 @@ func (ts *TerminalState) CloseTab(idx int) {
 	}
 	if len(ts.Tabs) <= 1 {
 		tab := ts.Tabs[0]
-		tab.Command = nil
+		tab.Command = ts.localShellCommand()
 		tab.Env = nil
 		tab.Title = "Terminal"
 		old, _ = ts.spawnTabLocked(tab)

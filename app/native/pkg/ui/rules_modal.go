@@ -62,10 +62,47 @@ func (a *AppUI) loadSelectedRuleContent() {
 	} else {
 		a.RuleEditorContent = ""
 	}
+	a.ruleLoadedContent = a.RuleEditorContent
+}
+
+// ruleBufferDirty reports unsaved edits between the text area and the
+// content loaded from disk for the selected rule file.
+func (a *AppUI) ruleBufferDirty() bool {
+	return a.RuleEditorContent != a.ruleLoadedContent
+}
+
+// selectRuleFile switches the edited rule file, confirming before discarding
+// unsaved edits to the current one.
+func (a *AppUI) selectRuleFile(next string) {
+	if next == a.SelectedRulePath {
+		return
+	}
+	if a.ruleBufferDirty() {
+		a.confirmDialogLabeled("Discard Unsaved Rule Edits?",
+			fmt.Sprintf("%s has unsaved changes that will be lost when switching to %s.", a.SelectedRulePath, next),
+			"Discard", func() {
+				a.SelectedRulePath = next
+				a.loadSelectedRuleContent()
+				a.invalidateUI()
+			}, nil)
+		return
+	}
+	a.SelectedRulePath = next
+	a.loadSelectedRuleContent()
+}
+
+// confirmRuleSync stages a confirmation before SyncRuleStandard overwrites
+// the destination rule file's contents.
+func (a *AppUI) confirmRuleSync(src, dst string) {
+	a.confirmDialogLabeled("Overwrite "+dst+"?",
+		fmt.Sprintf("Sync copies the contents of %s over %s — the destination's current contents will be replaced.", src, dst),
+		"Sync", func() {
+			a.SyncRuleStandard(src, dst)
+		}, nil)
 }
 
 // SaveActiveRule writes the editor text to the active rule file on disk.
-func (a *AppUI) SaveActiveRule(c *ui.Context) {
+func (a *AppUI) SaveActiveRule() {
 	if a.SelectedRulePath == "" {
 		return
 	}
@@ -74,34 +111,36 @@ func (a *AppUI) SaveActiveRule(c *ui.Context) {
 	_ = os.MkdirAll(dir, 0755)
 	err := os.WriteFile(fullPath, []byte(a.RuleEditorContent), 0644)
 	if err != nil {
-		c.AddToast(ui.Toast{Title: "Failed to Save", Description: err.Error(), Type: "error"})
+		a.queueToast(ui.Toast{Title: "Failed to Save", Description: err.Error(), Type: "error"})
 	} else {
+		a.ruleLoadedContent = a.RuleEditorContent
 		a.refreshRulesCache()
-		c.AddToast(ui.Toast{Title: "Saved Rule", Description: fmt.Sprintf("Successfully saved %s", a.SelectedRulePath), Type: "success"})
+		a.queueToast(ui.Toast{Title: "Saved Rule", Description: fmt.Sprintf("Successfully saved %s", a.SelectedRulePath), Type: "success"})
 		a.Workspace.Refresh()
 	}
 }
 
 // SyncRuleStandard copies instructions from source rule to target rule standard.
-func (a *AppUI) SyncRuleStandard(c *ui.Context, src, dst string) {
+func (a *AppUI) SyncRuleStandard(src, dst string) {
 	srcPath := filepath.Join(a.Workspace.RootDir, src)
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
-		c.AddToast(ui.Toast{Title: "Sync Failed", Description: fmt.Sprintf("Source file %s does not exist", src), Type: "error"})
+		a.queueToast(ui.Toast{Title: "Sync Failed", Description: fmt.Sprintf("Source file %s does not exist", src), Type: "error"})
 		return
 	}
 	dstPath := filepath.Join(a.Workspace.RootDir, dst)
 	_ = os.MkdirAll(filepath.Dir(dstPath), 0755)
 	err = os.WriteFile(dstPath, data, 0644)
 	if err != nil {
-		c.AddToast(ui.Toast{Title: "Sync Failed", Description: err.Error(), Type: "error"})
+		a.queueToast(ui.Toast{Title: "Sync Failed", Description: err.Error(), Type: "error"})
 		return
 	}
 	if a.SelectedRulePath == dst {
 		a.RuleEditorContent = string(data)
+		a.ruleLoadedContent = a.RuleEditorContent
 	}
 	a.refreshRulesCache()
-	c.AddToast(ui.Toast{Title: "Synced Standard", Description: fmt.Sprintf("Copied %s ➔ %s", src, dst), Type: "success"})
+	a.queueToast(ui.Toast{Title: "Synced Standard", Description: fmt.Sprintf("Copied %s ➔ %s", src, dst), Type: "success"})
 	a.Workspace.Refresh()
 }
 
@@ -179,8 +218,7 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 							item.Background(tc.Text.Alpha(0.05))
 						}
 						if item.Clicked() {
-							a.SelectedRulePath = thisFile
-							a.loadSelectedRuleContent()
+							a.selectRuleFile(thisFile)
 						}
 					}
 
@@ -197,7 +235,7 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 							syncCursor.Background(tc.Text.Alpha(0.06))
 						}
 						if syncCursor.Clicked() {
-							a.SyncRuleStandard(c, "AGENTS.md", ".cursorrules")
+							a.confirmRuleSync("AGENTS.md", ".cursorrules")
 						}
 
 						syncClaude := ui.Row(c).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
@@ -209,7 +247,7 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 							syncClaude.Background(tc.Text.Alpha(0.06))
 						}
 						if syncClaude.Clicked() {
-							a.SyncRuleStandard(c, "AGENTS.md", "CLAUDE.md")
+							a.confirmRuleSync("AGENTS.md", "CLAUDE.md")
 						}
 					})
 				})
@@ -234,7 +272,7 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 							saveBtn.Background(tc.Accent.Alpha(0.85))
 						}
 						if saveBtn.Clicked() {
-							a.SaveActiveRule(c)
+							a.SaveActiveRule()
 						}
 					})
 

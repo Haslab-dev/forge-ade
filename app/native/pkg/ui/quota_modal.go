@@ -49,12 +49,19 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 		m, _ := v.(map[string]interface{})
 		return m
 	}
+	pctKnown := func(m map[string]interface{}) bool {
+		if m == nil {
+			return false
+		}
+		_, ok := m["remainingPercent"]
+		return ok
+	}
 	pctOf := func(m map[string]interface{}, def float64) float64 {
 		if m == nil {
 			return def
 		}
 		v, _ := m["remainingPercent"].(float64)
-		if v <= 0 {
+		if v < 0 {
 			return def
 		}
 		return v
@@ -66,8 +73,29 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 		s, _ := m[key].(string)
 		return s
 	}
-	quotaBar := func(label string, pct float64, resetsIn string) {
+	quotaBar := func(label string, pct float64, resetsIn string, known bool) {
+		if !known {
+			// No data from the quota engine: say so instead of inventing 100%.
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+					ui.Box(c).Grow(1)
+					ui.Text(c, "Unavailable").FontSize(11).FontWeight(700).TextColor(tc.TextMuted)
+				})
+				ui.Box(c).FillWidth().Height(6).Radius(3).Background(tc.Border.Alpha(0.6))
+				ui.Text(c, "No quota data for this agent — connect an Antigravity account to see live limits").FontSize(10).TextColor(tc.TextMuted)
+			})
+			return
+		}
 		color := pctColor(pct)
+		resetText := "Quota available"
+		if pct <= 0 {
+			// remainingPercent == 0 is real data: the window is exhausted.
+			color = tc.Error
+			resetText = "Quota exhausted"
+		} else if resetsIn != "" && !strings.HasPrefix(resetsIn, "Quota") {
+			resetText = "Quota available · Resets in " + resetsIn
+		}
 		ui.Column(c).Gap(4).Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(color)
@@ -77,10 +105,6 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 			ui.Box(c).FillWidth().Height(6).Radius(3).Background(tc.Border.Alpha(0.6)).Children(func() {
 				ui.Box(c).WidthPercent(float32(pct)).Height(6).Radius(3).Background(color)
 			})
-			resetText := "Quota available"
-			if resetsIn != "" && !strings.HasPrefix(resetsIn, "Quota") {
-				resetText = "Quota available · Resets in " + resetsIn
-			}
 			ui.Text(c, resetText).FontSize(10).TextColor(color)
 		})
 	}
@@ -113,7 +137,9 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 							ui.Text(c, "QUOTA").FontSize(9).FontWeight(700).TextColor(tc.Accent)
 						})
 					})
-					ui.Text(c, "Real-time limits, token credits, and session context usage").FontSize(11).TextColor(tc.TextMuted)
+					// Honesty: this panel fetches the Antigravity (agent-agy)
+					// quota only — say which quota it is.
+					ui.Text(c, "Antigravity quota, token credits, and session context usage").FontSize(11).TextColor(tc.TextMuted)
 				})
 
 				// Refresh button
@@ -199,8 +225,8 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 						if g.Models != "" {
 							ui.Text(c, "Models within group: "+g.Models).FontSize(11).TextColor(tc.TextMuted)
 						}
-						quotaBar("Weekly Limit Remaining", pctOf(g.Weekly, 100), strOf(g.Weekly, "refreshesIn"))
-						quotaBar("Five Hour Limit Remaining", pctOf(g.Five, 100), strOf(g.Five, "refreshesIn"))
+						quotaBar("Weekly Limit Remaining", pctOf(g.Weekly, 100), strOf(g.Weekly, "refreshesIn"), pctKnown(g.Weekly))
+						quotaBar("Five Hour Limit Remaining", pctOf(g.Five, 100), strOf(g.Five, "refreshesIn"), pctKnown(g.Five))
 					})
 				}
 				for _, g := range groups {
@@ -213,7 +239,10 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 				if as != nil {
 					usedTokens, pctUsed = as.ContextUsage()
 				}
-				maxTokens := 1000000 // 1M context budget
+				// ContextUsage computes its percentage against the agent's
+				// 200k window — label the gauge with that same budget instead
+				// of a mismatched 1M figure.
+				maxTokens := 200000
 
 				ui.Column(c).Padding(14).Radius(12).Background(tc.SurfaceRaised.Alpha(0.5)).
 					BorderWidth(1).BorderColor(tc.Border.Alpha(0.7)).Gap(10).Children(func() {
@@ -230,7 +259,7 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 						ui.Text(c, fmt.Sprintf("%s of %s tokens", formatTokens(usedTokens), formatTokens(maxTokens))).
 							FontSize(11).TextColor(tc.TextMuted)
 						ui.Box(c).Grow(1)
-						ui.Text(c, "1,000,000 budget").FontSize(10).TextColor(tc.TextMuted)
+						ui.Text(c, "200k budget").FontSize(10).TextColor(tc.TextMuted)
 					})
 
 					// Progress bar
@@ -245,7 +274,8 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 						ui.Box(c).WidthPercent(fillWidthPct).Height(6).Radius(3).Background(tc.Success)
 					})
 
-					// Force Compact Conversation Context Button
+					// Force Compact Conversation Context Button — destructive
+					// (it deletes history), so confirm first and persist after.
 					compactBtn := ui.Row(c).Height(32).Radius(8).Padding(0, 12).Gap(6).
 						AlignItems(ui.Center).Justify(ui.Center).
 						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
@@ -259,15 +289,27 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 					if compactBtn.Clicked() {
 						activeSess := as.ActiveSession()
 						if as != nil && activeSess != nil && len(activeSess.Messages) > 4 {
-							// Keep first and last messages, compact older history
-							first := activeSess.Messages[0]
-							lastThree := activeSess.Messages[len(activeSess.Messages)-3:]
-							activeSess.Messages = append([]*agent.ChatMessage{first}, lastThree...)
-							c.AddToast(ui.Toast{Title: "Context Compacted", Description: "Conversation history pruned to active turns", Type: "success"})
+							msgCount := len(activeSess.Messages)
+							kept := 4 // first + last 3 survive
+							deleted := msgCount - kept
+							a.confirmDialogLabeled(
+								"Compact Conversation Context?",
+								fmt.Sprintf("This permanently deletes %d of %d message(s) from the active conversation — only the first message and the last 3 remain. The compacted thread is saved to disk and cannot be restored.", deleted, msgCount),
+								"Compact & Delete", func() {
+									sess := as.ActiveSession()
+									if sess == nil || len(sess.Messages) <= 4 {
+										return
+									}
+									first := sess.Messages[0]
+									lastThree := sess.Messages[len(sess.Messages)-3:]
+									sess.Messages = append([]*agent.ChatMessage{first}, lastThree...)
+									as.SaveSessionToDisk(sess)
+									a.queueToast(ui.Toast{Title: "Context Compacted", Description: fmt.Sprintf("Removed %d message(s); compacted thread saved", deleted), Type: "success"})
+									a.invalidateUI()
+								}, nil)
 						} else {
 							c.AddToast(ui.Toast{Title: "Already Optimal", Description: "Context is within compact bounds", Type: "info"})
 						}
-						a.ShowUsageModal = false
 					}
 				})
 			})

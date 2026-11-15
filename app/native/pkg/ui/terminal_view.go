@@ -215,9 +215,9 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 	term := ts.Term()
 	if term != nil {
 		termplugin.View(c, term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
-			if m.Item("Copy").Shortcut(ui.Cmd, ui.KeyC).Chosen() {
-				// Ghostty copies automatically on select or via keyboard shortcut
-			}
+			// No "Copy" item: the terminal copies on select (copy-on-select)
+			// and ⌘C is handled by the terminal itself; mygo exposes no API to
+			// read back the terminal selection to copy it manually.
 			if m.Item("Paste").Shortcut(ui.Cmd, ui.KeyV).Chosen() {
 				if text := mygo.Clipboard.ReadText(); text != "" {
 					term.Paste(text)

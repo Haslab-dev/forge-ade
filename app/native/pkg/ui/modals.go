@@ -11,6 +11,7 @@ import (
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/editor"
+	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/palette"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
@@ -90,8 +91,134 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowPlanModal {
 		a.renderPlanModal(c)
 	}
+	a.renderConfirmDialog(c)
+	a.renderEditorConfirmModal(c)
 	a.renderQuestionModal(c)
 	a.renderProjectSearchModal(c)
+}
+
+// renderConfirmDialog draws the reusable destructive-action confirmation
+// (confirmDialog). ui.Modal clears ShowConfirmDialog on Escape / outside
+// click, which cancels the staged action.
+func (a *AppUI) renderConfirmDialog(c *ui.Context) {
+	if !a.ShowConfirmDialog {
+		return
+	}
+	tc := a.ThemeMgr.Colors()
+
+	if c.Shortcut(0, ui.KeyEscape) {
+		a.cancelConfirmDialog()
+		return
+	}
+
+	a.modal(c, &a.ShowConfirmDialog, func() {
+		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerAlertTriangle).Width(16).Height(16).TextColor(tc.Warning)
+				ui.Text(c, a.ConfirmDialogTitle).FontSize(14).FontWeight(600)
+			})
+			ui.Text(c, a.ConfirmDialogDesc).FontSize(12).TextColor(tc.TextMuted)
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Justify(ui.End).Children(func() {
+				if ui.Button(c, "Cancel").Clicked() {
+					a.cancelConfirmDialog()
+				}
+				if ui.PrimaryButton(c, a.ConfirmDialogLabel).Clicked() {
+					a.acceptConfirmDialog()
+				}
+			})
+		})
+	})
+}
+
+// renderEditorConfirmModal renders the EditorManager data-loss confirmations:
+// discard-unsaved-buffers, overwrite-changed-on-disk, and workspace Replace
+// All. Resolution is delegated back to the manager (ResolveDiscard /
+// ResolveOverwrite / the staged replace decide callback).
+func (a *AppUI) renderEditorConfirmModal(c *ui.Context) {
+	discard := len(a.EditorPendingDiscard) > 0
+	overwrite := a.EditorPendingOverwrite != ""
+	replace := a.EditorPendingReplaceN > 0 && a.editorReplaceDecide != nil
+	if !discard && !overwrite && !replace {
+		return
+	}
+	tc := a.ThemeMgr.Colors()
+
+	title, desc, confirmLabel := "", "", ""
+	var onConfirm, onCancel func()
+	switch {
+	case discard:
+		paths := a.EditorPendingDiscard
+		list := make([]string, 0, len(paths))
+		for _, p := range paths {
+			list = append(list, filepath.Base(p))
+		}
+		title = "Discard Unsaved Changes?"
+		desc = fmt.Sprintf("%d file(s) have unsaved changes that will be lost: %s", len(paths), strings.Join(list, ", "))
+		confirmLabel = "Discard"
+		onConfirm = func() {
+			a.EditorPendingDiscard = nil
+			a.Editor.ResolveDiscard(true)
+		}
+		onCancel = func() {
+			a.EditorPendingDiscard = nil
+			a.Editor.ResolveDiscard(false)
+		}
+	case overwrite:
+		path := a.EditorPendingOverwrite
+		title = "File Changed on Disk"
+		desc = fmt.Sprintf("%s was modified outside the editor while it had unsaved changes. Overwrite the on-disk version with your buffer?", filepath.Base(path))
+		confirmLabel = "Overwrite"
+		onConfirm = func() {
+			a.EditorPendingOverwrite = ""
+			a.Editor.ResolveOverwrite(true)
+		}
+		onCancel = func() {
+			a.EditorPendingOverwrite = ""
+			a.Editor.ResolveOverwrite(false)
+		}
+	case replace:
+		n := a.EditorPendingReplaceN
+		decide := a.editorReplaceDecide
+		title = "Replace All"
+		desc = fmt.Sprintf("Replace %d match(es) of “%s” across the workspace? Open buffers are updated so editor and disk stay in sync.", n, a.FileSearchQuery)
+		confirmLabel = "Replace"
+		onConfirm = func() {
+			a.EditorPendingReplaceN = 0
+			a.editorReplaceDecide = nil
+			decide(true)
+		}
+		onCancel = func() {
+			a.EditorPendingReplaceN = 0
+			a.editorReplaceDecide = nil
+			decide(false)
+		}
+	}
+
+	if c.Shortcut(0, ui.KeyEscape) {
+		onCancel()
+		return
+	}
+
+	open := discard || overwrite || replace
+	a.modal(c, &open, func() {
+		ui.Column(c).Width(440).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().Children(func() {
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerAlertTriangle).Width(16).Height(16).TextColor(tc.Warning)
+				ui.Text(c, title).FontSize(14).FontWeight(600)
+			})
+			ui.Text(c, desc).FontSize(12).TextColor(tc.TextMuted)
+			ui.Row(c).AlignItems(ui.Center).Gap(6).Justify(ui.End).Children(func() {
+				if ui.Button(c, "Cancel").Clicked() {
+					onCancel()
+				}
+				if ui.PrimaryButton(c, confirmLabel).Clicked() {
+					onConfirm()
+				}
+			})
+		})
+	})
 }
 
 func (a *AppUI) renderPaletteModal(c *ui.Context) {
@@ -486,7 +613,10 @@ func (a *AppUI) renderPermissionModal(c *ui.Context) {
 	req := mgr.ActiveReq
 	tc := a.ThemeMgr.Colors()
 
-	a.modal(c, nil, func() {
+	// ui.Modal dereferences the open pointer every frame, so hand it a real
+	// stable bool (a nil pointer panics on every permission prompt).
+	a.PermissionModalOpen = true
+	a.modal(c, &a.PermissionModalOpen, func() {
 		ui.Column(c).Width(480).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
 			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -1182,7 +1312,9 @@ func (a *AppUI) renderTaskActionsMenu(c *ui.Context) {
 				menuItem(icons.TablerTrash, "Delete task", true, func() {
 					a.ShowTaskMenuModal = false
 					if sess != nil {
-						a.Agent.DeleteSession(sess.ID)
+						a.confirmDialogLabeled("Delete Task?", fmt.Sprintf("“%s” and its conversation history will be permanently removed.", sess.Title), "Delete", func() {
+							a.Agent.DeleteSession(sess.ID)
+						}, nil)
 					}
 				})
 			})
@@ -1254,14 +1386,18 @@ func (a *AppUI) renderBranchModal(c *ui.Context) {
 
 				in := ui.TextInput(c, &a.BranchSearchQuery).Placeholder("Search or create branch...").Grow(1).AutoFocus()
 				query := strings.TrimSpace(a.BranchSearchQuery)
+				var snap git.GitSnapshot
+				if a.Git != nil {
+					// Read through the snapshot: background Refresh writes the
+					// live fields, so direct reads race the render thread.
+					snap = a.Git.Snapshot()
+				}
 				if in.Submitted() && query != "" {
 					found := false
-					if a.Git != nil {
-						for _, b := range a.Git.Branches {
-							if b == query {
-								found = true
-								break
-							}
+					for _, b := range snap.Branches {
+						if b == query {
+							found = true
+							break
 						}
 					}
 					if found {
@@ -1271,12 +1407,8 @@ func (a *AppUI) renderBranchModal(c *ui.Context) {
 					}
 				}
 
-				currentBranch := ""
-				var branches []string
-				if a.Git != nil {
-					currentBranch = a.Git.Branch
-					branches = a.Git.Branches
-				}
+				currentBranch := snap.Branch
+				branches := snap.Branches
 
 				var filtered []string
 				for _, b := range branches {

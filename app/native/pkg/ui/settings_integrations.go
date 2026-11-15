@@ -66,7 +66,9 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 							Type:    sm.MCPType,
 							Enabled: true,
 						}
-						if _, err := mgr.SaveServer(cfg); err == nil {
+						if _, err := mgr.SaveServer(cfg); err != nil {
+							c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+						} else {
 							sm.MCPName, sm.MCPCommand = "", ""
 							sm.MCPFormOpen = false
 							c.AddToast(ui.Toast{Title: "Server Saved", Description: cfg.Name, Type: "success"})
@@ -102,15 +104,24 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 						ui.Text(c, spec).FontSize(11).Font("monospace").TextColor(tc.TextMuted).SingleLine()
 					})
 					del := IconButton(c, tc, icons.TablerTrash, 13)
+					confirmDeleteServer := func() {
+						// queueToast, not c.AddToast: the staged action runs in a
+						// later frame's context.
+						a.confirmDialogLabeled("Delete MCP Server?", fmt.Sprintf("“%s” will be removed and its tools will no longer be offered to the agent.", thisS.Name), "Delete", func() {
+							if err := mgr.DeleteServer(thisS.Name); err != nil {
+								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
+							} else {
+								a.queueToast(ui.Toast{Title: "Server Deleted", Description: thisS.Name, Type: "info"})
+							}
+						}, nil)
+					}
 					del.ContextMenu(func(m *ui.Menu) {
 						if m.Item("Delete server").Danger().Chosen() {
-							if err := mgr.DeleteServer(thisS.Name); err == nil {
-								c.AddToast(ui.Toast{Title: "Server Deleted", Description: thisS.Name, Type: "info"})
-							}
+							confirmDeleteServer()
 						}
 					})
 					if del.Clicked() {
-						_ = mgr.DeleteServer(thisS.Name)
+						confirmDeleteServer()
 					}
 				})
 			})
@@ -204,10 +215,14 @@ func (a *AppUI) renderSettingsTabSkillsReal(c *ui.Context, tc theme.ThemeColors,
 					Badge(c, tc, string(thisSk.Scope), tc.Info)
 					del := IconButton(c, tc, icons.TablerTrash, 13)
 					if del.Clicked() {
-						if err := skillMgr.DeleteSkill(thisSk.Name); err == nil {
+						a.confirmDialogLabeled("Delete Skill?", fmt.Sprintf("“%s” will be removed from the agent's available skills.", thisSk.Name), "Delete", func() {
+							if err := skillMgr.DeleteSkill(thisSk.Name); err != nil {
+								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
+								return
+							}
 							skillMgr.Reload()
-							c.AddToast(ui.Toast{Title: "Skill Deleted", Description: thisSk.Name, Type: "info"})
-						}
+							a.queueToast(ui.Toast{Title: "Skill Deleted", Description: thisSk.Name, Type: "info"})
+						}, nil)
 					}
 				})
 			})
@@ -288,9 +303,13 @@ func (a *AppUI) renderSettingsTabMemory(c *ui.Context, tc theme.ThemeColors, sm 
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		ui.TextInput(c, &sm.MemoryNew).Placeholder("New memory…").Grow(1)
 		if ui.Button(c, "Save").Clicked() && strings.TrimSpace(sm.MemoryNew) != "" {
-			_ = memMgr.Save(memory.Entry{Key: fmt.Sprintf("note-%d", time.Now().UnixMilli()), Content: sm.MemoryNew, Scope: "global"})
-			sm.MemoryNew = ""
-			c.AddToast(ui.Toast{Title: "Memory Saved", Type: "success"})
+			content := sm.MemoryNew
+			if err := memMgr.Save(memory.Entry{Key: fmt.Sprintf("note-%d", time.Now().UnixMilli()), Content: content, Scope: "global"}); err != nil {
+				c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+			} else {
+				sm.MemoryNew = ""
+				c.AddToast(ui.Toast{Title: "Memory Saved", Type: "success"})
+			}
 		}
 	})
 
@@ -308,7 +327,11 @@ func (a *AppUI) renderSettingsTabMemory(c *ui.Context, tc theme.ThemeColors, sm 
 					})
 					del := IconButton(c, tc, icons.TablerTrash, 13)
 					if del.Clicked() {
-						_ = memMgr.Delete(thisE.ID)
+						a.confirmDialogLabeled("Delete Memory?", fmt.Sprintf("“%s” will no longer be recalled by the agent.", truncatePreview(thisE.Content, 60)), "Delete", func() {
+							if err := memMgr.Delete(thisE.ID); err != nil {
+								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
+							}
+						}, nil)
 					}
 				})
 			})
@@ -377,7 +400,9 @@ func (a *AppUI) renderSettingsTabAutomations(c *ui.Context, tc theme.ThemeColors
 						Enabled:   strings.TrimSpace(sm.AutoCron) != "",
 						Workspace: a.Workspace.RootDir,
 					})
-					if err == nil {
+					if err != nil {
+						c.AddToast(ui.Toast{Title: "Create Failed", Description: err.Error(), Type: "error"})
+					} else {
 						sm.AutoName, sm.AutoCron, sm.AutoPrompt = "", "", ""
 						c.AddToast(ui.Toast{Title: "Automation Created", Type: "success"})
 					}
@@ -430,7 +455,11 @@ func (a *AppUI) renderSettingsTabAutomations(c *ui.Context, tc theme.ThemeColors
 					}
 					del := IconButton(c, tc, icons.TablerTrash, 13)
 					if del.Clicked() {
-						_ = autoMgr.Delete(thisAu.ID)
+						a.confirmDialogLabeled("Delete Automation?", fmt.Sprintf("“%s” will stop running and its history is removed.", thisAu.Name), "Delete", func() {
+							if err := autoMgr.Delete(thisAu.ID); err != nil {
+								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
+							}
+						}, nil)
 					}
 				})
 			})
@@ -839,9 +868,13 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 					} else {
 						del := IconButton(c, tc, icons.TablerTrash, 13)
 						if del.Clicked() {
-							if err := a.Engine.AgentMgr.DeleteAgentDefinition(thisD.ID); err == nil {
-								c.AddToast(ui.Toast{Title: "Persona Deleted", Description: thisD.Name, Type: "info"})
-							}
+							a.confirmDialogLabeled("Delete Persona?", fmt.Sprintf("“%s” will be removed from the orchestration roster.", thisD.Name), "Delete", func() {
+								if err := a.Engine.AgentMgr.DeleteAgentDefinition(thisD.ID); err != nil {
+									a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
+								} else {
+									a.queueToast(ui.Toast{Title: "Persona Deleted", Description: thisD.Name, Type: "info"})
+								}
+							}, nil)
 						}
 					}
 				})
@@ -902,11 +935,17 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 						if !strings.HasPrefix(name, "/") {
 							name = "/" + name
 						}
-						sm.CustomCommands = append(sm.CustomCommands, settings.CustomSlashCommand{
+						updated := append(append([]settings.CustomSlashCommand(nil), sm.CustomCommands...), settings.CustomSlashCommand{
 							Name:        name,
 							Description: sm.CmdDescription,
 							Prompt:      sm.CmdPrompt,
 						})
+						// Persist through the manager (round-trips to disk) and
+						// re-publish palette commands so ⌘K can run it.
+						sm.SetCustomCommands(updated)
+						if a.Palette != nil {
+							a.Palette.SetCommands(a.paletteCommands())
+						}
 						sm.CmdName, sm.CmdDescription, sm.CmdPrompt = "", "", ""
 						sm.CmdFormOpen = false
 						c.AddToast(ui.Toast{Title: "Command Added", Description: name, Type: "success"})
@@ -940,7 +979,10 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 								updated = append(updated, it)
 							}
 						}
-						sm.CustomCommands = updated
+						sm.SetCustomCommands(updated)
+						if a.Palette != nil {
+							a.Palette.SetCommands(a.paletteCommands())
+						}
 					}
 				})
 			})
@@ -969,6 +1011,12 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
 	settingsSectionHeader(c, tc, "Browser Use", "Headless browser, web automation, search providers, and page preview controls.")
 
+	// Honesty: these preferences are not read by any browser automation yet.
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		Badge(c, tc, "Not wired up yet", tc.Warning)
+		ui.Box(c).Grow(1)
+	})
+
 	if sm.BrowserEngine == "" {
 		sm.BrowserEngine = "DuckDuckGo"
 	}
@@ -983,7 +1031,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 					ui.Text(c, "Headless Background Mode").FontSize(12).FontWeight(600)
 					ui.Text(c, "Execute web navigation actions invisibly in background without stealing desktop focus.").FontSize(11).TextColor(tc.TextMuted)
 				})
-				ui.Switch(c, &sm.BrowserHeadless)
+				ui.Switch(c, &sm.BrowserHeadless).Disabled(true).DimDisabled(true)
 			})
 
 			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
@@ -993,7 +1041,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 					ui.Text(c, "Execute JavaScript in Web Pages").FontSize(12).FontWeight(600)
 					ui.Text(c, "Allow web pages and scraped DOM scripts to evaluate dynamically.").FontSize(11).TextColor(tc.TextMuted)
 				})
-				ui.Switch(c, &sm.BrowserAllowJS)
+				ui.Switch(c, &sm.BrowserAllowJS).Disabled(true).DimDisabled(true)
 			})
 
 			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
@@ -1007,7 +1055,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 						prov := p
 						isSel := sm.BrowserEngine == prov
 						btn := ui.Row(c.Key("search-eng-"+prov)).Height(24).Radius(4).Padding(0, 10).
-							BorderWidth(1).Cursor(ui.CursorPointer).AlignItems(ui.Center)
+							BorderWidth(1).AlignItems(ui.Center)
 						if isSel {
 							btn.Background(tc.Accent.Alpha(0.15)).BorderColor(tc.Accent)
 						} else {
@@ -1020,9 +1068,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 							}
 							ui.Text(c, prov).FontSize(11).FontWeight(500).TextColor(labelColor)
 						})
-						if btn.Clicked() {
-							sm.BrowserEngine = prov
-						}
+						// Control disabled: no browser automation reads this yet.
 					}
 				})
 			})
@@ -1038,7 +1084,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 						viewport := vp
 						isSel := sm.BrowserViewport == viewport
 						btn := ui.Row(c.Key("viewport-"+viewport)).Height(24).Radius(4).Padding(0, 10).
-							BorderWidth(1).Cursor(ui.CursorPointer).AlignItems(ui.Center)
+							BorderWidth(1).AlignItems(ui.Center)
 						if isSel {
 							btn.Background(tc.Accent.Alpha(0.15)).BorderColor(tc.Accent)
 						} else {
@@ -1051,9 +1097,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 							}
 							ui.Text(c, viewport).FontSize(11).FontWeight(500).TextColor(labelColor)
 						})
-						if btn.Clicked() {
-							sm.BrowserViewport = viewport
-						}
+						// Control disabled: no browser automation reads this yet.
 					}
 				})
 			})
@@ -1069,6 +1113,12 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 	if sm.ComputerPermissionMode == "" {
 		sm.ComputerPermissionMode = "Supervised"
 	}
+
+	// Honesty: no desktop automation reads these preferences yet.
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		Badge(c, tc, "Not wired up yet", tc.Warning)
+		ui.Box(c).Grow(1)
+	})
 
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(12).Children(func() {
@@ -1088,8 +1138,10 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 				for _, m := range modes {
 					mode := m
 					isSel := sm.ComputerPermissionMode == mode.name
+					// Selection display only — control disabled until computer
+					// use is actually wired up.
 					card := ui.Row(c.Key("comp-mode-"+mode.name)).Radius(6).Padding(8, 12).Gap(8).
-						BorderWidth(1).Cursor(ui.CursorPointer).AlignItems(ui.Center)
+						BorderWidth(1).AlignItems(ui.Center)
 					if isSel {
 						card.Background(tc.Accent.Alpha(0.1)).BorderColor(tc.Accent)
 					} else {
@@ -1107,9 +1159,6 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 							ui.Text(c, mode.desc).FontSize(10).TextColor(tc.TextMuted)
 						})
 					})
-					if card.Clicked() {
-						sm.ComputerPermissionMode = mode.name
-					}
 				}
 			})
 
@@ -1117,10 +1166,10 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
-					ui.Text(c, "Display Resolution & Scaling Status").FontSize(12).FontWeight(600)
-					ui.Text(c, "Native macOS Quartz display coordinates bridge active and calibrated.").FontSize(11).TextColor(tc.TextMuted)
+					ui.Text(c, "Display Resolution & Scaling").FontSize(12).FontWeight(600)
+					ui.Text(c, "Display coordinate bridge for desktop automation — reported once computer use is wired up.").FontSize(11).TextColor(tc.TextMuted)
 				})
-				Badge(c, tc, "Calibrated Retina @2x", tc.Success)
+				Badge(c, tc, "Unavailable", tc.TextMuted)
 			})
 
 			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
@@ -1128,9 +1177,9 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
 					ui.Text(c, "System Safety Sandbox").FontSize(12).FontWeight(600)
-					ui.Text(c, "Prevent automation actions on system keychain, password dialogues, and /System directories.").FontSize(11).TextColor(tc.TextMuted)
+					ui.Text(c, "Prevent automation actions on system keychain, password dialogues, and /System directories — enforced once computer use is wired up.").FontSize(11).TextColor(tc.TextMuted)
 				})
-				Badge(c, tc, "Active", tc.Accent)
+				Badge(c, tc, "Unavailable", tc.TextMuted)
 			})
 		})
 	})
@@ -1140,6 +1189,13 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 
 func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
 	settingsSectionHeader(c, tc, "Lifecycle Hooks", "Execute scripts or commands on agent events (PreToolUse, PostToolUse, Stop, SessionStart).")
+
+	// Honesty: hooks are saved and reloaded today, but nothing executes them
+	// yet — say so instead of implying they run.
+	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+		Badge(c, tc, "Saved — execution not wired yet", tc.Warning)
+		ui.Box(c).Grow(1)
+	})
 
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		addBtn := ui.Button(c, "+ Add Hook")
@@ -1169,15 +1225,17 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 						if evVal == "" {
 							evVal = "PreToolUse"
 						}
-						sm.HooksList = append(sm.HooksList, settings.HookEntry{
+						updated := append(append([]settings.HookEntry(nil), sm.HooksList...), settings.HookEntry{
 							ID:      fmt.Sprintf("hook-%d", time.Now().UnixNano()),
 							Event:   evVal,
 							Matcher: sm.HookMatcher,
 							Command: sm.HookCommand,
 						})
+						// Persist through the manager so hooks round-trip.
+						sm.SetHooks(updated)
 						sm.HookEvent, sm.HookMatcher, sm.HookCommand = "", "", ""
 						sm.HookFormOpen = false
-						c.AddToast(ui.Toast{Title: "Hook Added", Type: "success"})
+						c.AddToast(ui.Toast{Title: "Hook Saved", Description: "Stored — it will run once hook execution is wired up", Type: "info"})
 					}
 				})
 			})
@@ -1196,6 +1254,7 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 							if thisH.Matcher != "" {
 								Badge(c, tc, thisH.Matcher, tc.Info)
 							}
+							Badge(c, tc, "not executed", tc.TextMuted)
 						})
 						ui.Text(c, thisH.Command).FontSize(11).TextColor(tc.TextMuted)
 					})
@@ -1207,7 +1266,7 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 								updated = append(updated, item)
 							}
 						}
-						sm.HooksList = updated
+						sm.SetHooks(updated)
 					}
 				})
 			})
@@ -1226,14 +1285,22 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 func (a *AppUI) renderSettingsTabIndexing(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
 	settingsSectionHeader(c, tc, "Codebase Indexing", "Real-time symbol parsing, vector embeddings, and semantic code search status.")
 
-	if sm.IndexedFiles <= 0 {
-		sm.IndexedFiles = 142
-	}
-	if sm.IndexedSymbols <= 0 {
-		sm.IndexedSymbols = 1840
-	}
 	if sm.IndexingStatus == "" {
 		sm.IndexingStatus = "Index ready & up-to-date"
+	}
+
+	// Real counts from the workspace file index — never fabricated. The
+	// symbol count is omitted entirely rather than faked (no cheap parser
+	// counter is wired to this screen yet).
+	fileCount := 0
+	var totalBytes int64
+	if a.Workspace != nil {
+		for _, f := range a.Workspace.FilteredFiles() {
+			if !f.IsDir {
+				fileCount++
+				totalBytes += f.Size
+			}
+		}
 	}
 
 	settingsCard(c, tc, func() {
@@ -1244,15 +1311,27 @@ func (a *AppUI) renderSettingsTabIndexing(c *ui.Context, tc theme.ThemeColors, s
 					ui.Text(c, sm.IndexingStatus).FontSize(11).TextColor(tc.Accent)
 				})
 				reindexBtn := ContrastCTA(c, tc, "Reindex Workspace")
-				if reindexBtn.Clicked() {
-					sm.IndexingStatus = "Indexing workspace..."
-					c.AddToast(ui.Toast{Title: "Indexing Started", Description: "Parsing codebase symbols in background", Type: "info"})
+				if reindexBtn.Clicked() && !sm.ReindexBusy {
+					sm.ReindexBusy = true
+					sm.IndexingStatus = "Refreshing workspace index..."
+					c.AddToast(ui.Toast{Title: "Reindex Started", Description: "Refreshing workspace file index", Type: "info"})
 					go func() {
-						time.Sleep(500 * time.Millisecond)
-						sm.IndexingStatus = fmt.Sprintf("Index updated at %s", time.Now().Format("15:04:05"))
-						if a.Window != nil {
-							a.Window.Invalidate()
+						if a.Workspace != nil {
+							a.Workspace.Refresh()
 						}
+						a.runOnUI(func() {
+							sm.ReindexBusy = false
+							count := 0
+							if a.Workspace != nil {
+								for _, f := range a.Workspace.FilteredFiles() {
+									if !f.IsDir {
+										count++
+									}
+								}
+							}
+							sm.IndexingStatus = fmt.Sprintf("Index refreshed at %s — %d files", time.Now().Format("15:04:05"), count)
+							a.invalidateUI()
+						})
 					}()
 				}
 			})
@@ -1262,15 +1341,11 @@ func (a *AppUI) renderSettingsTabIndexing(c *ui.Context, tc theme.ThemeColors, s
 			ui.Row(c).Gap(16).Children(func() {
 				ui.Column(c).Radius(6).Padding(10).Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Grow(1).Children(func() {
 					ui.Text(c, "Indexed Files").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Text(c, fmt.Sprintf("%d", sm.IndexedFiles)).FontSize(18).FontWeight(700).TextColor(tc.Accent)
-				})
-				ui.Column(c).Radius(6).Padding(10).Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Grow(1).Children(func() {
-					ui.Text(c, "Parsed Symbols").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Text(c, fmt.Sprintf("%d", sm.IndexedSymbols)).FontSize(18).FontWeight(700).TextColor(tc.Info)
+					ui.Text(c, fmt.Sprintf("%d", fileCount)).FontSize(18).FontWeight(700).TextColor(tc.Accent)
 				})
 				ui.Column(c).Radius(6).Padding(10).Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Grow(1).Children(func() {
 					ui.Text(c, "Index Size").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Text(c, "4.2 MB").FontSize(18).FontWeight(700)
+					ui.Text(c, formatBytes(totalBytes)).FontSize(18).FontWeight(700)
 				})
 			})
 
@@ -1296,4 +1371,14 @@ func (a *AppUI) MCPMgr() *mcp.Manager {
 		return nil
 	}
 	return a.Engine.MCPMgr
+}
+
+// truncatePreview shortens s for single-line dialog copy.
+func truncatePreview(s string, max int) string {
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
 }

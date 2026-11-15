@@ -27,7 +27,6 @@ type uiPrefs struct {
 	RightDrawerWidth     float32 `json:"right_drawer_width"`
 	BottomTerminalHeight float32 `json:"bottom_terminal_height"`
 	FollowAgent          bool    `json:"follow_agent"`
-	AgentViewMode        string  `json:"agent_view_mode"`
 	LeftSidebarView      string  `json:"left_sidebar_view"`
 	SidebarListView      string  `json:"sidebar_list_view"`
 	ProjectFilter        string  `json:"project_filter"`
@@ -95,6 +94,8 @@ func (a *AppUI) loadUIPrefs() {
 	a.ShowRightDrawer = p.ShowRightDrawer
 	a.ShowBottomTerminal = p.ShowBottomTerminal
 	a.FollowAgent = p.FollowAgent
+	// Intentional reset: the app always opens in chat view; agent_view_mode
+	// is deliberately not persisted.
 	a.AgentViewMode = AgentViewChat
 	switch p.LeftSidebarView {
 	case "tasks", "files":
@@ -131,7 +132,6 @@ func (a *AppUI) SaveUIPrefs() {
 		RightDrawerWidth:     a.RightDrawerWidth,
 		BottomTerminalHeight: a.BottomTerminalHeight,
 		FollowAgent:          a.FollowAgent,
-		AgentViewMode:        a.AgentViewMode,
 		LeftSidebarView:      a.LeftSidebarView,
 		SidebarListView:      a.SidebarListView,
 		ProjectFilter:        a.ProjectFilter,
@@ -161,11 +161,11 @@ func (a *AppUI) prefsSnapshot() string {
 		a.ThemeMgr.Appearance, a.ThemeMgr.PaletteID, a.ThemeMgr.ChatWidth, a.ThemeMgr.DiffScheme,
 		f(a.ShowLeftSidebar), f(a.ShowRightDrawer), f(a.ShowBottomTerminal),
 		f32(a.LeftSidebarWidth), f32(a.RightDrawerWidth), f32(a.BottomTerminalHeight),
-		f(a.FollowAgent), a.AgentViewMode, a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
+		f(a.FollowAgent), a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
 	}.String()
 }
 
-type prefsSnap [16]string
+type prefsSnap [15]string
 
 func (p prefsSnap) String() string {
 	return strings.Join(p[:], "|")
