@@ -3,9 +3,11 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,7 +57,18 @@ type Engine struct {
 	watcherSubscribed bool
 	watcherOnChange   func()
 	watcherTimer      *time.Timer
+	watcherRoot       string // currently watched root dir ("" = none)
+
+	// Automation scheduler lifecycle + UI fire handler.
+	autoMu      sync.Mutex
+	autoCancel  context.CancelFunc
+	autoHandler func(automations.Automation)
 }
+
+// automationFireEvent is published on the engine bus when a scheduled
+// automation becomes due. Defined here because the shared RakitKode events
+// package predates automations.
+const automationFireEvent events.EventType = "automations:fire"
 
 // NewEngine creates and initializes the native backend subsystems.
 func NewEngine(dataDir string) *Engine {
@@ -74,7 +87,7 @@ func NewEngine(dataDir string) *Engine {
 	acpMgr := acp.NewManager(bus)
 	acpMgr.SetDataDir(dataDir)
 
-	remoteMgr := remotefs.NewManager()
+	remoteMgr := remotefs.NewManager(dataDir)
 	remoteMgr.SetEventBus(bus)
 
 	gitEngine := git.NewEngine()
@@ -87,12 +100,14 @@ func NewEngine(dataDir string) *Engine {
 	w, _ := watcher.New(bus)
 
 	mgrs := wireManagers(dataDir, bus, llmClient)
-	autoMgr, err := automations.NewManager(dataDir)
-	if err != nil {
-		autoMgr = nil
+	autoMgr, autoErr := automations.NewManager(dataDir)
+	if autoErr != nil {
+		// A corrupt automations.json was quarantined; the manager still works
+		// on a fresh schedule, so the engine keeps it and logs the cause.
+		log.Printf("engine: automations: %v", autoErr)
 	}
 
-	return &Engine{
+	e := &Engine{
 		GitEngine:       gitEngine,
 		LLMClient:       llmClient,
 		CommitGenerator: commitGen,
@@ -111,6 +126,47 @@ func NewEngine(dataDir string) *Engine {
 		AgentMgr:        mgrs.Agent,
 		AutoMgr:         autoMgr,
 	}
+
+	// Run the cron scheduler for the engine's lifetime: it advances and
+	// persists NextRunAt/LastRunAt and delivers due fires via the bus and
+	// the handler registered with SetAutomationFireHandler.
+	ctx, cancel := context.WithCancel(context.Background())
+	e.autoCancel = cancel
+	autoMgr.StartScheduler(ctx, e.dispatchAutomationFire)
+
+	return e
+}
+
+// dispatchAutomationFire delivers a due automation to the UI layer: a bus
+// event plus the registered fire handler. core stays UI-free — the fire
+// carries only the automation payload; the UI decides how to run it.
+func (e *Engine) dispatchAutomationFire(a automations.Automation) {
+	if e.Bus != nil {
+		e.Bus.Publish(events.Event{
+			Type: automationFireEvent,
+			Data: map[string]interface{}{
+				"id":        a.ID,
+				"name":      a.Name,
+				"prompt":    a.Prompt,
+				"workspace": a.Workspace,
+				"cronExpr":  a.CronExpr,
+			},
+		})
+	}
+	e.autoMu.Lock()
+	fn := e.autoHandler
+	e.autoMu.Unlock()
+	if fn != nil {
+		fn(a)
+	}
+}
+
+// SetAutomationFireHandler registers the callback invoked when a scheduled
+// automation fires (with its full payload). Pass nil to clear it.
+func (e *Engine) SetAutomationFireHandler(fn func(automations.Automation)) {
+	e.autoMu.Lock()
+	e.autoHandler = fn
+	e.autoMu.Unlock()
 }
 
 // ConnectSSH establishes a connection to a remote SSH/SFTP server.
@@ -181,8 +237,28 @@ func (e *Engine) GetGitBranches(repoPath string) ([]string, error) {
 	return e.GitEngine.GetBranches(ctx, repoPath)
 }
 
+// validateBranchName rejects branch arguments that could be misread as
+// command-line flags. Note `--` cannot separate it the way Merge does: after
+// `--`, git checkout parses arguments as PATHSPECS, so `git checkout -- main`
+// fails with "pathspec did not match" instead of switching branches (verified
+// against git). exec.Command passes argv directly — no shell — so a leading
+// dash is the only injection vector, and it is blocked here.
+func validateBranchName(branch string) error {
+	name := strings.TrimSpace(branch)
+	if name == "" {
+		return fmt.Errorf("branch name cannot be empty")
+	}
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("invalid branch name %q: must not start with '-'", branch)
+	}
+	return nil
+}
+
 // GitCheckout switches branch in repo.
 func (e *Engine) GitCheckout(repoPath, branch string) error {
+	if err := validateBranchName(branch); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "checkout", branch)
@@ -196,6 +272,9 @@ func (e *Engine) GitCheckout(repoPath, branch string) error {
 
 // GitCreateBranch creates and checks out a new branch.
 func (e *Engine) GitCreateBranch(repoPath, branch string) error {
+	if err := validateBranchName(branch); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "checkout", "-b", branch)
@@ -295,6 +374,18 @@ func (e *Engine) StartWatcher(rootDir string, onChange func()) {
 	if home, err := os.UserHomeDir(); err == nil && (rootDir == home || rootDir == "" || rootDir == "/") {
 		return
 	}
+	e.watcherMu.Lock()
+	prevRoot := e.watcherRoot
+	e.watcherRoot = rootDir
+	e.watcherMu.Unlock()
+
+	// A workspace switch must release the previous root: every WatchDir adds
+	// the whole subtree to the fsnotify watch list, so switching without
+	// unwatching accumulates stale handles (and stale event sources) forever.
+	if prevRoot != "" && prevRoot != rootDir {
+		_ = e.Watcher.UnwatchDir(prevRoot)
+	}
+
 	e.Watcher.Start()
 	_ = e.Watcher.WatchDir(rootDir)
 
@@ -334,6 +425,7 @@ func (e *Engine) StopWatcher() {
 		e.watcherTimer.Stop()
 		e.watcherTimer = nil
 	}
+	e.watcherRoot = ""
 	e.watcherMu.Unlock()
 	if e.Watcher != nil {
 		e.Watcher.Stop()
