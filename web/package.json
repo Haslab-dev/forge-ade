@@ -1,7 +1,7 @@
 {
   "name": "forge-ade-landing",
   "private": true,
-  "version": "1.0.19",
+  "version": "1.0.20",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,5 +23,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
-  }
+  },
+  "build": 1
 }
