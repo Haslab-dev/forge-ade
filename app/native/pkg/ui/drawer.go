@@ -1424,8 +1424,8 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		}
 	})
 
-	// Special preview modes (image / markdown) render instead of the buffer.
-	if a.ActiveSideFile == a.SideFilePreviewImage || a.ActiveSideFile == a.SideFilePreviewMd {
+	// Special preview modes (markdown) render instead of the buffer.
+	if a.ActiveSideFile == a.SideFilePreviewMd {
 		ui.Column(c).Grow(1).FillHeight().Children(func() {
 			a.renderSideFilePreviewBody(c, tc, func() {
 				ui.Column(c).Grow(1).Center().Children(func() {
@@ -1439,6 +1439,13 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 	full := ""
 	if a.Workspace != nil {
 		full = a.Workspace.ResolveFullPath(a.ActiveSideFile)
+	}
+
+	// Image and SVG viewer preview in right panel
+	if isImageOrSVG(a.ActiveSideFile) && a.SVGViewMode[full] != "code" {
+		doc := a.Editor.GetDoc(full)
+		a.renderImageViewer(c, tc, full, a.ActiveSideFile, doc, true)
+		return
 	}
 
 	// Native PDF viewer preview in side file tabs

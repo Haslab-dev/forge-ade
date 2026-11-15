@@ -163,6 +163,13 @@ type AppUI struct {
 	sidePreviewMdMod     int64
 	sidePreviewMdText    string
 
+	// Image & SVG Viewer state
+	ImageZoom    map[string]float32 // zoom multiplier (0 = fit to window)
+	ImageFitMode map[string]bool    // fit to window flag
+	ImageBgStyle map[string]string  // "grid" (default), "dark", "light"
+	SVGViewMode  map[string]string  // "preview" (default) or "code"
+	imageCache   map[string]*cachedImage
+
 	// Right-drawer browser viewer tab (native web view) + subagent pane.
 	BrowserWebView    *mygo.WebView
 	BrowserURLInput   string
@@ -408,6 +415,11 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		InlineAI:                editor.NewInlineAI(),
 		FileSearchMode:          "files",
 		SideFileDiffMode:        make(map[string]bool),
+		ImageZoom:               make(map[string]float32),
+		ImageFitMode:            make(map[string]bool),
+		ImageBgStyle:            make(map[string]string),
+		SVGViewMode:             make(map[string]string),
+		imageCache:              make(map[string]*cachedImage),
 		SidebarListView:         "project",
 		DeckSlideCount:          1,
 		Snippets:                terminal.NewSnippetManager(engine.DataDir),
@@ -1333,6 +1345,12 @@ func (a *AppUI) openSideFile(relPath string) {
 		a.openPdfViewer(full)
 	} else if isDeckOrMotionFile(lower) {
 		a.openDeckViewer(full)
+	} else if isImageOrSVG(lower) {
+		a.SideFilePreviewImage = relPath
+		a.SideFilePreviewMd = ""
+		if doc := a.Editor.GetDoc(full); doc == nil {
+			_, _ = a.Editor.OpenFile(full, relPath)
+		}
 	} else {
 		if doc := a.Editor.GetDoc(full); doc == nil {
 			_, _ = a.Editor.OpenFile(full, relPath)

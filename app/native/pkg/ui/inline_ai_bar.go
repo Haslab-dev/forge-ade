@@ -283,12 +283,8 @@ func (a *AppUI) formatDocumentSelection(c *ui.Context, doc *editor.OpenDocument)
 // openSidePreviewFile renders image/markdown previews in the drawer Files
 // pane (DeckMotionViewer auto-detect sends decks to the browser tab).
 func (a *AppUI) openSidePreviewFile(c *ui.Context, relPath string) {
-	ext := strings.ToLower(strings.TrimPrefix(relPath, "."))
-	_ = ext
 	switch {
-	case strings.HasSuffix(relPath, ".png"), strings.HasSuffix(relPath, ".jpg"),
-		strings.HasSuffix(relPath, ".jpeg"), strings.HasSuffix(relPath, ".gif"),
-		strings.HasSuffix(relPath, ".webp"), strings.HasSuffix(relPath, ".svg"):
+	case isImageOrSVG(relPath):
 		a.SideFilePreviewImage = relPath
 		a.SideFilePreviewMd = ""
 		a.openSideFile(relPath)
@@ -309,34 +305,12 @@ func (a *AppUI) openSidePreviewFile(c *ui.Context, relPath string) {
 }
 
 // renderSideFilePreviewBody renders the special preview modes of the side
-// file pane: images via ui.Image and markdown via the themed renderer,
-// caching file reads and image decoding by (fullPath, modTime).
+// file pane: images via renderImageViewer and markdown via the themed renderer.
 func (a *AppUI) renderSideFilePreviewBody(c *ui.Context, tc theme.ThemeColors, fallback func()) {
 	if a.SideFilePreviewImage != "" {
 		full := a.Workspace.ResolveFullPath(a.SideFilePreviewImage)
-		if info, err := os.Stat(full); err == nil {
-			mod := info.ModTime().UnixNano()
-			if a.sidePreviewImgPath != full || a.sidePreviewImgMod != mod || a.sidePreviewImgSrc == nil {
-				if data, rerr := os.ReadFile(full); rerr == nil {
-					if src, derr := ui.DecodeImage(data); derr == nil {
-						a.sidePreviewImgPath = full
-						a.sidePreviewImgMod = mod
-						a.sidePreviewImgSrc = src
-					} else {
-						a.sidePreviewImgSrc = nil
-					}
-				} else {
-					a.sidePreviewImgSrc = nil
-				}
-			}
-			if a.sidePreviewImgSrc != nil {
-				ui.Box(c).Grow(1).Center().Children(func() {
-					ui.Image(c, a.sidePreviewImgSrc).MaxWidth(420)
-				})
-				return
-			}
-		}
-		fallback()
+		doc := a.Editor.GetDoc(full)
+		a.renderImageViewer(c, tc, full, a.SideFilePreviewImage, doc, true)
 		return
 	}
 	if a.SideFilePreviewMd != "" {

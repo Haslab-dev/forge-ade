@@ -490,6 +490,24 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 		return
 	}
 
+	if em.ActivePath != "" && isImageOrSVG(em.ActivePath) {
+		full := em.ActivePath
+		if a.Workspace != nil && !filepath.IsAbs(full) {
+			full = a.Workspace.ResolveFullPath(full)
+		}
+		doc := em.GetDoc(full)
+		rel := em.ActivePath
+		if a.Workspace != nil {
+			if r, err := filepath.Rel(a.Workspace.RootDir, full); err == nil && !strings.HasPrefix(r, "..") {
+				rel = r
+			}
+		}
+		if a.SVGViewMode[full] != "code" {
+			a.renderImageViewer(c, tc, full, rel, doc, false)
+			return
+		}
+	}
+
 	if em.IsDiffView {
 		a.renderEditorDiff(c)
 		return
@@ -556,10 +574,14 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 					if panePath == em.ActivePath {
 						a.renderEditorSingle(c)
 					} else {
-						ui.Column(c).Grow(1).FillWidth().Children(func() {
-							edView := mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
-							a.attachEditorContextMenu(c, edView, paneDoc)
-						})
+						if paneDoc != nil && isImageOrSVG(paneDoc.RelativePath) && a.SVGViewMode[paneDoc.FullPath] != "code" {
+							a.renderImageViewer(c, tc, paneDoc.FullPath, paneDoc.RelativePath, paneDoc, false)
+						} else {
+							ui.Column(c).Grow(1).FillWidth().Children(func() {
+								edView := mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
+								a.attachEditorContextMenu(c, edView, paneDoc)
+							})
+						}
 					}
 				})
 			}
@@ -735,6 +757,11 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 		return
 	}
 
+	if isImageOrSVG(doc.RelativePath) && a.SVGViewMode[doc.FullPath] != "code" {
+		a.renderImageViewer(c, tc, doc.FullPath, doc.RelativePath, doc, false)
+		return
+	}
+
 	doc.Editor.SoftWrap = em.SoftWrap
 	em.ApplyTheme(doc.Editor)
 
@@ -777,6 +804,20 @@ func (a *AppUI) renderBreadcrumbs(c *ui.Context, doc *editor.OpenDocument) {
 			}
 		}
 		ui.Box(c).Grow(1)
+		if isSVG(doc.RelativePath) {
+			svgToggle := ui.Row(c.Key("bc-svg-toggle")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+			svgToggle.Children(func() {
+				ui.Icon(c, icons.TablerEye).Width(11).Height(11).TextColor(tc.Accent)
+				ui.Text(c, "Preview Vector").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+			})
+			if svgToggle.Hovered() {
+				svgToggle.Background(tc.Accent.Alpha(0.12))
+			}
+			if svgToggle.Clicked() {
+				a.SVGViewMode[doc.FullPath] = "preview"
+			}
+		}
 		langName := "Plain Text"
 		if l := doc.Editor.Buffer.Language(); l != nil {
 			langName = l.Name
