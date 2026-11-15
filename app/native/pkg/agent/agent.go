@@ -16,7 +16,6 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
-	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/core/acp"
 	"github.com/hasdev/forge-ade/core/agentsession"
@@ -203,6 +202,12 @@ type AgentSession struct {
 	LastUsage            *UsageInfo      `json:"lastUsage,omitempty"`
 	SteerQueue           []string        `json:"-"`
 	turnStartFiles       map[string]bool // git snapshot at turn start
+
+	// PendingApprovals queues unanswered permission requests so a second
+	// agent:ask never hides the first one. The streaming message's
+	// PendingApproval always points at the earliest unresolved entry;
+	// ResolveSessionApproval pops entries as they are answered.
+	PendingApprovals []*PermissionRequest `json:"-"`
 }
 
 // AgentState tracks sessions, conversation history, streaming responses, and prompt composer.
@@ -225,7 +230,6 @@ type AgentState struct {
 	// FetchingModels guards the live /models fetch for the model picker.
 	FetchingModels  bool
 	ReasoningEffort ReasoningEffort
-	AutoVerify      bool
 	SteerQueue      []string
 	AttachedFiles   []string
 	StashedPrompts  []string
@@ -235,7 +239,6 @@ type AgentState struct {
 	PromptHistory      []string
 	PromptHistoryIdx   int    // -1 = not browsing
 	PromptHistoryDraft string // in-progress text saved when history starts
-	ShowModelPicker    bool
 	AvailableModels    []string
 	NextID             int
 	IsStreaming        bool
@@ -245,6 +248,11 @@ type AgentState struct {
 	statsPending       map[string]bool
 	Messages           []*ChatMessage // alias for active session messages
 	Invalidate         func()
+
+	// streamCancels holds the context cancel funcs of in-flight raw-LLM
+	// fallback streams per session, so CancelStreaming can abort them (the
+	// stream context is local to the turn goroutine).
+	streamCancels map[string]*streamCancelHandle
 }
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
@@ -293,9 +301,9 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 		ActiveFilterTab: "active",
 		ExecutionMode:   ModeBypass,
 		ReasoningEffort: EffortMedium,
-		AutoVerify:      false,
 		SteerQueue:      make([]string, 0),
 		AvailableModels: []string{},
+		streamCancels:   make(map[string]*streamCancelHandle),
 		Invalidate:      invalidate,
 		NextID:          1,
 		MdOpts: markdown.Options{
@@ -310,6 +318,299 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 	as.LoadSteerQueues()
 
 	return as
+}
+
+// streamCancelHandle carries the context.CancelFunc of an in-flight raw-LLM
+// fallback stream. It is heap-allocated so CancelStreaming can find and call
+// it under as.mu (func values are not comparable, pointers are).
+type streamCancelHandle struct {
+	cancel context.CancelFunc
+}
+
+func (as *AgentState) setStreamCancel(sessionID string, h *streamCancelHandle) {
+	as.mu.Lock()
+	if as.streamCancels == nil {
+		as.streamCancels = make(map[string]*streamCancelHandle)
+	}
+	as.streamCancels[sessionID] = h
+	as.mu.Unlock()
+}
+
+func (as *AgentState) clearStreamCancel(sessionID string, h *streamCancelHandle) {
+	as.mu.Lock()
+	if as.streamCancels != nil && as.streamCancels[sessionID] == h {
+		delete(as.streamCancels, sessionID)
+	}
+	as.mu.Unlock()
+}
+
+// cancelStreamFor aborts an in-flight raw-LLM fallback stream of sessionID
+// (no-op when none is running). Safe from any goroutine.
+func (as *AgentState) cancelStreamFor(sessionID string) {
+	as.mu.Lock()
+	h := as.streamCancels[sessionID]
+	as.mu.Unlock()
+	if h != nil && h.cancel != nil {
+		h.cancel()
+	}
+}
+
+// snapshotMessageLocked returns a render-safe copy of m. Writers mutate
+// ChatMessage fields in place under as.mu (msg.Text += delta), and tool
+// structs in place on tool events, so the render must draw from per-message
+// copies taken under the same lock.
+func snapshotMessageLocked(m *ChatMessage) *ChatMessage {
+	if m == nil {
+		return nil
+	}
+	cp := *m
+	if len(m.Tools) > 0 {
+		cp.Tools = make([]*ToolExecution, len(m.Tools))
+		for j, t := range m.Tools {
+			if t == nil {
+				continue
+			}
+			tcp := *t
+			cp.Tools[j] = &tcp
+		}
+	}
+	if len(m.Changes) > 0 {
+		cp.Changes = make([]*FileChange, len(m.Changes))
+		for j, ch := range m.Changes {
+			if ch == nil {
+				continue
+			}
+			ccp := *ch
+			cp.Changes[j] = &ccp
+		}
+	}
+	if len(m.PendingQuestions) > 0 {
+		cp.PendingQuestions = make([]AgentQuestion, len(m.PendingQuestions))
+		for j, q := range m.PendingQuestions {
+			qc := q
+			qc.Options = append([]string(nil), q.Options...)
+			qc.Selected = append([]string(nil), q.Selected...)
+			cp.PendingQuestions[j] = qc
+		}
+	}
+	if m.PendingApproval != nil {
+		pap := *m.PendingApproval
+		cp.PendingApproval = &pap
+	}
+	return &cp
+}
+
+// MessagesSnapshot returns a per-frame consistent copy of the active
+// session's transcript: slice header plus per-message struct copies taken
+// under the state lock. Render code must never read the live message
+// pointers while turn goroutines stream.
+func (as *AgentState) MessagesSnapshot() []*ChatMessage {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	out := make([]*ChatMessage, len(as.Messages))
+	for i, m := range as.Messages {
+		out[i] = snapshotMessageLocked(m)
+	}
+	return out
+}
+
+// ActiveTranscriptSnapshot returns the transcript snapshot plus the session
+// identity fields the chat surface renders (one lock acquisition per frame).
+func (as *AgentState) ActiveTranscriptSnapshot() (msgs []*ChatMessage, sessionID, checkpointTurnID string) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	sessionID = as.ActiveSessionID
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		checkpointTurnID = s.LastCheckpointTurnID
+		msgs = make([]*ChatMessage, len(s.Messages))
+		for i, m := range s.Messages {
+			msgs[i] = snapshotMessageLocked(m)
+		}
+		break
+	}
+	return
+}
+
+// TranscriptVersion returns a cheap change key of the active transcript
+// (message count + total text/thinking/tool bytes) so content-dependent UI
+// such as find-in-thread re-computes while a turn streams.
+func (as *AgentState) TranscriptVersion() int {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	v := len(as.Messages)
+	for _, m := range as.Messages {
+		if m == nil {
+			continue
+		}
+		v += len(m.Text) + len(m.Thinking)
+		for _, t := range m.Tools {
+			v += len(t.Command) + len(t.Output)
+		}
+	}
+	return v
+}
+
+// SteerQueueSnapshot returns a copy of the active session's steer queue.
+func (as *AgentState) SteerQueueSnapshot() []string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	return append([]string(nil), as.SteerQueue...)
+}
+
+// StreamingSnapshot reports whether the active session is streaming.
+func (as *AgentState) StreamingSnapshot() bool {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	return as.IsStreaming
+}
+
+// SnapshotActiveSessionID returns the active session id under the state lock.
+func (as *AgentState) SnapshotActiveSessionID() string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	return as.ActiveSessionID
+}
+
+// ActiveTaskManager returns the task tracker of the active session.
+func (as *AgentState) ActiveTaskManager() *TaskManager {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	return as.TaskManager
+}
+
+// MutateMessage applies fn to the live copy of a message under the state
+// lock. Render click handlers receive snapshot copies, so every render-time
+// write (show/hide toggles, feedback, undo state) must go through this.
+// sessionID may be empty to search all sessions.
+func (as *AgentState) MutateMessage(sessionID string, messageID int, fn func(m *ChatMessage)) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if sessionID != "" && s.ID != sessionID {
+			continue
+		}
+		for _, m := range s.Messages {
+			if m.ID == messageID {
+				fn(m)
+				return
+			}
+		}
+	}
+}
+
+// ToggleMessageFeedback sets or clears a thumbs feedback ("up"/"down") on the
+// live message and persists the session asynchronously. Returns whether the
+// feedback is active after the toggle.
+func (as *AgentState) ToggleMessageFeedback(sessionID string, messageID int, kind string) bool {
+	as.mu.Lock()
+	var sess *AgentSession
+	active := false
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		sess = s
+		for _, m := range s.Messages {
+			if m.ID == messageID {
+				if m.Feedback == kind {
+					m.Feedback = ""
+				} else {
+					m.Feedback = kind
+					active = true
+				}
+				break
+			}
+		}
+		break
+	}
+	as.mu.Unlock()
+	if sess != nil {
+		go as.SaveSessionToDisk(sess)
+	}
+	return active
+}
+
+// ClearMessageChanges drops a finalized message's turn-change list (used
+// after a verified checkpoint restore / turn undo).
+func (as *AgentState) ClearMessageChanges(sessionID string, messageID int) {
+	as.MutateMessage(sessionID, messageID, func(m *ChatMessage) {
+		m.Changes = nil
+	})
+}
+
+// ClearConversation wipes the active session's transcript (/clear): under the
+// lock it nils both the session's messages and the active alias and resets
+// the streaming flag; the emptied session is persisted outside the lock.
+func (as *AgentState) ClearConversation() {
+	sess := as.ActiveSession()
+	if sess == nil {
+		return
+	}
+	as.mu.Lock()
+	sess.Messages = nil
+	if sess.ID == as.ActiveSessionID {
+		as.Messages = nil
+	}
+	sess.UpdatedAt = time.Now()
+	as.IsStreaming = false
+	as.mu.Unlock()
+	go as.SaveSessionToDisk(sess)
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// RemoveSteerItem drops the first active-session queue entry equal to text
+// (identity, not index: the tray renders a snapshot that can shift) and
+// reports whether it was removed. The per-session copy stays in sync.
+func (as *AgentState) RemoveSteerItem(text string) bool {
+	as.mu.Lock()
+	removed := false
+	for i, it := range as.SteerQueue {
+		if it == text {
+			as.SteerQueue = append(as.SteerQueue[:i], as.SteerQueue[i+1:]...)
+			removed = true
+			break
+		}
+	}
+	if removed && as.ActiveSessionID != "" {
+		for _, s := range as.Sessions {
+			if s.ID == as.ActiveSessionID {
+				s.SteerQueue = append([]string(nil), as.SteerQueue...)
+				break
+			}
+		}
+	}
+	as.mu.Unlock()
+	return removed
+}
+
+// TakeSteerItem removes and returns the first active-session queue entry
+// equal to text ("Edit" moves the text back into the composer); returns ""
+// when the entry is gone.
+func (as *AgentState) TakeSteerItem(text string) string {
+	as.mu.Lock()
+	taken := ""
+	for i, it := range as.SteerQueue {
+		if it == text {
+			taken = it
+			as.SteerQueue = append(as.SteerQueue[:i], as.SteerQueue[i+1:]...)
+			break
+		}
+	}
+	if taken != "" && as.ActiveSessionID != "" {
+		for _, s := range as.Sessions {
+			if s.ID == as.ActiveSessionID {
+				s.SteerQueue = append([]string(nil), as.SteerQueue...)
+				break
+			}
+		}
+	}
+	as.mu.Unlock()
+	return taken
 }
 
 // ensureStreamingMessage returns the assistant message currently being
@@ -629,10 +930,15 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 	if as.ActiveSessionID == sessionID || sessionID == "" {
 		as.IsStreaming = false
 	}
-	// Drain the completing session's own steer queue even if it completed in the background.
+	// Drain the completing session's own steer queue even if it completed in
+	// the background — but never when the user stopped the turn: draining
+	// would hand the queue to HandleTurnDone's caller, which relaunches the
+	// session and defeats Stop. Queued prompts stay in the tray (and on the
+	// session) so the next real turn consumes them.
+	turnStopped := info.Status == "stopped"
 	var steerSnapshot []string
 	saveSteer := false
-	if sessToSave != nil && len(sessToSave.SteerQueue) > 0 {
+	if !turnStopped && sessToSave != nil && len(sessToSave.SteerQueue) > 0 {
 		nextSteer = sessToSave.SteerQueue[0]
 		sessToSave.SteerQueue = sessToSave.SteerQueue[1:]
 		steerSnapshot = append([]string(nil), sessToSave.SteerQueue...)
@@ -650,7 +956,7 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		if sessToSave.ID == as.ActiveSessionID {
 			as.Messages = sessToSave.Messages
 		}
-	} else if (as.ActiveSessionID == sessionID || sessionID == "") && len(as.SteerQueue) > 0 {
+	} else if !turnStopped && (as.ActiveSessionID == sessionID || sessionID == "") && len(as.SteerQueue) > 0 {
 		nextSteer = as.SteerQueue[0]
 		as.SteerQueue = as.SteerQueue[1:]
 		steerSnapshot = append([]string(nil), as.SteerQueue...)
@@ -684,8 +990,25 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 	return nextSteer
 }
 
-// HandleAsk applies an agent:ask permission request: surfaces it on the
-// streaming message and flips the session to awaiting-approval.
+// pendingApprovalFromRequest derives the render-facing approval card from a
+// queued permission request. Callers must hold as.mu.
+func pendingApprovalFromRequest(s *AgentSession, r *PermissionRequest) *PendingApproval {
+	if r == nil {
+		return nil
+	}
+	return &PendingApproval{
+		SessionID:  s.ID,
+		ToolCallID: r.RequestID,
+		ToolName:   r.ToolName,
+		Summary:    r.Title,
+		Arguments:  r.Arguments,
+	}
+}
+
+// HandleAsk applies an agent:ask permission request: it is appended to the
+// session's pending-approval queue (a second request must not hide the first
+// unanswered one), the streaming message points at the earliest unresolved
+// entry, and the session flips to awaiting-approval.
 func (as *AgentState) HandleAsk(req *PermissionRequest) {
 	if req == nil {
 		return
@@ -696,13 +1019,48 @@ func (as *AgentState) HandleAsk(req *PermissionRequest) {
 			continue
 		}
 		s.Status = "awaiting-approval"
+		s.PendingApprovals = append(s.PendingApprovals, req)
 		msg := as.ensureStreamingMessage(s)
-		msg.PendingApproval = &PendingApproval{
-			SessionID:  s.ID,
-			ToolCallID: req.RequestID,
-			ToolName:   req.ToolName,
-			Summary:    req.Title,
-			Arguments:  req.Arguments,
+		msg.PendingApproval = pendingApprovalFromRequest(s, s.PendingApprovals[0])
+		if s.ID == as.ActiveSessionID {
+			as.Messages = s.Messages
+		}
+		break
+	}
+	as.mu.Unlock()
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
+// ResolveSessionApproval pops the answered request (matched by request ID)
+// from the session's pending-approval queue after a successful respond, and
+// re-points the approval bar at the earliest remaining request — or clears
+// it when the queue is empty. Call only after the backend accepted the
+// decision; on error the queue is left untouched so the user can retry.
+func (as *AgentState) ResolveSessionApproval(sessionID, requestID string) {
+	as.mu.Lock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i, r := range s.PendingApprovals {
+			if r != nil && r.RequestID == requestID {
+				s.PendingApprovals = append(s.PendingApprovals[:i], s.PendingApprovals[i+1:]...)
+				break
+			}
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			msg := s.Messages[i]
+			if msg.PendingApproval == nil || msg.PendingApproval.Resolved {
+				continue
+			}
+			if len(s.PendingApprovals) > 0 {
+				msg.PendingApproval = pendingApprovalFromRequest(s, s.PendingApprovals[0])
+			} else {
+				msg.PendingApproval = nil
+			}
+			break
 		}
 		if s.ID == as.ActiveSessionID {
 			as.Messages = s.Messages
@@ -800,34 +1158,6 @@ func (as *AgentState) HandleCommands(sessionID string, commands []string) {
 		break
 	}
 	as.mu.Unlock()
-}
-
-// ExecutionModeIcon returns the Tabler SVG icon for the active execution mode.
-func (as *AgentState) ExecutionModeIcon() *ui.SVG {
-	switch as.ExecutionMode {
-	case ModeAsk:
-		return icons.TablerHand
-	case ModeCode:
-		return icons.TablerPencil
-	case ModePlan:
-		return icons.TablerShieldCheck
-	default:
-		return icons.TablerShieldAlert
-	}
-}
-
-// ExecutionModeLabel returns the user-facing label for the active execution mode.
-func (as *AgentState) ExecutionModeLabel() string {
-	switch as.ExecutionMode {
-	case ModeAsk:
-		return "Ask"
-	case ModeCode:
-		return "Edits"
-	case ModePlan:
-		return "Auto"
-	default:
-		return "Full"
-	}
 }
 
 // CycleExecutionMode advances to the next execution autonomy level.
@@ -1046,13 +1376,20 @@ func (as *AgentState) ClearAttachedFiles() {
 	as.AttachedFiles = nil
 }
 
-// StashPrompt stashes the current composer draft text into memory and disk.
+// maxStashedPrompts is the documented capacity of the prompt stash.
+const maxStashedPrompts = 20
+
+// StashPrompt stashes the current composer draft text into memory and disk,
+// keeping at most maxStashedPrompts entries (oldest dropped first).
 func (as *AgentState) StashPrompt() {
 	as.mu.Lock()
 	txt := strings.TrimSpace(as.InputText)
 	stashed := false
 	if txt != "" {
 		as.StashedPrompts = append(as.StashedPrompts, txt)
+		if len(as.StashedPrompts) > maxStashedPrompts {
+			as.StashedPrompts = append([]string(nil), as.StashedPrompts[len(as.StashedPrompts)-maxStashedPrompts:]...)
+		}
 		as.InputText = ""
 		stashed = true
 	}
@@ -1502,36 +1839,45 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		return
 	}
 
+	// Snapshot everything the disk format needs under the state lock: turn
+	// goroutines mutate messages and tool structs in place, and the previous
+	// unlocked iteration raced them. Per-message struct copies keep the
+	// encoded payload off the live backing arrays; disk I/O stays outside.
+	as.mu.Lock()
 	var diskMsgs []map[string]interface{}
 	for _, m := range sess.Messages {
-		role := m.Role
+		if m == nil {
+			continue
+		}
+		cp := snapshotMessageLocked(m)
+		role := cp.Role
 		if role == "assistant" {
 			role = "agent"
 		}
 		msgMap := map[string]interface{}{
-			"id":        fmt.Sprintf("msg-%d", m.ID),
+			"id":        fmt.Sprintf("msg-%d", cp.ID),
 			"role":      role,
-			"content":   m.Text,
-			"timestamp": m.Timestamp.Format(time.RFC3339),
+			"content":   cp.Text,
+			"timestamp": cp.Timestamp.Format(time.RFC3339),
 		}
-		if m.Thinking != "" {
-			msgMap["thoughts"] = []string{m.Thinking}
-			msgMap["isThinking"] = m.IsThinking
+		if cp.Thinking != "" {
+			msgMap["thoughts"] = []string{cp.Thinking}
+			msgMap["isThinking"] = cp.IsThinking
 		}
-		if m.ThinkingTimeSec > 0 {
-			msgMap["thinkingTimeSec"] = m.ThinkingTimeSec
+		if cp.ThinkingTimeSec > 0 {
+			msgMap["thinkingTimeSec"] = cp.ThinkingTimeSec
 		}
-		if m.TotalSteps > 0 {
-			msgMap["totalSteps"] = m.TotalSteps
+		if cp.TotalSteps > 0 {
+			msgMap["totalSteps"] = cp.TotalSteps
 		}
-		if m.Feedback != "" {
-			msgMap["feedback"] = m.Feedback
+		if cp.Feedback != "" {
+			msgMap["feedback"] = cp.Feedback
 		}
-		if len(m.Changes) > 0 {
-			msgMap["changes"] = m.Changes
+		if len(cp.Changes) > 0 {
+			msgMap["changes"] = cp.Changes
 		}
-		if len(m.Tools) > 0 {
-			msgMap["toolExecutions"] = m.Tools
+		if len(cp.Tools) > 0 {
+			msgMap["toolExecutions"] = cp.Tools
 		}
 		diskMsgs = append(diskMsgs, msgMap)
 	}
@@ -1539,18 +1885,22 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 	var tasksList []TaskItem
 	goal := sess.Title
 	if sess.Tasks != nil {
-		tasksList = sess.Tasks.Tasks
-		if sess.Tasks.Goal != "" {
-			goal = sess.Tasks.Goal
+		tasksList = sess.Tasks.GetTasks()
+		if g := sess.Tasks.GoalText(); g != "" {
+			goal = g
 		}
 	}
 
 	// Preserve empty string for General sessions instead of re-binding them to
 	// whichever workspace happens to be active during a background turn completion.
 	wsPath := agentsession.NormalizeWorkspacePath(sess.WorkspacePath)
-	diskWs := wsPath
-	if diskWs == "" && agentsession.IsTempTestPath(as.workspacePath) {
-		diskWs = as.workspacePath
+	curWs := as.workspacePath
+	execMode := as.ExecutionMode
+	effort := as.ReasoningEffort
+	var lastUsage *UsageInfo
+	if sess.LastUsage != nil {
+		lu := *sess.LastUsage
+		lastUsage = &lu
 	}
 
 	updatedAt := sess.UpdatedAt
@@ -1558,6 +1908,8 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		updatedAt = time.Now()
 	}
 
+	// Build the payload under the lock (cheap map writes) so every session
+	// scalar is read consistently; only the encode + disk write run outside.
 	data := map[string]interface{}{
 		"id":             sess.ID,
 		"title":          sess.Title,
@@ -1569,8 +1921,8 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		"provider":       sess.Provider,
 		"agentId":        sess.AgentID,
 		"agentType":      sess.AgentType,
-		"executionMode":  string(as.ExecutionMode),
-		"reasoningLevel": string(as.ReasoningEffort),
+		"executionMode":  string(execMode),
+		"reasoningLevel": string(effort),
 		"workspacePath":  wsPath,
 		"pinned":         sess.Pinned,
 		"archived":       sess.Archived,
@@ -1578,14 +1930,23 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		"messages":       diskMsgs,
 		"tasks":          tasksList,
 	}
-	if sess.RemoteSessionID != "" {
-		data["remoteSessionId"] = sess.RemoteSessionID
+	remoteID := sess.RemoteSessionID
+	checkpointID := sess.LastCheckpointTurnID
+	as.mu.Unlock()
+
+	if remoteID != "" {
+		data["remoteSessionId"] = remoteID
 	}
-	if sess.LastCheckpointTurnID != "" {
-		data["lastCheckpointTurnId"] = sess.LastCheckpointTurnID
+	if checkpointID != "" {
+		data["lastCheckpointTurnId"] = checkpointID
 	}
-	if sess.LastUsage != nil {
-		data["lastUsage"] = sess.LastUsage
+	if lastUsage != nil {
+		data["lastUsage"] = lastUsage
+	}
+
+	diskWs := wsPath
+	if diskWs == "" && agentsession.IsTempTestPath(curWs) {
+		diskWs = curWs
 	}
 
 	bytes, err := json.MarshalIndent(data, "", "  ")
@@ -2566,25 +2927,9 @@ func (as *AgentState) SubmitMessage() {
 		}
 		switch root {
 		case "/clear":
-			as.mu.Lock()
-			for _, s := range as.Sessions {
-				if s.ID == targetSessID {
-					s.Messages = s.Messages[:0]
-					if s.ID == as.ActiveSessionID {
-						as.Messages = s.Messages
-					}
-					s.UpdatedAt = time.Now()
-					// Save outside the held lock (SaveSessionToDisk locks).
-					as.mu.Unlock()
-					as.SaveSessionToDisk(s)
-					as.mu.Lock()
-					break
-				}
-			}
-			as.mu.Unlock()
-			if as.Invalidate != nil {
-				as.Invalidate()
-			}
+			// Shared locked implementation (nils session + alias, resets
+			// streaming, persists async) — same path as the slash menu.
+			as.ClearConversation()
 			return
 		case "/help":
 			as.mu.Lock()
@@ -2655,6 +3000,11 @@ func (as *AgentState) CancelStreaming() {
 		return
 	}
 
+	// Abort an in-flight raw-LLM fallback stream first: its context is local
+	// to the turn goroutine and is otherwise unreachable (tokens would keep
+	// burning after Stop).
+	as.cancelStreamFor(sessionID)
+
 	if isInternal {
 		as.StopInternalTurn(sessionID)
 	} else if as.ACPMgr != nil {
@@ -2676,6 +3026,15 @@ func (as *AgentState) CancelStreaming() {
 					msg.Text = "*(stopped by user)*"
 				}
 			}
+			// A stopped turn can no longer answer its approvals: mark them
+			// resolved and drop the queue so the bar does not outlive the
+			// turn (the requests are moot once the harness is cancelled).
+			for _, m := range cancelSess.Messages {
+				if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+					m.PendingApproval.Resolved = true
+				}
+			}
+			cancelSess.PendingApprovals = nil
 		}
 		if cancelSess.Status == "running" || cancelSess.Status == "streaming" {
 			cancelSess.Status = "idle"
@@ -2856,6 +3215,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			prev.PendingApproval.Resolved = true
 		}
 	}
+	targetSess.PendingApprovals = nil
 	targetSess.Messages = append(targetSess.Messages, assistantMsg)
 	targetSess.Status = "running"
 	targetSess.turnStartFiles = turnStartFiles
@@ -2989,6 +3349,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 
 	// 3. Fallback: raw LLMClient stream (no agent engine wired).
 	go func() {
+		turnCancelled := false
 		defer func() {
 			// Compute git diff stats outside as.mu so subprocess calls never block UI renders.
 			turnEndFiles := as.gitStatusPathsForWorkspace(sessWs)
@@ -3011,11 +3372,16 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			targetSess.UpdatedAt = time.Now()
 			targetSess.turnStartFiles = nil
 			assistantMsg.Changes = turnChanges
+			if turnCancelled && strings.TrimSpace(assistantMsg.Text) == "" {
+				assistantMsg.Text = "*(stopped by user)*"
+			}
 
+			// Stop must not hand the steer queue to the relaunch: like
+			// HandleTurnDone, drain only for turns that finished on their own.
 			var nextSteer string
 			var steerSnapshot []string
 			saveSteer := false
-			if len(targetSess.SteerQueue) > 0 {
+			if !turnCancelled && len(targetSess.SteerQueue) > 0 {
 				nextSteer = targetSess.SteerQueue[0]
 				targetSess.SteerQueue = targetSess.SteerQueue[1:]
 				steerSnapshot = append([]string(nil), targetSess.SteerQueue...)
@@ -3033,7 +3399,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				if targetSess.ID == as.ActiveSessionID {
 					as.Messages = targetSess.Messages
 				}
-			} else if as.ActiveSessionID == targetSessID && len(as.SteerQueue) > 0 {
+			} else if !turnCancelled && as.ActiveSessionID == targetSessID && len(as.SteerQueue) > 0 {
 				nextSteer = as.SteerQueue[0]
 				as.SteerQueue = as.SteerQueue[1:]
 				targetSess.SteerQueue = append([]string(nil), as.SteerQueue...)
@@ -3081,9 +3447,19 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			as.mu.Unlock()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
+			// Register the cancel func so CancelStreaming can reach this
+			// turn-local context; the callback stops appending once aborted.
+			handle := &streamCancelHandle{cancel: cancel}
+			as.setStreamCancel(targetSessID, handle)
+			defer func() {
+				as.clearStreamCancel(targetSessID, handle)
+				cancel()
+			}()
 
 			_, err := as.engine.LLMClient.ChatWithStream(ctx, llmMsgs, nil, func(deltaContent, deltaReasoning string) {
+				if ctx.Err() != nil {
+					return // Stop was pressed: stop appending tokens
+				}
 				as.mu.Lock()
 				if deltaReasoning != "" {
 					assistantMsg.Thinking += deltaReasoning
@@ -3097,6 +3473,11 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 					as.Invalidate()
 				}
 			})
+
+			if ctx.Err() != nil {
+				turnCancelled = true
+				return // the defer finalizes this as a user-stopped turn
+			}
 
 			if err == nil && len(assistantMsg.Text) > 0 {
 				return
@@ -3117,49 +3498,6 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			as.mu.Unlock()
 		}
 	}()
-}
-
-func summarizeTools(tools []*ToolExecution) string {
-	var commands, reads, edits, searches, others int
-	for _, t := range tools {
-		name := strings.ToLower(t.ToolName)
-		switch {
-		case strings.Contains(name, "command") || strings.Contains(name, "bash") || strings.Contains(name, "shell") || strings.Contains(name, "exec") || strings.Contains(name, "terminal"):
-			commands++
-		case strings.Contains(name, "read") || strings.Contains(name, "view") || strings.Contains(name, "cat"):
-			reads++
-		case strings.Contains(name, "edit") || strings.Contains(name, "write") || strings.Contains(name, "patch") || strings.Contains(name, "replace") || strings.Contains(name, "create"):
-			edits++
-		case strings.Contains(name, "search") || strings.Contains(name, "grep") || strings.Contains(name, "find"):
-			searches++
-		default:
-			others++
-		}
-	}
-	var parts []string
-	if commands > 0 {
-		parts = append(parts, fmt.Sprintf("Ran %d command%s", commands, plural(commands)))
-	}
-	if reads > 0 {
-		parts = append(parts, fmt.Sprintf("Read %d file%s", reads, plural(reads)))
-	}
-	if edits > 0 {
-		parts = append(parts, fmt.Sprintf("Edited %d file%s", edits, plural(edits)))
-	}
-	if searches > 0 {
-		suffix := "ies"
-		if searches == 1 {
-			suffix = "y"
-		}
-		parts = append(parts, fmt.Sprintf("Searched %d quer%s", searches, suffix))
-	}
-	if others > 0 && len(parts) == 0 {
-		parts = append(parts, fmt.Sprintf("Executed %d tool%s", others, plural(others)))
-	}
-	if len(parts) == 0 {
-		return fmt.Sprintf("%d tool calls", len(tools))
-	}
-	return strings.Join(parts, " · ")
 }
 
 func extractChangesFromTools(tools []*ToolExecution) []*FileChange {
@@ -3213,13 +3551,6 @@ func extractPathFromTool(cmd string) string {
 		}
 	}
 	return ""
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
 }
 
 // LastTurnChangedFile returns the first file the session's last turn changed

@@ -126,3 +126,10 @@ func (tm *TaskManager) GetTasks() []TaskItem {
 	copy(out, tm.Tasks)
 	return out
 }
+
+// GoalText returns the current goal under the read lock.
+func (tm *TaskManager) GoalText() string {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	return tm.Goal
+}

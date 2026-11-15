@@ -143,17 +143,17 @@ func (a *AppUI) renderMarkdownJSONBlock(c *ui.Context, tc theme.ThemeColors, b *
 	}
 
 	box := ui.Column(c).Radius(8).Background(tc.Canvas).
-		BorderWidth(1).BorderColor(ui.Hex("#eab308").Alpha(0.35)).Clip().AlignSelf(ui.Stretch)
+		BorderWidth(1).BorderColor(tc.Warning.Alpha(0.35)).Clip().AlignSelf(ui.Stretch)
 	box.Children(func() {
 		// Header bar with JSON badge
 		header := ui.Row(c).Height(30).Padding(0, 10).AlignItems(ui.Center).
 			Background(tc.SurfaceRaised.Alpha(0.6)).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5))
 		header.Children(func() {
-			ui.Box(c).Radius(4).Padding(1, 6).Background(ui.Hex("#eab308").Alpha(0.15)).
-				BorderWidth(1).BorderColor(ui.Hex("#eab308").Alpha(0.35)).Children(func() {
+			ui.Box(c).Radius(4).Padding(1, 6).Background(tc.Warning.Alpha(0.15)).
+				BorderWidth(1).BorderColor(tc.Warning.Alpha(0.35)).Children(func() {
 				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerBraces).Width(12).Height(12).TextColor(ui.Hex("#eab308"))
-					ui.Text(c, "JSON").FontSize(10).Font("monospace").FontWeight(700).TextColor(ui.Hex("#eab308"))
+					ui.Icon(c, icons.TablerBraces).Width(12).Height(12).TextColor(tc.Warning)
+					ui.Text(c, "JSON").FontSize(10).Font("monospace").FontWeight(700).TextColor(tc.Warning)
 				})
 			})
 
@@ -167,10 +167,10 @@ func (a *AppUI) renderMarkdownJSONBlock(c *ui.Context, tc theme.ThemeColors, b *
 
 			// Inspect in Modal action
 			modalBtn := ui.Row(c.Key("json-modal-btn-"+fmt.Sprint(b.Index))).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-				Background(ui.Hex("#eab308").Alpha(0.12)).BorderWidth(1).BorderColor(ui.Hex("#eab308").Alpha(0.3)).Cursor(ui.CursorPointer)
+				Background(tc.Warning.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.3)).Cursor(ui.CursorPointer)
 			modalBtn.Children(func() {
-				ui.Icon(c, icons.TablerExternalLink).Width(10).Height(10).TextColor(ui.Hex("#eab308"))
-				ui.Text(c, "Modal").FontSize(10).FontWeight(600).TextColor(ui.Hex("#eab308"))
+				ui.Icon(c, icons.TablerExternalLink).Width(10).Height(10).TextColor(tc.Warning)
+				ui.Text(c, "Modal").FontSize(10).FontWeight(600).TextColor(tc.Warning)
 			})
 			if modalBtn.Clicked() {
 				a.JSONModalTitle = "JSON Code Block"
@@ -202,10 +202,6 @@ func (a *AppUI) renderMarkdownJSONBlock(c *ui.Context, tc theme.ThemeColors, b *
 // (the native equivalent to Open Design), presenting slides, motion, and UI mockups.
 func (a *AppUI) renderMarkdownForgeDesignBlock(c *ui.Context, tc theme.ThemeColors, b *markdown.CodeBlockView) {
 	code := b.Code()
-	targetPath := "deck.html"
-	if a.Workspace != nil && a.Workspace.RootDir != "" {
-		targetPath = filepath.Join(a.Workspace.RootDir, "deck.html")
-	}
 
 	isMotion := strings.Contains(strings.ToLower(code), "motion") || strings.Contains(strings.ToLower(b.Info), "motion")
 	modeLabel := "PRESENTATION DECK"
@@ -248,16 +244,20 @@ func (a *AppUI) renderMarkdownForgeDesignBlock(c *ui.Context, tc theme.ThemeColo
 				previewDeckBtn := ui.Row(c.Key("fdb-deck-"+fmt.Sprint(b.Index))).Height(26).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
 					Background(tc.Accent).Cursor(ui.CursorPointer)
 				previewDeckBtn.Children(func() {
-					ui.Icon(c, icons.TablerPresentation).Width(13).Height(13).TextColor(ui.Hex("#ffffff"))
-					ui.Text(c, "Open in Deck Viewer").FontSize(11).FontWeight(600).TextColor(ui.Hex("#ffffff"))
+					ui.Icon(c, icons.TablerPresentation).Width(13).Height(13).TextColor(tc.AccentForeground)
+					ui.Text(c, "Open in Deck Viewer").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 				})
 				if previewDeckBtn.Clicked() {
-					if a.Workspace != nil && a.Workspace.RootDir != "" && len(code) > 0 {
-						_ = os.WriteFile(targetPath, []byte(code), 0644)
+					// Preview from a temp file: writing <workspace>/deck.html
+					// clobbered a real workspace file (and the write error was
+					// ignored, so a failed write still opened the viewer).
+					if path := a.writeTempDeckHTML(code); path != "" {
+						a.openDeckViewer(path)
+						a.RightDrawerTab = RightTabDeck
+						a.ShowRightDrawer = true
+					} else {
+						a.queueToast(ui.Toast{Title: "Couldn't Preview Deck", Description: "failed to write the deck HTML to a temp file", Type: "error"})
 					}
-					a.openDeckViewer(targetPath)
-					a.RightDrawerTab = RightTabDeck
-					a.ShowRightDrawer = true
 				}
 
 				previewBrowserBtn := ui.Row(c.Key("fdb-browser-"+fmt.Sprint(b.Index))).Height(26).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
@@ -284,6 +284,30 @@ func (a *AppUI) renderMarkdownForgeDesignBlock(c *ui.Context, tc theme.ThemeColo
 			})
 		})
 	})
+}
+
+// writeTempDeckHTML writes generated deck/motion HTML to a temp file so
+// previewing never touches workspace files. Returns "" (and removes the
+// partial file) on any failure.
+func (a *AppUI) writeTempDeckHTML(code string) string {
+	if strings.TrimSpace(code) == "" {
+		return ""
+	}
+	f, err := os.CreateTemp(os.TempDir(), "forge-deck-*.html")
+	if err != nil {
+		return ""
+	}
+	path := f.Name()
+	if _, werr := f.WriteString(code); werr != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return ""
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(path)
+		return ""
+	}
+	return path
 }
 
 // boardTaskEnvelope represents an agent JSON payload containing board task data.
@@ -321,9 +345,11 @@ func boardStatusPill(status string, tc theme.ThemeColors) (string, ui.Color, ui.
 	case "in_progress", "in-progress", "working":
 		return "In Progress", tc.Warning, tc.Warning.Alpha(0.16)
 	case "in_review", "review":
-		return "In Review", ui.Hex("#a855f7"), ui.Hex("#a855f7").Alpha(0.16)
+		// Semantic tokens over raw hex: In Review maps to the accent hue, In
+		// Testing to Info, so both adapt across the palette variants.
+		return "In Review", tc.Accent, tc.Accent.Alpha(0.16)
 	case "in_testing", "testing":
-		return "In Testing", ui.Hex("#3b82f6"), ui.Hex("#3b82f6").Alpha(0.16)
+		return "In Testing", tc.Info, tc.Info.Alpha(0.16)
 	case "todo", "to_do":
 		return "To Do", tc.TextMuted, tc.Text.Alpha(0.08)
 	default:
@@ -337,9 +363,10 @@ func boardPriorityPill(priority string, tc theme.ThemeColors) (string, ui.Color,
 	case "urgent":
 		return "Urgent", tc.Error, tc.Error.Alpha(0.16)
 	case "high":
-		return "High", ui.Hex("#f97316"), ui.Hex("#f97316").Alpha(0.16)
+		// FullAccess is the semantic orange role (#f97316) of the token set.
+		return "High", tc.FullAccess, tc.FullAccess.Alpha(0.16)
 	case "medium":
-		return "Medium", ui.Hex("#eab308"), ui.Hex("#eab308").Alpha(0.16)
+		return "Medium", tc.Warning, tc.Warning.Alpha(0.16)
 	default:
 		return "Low", tc.TextMuted, tc.Text.Alpha(0.08)
 	}
@@ -468,13 +495,21 @@ func (a *AppUI) renderBoardTaskCard(c *ui.Context, tc theme.ThemeColors, m *agen
 					if taskID == "" {
 						taskID = task.Key
 					}
-					if a.Board != nil {
-						_ = a.Board.MoveTaskStatus(taskID, "done")
-					}
-					task.Status = "done"
-					c.AddToast(ui.Toast{Title: "Task moved to Done", Type: "success"})
-					if a.Window != nil {
-						a.Window.Invalidate()
+					if a.Board == nil {
+						a.queueToast(ui.Toast{Title: "Board Unavailable", Description: "the workflow board is not loaded", Type: "error"})
+					} else if err := a.Board.MoveTaskStatus(taskID, "done"); err != nil {
+						// Surface the failure instead of mutating the parsed
+						// payload copy (a doomed optimistic status that reverted
+						// on the next frame with a fake success toast).
+						a.queueToast(ui.Toast{Title: "Couldn't Move Task", Description: err.Error(), Type: "error"})
+						if a.Window != nil {
+							a.Window.Invalidate()
+						}
+					} else {
+						c.AddToast(ui.Toast{Title: "Task moved to Done", Type: "success"})
+						if a.Window != nil {
+							a.Window.Invalidate()
+						}
 					}
 				}
 			} else {
@@ -539,10 +574,10 @@ func (a *AppUI) renderAgentJSONCard(c *ui.Context, tc theme.ThemeColors, m *agen
 				}
 			} else {
 				ui.Box(c).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).
-					Background(ui.Hex("#eab308").Alpha(0.15)).Children(func() {
-					ui.Icon(c, icons.TablerBraces).Width(13).Height(13).TextColor(ui.Hex("#eab308"))
+					Background(tc.Warning.Alpha(0.15)).Children(func() {
+					ui.Icon(c, icons.TablerBraces).Width(13).Height(13).TextColor(tc.Warning)
 				})
-				ui.Text(c, "AGENT DATA PAYLOAD").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(ui.Hex("#eab308"))
+				ui.Text(c, "AGENT DATA PAYLOAD").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.Warning)
 				ui.Text(c, fmt.Sprintf("%d lines", lineCount)).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
 			}
 
@@ -599,8 +634,8 @@ func (a *AppUI) renderAgentJSONCard(c *ui.Context, tc theme.ThemeColors, m *agen
 				}
 			} else {
 				firstLine := strings.TrimSpace(strings.Split(formatted, "\n")[0])
-				if len(firstLine) > 80 {
-					firstLine = firstLine[:80] + "…"
+				if runes := []rune(firstLine); len(runes) > 80 {
+					firstLine = string(runes[:80]) + "…"
 				}
 				ui.Text(c, firstLine).FontSize(11).Font("monospace").TextColor(tc.TextMuted).SingleLine()
 			}
@@ -628,8 +663,8 @@ func (a *AppUI) renderJSONModal(c *ui.Context) {
 			// Header
 			ui.Row(c).Height(50).Padding(0, 16).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-				ui.Row(c).Size(30, 30).Radius(6).Background(ui.Hex("#eab308").Alpha(0.15)).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerBraces).Width(16).Height(16).TextColor(ui.Hex("#eab308"))
+				ui.Row(c).Size(30, 30).Radius(6).Background(tc.Warning.Alpha(0.15)).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerBraces).Width(16).Height(16).TextColor(tc.Warning)
 				})
 				ui.Box(c).Width(10)
 				title := a.JSONModalTitle
@@ -696,14 +731,14 @@ func (a *AppUI) renderPlanModal(c *ui.Context) {
 	if a.Agent == nil {
 		return
 	}
-	tm := a.Agent.TaskManager
+	tm := a.Agent.ActiveTaskManager()
 	var tasks []agent.TaskItem
 	var completed, total int
 	goal := ""
 	if tm != nil {
 		tasks = tm.GetTasks()
 		completed, total = tm.Progress()
-		goal = tm.Goal
+		goal = tm.GoalText()
 	}
 	if goal == "" {
 		if activeSess := a.Agent.ActiveSession(); activeSess != nil && activeSess.Title != "" {
@@ -990,8 +1025,8 @@ func (a *AppUI) renderTurnDesignCard(c *ui.Context, tc theme.ThemeColors, m *age
 				deckBtn := ui.Row(c.Key("td-deck-"+fmt.Sprint(m.ID))).Height(26).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
 					Background(tc.Accent).Cursor(ui.CursorPointer)
 				deckBtn.Children(func() {
-					ui.Icon(c, icons.TablerPresentation).Width(13).Height(13).TextColor(ui.Hex("#ffffff"))
-					ui.Text(c, "Open in Deck Viewer").FontSize(11).FontWeight(600).TextColor(ui.Hex("#ffffff"))
+					ui.Icon(c, icons.TablerPresentation).Width(13).Height(13).TextColor(tc.AccentForeground)
+					ui.Text(c, "Open in Deck Viewer").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 				})
 				if deckBtn.Clicked() {
 					a.openDeckViewer(fullPath)
@@ -1040,14 +1075,14 @@ func (a *AppUI) renderToolSkillBlock(c *ui.Context, tc theme.ThemeColors, t *age
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).
-				Background(ui.Hex("#8b5cf6").Alpha(0.18)).Children(func() {
-				ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(ui.Hex("#a78bfa"))
+				Background(tc.Accent.Alpha(0.18)).Children(func() {
+				ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(tc.Accent)
 			})
 			ui.Column(c).Gap(1).Grow(1).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, skillName).FontSize(12).FontWeight(600).TextColor(tc.Text)
-					ui.Box(c).Radius(3).Padding(1, 5).Background(ui.Hex("#8b5cf6").Alpha(0.15)).Children(func() {
-						ui.Text(c, "SKILL LOADED").FontSize(9).FontWeight(700).TextColor(ui.Hex("#a78bfa"))
+					ui.Box(c).Radius(3).Padding(1, 5).Background(tc.Accent.Alpha(0.15)).Children(func() {
+						ui.Text(c, "SKILL LOADED").FontSize(9).FontWeight(700).TextColor(tc.Accent)
 					})
 				})
 			})
@@ -1076,14 +1111,14 @@ func (a *AppUI) renderToolMCPLoadBlock(c *ui.Context, tc theme.ThemeColors, t *a
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).
-				Background(ui.Hex("#06b6d4").Alpha(0.18)).Children(func() {
-				ui.Icon(c, icons.TablerPlug).Width(13).Height(13).TextColor(ui.Hex("#22d3ee"))
+				Background(tc.Info.Alpha(0.18)).Children(func() {
+				ui.Icon(c, icons.TablerPlug).Width(13).Height(13).TextColor(tc.Info)
 			})
 			ui.Column(c).Gap(1).Grow(1).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, serverName).FontSize(12).FontWeight(600).TextColor(tc.Text)
-					ui.Box(c).Radius(3).Padding(1, 5).Background(ui.Hex("#06b6d4").Alpha(0.15)).Children(func() {
-						ui.Text(c, "MCP SERVER").FontSize(9).FontWeight(700).TextColor(ui.Hex("#22d3ee"))
+					ui.Box(c).Radius(3).Padding(1, 5).Background(tc.Info.Alpha(0.15)).Children(func() {
+						ui.Text(c, "MCP SERVER").FontSize(9).FontWeight(700).TextColor(tc.Info)
 					})
 					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success)
 				})
@@ -1120,13 +1155,13 @@ func (a *AppUI) renderToolMCPCallBlock(c *ui.Context, tc theme.ThemeColors, t *a
 	ui.Column(c).Gap(6).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).
-				Background(ui.Hex("#0284c7").Alpha(0.18)).Children(func() {
-				ui.Icon(c, icons.TablerCpu).Width(13).Height(13).TextColor(ui.Hex("#38bdf8"))
+				Background(tc.Info.Alpha(0.18)).Children(func() {
+				ui.Icon(c, icons.TablerCpu).Width(13).Height(13).TextColor(tc.Info)
 			})
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).Children(func() {
 				if server != "" {
-					ui.Box(c).Radius(3).Padding(1, 5).Background(ui.Hex("#0284c7").Alpha(0.15)).Children(func() {
-						ui.Text(c, strings.ToUpper(server)).FontSize(9).FontWeight(700).TextColor(ui.Hex("#38bdf8"))
+					ui.Box(c).Radius(3).Padding(1, 5).Background(tc.Info.Alpha(0.15)).Children(func() {
+						ui.Text(c, strings.ToUpper(server)).FontSize(9).FontWeight(700).TextColor(tc.Info)
 					})
 				}
 				ui.Text(c, tool).FontSize(12).Font("monospace").FontWeight(600).TextColor(tc.Text)
@@ -1216,8 +1251,8 @@ func (a *AppUI) renderToolDesignBlock(c *ui.Context, tc theme.ThemeColors, t *ag
 			deckBtn := ui.Row(c.Key("tdb-deck-"+t.ID)).Height(24).Radius(5).Padding(0, 8).Gap(5).AlignItems(ui.Center).
 				Background(tc.Accent).Cursor(ui.CursorPointer)
 			deckBtn.Children(func() {
-				ui.Icon(c, icons.TablerPresentation).Width(12).Height(12).TextColor(ui.Hex("#ffffff"))
-				ui.Text(c, "Open in Deck Viewer").FontSize(11).FontWeight(600).TextColor(ui.Hex("#ffffff"))
+				ui.Icon(c, icons.TablerPresentation).Width(12).Height(12).TextColor(tc.AccentForeground)
+				ui.Text(c, "Open in Deck Viewer").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 			})
 			if deckBtn.Clicked() {
 				a.openDeckViewer(targetPath)

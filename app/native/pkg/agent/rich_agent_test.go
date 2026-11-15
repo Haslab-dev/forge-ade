@@ -1,12 +1,10 @@
 package agent
 
 import (
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
-	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
 func TestRichAgentTimelineFeatures(t *testing.T) {
@@ -16,17 +14,12 @@ func TestRichAgentTimelineFeatures(t *testing.T) {
 
 	_ = as.NewSession("Rich Timeline Parity Task")
 
-	// 1. Tool execution and summarization
+	// 1. Tool execution fixtures
 	tools := []*ToolExecution{
 		{ID: "t1", ToolName: "run_command", Command: "go test ./...", Status: "completed", DurationMs: 340},
 		{ID: "t2", ToolName: "read_file", Command: `{"path": "pkg/ui/app.go"}`, Status: "completed", DurationMs: 45},
 		{ID: "t3", ToolName: "replace_file_content", Command: `{"path": "pkg/ui/agent.go"}`, Status: "completed", DurationMs: 120},
 		{ID: "t4", ToolName: "search_web", Command: `{"query": "mygo api"}`, Status: "completed", DurationMs: 820},
-	}
-
-	summary := summarizeTools(tools)
-	if !strings.Contains(summary, "1 command") || !strings.Contains(summary, "1 file") || !strings.Contains(summary, "1 query") {
-		t.Fatalf("unexpected summary format: %s", summary)
 	}
 
 	// 2. Turn changes extraction
@@ -78,12 +71,6 @@ func TestAgentStateExecutionModeAndEffortCycles(t *testing.T) {
 	as := NewAgentState(nil, tempDir, nil)
 
 	as.ExecutionMode = ModeAsk
-	if as.ExecutionModeLabel() != "Ask" {
-		t.Errorf("Expected 'Ask', got '%s'", as.ExecutionModeLabel())
-	}
-	if as.ExecutionModeIcon() != icons.TablerHand {
-		t.Errorf("Expected TablerHand icon for ModeAsk")
-	}
 
 	as.CycleExecutionMode()
 	if as.ExecutionMode != ModeCode {

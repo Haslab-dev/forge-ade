@@ -325,14 +325,16 @@ func (as *AgentState) internalManagerID(sessionID string) string {
 }
 
 // RespondInternalApproval answers a pending tool approval of an internal
-// session (RespondAgentApproval binding parity).
+// session (RespondAgentApproval binding parity). A missing engine session is
+// an error, not a silent success: the approval bar must stay up so the user
+// can retry.
 func (as *AgentState) RespondInternalApproval(sessionID string, approve, autoApproveAll bool) error {
 	if as.engine == nil || as.engine.AgentMgr == nil {
-		return nil
+		return fmt.Errorf("agent engine unavailable: approval for session %s was not delivered", sessionID)
 	}
 	mgrID := as.internalManagerID(sessionID)
 	if mgrID == "" {
-		return nil
+		return fmt.Errorf("internal session %s has no connected agent session: approval was not delivered", sessionID)
 	}
 	return as.engine.AgentMgr.RespondApproval(context.Background(), mgrID, approve, autoApproveAll)
 }
@@ -362,8 +364,9 @@ func (as *AgentState) HandleQuestions(sessionID string, questions []AgentQuestio
 	}
 }
 
-// PendingQuestions returns the live questions of a session's streaming
-// message, if any.
+// PendingQuestions returns a copy of the questions of a session's streaming
+// message, if any. Render reads must not alias the live slice: the UI mutates
+// selections through UpdateQuestion under the lock.
 func (as *AgentState) PendingQuestions(sessionID string) []AgentQuestion {
 	as.mu.Lock()
 	defer as.mu.Unlock()
@@ -372,8 +375,15 @@ func (as *AgentState) PendingQuestions(sessionID string) []AgentQuestion {
 			continue
 		}
 		for i := len(s.Messages) - 1; i >= 0; i-- {
-			if len(s.Messages[i].PendingQuestions) > 0 {
-				return s.Messages[i].PendingQuestions
+			if qs := s.Messages[i].PendingQuestions; len(qs) > 0 {
+				out := make([]AgentQuestion, len(qs))
+				for j, q := range qs {
+					qc := q
+					qc.Options = append([]string(nil), q.Options...)
+					qc.Selected = append([]string(nil), q.Selected...)
+					out[j] = qc
+				}
+				return out
 			}
 		}
 		break
@@ -408,7 +418,10 @@ func (as *AgentState) UpdateQuestion(sessionID string, qIndex int, fn func(q *Ag
 }
 
 // SubmitQuestionAnswers collects every question's selection into the
-// RespondAgentAsk payload, clears the cards, and resumes the turn.
+// RespondAgentAsk payload, clears the cards, and resumes the turn. On a
+// failed respond it restores the questions and the awaiting status: the
+// manager is still blocked on the ask, and leaving the cards cleared would
+// hang the turn forever.
 func (as *AgentState) SubmitQuestionAnswers(sessionID string) error {
 	qs := as.PendingQuestions(sessionID)
 	if len(qs) == 0 {
@@ -422,14 +435,19 @@ func (as *AgentState) SubmitQuestionAnswers(sessionID string) error {
 			}
 		}
 	}
-	// Clear the pending cards first so the UI returns to streaming state.
+	// Clear the pending cards first so the UI returns to streaming state,
+	// remembering what was cleared for the failure path below.
+	clearedMsgID := 0
+	prevStatus := ""
 	as.mu.Lock()
 	for _, s := range as.Sessions {
 		if s.ID != sessionID {
 			continue
 		}
+		prevStatus = s.Status
 		for i := len(s.Messages) - 1; i >= 0; i-- {
 			if len(s.Messages[i].PendingQuestions) > 0 {
+				clearedMsgID = s.Messages[i].ID
 				s.Messages[i].PendingQuestions = nil
 				break
 			}
@@ -443,18 +461,46 @@ func (as *AgentState) SubmitQuestionAnswers(sessionID string) error {
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
-	return as.RespondInternalAsk(sessionID, answers)
+
+	if err := as.RespondInternalAsk(sessionID, answers); err != nil {
+		// Restore the questions and the previous status so the user can fix
+		// and retry (the agent keeps waiting for this ask).
+		as.mu.Lock()
+		for _, s := range as.Sessions {
+			if s.ID != sessionID {
+				continue
+			}
+			for i := len(s.Messages) - 1; i >= 0; i-- {
+				if s.Messages[i].ID == clearedMsgID {
+					s.Messages[i].PendingQuestions = qs
+					break
+				}
+			}
+			if prevStatus != "" {
+				s.Status = prevStatus
+			}
+			break
+		}
+		as.mu.Unlock()
+		if as.Invalidate != nil {
+			as.Invalidate()
+		}
+		return err
+	}
+	return nil
 }
 
 // RespondInternalAsk answers a structured agent question with option answers
-// (RespondAgentAsk binding parity).
+// (RespondAgentAsk binding parity). It returns a descriptive error instead of
+// a silent nil when the backing engine session is missing: the caller must
+// know the answers were NOT delivered, or the turn hangs forever.
 func (as *AgentState) RespondInternalAsk(sessionID string, answers map[string]any) error {
 	if as.engine == nil || as.engine.AgentMgr == nil {
-		return nil
+		return fmt.Errorf("agent engine unavailable: answers for session %s were not delivered", sessionID)
 	}
 	mgrID := as.internalManagerID(sessionID)
 	if mgrID == "" {
-		return nil
+		return fmt.Errorf("internal session %s has no connected agent session: answers were not delivered", sessionID)
 	}
 	return as.engine.AgentMgr.RespondAsk(mgrID, answers)
 }

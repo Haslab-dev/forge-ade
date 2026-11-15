@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -78,7 +78,8 @@ func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
 	return inset, inset
 }
 
-// shortModelLabel formats a concise model name for headers and chips.
+// shortModelLabel formats a concise model name for headers and chips
+// (rune-safe truncation: model names may contain multibyte characters).
 func shortModelLabel(model string) string {
 	if model == "" {
 		return "Select Model"
@@ -86,8 +87,8 @@ func shortModelLabel(model string) string {
 	if idx := strings.Index(model, " ("); idx != -1 {
 		model = model[:idx]
 	}
-	if len(model) > 24 {
-		return model[:22] + "…"
+	if runes := []rune(model); len(runes) > 24 {
+		return string(runes[:22]) + "…"
 	}
 	return model
 }
@@ -128,29 +129,41 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	if as == nil {
 		return
 	}
-	sess := as.ActiveSession()
+	// One consistent per-frame copy of the transcript under the state lock:
+	// bus goroutines mutate ChatMessage fields in place while streaming, so
+	// the render must never read the live message pointers (or session
+	// scalar fields) directly.
+	msgs, sessionID, checkpointTurnID := as.ActiveTranscriptSnapshot()
 
-	if sess == nil || len(as.Messages) == 0 {
+	if sessionID == "" || len(msgs) == 0 {
 		a.renderAgentHome(c)
-		if as.ShowModelPicker {
-			a.renderModelPickerModal(c)
-		}
 		return
 	}
 
 	a.setupMarkdownOptions(as, tc)
 
 	as.ListState.Key = func(i int) any {
-		if i < len(as.Messages) {
-			return as.Messages[i].ID
+		if i < len(msgs) {
+			return msgs[i].ID
 		}
 		return i
 	}
-	if a.LastFollowSessionID != as.ActiveSessionID {
-		a.LastFollowSessionID = as.ActiveSessionID
+	if a.LastFollowSessionID != sessionID {
+		a.LastFollowSessionID = sessionID
 		as.ListState.FollowEnd = true
 	}
 	as.ListState.FollowAnimation = &ui.Smooth
+
+	// The checkpoint restore action is honest only on the message the active
+	// checkpoint belongs to: RestoreLastTurnCheckpoint always reverts the
+	// LAST turn, so only the last assistant message offers it (17b).
+	lastAssistantID := 0
+	for j := len(msgs) - 1; j >= 0; j-- {
+		if msgs[j] != nil && msgs[j].Role == "assistant" {
+			lastAssistantID = msgs[j].ID
+			break
+		}
+	}
 
 	leftInset, _ := a.chatLaneInset(c)
 	rightInset := leftInset
@@ -171,11 +184,11 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			transcriptWidth := a.chatColumnWidth(c)
 			ui.Row(c).Grow(1).MaxWidth(transcriptWidth).Children(func() {
 				a.renderTurnScrubber(c, tc, as)
-				ui.List(c, &as.ListState, len(as.Messages), func(i int) {
-					if i >= len(as.Messages) {
+				ui.List(c, &as.ListState, len(msgs), func(i int) {
+					if i >= len(msgs) || msgs[i] == nil {
 						return
 					}
-					m := as.Messages[i]
+					m := msgs[i]
 					if m.Role == "user" {
 						ui.Row(c.Key("urow")).Padding(8, rightInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center).Children(func() {
 							copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Height(24).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
@@ -223,17 +236,17 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 							// 1. "Working / Worked for Ns" pill & trace block
 							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
 							if hasWork {
-								a.renderWorkPill(c, tc, m)
+								a.renderWorkPill(c, tc, sessionID, m)
 								open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
 								if open {
 									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
 										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
 									work.Children(func() {
 										if m.Thinking != "" || m.IsThinking {
-											a.renderThinkingBlock(c, tc, m)
+											a.renderThinkingBlock(c, tc, sessionID, m)
 										}
 										if len(m.Tools) > 0 {
-											a.renderFoldedToolTraces(c, tc, m)
+											a.renderFoldedToolTraces(c, tc, sessionID, m)
 										}
 									})
 								}
@@ -258,7 +271,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 
 							// 3. ZCode Turn Changes Card
 							if len(m.Changes) > 0 {
-								a.renderTurnChangesCard(c, tc, m)
+								a.renderTurnChangesCard(c, tc, sessionID, m.ID == lastAssistantID, m)
 							}
 
 							// 4. Pending Approval Bar & Structured Questions Card
@@ -266,7 +279,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								a.renderApprovalBar(c, tc, m)
 							}
 							if len(m.PendingQuestions) > 0 {
-								a.renderPendingQuestionsCard(c, tc, sess.ID, m)
+								a.renderPendingQuestionsCard(c, tc, sessionID, m)
 							}
 
 							// 5. ZCode Bottom-Left Action Icons + Timestamp
@@ -296,10 +309,9 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										upBtn.Background(tc.Text.Alpha(0.06))
 									}
 									if upBtn.Clicked() {
-										if m.Feedback == "up" {
-											m.Feedback = ""
-										} else {
-											m.Feedback = "up"
+										// Toggle the live message under the lock (m is a
+										// frame snapshot) and persist the session (17c).
+										if as.ToggleMessageFeedback(sessionID, m.ID, "up") {
 											c.AddToast(ui.Toast{Title: "Response rated helpful", Type: "success"})
 										}
 									}
@@ -316,15 +328,12 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										downBtn.Background(tc.Text.Alpha(0.06))
 									}
 									if downBtn.Clicked() {
-										if m.Feedback == "down" {
-											m.Feedback = ""
-										} else {
-											m.Feedback = "down"
+										if as.ToggleMessageFeedback(sessionID, m.ID, "down") {
 											c.AddToast(ui.Toast{Title: "Response rated unhelpful", Type: "info"})
 										}
 									}
 
-									if sess != nil && sess.LastCheckpointTurnID != "" {
+									if checkpointTurnID != "" && m.ID == lastAssistantID {
 										cpBtn := ui.Row(c.Key("cp-restore-"+fmt.Sprint(m.ID))).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 										cpBtn.Children(func() {
 											ui.Icon(c, icons.TablerRotate).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -333,16 +342,18 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 											cpBtn.Background(tc.Text.Alpha(0.06))
 										}
 										if cpBtn.Clicked() {
-											sid := sess.ID
+											sid := sessionID
 											go func() {
 												err := as.RestoreLastTurnCheckpoint(sid)
 												if a.Git != nil {
 													a.Git.Refresh()
 												}
+												// Context.AddToast silently drops calls made
+												// outside a frame — queue from goroutines.
 												if err == nil {
-													c.AddToast(ui.Toast{Title: "Checkpoint Restored", Type: "success"})
+													a.queueToast(ui.Toast{Title: "Checkpoint Restored", Type: "success"})
 												} else {
-													c.AddToast(ui.Toast{Title: "Restore Failed", Description: err.Error(), Type: "error"})
+													a.queueToast(ui.Toast{Title: "Restore Failed", Description: err.Error(), Type: "error"})
 												}
 												if a.Window != nil {
 													a.Window.Invalidate()
@@ -362,12 +373,12 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			})
 
 			// Mid-turn Steering Queue Tray
-			if len(as.SteerQueue) > 0 {
+			if len(as.SteerQueueSnapshot()) > 0 {
 				a.renderSteerQueueTray(c)
 			}
 
 			// Composer
-			a.renderComposer(c, tc, sess)
+			a.renderComposer(c, tc, nil)
 		})
 
 		// Jump to latest: shown when the user scrolled the transcript up,
@@ -392,7 +403,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	})
 }
 
-func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
+func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
 	running := !m.Done
 	totalSteps := m.TotalSteps
 	if totalSteps == 0 {
@@ -456,11 +467,14 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, m *agent.Cha
 		pill.Background(tc.SurfaceRaised)
 	}
 	if pill.Clicked() {
-		m.ShowTools = !m.ShowTools
+		// m is a frame snapshot; flip the live message under the lock.
+		a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
+			lm.ShowTools = !lm.ShowTools
+		})
 	}
 }
 
-func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
+func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
 	isThinking := m.IsThinking && !m.Done
 	tokens := len(m.Thinking) / 4
 	if tokens < 1 && m.Thinking != "" {
@@ -528,7 +542,9 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 			header.Background(tc.Text.Alpha(0.04))
 		}
 		if header.Clicked() {
-			m.ShowThinking = !m.ShowThinking
+			a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
+				lm.ShowThinking = !lm.ShowThinking
+			})
 		}
 
 		showCoT := m.ShowThinking || (!m.Done && isThinking)
@@ -553,7 +569,7 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, m *agen
 // output line count — with forge-ade's per-tool expanded views. Skill tools
 // are excluded from the rows (counted in the summary only), as the original
 // does with isSkillTool.
-func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
+func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
 	if len(m.Tools) == 0 {
 		return
 	}
@@ -606,7 +622,9 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				groupBar.Background(tc.SurfaceRaised)
 			}
 			if groupBar.Clicked() {
-				m.ShowTools = !m.ShowTools
+				a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
+					lm.ShowTools = !lm.ShowTools
+				})
 			}
 		}
 
@@ -721,8 +739,8 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, m *a
 				if displayLabel == "" {
 					displayLabel = thisTool.ToolName
 				}
-				if len(displayLabel) > 72 {
-					displayLabel = displayLabel[:69] + "…"
+				if runes := []rune(displayLabel); len(runes) > 72 {
+					displayLabel = string(runes[:69]) + "…"
 				}
 
 				// Output line count on the right, like the original's read rows.
@@ -892,8 +910,8 @@ func fileExtBadgeLabel(path string) string {
 	case "MD", "MARKDOWN":
 		return "M↓"
 	default:
-		if len(ext) > 4 {
-			return ext[:4]
+		if runes := []rune(ext); len(runes) > 4 {
+			return string(runes[:4])
 		}
 		return ext
 	}
@@ -987,8 +1005,8 @@ func renderToolOutputBox(c *ui.Context, tc theme.ThemeColors, outText string, fa
 		boxBorder = tc.Error.Alpha(0.3)
 		textColor = tc.Error
 	}
-	if len(outText) > 1200 {
-		outText = outText[:1200] + "\n… [truncated]"
+	if runes := []rune(outText); len(runes) > 1200 {
+		outText = string(runes[:1200]) + "\n… [truncated]"
 	}
 	ui.Box(c).Padding(8).Radius(6).Background(boxBg).
 		BorderWidth(1).BorderColor(boxBorder).Children(func() {
@@ -996,7 +1014,7 @@ func renderToolOutputBox(c *ui.Context, tc theme.ThemeColors, outText string, fa
 	})
 }
 
-func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
+func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, sessionID string, isCheckpointMsg bool, m *agent.ChatMessage) {
 	if a.Agent == nil {
 		return
 	}
@@ -1042,7 +1060,7 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 			ui.Text(c, fmt.Sprintf("-%d", totalDel)).FontSize(11).FontWeight(600).TextColor(tc.DiffDeletionForeground)
 			ui.Box(c).Grow(1)
 
-			if m.Done {
+			if m.Done && isCheckpointMsg {
 				undoBtn := ui.Row(c.Key("tchg-undo-"+fmt.Sprint(m.ID))).Height(22).Radius(6).Padding(0, 8).Gap(4).
 					AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				undoBtn.Children(func() {
@@ -1054,10 +1072,15 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 				}
 				if undoBtn.Clicked() {
 					changes := append([]*agent.FileChange(nil), m.Changes...)
-					m.Changes = nil
-					session := as.ActiveSessionID
+					session := sessionID
+					msgID := m.ID
 					go func() {
-						if rerr := as.RestoreLastTurnCheckpoint(session); rerr != nil && a.Git != nil {
+						// Only toast success once the undo actually happened:
+						// checkpoint restore first, per-file git discard as the
+						// fallback; with neither available, keep the list and
+						// report the failure (queueToast — goroutine context).
+						rerr := as.RestoreLastTurnCheckpoint(session)
+						if rerr != nil && a.Git != nil {
 							for _, ch := range changes {
 								if ch != nil && ch.Path != "" {
 									a.Git.Discard(ch.Path)
@@ -1067,7 +1090,15 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 						if a.Git != nil {
 							a.Git.Refresh()
 						}
-						c.AddToast(ui.Toast{Title: "Turn Changes Undone", Type: "info"})
+						if rerr != nil && a.Git == nil {
+							a.queueToast(ui.Toast{Title: "Undo Failed", Description: rerr.Error(), Type: "error"})
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+							return
+						}
+						as.ClearMessageChanges(session, msgID)
+						a.queueToast(ui.Toast{Title: "Turn Changes Undone", Type: "info"})
 						if a.Window != nil {
 							a.Window.Invalidate()
 						}
@@ -1150,30 +1181,35 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, m *ag
 
 // respondApproval routes an approval decision to the right backend: internal
 // sessions go through the RakitKode agent engine (RespondAgentApproval
-// parity), ACP harnesses through the ACP manager.
-func (a *AppUI) respondApproval(sessionID, requestID string, approve, autoApproveAll bool) {
+// parity), ACP harnesses through the ACP manager. The error is propagated so
+// the caller can keep the approval unresolved and let the user retry.
+func (a *AppUI) respondApproval(sessionID, requestID string, approve, autoApproveAll bool) error {
 	if a.Agent != nil && a.Agent.IsInternalSession(sessionID) {
-		_ = a.Agent.RespondInternalApproval(sessionID, approve, autoApproveAll)
-		return
+		return a.Agent.RespondInternalApproval(sessionID, approve, autoApproveAll)
 	}
 	if a.ACPMgr != nil {
-		_ = a.ACPMgr.RespondPermission(sessionID, requestID, approve)
+		return a.ACPMgr.RespondPermission(sessionID, requestID, approve)
 	}
+	return fmt.Errorf("no agent harness available to approve %s", requestID)
 }
 
-// resolvePendingApproval resolves a message's PendingApproval state once and
-// forwards the decision to the active agent harness.
+// resolvePendingApproval forwards the decision to the active agent harness
+// first; only on success is the approval marked resolved and popped from the
+// session's pending-approval queue. On error the bar stays up and the error
+// is toasted so the user can retry.
 func (a *AppUI) resolvePendingApproval(msg *agent.ChatMessage, approve, autoApproveAll bool) {
 	if msg == nil || msg.PendingApproval == nil || msg.PendingApproval.Resolved {
 		return
 	}
-	appr := msg.PendingApproval
-	appr.Resolved = true
-	appr.Approved = approve
+	appr := *msg.PendingApproval // values from the frame snapshot
+	if err := a.respondApproval(appr.SessionID, appr.ToolCallID, approve, autoApproveAll); err != nil {
+		a.queueToast(ui.Toast{Title: "Approval Failed", Description: err.Error(), Type: "error"})
+		return
+	}
 	if approve && autoApproveAll && a.Agent != nil {
 		a.Agent.ExecutionMode = agent.ModeBypass
 	}
-	a.respondApproval(appr.SessionID, appr.ToolCallID, approve, autoApproveAll)
+	a.Agent.ResolveSessionApproval(appr.SessionID, appr.ToolCallID)
 }
 
 func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.ChatMessage) {
@@ -1220,35 +1256,48 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 		return
 	}
 
+	// Render from a locked copy: the queue mutates from turn goroutines and
+	// submit paths, and removals match by identity, not a captured index that
+	// can shift.
+	queue := as.SteerQueueSnapshot()
+	streaming := as.StreamingSnapshot()
+
 	// ZCode queued-prompt tray: compact rows — grip, text, then per-row
 	// Steer (first row only, dashed into the running turn), edit and delete.
 	tray := ui.Column(c).Padding(6).Radius(12).Background(tc.SurfaceRaised).
 		BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).Gap(2)
 	tray.Children(func() {
-		for idx, item := range as.SteerQueue {
-			thisIdx, thisItem := idx, item
-			row := ui.Row(c.Key(fmt.Sprintf("steer-%d", thisIdx))).MinHeight(34).Radius(8).
+		for idx, item := range queue {
+			thisItem := item
+			// The snapshot index only keys the row for this frame; removals
+			// match by identity, never by a captured index.
+			row := ui.Row(c.Key(fmt.Sprintf("steer-%d", idx))).MinHeight(34).Radius(8).
 				Padding(4, 8).Gap(8).AlignItems(ui.Center).
 				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
 			row.Children(func() {
 				ui.Icon(c, icons.TablerGripVertical).Width(13).Height(13).TextColor(tc.IconMuted)
 				ui.Text(c, thisItem).FontSize(12).Grow(1).SingleLine()
-				if thisIdx == 0 {
+				if idx == 0 {
 					steerBtn := ui.Row(c.Key("steer-now")).Height(26).Radius(7).Padding(0, 10).Gap(4).
 						AlignItems(ui.Center).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border)
 					steerBtn.Children(func() {
 						ui.Icon(c, icons.TablerArrowUp).Width(12).Height(12).TextColor(tc.Text)
 						ui.Text(c, "Steer").FontSize(12).FontWeight(600).TextColor(tc.Text)
 					})
-					if steerBtn.Clicked() && as.IsStreaming {
+					if steerBtn.Clicked() && streaming {
 						text := thisItem
+						sid := as.SnapshotActiveSessionID()
 						go func() {
-							as.SteerInternal(as.ActiveSessionID, text)
-							as.Lock()
-							if thisIdx < len(as.SteerQueue) {
-								as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
+							// Keep the queued item on failure so the text is
+							// never silently lost; remove by identity.
+							if err := as.SteerInternal(sid, text); err != nil {
+								a.queueToast(ui.Toast{Title: "Steer Failed", Description: err.Error(), Type: "error"})
+								if a.Window != nil {
+									a.Window.Invalidate()
+								}
+								return
 							}
-							as.Unlock()
+							as.RemoveSteerItem(text)
 							as.SaveSteerQueues()
 							if as.Invalidate != nil {
 								as.Invalidate()
@@ -1261,14 +1310,10 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 					ui.Icon(c, icons.TablerPencil).Width(13).Height(13).TextColor(tc.TextMuted)
 				})
 				if edit.Clicked() {
-					as.Lock()
-					if thisIdx < len(as.SteerQueue) {
-						as.InputText = as.SteerQueue[thisIdx]
-						as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
-					} else {
-						as.InputText = thisItem
-					}
-					as.Unlock()
+					// TakeSteerItem locks internally (never wrap it in
+					// as.Lock — sync.Mutex is not reentrant). InputText is
+					// composer/UI-thread state.
+					as.InputText = as.TakeSteerItem(thisItem)
 					as.SaveSteerQueues()
 				}
 				del := ui.Row(c.Key("steer-del")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
@@ -1279,11 +1324,7 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 					del.Background(tc.Error.Alpha(0.12))
 				}
 				if del.Clicked() {
-					as.Lock()
-					if thisIdx < len(as.SteerQueue) {
-						as.SteerQueue = append(as.SteerQueue[:thisIdx], as.SteerQueue[thisIdx+1:]...)
-					}
-					as.Unlock()
+					as.RemoveSteerItem(thisItem)
 					as.SaveSteerQueues()
 				}
 			})
@@ -1376,7 +1417,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		// message wraps or a long text is pasted, as forge-ade's composer does.
 		ui.Row(c).Padding(12, 16, 6, 16).Children(func() {
 			placeholder := "Ask anything, @ threads or files, $ skills, or / commands"
-			if as.IsStreaming {
+			if as.StreamingSnapshot() {
 				placeholder = "Keep typing to queue follow-up changes..."
 			}
 			in := ui.TextAreaBase(c, &as.InputText).Lines(1, 8).Placeholder(placeholder).Grow(1)
@@ -1707,8 +1748,8 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					for i, st := range as.StashedPrompts {
 						idx := i
 						title := strings.ReplaceAll(st, "\n", " ")
-						if len(title) > 60 {
-							title = title[:57] + "…"
+						if runes := []rune(title); len(runes) > 60 {
+							title = string(runes[:57]) + "…"
 						}
 						if m.Item(title).Chosen() {
 							as.RestoreStash(idx)
@@ -1725,26 +1766,8 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				})
 			}
 
-			verifyBtn := chipRow(c, tc)
-			if as.AutoVerify {
-				verifyBtn.Background(tc.Success.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.35))
-				verifyBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerShieldCheck).Width(13).Height(13).TextColor(tc.Success)
-						ui.Text(c, "Verify").FontSize(12).FontWeight(500).TextColor(tc.Success)
-					})
-				})
-			} else {
-				verifyBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerShieldCheck).Width(13).Height(13).TextColor(tc.TextMuted)
-						ui.Text(c, "Verify").FontSize(12).FontWeight(500).TextColor(tc.Text)
-					})
-				})
-			}
-			if verifyBtn.Clicked() {
-				as.AutoVerify = !as.AutoVerify
-			}
+			// (The former "Verify" chip was removed: it only toggled
+			// as.AutoVerify, which no backend ever read — dead UI.)
 
 			ui.Box(c).Grow(1)
 
@@ -1791,7 +1814,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			}
 
 			// Send / Steer / Queue / Stop controls
-			if as.IsStreaming {
+			if as.StreamingSnapshot() {
 				if strings.TrimSpace(as.InputText) != "" {
 					queueBtn := ui.Row(c).Height(28).Radius(999).Padding(0, 10).Gap(4).AlignItems(ui.Center).
 						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
@@ -2005,8 +2028,10 @@ func (a *AppUI) renderLandingTray(c *ui.Context, tc theme.ThemeColors, projectNa
 
 		// Git branch chip — only when an actual local git repository workspace is open.
 		branch := ""
-		if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") && a.Git != nil && a.Git.Branch != "" {
-			branch = a.Git.Branch
+		if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") && a.Git != nil {
+			// One locked snapshot per function: GitManager fields are written
+			// from background refresh goroutines.
+			branch = a.Git.Snapshot().Branch
 		}
 		if branch != "" {
 			dirtyFiles, _, _ := a.gitDirtySummary()
@@ -2104,80 +2129,6 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 			})
 		})
 
-		if as.ShowModelPicker {
-			a.renderModelPickerModal(c)
-		}
-	})
-}
-
-func (a *AppUI) renderModelPickerModal(c *ui.Context) {
-	tc := a.ThemeMgr.Colors()
-	as := a.Agent
-	if as == nil {
-		return
-	}
-
-	ui.Column(c).Absolute().Bottom(64).Right(64).Width(300).Padding(6).Radius(12).
-		Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
-		Shadow(0, 12, 32, -8, ui.RGBA(0, 0, 0, 0.35)).Children(func() {
-		ui.Row(c).Padding(6, 8).AlignItems(ui.Center).Gap(6).Children(func() {
-			ui.Text(c, "Select AI Model").FontSize(12).FontWeight(600)
-			ui.Box(c).Grow(1)
-		})
-		// Fetch models from the ACTIVE provider live (ForgeADE's
-		// FetchProviderModels parity) the first time the picker opens.
-		if len(as.AvailableModels) == 0 && !as.FetchingModels && a.Engine != nil && a.Engine.LLMClient != nil {
-			cfg := a.Engine.LLMClient.GetConfig()
-			if cfg.APIKey != "" && cfg.BaseURL != "" {
-				as.FetchingModels = true
-				llmClient := a.Engine.LLMClient
-				go func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-					defer cancel()
-					models, err := llmClient.FetchModels(ctx, cfg.APIKey, cfg.BaseURL)
-					as.Lock()
-					as.FetchingModels = false
-					if err == nil && len(models) > 0 {
-						as.AvailableModels = models
-					}
-					as.Unlock()
-					if a.Window != nil {
-						a.Window.Invalidate()
-					}
-				}()
-			}
-		}
-		if len(as.AvailableModels) == 0 {
-			ui.Row(c).Padding(12, 8).Justify(ui.Center).Gap(6).AlignItems(ui.Center).Children(func() {
-				if as.FetchingModels {
-					ui.Spinner(c).Size(12, 12).Label("Fetching models")
-				} else {
-					ui.Text(c, "No models configured").FontSize(11).TextColor(tc.TextMuted)
-				}
-			})
-		}
-		for _, model := range as.AvailableModels {
-			thisModel := model
-			isSelected := (as.ActiveModel == thisModel)
-			row := ui.Row(c.Key("model-"+thisModel)).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
-			row.Children(func() {
-				if isSelected {
-					ui.Icon(c, icons.TablerCheck).Width(13).Height(13).TextColor(tc.Accent)
-				} else {
-					ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(tc.IconMuted)
-				}
-				ui.Text(c, thisModel).FontSize(12).Grow(1)
-			})
-			if isSelected {
-				row.Background(tc.Accent.Alpha(0.1))
-			} else if row.Hovered() {
-				row.Background(tc.Text.Alpha(0.04))
-			}
-			if row.Clicked() {
-				as.ActiveModel = thisModel
-				as.ShowModelPicker = false
-			}
-		}
 	})
 }
 
@@ -2198,7 +2149,7 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	if a.Agent == nil {
 		return
 	}
-	tm := a.Agent.TaskManager
+	tm := a.Agent.ActiveTaskManager()
 	var tasks []agent.TaskItem
 	var completed, total int
 	if tm != nil {
@@ -2215,7 +2166,7 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	}
 	allDone := completed == total && total > 0
 
-	subs := a.Agent.Subagents(a.Agent.ActiveSessionID)
+	subs := a.Agent.Subagents(a.Agent.SnapshotActiveSessionID())
 	runningSubs := 0
 	for _, s := range subs {
 		st := strings.ToLower(fmt.Sprintf("%v", s.State))
@@ -2225,7 +2176,7 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	}
 
 	activeSess := a.Agent.ActiveSession()
-	isSessionRunning := a.Agent.IsStreaming || (activeSess != nil && (activeSess.Status == "running" || activeSess.Status == "streaming"))
+	isSessionRunning := a.Agent.StreamingSnapshot() || (activeSess != nil && (activeSess.Status == "running" || activeSess.Status == "streaming"))
 
 	// If there is no work to do, hide it completely!
 	hasWork := (current != nil) || (runningSubs > 0) || isSessionRunning
@@ -2724,13 +2675,9 @@ func (a *AppUI) tryHandleSlashCommand(trimmed string) bool {
 		as.InputText = ""
 		return true
 	case "/clear":
-		if sess := as.ActiveSession(); sess != nil {
-			as.Lock()
-			sess.Messages = nil
-			as.Messages = nil
-			as.Unlock()
-			go as.SaveSessionToDisk(sess)
-		}
+		// Shared locked implementation: nils both the session messages and
+		// the active alias, resets streaming state, persists async.
+		as.ClearConversation()
 		as.InputText = ""
 		return true
 	}
@@ -2862,6 +2809,23 @@ func questionDraftKey(sessionID string, qi int, inDialog bool) string {
 	return fmt.Sprintf("q:%s:%d:%v", sessionID, qi, inDialog)
 }
 
+// questionDraftsMu guards AppUI.QuestionDrafts: render reads/writes the map
+// in-frame while submit goroutines clear it (a concurrent map write crashes).
+// No other file touches the map, so a package-level lock here is sufficient.
+var questionDraftsMu sync.Mutex
+
+// questionDraft returns (creating if needed) the draft string for a key.
+func (a *AppUI) questionDraft(key string) *string {
+	questionDraftsMu.Lock()
+	defer questionDraftsMu.Unlock()
+	d, ok := a.QuestionDrafts[key]
+	if !ok || d == nil {
+		d = new(string)
+		a.QuestionDrafts[key] = d
+	}
+	return d
+}
+
 func (a *AppUI) renderPendingQuestionsCard(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
 	card := ui.Column(c.Key("qcard-" + sessionID)).Radius(12).Padding(14).Gap(10).
 		Background(tc.Accent.Alpha(0.05)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
@@ -2889,7 +2853,17 @@ func (a *AppUI) renderPendingQuestionsCard(c *ui.Context, tc theme.ThemeColors, 
 			if submit.Clicked() {
 				session := sessionID
 				go func() {
-					_ = a.Agent.SubmitQuestionAnswers(session)
+					// SubmitQuestionAnswers restores the pending questions when
+					// delivery fails, so only clear the drafts on success — the
+					// user must be able to fix and retry (and AddToast from a
+					// goroutine is silently dropped; use queueToast).
+					if err := a.Agent.SubmitQuestionAnswers(session); err != nil {
+						a.queueToast(ui.Toast{Title: "Couldn't Submit Answers", Description: err.Error(), Type: "error"})
+						if a.Window != nil {
+							a.Window.Invalidate()
+						}
+						return
+					}
 					a.clearQuestionDrafts(session)
 					if a.Window != nil {
 						a.Window.Invalidate()
@@ -2909,11 +2883,7 @@ func (a *AppUI) renderQuestionBlock(c *ui.Context, tc theme.ThemeColors, session
 	}
 	q := qs[qi]
 	draftKey := questionDraftKey(sessionID, qi, inDialog)
-	draft, ok := a.QuestionDrafts[draftKey]
-	if !ok || draft == nil {
-		draft = new(string)
-		a.QuestionDrafts[draftKey] = draft
-	}
+	draft := a.questionDraft(draftKey)
 
 	block := ui.Column(c.Key(fmt.Sprintf("q-%d-%v", qi, inDialog))).Padding(8, 10).Radius(10).Gap(8).
 		Background(tc.Surface.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
@@ -2991,6 +2961,8 @@ func (a *AppUI) renderQuestionBlock(c *ui.Context, tc theme.ThemeColors, session
 
 // clearQuestionDrafts drops the custom-answer drafts of a session.
 func (a *AppUI) clearQuestionDrafts(sessionID string) {
+	questionDraftsMu.Lock()
+	defer questionDraftsMu.Unlock()
 	for k := range a.QuestionDrafts {
 		if strings.HasPrefix(k, "q:"+sessionID+":") {
 			delete(a.QuestionDrafts, k)
@@ -3043,13 +3015,23 @@ func (a *AppUI) renderQuestionModal(c *ui.Context) {
 					ui.Text(c, "Submit").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 				})
 				if submit.Clicked() {
-					a.ShowQuestionModal = false
+					session := sessionID
 					go func() {
-						_ = a.Agent.SubmitQuestionAnswers(sessionID)
-						a.clearQuestionDrafts(sessionID)
-						if a.Window != nil {
-							a.Window.Invalidate()
+						// Same restore-aware contract as the inline card: on
+						// failure the questions come back and the modal stays
+						// open so the user can retry; the modal closes only
+						// after the answers were delivered.
+						if err := a.Agent.SubmitQuestionAnswers(session); err != nil {
+							a.queueToast(ui.Toast{Title: "Couldn't Submit Answers", Description: err.Error(), Type: "error"})
+							return
 						}
+						a.clearQuestionDrafts(session)
+						a.runOnUI(func() {
+							a.ShowQuestionModal = false
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+						})
 					}()
 				}
 			})

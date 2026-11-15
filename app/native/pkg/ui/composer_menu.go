@@ -309,9 +309,12 @@ func (a *AppUI) applyComposerSuggestion(item composerSuggestion) {
 		}
 		return
 	case "/clear":
-		if sess := a.Agent.ActiveSession(); sess != nil {
-			sess.Messages = nil
-		}
+		// Shared locked implementation: nils both the session's messages and
+		// the active as.Messages alias, resets streaming state, and persists
+		// the emptied session to disk (the previous inline version did none
+		// of that: it dropped messages without the lock, left as.Messages
+		// pointing at the old slice, and never saved).
+		a.Agent.ClearConversation()
 		a.Agent.InputText = ""
 		a.SlashDismissedAt = ""
 		a.MentionDismissedAt = ""

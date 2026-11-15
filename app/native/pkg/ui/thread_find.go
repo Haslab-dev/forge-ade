@@ -15,7 +15,9 @@ import (
 )
 
 // threadFindMatches recomputes the match set: case-insensitive substring
-// over each message's text, thinking, tool labels, and tool output.
+// over each message's text, thinking, tool labels, and tool output. It reads
+// a locked snapshot, never the live transcript (turn goroutines stream into
+// it concurrently).
 func threadFindMatches(as *agent.AgentState, query string) []int {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -23,8 +25,14 @@ func threadFindMatches(as *agent.AgentState, query string) []int {
 	}
 	q := strings.ToLower(query)
 	var matches []int
-	for i, m := range as.Messages {
-		if threadMessageHaystack(m) != "" && strings.Contains(threadMessageHaystack(m), q) {
+	for i, m := range as.MessagesSnapshot() {
+		if m == nil {
+			continue
+		}
+		// Build the haystack once per message (the previous code built it
+		// twice per candidate).
+		hay := threadMessageHaystack(m)
+		if hay != "" && strings.Contains(hay, q) {
 			matches = append(matches, i)
 		}
 	}
@@ -60,13 +68,18 @@ func (a *AppUI) renderThreadFindBar(c *ui.Context, tc theme.ThemeColors, as *age
 			ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.TextMuted)
 			findIn = ui.TextInput(c, &a.ThreadFindQuery).Placeholder("Find in thread…").Grow(1)
 		})
-		// Recompute matches whenever the query, active session, or message count changed.
+		// Recompute matches whenever the query, active session, or transcript
+		// content changed. ThreadFindMsgCount stores a cheap content version
+		// (message count + text/thinking/tool bytes) rather than the raw
+		// count, so streaming content re-searches while a turn runs.
+		activeSessionID := as.SnapshotActiveSessionID()
+		contentVer := as.TranscriptVersion()
 		if a.ThreadFindQueryAt != a.ThreadFindQuery ||
-			a.ThreadFindSessionID != as.ActiveSessionID ||
-			a.ThreadFindMsgCount != len(as.Messages) {
+			a.ThreadFindSessionID != activeSessionID ||
+			a.ThreadFindMsgCount != contentVer {
 			a.ThreadFindQueryAt = a.ThreadFindQuery
-			a.ThreadFindSessionID = as.ActiveSessionID
-			a.ThreadFindMsgCount = len(as.Messages)
+			a.ThreadFindSessionID = activeSessionID
+			a.ThreadFindMsgCount = contentVer
 			a.ThreadFindMatches = threadFindMatches(as, a.ThreadFindQuery)
 			a.ThreadFindIdx = 0
 			if len(a.ThreadFindMatches) > 0 {
@@ -126,9 +139,11 @@ func leftInsetOf(a *AppUI, c *ui.Context) float32 {
 // active tick highlighted, hover preview, click scrolls to the turn — shown
 // only when the thread has ≥2 turns, as forge-ade's scrubber does.
 func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agent.AgentState) {
+	// Locked per-frame copy: the transcript streams in from bus goroutines.
+	msgs := as.MessagesSnapshot()
 	var turns []int // message indices of user turns
-	for i, m := range as.Messages {
-		if m.Role == "user" {
+	for i, m := range msgs {
+		if m != nil && m.Role == "user" {
 			turns = append(turns, i)
 		}
 	}
@@ -154,7 +169,7 @@ func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agen
 				}
 				tick := ui.Box(c.Key(fmt.Sprintf("tick-%d", ti))).Size(w, 2).Radius(1).Background(bg).Cursor(ui.CursorPointer)
 				preview := ""
-				if m := as.Messages[msgIdx]; m != nil {
+				if m := msgs[msgIdx]; m != nil {
 					preview = m.Text
 					if runes := []rune(preview); len(runes) > 60 {
 						preview = string(runes[:60]) + "…"
