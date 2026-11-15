@@ -26,7 +26,7 @@ Notes for AI coding agents working in this repository.
 - Focus active work on `app/native/`. Keep single-binary zero-overhead architecture intact (<30MB RAM footprint).
 - Styling in native uses semantic token utilities (`tc.Surface`, `tc.Border`, `tc.Accent`, `tc.Text`, …). Never hardcode raw hex colors in UI elements.
 - Keep wire contracts intact.
-- Workflow Kanban Board: project tasks and backlog are tracked in `.forge/board_tasks.json`. Monitored in real time by `internal/board/watcher.go` / `core/board`.
+- Workflow Kanban Board: project tasks and backlog are tracked in `.forge/board_tasks.json`. Monitored in real time by `core/board/watcher.go`.
 
 ## Verify before finishing
 
