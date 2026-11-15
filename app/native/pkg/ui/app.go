@@ -249,6 +249,16 @@ type AppUI struct {
 	RemoteUploadQueue       []RemoteUploadItem
 	RemoteUploadIsUploading bool
 
+	// External Open Target in header split button ("terminal" | "finder" | "zed")
+	ExternalOpenTarget string
+
+	// Editor In-Pane Shell
+	EditorShellInPane    bool
+	EditorShellPaneWidth float32
+
+	// SSH Host Search in SSH modal
+	SSHHostSearch string
+
 	// Follow Agent: auto-jump the editor to files the agent edits.
 	FollowAgent           bool
 	GitHistoryWidth       float32
@@ -357,6 +367,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		ShowBottomTerminal:      false,
 		ShowRightDrawer:         false,
 		RightDrawerTab:          RightTabLauncher,
+		ExternalOpenTarget:      "terminal",
+		EditorShellPaneWidth:    380,
 		EditorActivity:          ActivityExplorer,
 		NewTaskAgentType:        "acp",
 		NewTaskFilterTab:        "all",
@@ -1134,6 +1146,13 @@ type RemoteUploadItem struct {
 func (a *AppUI) OpenRemoteFileUploader(targetDir string) {
 	if targetDir == "" && a.Workspace != nil {
 		targetDir = a.Workspace.RootDir
+	}
+	if strings.HasPrefix(targetDir, "ssh://") {
+		_, remPath, _, _ := parseSSHWorkspaceURI(targetDir)
+		targetDir = remPath
+	}
+	if targetDir == "" {
+		targetDir = "/"
 	}
 	a.RemoteUploadTargetDir = targetDir
 	a.RemoteUploadQueue = nil

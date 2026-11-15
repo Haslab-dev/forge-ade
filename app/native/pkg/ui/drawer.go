@@ -182,7 +182,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				if a.Terminal != nil {
 					ui.Row(c).Height(32).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-						renderTerminalTabsStrip(c, tc, a.Terminal, "drawer-term")
+						a.renderTerminalTabsStrip(c, tc, a.Terminal, "drawer-term")
 						if IconButton(c, tc, icons.TablerPlus, 11).Clicked() {
 							_ = a.Terminal.NewTab("")
 						}
@@ -316,6 +316,9 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 				})
 				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.SurfaceRaised, tc.IconMuted, true, func() {
 					a.RightDrawerTab = RightTabSubagent
+				})
+				launcherCard("ssh", "Remote SSH / SFTP", "Connect to remote server, manage remote files, and open remote terminal.", icons.TablerServer, tc.Accent.Alpha(0.12), tc.Accent, false, func() {
+					a.OpenSSHModal()
 				})
 			})
 

@@ -289,6 +289,17 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 				_ = a.Terminal.ResetShell(dir)
 			}
 			m.Separator()
+		} else {
+			if node.IsDir {
+				if m.Item("Upload Files Here (SFTP)...").Chosen() {
+					_, remPath, _, _ := parseSSHWorkspaceURI(node.FullPath)
+					a.OpenRemoteFileUploader(remPath)
+				}
+			}
+			if m.Item("Open Remote Terminal Here").Chosen() {
+				a.openRemoteTerminal()
+			}
+			m.Separator()
 		}
 		if m.Item("Rename...").Chosen() {
 			a.ShowRenameFileModal = true
@@ -387,6 +398,9 @@ func (a *AppUI) renderFilesPane(c *ui.Context) {
 		ui.Text(c, "Files").FontSize(12).FontWeight(600)
 		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
 			Badge(c, tc, "REMOTE", tc.Accent)
+			if IconButton(c, tc, icons.TablerUpload, 12).Clicked() {
+				a.OpenRemoteFileUploader("")
+			}
 		}
 		ui.Box(c).Grow(1)
 		if IconButton(c, tc, icons.TablerFilePlus, 12).Clicked() {

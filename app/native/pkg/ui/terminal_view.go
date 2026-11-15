@@ -13,7 +13,7 @@ import (
 )
 
 // renderTerminalTabsStrip draws the clickable tab strip for a TerminalState.
-func renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts *terminal.TerminalState, keyPrefix string) {
+func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts *terminal.TerminalState, keyPrefix string) {
 	if ts == nil {
 		return
 	}
@@ -46,6 +46,43 @@ func renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts *terminal.T
 						tab.Background(tc.SurfaceRaised.Alpha(0.7))
 					}
 				}
+
+				tab.ContextMenu(func(m *ui.Menu) {
+					if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+						sessID := ""
+						if ts != nil {
+							sessID = ts.ActiveSessionID
+						}
+						a.OpenTerminalSnippetsModal(sessID, "", "")
+					}
+					m.Separator()
+					if m.Item("New Tab").Chosen() {
+						if ts != nil {
+							_ = ts.NewTab("")
+						}
+					}
+					if m.Item("Clear Terminal").Chosen() {
+						if ts != nil {
+							ts.SendInput("\x0c")
+						}
+					}
+					if m.Item("Restart Shell").Chosen() {
+						if ts != nil {
+							_ = ts.Restart()
+						}
+					}
+					m.Separator()
+					if m.Item("Close Tab").Chosen() {
+						if ts != nil {
+							if ts.TabCount() > 0 {
+								ts.CloseTab(tabSnap.Index)
+							} else {
+								_ = ts.Restart()
+							}
+						}
+					}
+				})
+
 				closedThisTab := false
 				tab.Children(func() {
 					labelColor := tc.TextMuted
@@ -85,8 +122,35 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 	ui.Column(c).Height(a.BottomTerminalHeight).Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 		// Terminal Drawer Header — ZCode dock style: bold label, shell name,
 		// session tab strip, then compact actions menu + new/close on the right.
-		ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 14).Gap(10).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		hdr := ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 14).Gap(10).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border)
+		hdr.ContextMenu(func(m *ui.Menu) {
+			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+				sessID := ""
+				if a.Terminal != nil {
+					sessID = a.Terminal.ActiveSessionID
+				}
+				a.OpenTerminalSnippetsModal(sessID, "", "")
+			}
+			if m.Item("Ask Agent Diagnostic").Chosen() {
+				a.askAgentFromTerminal()
+			}
+			m.Separator()
+			if m.Item("New Tab").Chosen() && a.Terminal != nil {
+				_ = a.Terminal.NewTab("")
+			}
+			if m.Item("Clear Terminal").Chosen() && a.Terminal != nil {
+				a.Terminal.SendInput("\x0c")
+			}
+			if m.Item("Restart Shell").Chosen() && a.Terminal != nil {
+				_ = a.Terminal.Restart()
+			}
+			m.Separator()
+			if m.Item("Close Dock").Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
+				a.ShowBottomTerminal = false
+			}
+		})
+		hdr.Children(func() {
 			ui.Text(c, "Terminal").FontSize(13).FontWeight(600)
 			shellName := "zsh"
 			if a.Settings != nil && a.Settings.DefaultShell != "" {
@@ -94,7 +158,7 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			}
 			ui.Text(c, shellName).FontSize(12).TextColor(tc.TextMuted)
 
-			renderTerminalTabsStrip(c, tc, a.Terminal, "bottom-term")
+			a.renderTerminalTabsStrip(c, tc, a.Terminal, "bottom-term")
 
 			moreBtn := ui.Row(c.Key("term-actions-menu")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 			moreBtn.Children(func() {

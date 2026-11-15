@@ -288,15 +288,50 @@ func (a *AppUI) DisconnectSSH() {
 	}
 }
 
-// renderSSHConnectModal renders the complete SSH connection dialog.
+// connectSSHShell launches an interactive SSH session in the bottom terminal.
+func (a *AppUI) connectSSHShell(cfg remotefs.SSHConfig) {
+	if a.Terminal == nil {
+		return
+	}
+	userHost := cfg.Host
+	if cfg.User != "" {
+		userHost = fmt.Sprintf("%s@%s", cfg.User, cfg.Host)
+	}
+	portStr := strconv.Itoa(cfg.Port)
+	if cfg.Port <= 0 {
+		portStr = "22"
+	}
+	args := []string{"ssh", "-p", portStr}
+	if cfg.KeyPath != "" && cfg.AuthType == "key_file" {
+		kp := cfg.KeyPath
+		if strings.HasPrefix(kp, "~/") {
+			home, _ := os.UserHomeDir()
+			kp = filepath.Join(home, kp[2:])
+		}
+		args = append(args, "-i", kp)
+	}
+	args = append(args, userHost)
+	if cfg.RemotePath != "" && cfg.RemotePath != "/" {
+		args = append(args, "-t", fmt.Sprintf("cd %s && exec $SHELL -l", cfg.RemotePath))
+	}
+	a.ShowBottomTerminal = true
+	a.Terminal.Command = args
+	a.Terminal.Title = fmt.Sprintf("SSH: %s", cfg.Host)
+	_ = a.Terminal.Restart()
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// renderSSHConnectModal renders the Termius-style SSH connection & SFTP management dialog.
 func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
 	ui.Modal(c, &a.ShowSSHModal, func() {
-		ui.Column(c).Width(640).Height(540).Radius(12).Background(tc.Surface).
+		ui.Column(c).Width(780).Height(580).Radius(12).Background(tc.Surface).
 			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
 			// Header
-			ui.Row(c).Height(58).Padding(0, 18).AlignItems(ui.Center).
+			ui.Row(c).Height(56).Padding(0, 18).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 				ui.Row(c).Size(34, 34).Radius(8).Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerServer).Width(18).Height(18).TextColor(tc.Accent)
@@ -304,12 +339,12 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 				ui.Box(c).Width(10)
 				ui.Column(c).Grow(1).Children(func() {
 					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "Connect to Remote Host via SSH").FontSize(13).FontWeight(600).TextColor(tc.Text)
+						ui.Text(c, "Remote Server Connections").FontSize(13).FontWeight(600).TextColor(tc.Text)
 						ui.Row(c).Padding(1, 5).Radius(4).Background(tc.Accent.Alpha(0.15)).Children(func() {
-							ui.Text(c, "SFTP").FontSize(9).FontWeight(700).TextColor(tc.Accent)
+							ui.Text(c, "SSH / SFTP").FontSize(9).FontWeight(700).TextColor(tc.Accent)
 						})
 					})
-					ui.Text(c, "Browse, edit, and sync remote files natively without local mounting").
+					ui.Text(c, "Browse, edit, sync remote files and manage shells natively like Termius").
 						FontSize(11).TextColor(tc.TextMuted)
 				})
 				closeBtn := ui.Row(c).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
@@ -326,87 +361,188 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 
 			// Body: Left Saved Hosts List + Right Connection Form
 			ui.Row(c).Grow(1).Children(func() {
-				// Left Saved Hosts Sidebar
-				ui.Column(c).Width(185).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
-					ui.Row(c).Height(34).Padding(0, 10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-						ui.Text(c, "SAVED HOSTS").FontSize(10).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
-						newBtn := ui.Row(c).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				// Left Saved Hosts Sidebar (Termius-like host list)
+				ui.Column(c).Width(240).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
+					// Sidebar Top: Header + New Host button
+					ui.Row(c).Height(36).Padding(0, 10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+						ui.Text(c, "SAVED HOSTS").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						if len(a.SSHSavedConfigs) > 0 {
+							ui.Box(c).Width(4)
+							ui.Row(c).Padding(1, 5).Radius(4).Background(tc.Text.Alpha(0.06)).Children(func() {
+								ui.Text(c, fmt.Sprintf("%d", len(a.SSHSavedConfigs))).FontSize(9).TextColor(tc.TextMuted)
+							})
+						}
+						ui.Box(c).Grow(1)
+						newBtn := ui.Row(c.Key("new-ssh-host")).Height(24).Radius(5).Padding(0, 8).Gap(4).
+							Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 						newBtn.Children(func() {
-							ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.Accent)
+							ui.Icon(c, icons.TablerPlus).Width(12).Height(12).TextColor(tc.Accent)
+							ui.Text(c, "New").FontSize(10).FontWeight(600).TextColor(tc.Accent)
 						})
 						if newBtn.Hovered() {
-							newBtn.Background(tc.Accent.Alpha(0.12))
+							newBtn.Background(tc.Accent.Alpha(0.2))
 						}
 						if newBtn.Clicked() {
 							a.ResetSSHForm()
 						}
 					})
 
+					// Search Filter Input
+					ui.Row(c).Padding(6, 8).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+						ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.IconMuted)
+						ui.Box(c).Width(4)
+						ui.TextInput(c, &a.SSHHostSearch).Placeholder("Search hosts...").Grow(1)
+						if a.SSHHostSearch != "" {
+							clrBtn := ui.Row(c.Key("clear-host-search")).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+							clrBtn.Children(func() {
+								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.IconMuted)
+							})
+							if clrBtn.Clicked() {
+								a.SSHHostSearch = ""
+							}
+						}
+					})
+
+					// Filtered Host list
+					q := strings.ToLower(strings.TrimSpace(a.SSHHostSearch))
+					var matchedConfigs []remotefs.SSHConfig
+					for _, cfg := range a.SSHSavedConfigs {
+						if q == "" ||
+							strings.Contains(strings.ToLower(cfg.Label), q) ||
+							strings.Contains(strings.ToLower(cfg.Host), q) ||
+							strings.Contains(strings.ToLower(cfg.User), q) ||
+							strings.Contains(strings.ToLower(cfg.RemotePath), q) {
+							matchedConfigs = append(matchedConfigs, cfg)
+						}
+					}
+
 					ui.Scroll(c).Grow(1).Children(func() {
-						ui.Column(c).Padding(6, 6).Gap(2).Children(func() {
-							if len(a.SSHSavedConfigs) == 0 {
-								ui.Row(c).Padding(12, 6).Justify(ui.Center).Children(func() {
-									ui.Text(c, "No saved hosts").FontSize(11).TextColor(tc.TextMuted)
+						ui.Column(c).Padding(6, 6).Gap(4).Children(func() {
+							if len(matchedConfigs) == 0 {
+								ui.Column(c).Padding(24, 10).AlignItems(ui.Center).Gap(6).Children(func() {
+									ui.Icon(c, icons.TablerServer).Width(24).Height(24).TextColor(tc.IconMuted.Alpha(0.4))
+									ui.Text(c, "No hosts found").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+									if q != "" {
+										ui.Text(c, "Try a different search term").FontSize(10).TextColor(tc.TextMuted.Alpha(0.8))
+									}
 								})
 							} else {
-								for _, cfg := range a.SSHSavedConfigs {
+								for _, cfg := range matchedConfigs {
 									itemCfg := cfg
 									isSelected := (a.SSHSelectedConfigID == itemCfg.ID)
 									isActive := strings.HasPrefix(a.Workspace.RootDir, "ssh://") &&
 										(strings.Contains(a.Workspace.RootDir, itemCfg.ID) || strings.Contains(a.Workspace.RootDir, itemCfg.Host))
 
-									itemRow := ui.Row(c.Key("saved-ssh-"+itemCfg.ID)).Height(42).Radius(6).
-										Padding(4, 8).AlignItems(ui.Center)
+									card := ui.Column(c.Key("saved-ssh-"+itemCfg.ID)).Radius(8).
+										Padding(8, 8).Gap(4).BorderWidth(1).Cursor(ui.CursorPointer)
 									if isSelected {
-										itemRow.Background(tc.Accent)
-									} else if itemRow.Hovered() {
-										itemRow.Background(tc.Text.Alpha(0.04))
+										card.Background(tc.SurfaceRaised).BorderColor(tc.Accent)
+									} else {
+										card.Background(tc.Surface.Alpha(0.4)).BorderColor(tc.Border.Alpha(0.5))
+										if card.Hovered() {
+											card.Background(tc.SurfaceRaised.Alpha(0.6)).BorderColor(tc.Border)
+										}
 									}
 
-									itemRow.Children(func() {
-										ui.Column(c).Grow(1).Children(func() {
-											ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-												if isActive {
-													ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success)
-												}
-												txt := itemCfg.Label
-												if txt == "" {
-													txt = itemCfg.Host
-												}
-												lbl := ui.Text(c, txt).FontSize(11).FontWeight(500).SingleLine()
-												if isSelected {
-													lbl.TextColor(tc.Canvas)
-												} else {
-													lbl.TextColor(tc.Text)
-												}
-											})
-											sub := fmt.Sprintf("%s@%s", itemCfg.User, itemCfg.Host)
-											subLbl := ui.Text(c, sub).FontSize(10).SingleLine()
-											if isSelected {
-												subLbl.TextColor(tc.Canvas.Alpha(0.8))
+									card.Children(func() {
+										// Top line: Server icon + Label + Online dot
+										ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+											iconBox := ui.Row(c).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center)
+											if isActive {
+												iconBox.Background(tc.Success.Alpha(0.18))
 											} else {
-												subLbl.TextColor(tc.TextMuted)
+												iconBox.Background(tc.Accent.Alpha(0.1))
+											}
+											iconBox.Children(func() {
+												icColor := tc.Accent
+												if isActive {
+													icColor = tc.Success
+												}
+												ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(icColor)
+											})
+
+											titleTxt := itemCfg.Label
+											if titleTxt == "" {
+												titleTxt = itemCfg.Host
+											}
+											ui.Text(c, titleTxt).FontSize(11).FontWeight(600).TextColor(tc.Text).Grow(1).SingleLine()
+
+											if isActive {
+												ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success)
 											}
 										})
 
-										delBtn := ui.Row(c.Key("del-ssh-"+itemCfg.ID)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-										delBtn.Children(func() {
-											ic := ui.Icon(c, icons.TablerTrash).Width(12).Height(12)
-											if isSelected {
-												ic.TextColor(tc.Canvas.Alpha(0.9))
-											} else {
-												ic.TextColor(tc.IconMuted)
+										// Second line: user@host:port
+										hostDisplay := fmt.Sprintf("%s@%s:%d", itemCfg.User, itemCfg.Host, itemCfg.Port)
+										ui.Text(c, hostDisplay).FontSize(10).TextColor(tc.TextMuted).SingleLine()
+
+										// Third line: Remote path badge if set
+										if itemCfg.RemotePath != "" {
+											ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
+												ui.Icon(c, icons.TablerFolder).Width(10).Height(10).TextColor(tc.IconMuted)
+												ui.Text(c, itemCfg.RemotePath).FontSize(9).TextColor(tc.TextMuted).SingleLine()
+											})
+										}
+
+										// Termius 1-Click Action Buttons
+										ui.Row(c).Gap(4).Margin(2, 0, 0, 0).AlignItems(ui.Center).Children(func() {
+											connectBtn := ui.Row(c.Key("act-conn-"+itemCfg.ID)).Height(20).Radius(4).Padding(0, 6).Gap(3).
+												Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+											connectBtn.Children(func() {
+												ui.Icon(c, icons.TablerPlug).Width(9).Height(9).TextColor(tc.Accent)
+												ui.Text(c, "Connect").FontSize(9).FontWeight(600).TextColor(tc.Accent)
+											})
+											if connectBtn.Hovered() {
+												connectBtn.Background(tc.Accent.Alpha(0.24))
+											}
+											if connectBtn.Clicked() {
+												a.LoadSSHConfig(itemCfg)
+												a.ConnectCurrentSSH()
+											}
+
+											shellBtn := ui.Row(c.Key("act-shell-"+itemCfg.ID)).Size(20, 20).Radius(4).
+												Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
+												AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+											shellBtn.Children(func() {
+												ui.Icon(c, icons.TablerTerminal).Width(10).Height(10).TextColor(tc.TextMuted)
+											})
+											if shellBtn.Hovered() {
+												shellBtn.Background(tc.Text.Alpha(0.08))
+											}
+											if shellBtn.Clicked() {
+												a.connectSSHShell(itemCfg)
+											}
+
+											sftpBtn := ui.Row(c.Key("act-sftp-"+itemCfg.ID)).Size(20, 20).Radius(4).
+												Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
+												AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+											sftpBtn.Children(func() {
+												ui.Icon(c, icons.TablerUpload).Width(10).Height(10).TextColor(tc.TextMuted)
+											})
+											if sftpBtn.Hovered() {
+												sftpBtn.Background(tc.Text.Alpha(0.08))
+											}
+											if sftpBtn.Clicked() {
+												a.OpenRemoteFileUploader(itemCfg.RemotePath)
+											}
+
+											ui.Box(c).Grow(1)
+
+											delBtn := ui.Row(c.Key("del-ssh-"+itemCfg.ID)).Size(20, 20).Radius(4).
+												AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+											delBtn.Children(func() {
+												ui.Icon(c, icons.TablerTrash).Width(10).Height(10).TextColor(tc.IconMuted)
+											})
+											if delBtn.Hovered() {
+												delBtn.Background(tc.Error.Alpha(0.18))
+											}
+											if delBtn.Clicked() {
+												a.DeleteSSHConfig(itemCfg.ID)
 											}
 										})
-										if delBtn.Hovered() {
-											delBtn.Background(tc.Error.Alpha(0.2))
-										}
-										if delBtn.Clicked() {
-											a.DeleteSSHConfig(itemCfg.ID)
-										}
 									})
 
-									if itemRow.Clicked() {
+									if card.Clicked() {
 										a.LoadSSHConfig(itemCfg)
 									}
 								}
@@ -415,13 +551,58 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 					})
 				})
 
-				// Right Form
+				// Right Form (Termius-like server configuration)
 				ui.Scroll(c).Grow(1).Children(func() {
-					ui.Column(c).Padding(16, 16).Gap(12).Children(func() {
+					ui.Column(c).Padding(16, 20).Gap(14).Children(func() {
+						// Form Header & Current Host Badge
+						ui.Row(c).AlignItems(ui.Center).Children(func() {
+							headerTitle := "New Remote Host"
+							if a.SSHSelectedConfigID != "" {
+								lbl := a.SSHLabel
+								if lbl == "" {
+									lbl = a.SSHHost
+								}
+								headerTitle = fmt.Sprintf("Host: %s", lbl)
+							}
+							ui.Text(c, headerTitle).FontSize(13).FontWeight(600).TextColor(tc.Text).Grow(1)
+
+							if a.SSHHost != "" {
+								quickShellBtn := ui.Row(c.Key("quick-shell-btn")).Height(24).Radius(5).Padding(0, 8).Gap(4).
+									Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+								quickShellBtn.Children(func() {
+									ui.Icon(c, icons.TablerTerminal).Width(11).Height(11).TextColor(tc.Accent)
+									ui.Text(c, "Shell").FontSize(10).TextColor(tc.Text)
+								})
+								if quickShellBtn.Clicked() {
+									p, _ := strconv.Atoi(a.SSHPortText)
+									a.connectSSHShell(remotefs.SSHConfig{
+										Host:       a.SSHHost,
+										Port:       p,
+										User:       a.SSHUser,
+										AuthType:   a.SSHAuthType,
+										KeyPath:    a.SSHKeyPath,
+										RemotePath: a.SSHRemotePath,
+									})
+								}
+
+								ui.Box(c).Width(6)
+
+								quickSftpBtn := ui.Row(c.Key("quick-sftp-btn")).Height(24).Radius(5).Padding(0, 8).Gap(4).
+									Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+								quickSftpBtn.Children(func() {
+									ui.Icon(c, icons.TablerUpload).Width(11).Height(11).TextColor(tc.Accent)
+									ui.Text(c, "SFTP Upload").FontSize(10).TextColor(tc.Text)
+								})
+								if quickSftpBtn.Clicked() {
+									a.OpenRemoteFileUploader(a.SSHRemotePath)
+								}
+							}
+						})
+
 						// Error Banner
 						if a.SSHErrorMsg != "" {
 							ui.Row(c).Radius(6).Padding(8, 10).Gap(8).Background(tc.Error.Alpha(0.12)).
-								BorderWidth(1, 1, 1, 1).BorderColor(tc.Error.Alpha(0.3)).AlignItems(ui.Center).Children(func() {
+								BorderWidth(1).BorderColor(tc.Error.Alpha(0.3)).AlignItems(ui.Center).Children(func() {
 								ui.Icon(c, icons.TablerAlertTriangle).Width(16).Height(16).TextColor(tc.Error)
 								ui.Text(c, a.SSHErrorMsg).FontSize(11).TextColor(tc.Error).Grow(1)
 							})
@@ -429,11 +610,11 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 
 						// Row 1: Host + Port
 						ui.Row(c).Gap(10).Children(func() {
-							ui.Column(c).Grow(2).Gap(4).Children(func() {
+							ui.Column(c).Grow(3).Gap(4).Children(func() {
 								ui.Text(c, "Host / IP Address *").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
 								ui.TextInput(c, &a.SSHHost).Placeholder("vps.example.com or 192.168.1.50").Grow(1)
 							})
-							ui.Column(c).Grow(1).Gap(4).Children(func() {
+							ui.Column(c).Width(100).Gap(4).Children(func() {
 								ui.Text(c, "Port").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
 								ui.TextInput(c, &a.SSHPortText).Placeholder("22").Grow(1)
 							})
@@ -457,12 +638,15 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 							ui.Row(c).Gap(6).Children(func() {
 								authTab := func(id, label string, icon *ui.SVG) {
 									isCur := (a.SSHAuthType == id)
-									tab := ui.Row(c.Key("auth-tab-"+id)).Height(30).Radius(6).Grow(1).
-										BorderWidth(1, 1, 1, 1).AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+									tab := ui.Row(c.Key("auth-tab-" + id)).Height(30).Radius(6).Grow(1).
+										BorderWidth(1).AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 									if isCur {
 										tab.Background(tc.Accent.Alpha(0.12)).BorderColor(tc.Accent)
 									} else {
 										tab.Background(tc.Canvas).BorderColor(tc.Border)
+										if tab.Hovered() {
+											tab.Background(tc.SurfaceRaised)
+										}
 									}
 									tab.Children(func() {
 										ic := ui.Icon(c, icon).Width(13).Height(13)
@@ -491,27 +675,63 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 						// Auth details box
 						switch a.SSHAuthType {
 						case "key_file":
-							ui.Column(c).Padding(10, 10).Radius(6).Gap(8).Background(tc.Canvas).
-								BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).Children(func() {
+							ui.Column(c).Padding(10, 12).Radius(8).Gap(8).Background(tc.Canvas).
+								BorderWidth(1).BorderColor(tc.Border).Children(func() {
 								ui.Column(c).Gap(3).Children(func() {
-									ui.Text(c, "Private Key Path").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+									ui.Row(c).AlignItems(ui.Center).Children(func() {
+										ui.Text(c, "Private Key Path").FontSize(10).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
+										browseKeyBtn := ui.Row(c.Key("browse-ssh-key")).Height(20).Radius(4).Padding(0, 6).Gap(3).
+											Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+										browseKeyBtn.Children(func() {
+											ui.Icon(c, icons.TablerFolder).Width(10).Height(10).TextColor(tc.IconMuted)
+											ui.Text(c, "Browse…").FontSize(9).TextColor(tc.Text)
+										})
+										if browseKeyBtn.Clicked() && a.Window != nil {
+											win := a.Window
+											go func() {
+												paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+													Parent:   win,
+													Title:    "Select SSH Private Key",
+													Multiple: false,
+												})
+												if err == nil && len(paths) > 0 {
+													a.SSHKeyPath = paths[0]
+													win.Invalidate()
+												}
+											}()
+										}
+									})
 									ui.TextInput(c, &a.SSHKeyPath).Placeholder("~/.ssh/id_ed25519").Grow(1)
+									ui.Row(c).Gap(4).Padding(2, 0).Children(func() {
+										for _, kp := range []string{"~/.ssh/id_ed25519", "~/.ssh/id_rsa"} {
+											val := kp
+											chip := ui.Row(c.Key("key-chip-"+val)).Radius(3).Padding(1, 5).
+												Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+											chip.Children(func() {
+												ui.Text(c, val).FontSize(9).TextColor(tc.TextMuted)
+											})
+											if chip.Clicked() {
+												a.SSHKeyPath = val
+											}
+										}
+									})
 								})
 								ui.Column(c).Gap(3).Children(func() {
-									ui.Text(c, "Passphrase (Leave empty if unencrypted)").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+									ui.Text(c, "Passphrase (Leave empty if unencrypted)").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
 									ui.TextInput(c, &a.SSHKeyPassphrase).Placeholder("Optional passphrase").Password().Grow(1)
 								})
 							})
 						case "password":
-							ui.Column(c).Padding(10, 10).Radius(6).Gap(4).Background(tc.Canvas).
-								BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).Children(func() {
-								ui.Text(c, "SSH Password").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+							ui.Column(c).Padding(10, 12).Radius(8).Gap(4).Background(tc.Canvas).
+								BorderWidth(1).BorderColor(tc.Border).Children(func() {
+								ui.Text(c, "SSH Password").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
 								ui.TextInput(c, &a.SSHPassword).Placeholder("Enter SSH password").Password().Grow(1)
 							})
 						case "agent":
-							ui.Row(c).Padding(10, 10).Radius(6).Background(tc.Canvas).
-								BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).Children(func() {
-								ui.Text(c, "Will authenticate via active local SSH agent ($SSH_AUTH_SOCK).").
+							ui.Row(c).Padding(12, 12).Radius(8).Background(tc.Canvas).
+								BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Gap(8).Children(func() {
+								ui.Icon(c, icons.TablerServer).Width(16).Height(16).TextColor(tc.Accent)
+								ui.Text(c, "Authenticates via local SSH agent ($SSH_AUTH_SOCK) with your unlocked keys.").
 									FontSize(11).TextColor(tc.TextMuted)
 							})
 						}
@@ -529,11 +749,11 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 								for _, qp := range quickPaths {
 									pathStr := qp
 									isCur := (a.SSHRemotePath == pathStr)
-									chip := ui.Row(c.Key("qp-"+pathStr)).Radius(3).Padding(1, 5)
+									chip := ui.Row(c.Key("qp-"+pathStr)).Radius(3).Padding(1, 5).Cursor(ui.CursorPointer)
 									if isCur {
 										chip.Background(tc.Accent)
 									} else {
-										chip.Background(tc.Canvas).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border)
+										chip.Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border)
 									}
 									chip.Children(func() {
 										txt := ui.Text(c, pathStr).FontSize(9)
@@ -561,7 +781,7 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 							ui.Box(c).Grow(1)
 
 							cancelBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 14).
-								BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
+								BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 							cancelBtn.Children(func() {
 								ui.Text(c, "Cancel").FontSize(11).TextColor(tc.TextMuted)
 							})
@@ -575,9 +795,9 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 							ui.Box(c).Width(8)
 
 							connectBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 16).
-								Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+								Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 							connectBtn.Children(func() {
-								label := "Connect & Open"
+								label := "Connect & Open Workspace"
 								if a.SSHIsConnecting {
 									label = "Connecting..."
 								}

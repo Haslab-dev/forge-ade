@@ -1158,6 +1158,9 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 		})
 
 		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+			treeBtn(icons.TablerUpload, func() {
+				a.OpenRemoteFileUploader("")
+			})
 			unplugBtn := ui.Row(c).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 			unplugBtn.Children(func() {
 				ui.Icon(c, icons.TablerUnplug).Width(14).Height(14).TextColor(tc.Error)

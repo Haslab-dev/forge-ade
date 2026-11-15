@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -11,6 +13,69 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 )
+
+func (a *AppUI) resolveExternalTargetDir(targetPath string) string {
+	dir := targetPath
+	if dir == "" && a.Workspace != nil {
+		dir = a.Workspace.RootDir
+	}
+	if dir == "" || strings.HasPrefix(dir, "ssh://") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			dir = home
+		}
+	}
+	return dir
+}
+
+// openExternalTerminal opens the workspace folder in the OS terminal app.
+func (a *AppUI) openExternalTerminal(targetPath string) {
+	dir := a.resolveExternalTargetDir(targetPath)
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command("/usr/bin/open", "-a", "Terminal", dir)
+		if err := cmd.Start(); err != nil {
+			_ = exec.Command("/usr/bin/open", dir).Start()
+		}
+		return
+	}
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("cmd", "/c", "start", "wt", "-d", dir)
+		if err := cmd.Start(); err != nil {
+			_ = exec.Command("cmd", "/c", "start", "cmd", "/K", "cd", "/d", dir).Start()
+		}
+		return
+	}
+	for _, term := range []string{"x-terminal-emulator", "gnome-terminal", "konsole", "alacritty", "kitty", "xterm"} {
+		if path, err := exec.LookPath(term); err == nil {
+			cmd := exec.Command(path)
+			cmd.Dir = dir
+			if err := cmd.Start(); err == nil {
+				return
+			}
+		}
+	}
+}
+
+// openInFinder reveals the workspace folder in macOS Finder.
+func (a *AppUI) openInFinder(targetPath string) {
+	dir := a.resolveExternalTargetDir(targetPath)
+	mygo.Shell.ShowItemInFolder(dir)
+}
+
+// openExternalEditor opens the workspace folder in an external editor like Zed / VS Code.
+func (a *AppUI) openExternalEditor(targetPath string) {
+	dir := a.resolveExternalTargetDir(targetPath)
+	if runtime.GOOS == "darwin" {
+		if err := exec.Command("/usr/bin/open", "-a", "Zed", dir).Start(); err == nil {
+			return
+		}
+		if err := exec.Command("/usr/bin/open", "-a", "Visual Studio Code", dir).Start(); err == nil {
+			return
+		}
+	}
+	a.Mode = ModeEditor
+	a.IsGitClientOpen = false
+}
 
 // gitDirtySummary returns the working tree dirty file count and total +/- line counts.
 func (a *AppUI) gitDirtySummary() (files, additions, deletions int) {
@@ -290,22 +355,39 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			}
 
 			// ZCode Split Quick-Action Pill: [ >_ | ▾ ]
+			target := a.ExternalOpenTarget
+			if target == "" {
+				target = "terminal"
+			}
+			targetIcon := icons.TablerTerminal
+			switch target {
+			case "finder":
+				targetIcon = icons.TablerFolder
+			case "zed":
+				targetIcon = icons.TablerCode
+			default:
+				targetIcon = icons.TablerTerminal
+			}
+
 			splitPill := ui.Row(c.Key("hdr-split-term")).Height(26).Radius(7).Shrink(0).AlignItems(ui.Center).
 				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder)
 			splitPill.Children(func() {
 				termHalf := ui.Row(c.Key("hdr-split-left")).Height(24).Padding(0, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-				termIconColor := tc.ToolbarControlForeground
-				if a.ShowBottomTerminal {
-					termIconColor = tc.Accent
-				}
 				termHalf.Children(func() {
-					ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(termIconColor)
+					ui.Icon(c, targetIcon).Width(13).Height(13).TextColor(tc.ToolbarControlForeground)
 				})
 				if termHalf.Hovered() {
 					termHalf.Background(tc.ToolbarControlHover)
 				}
 				if termHalf.Clicked() {
-					a.ShowBottomTerminal = !a.ShowBottomTerminal
+					switch target {
+					case "finder":
+						a.openInFinder("")
+					case "zed":
+						a.openExternalEditor("")
+					default:
+						a.openExternalTerminal("")
+					}
 				}
 
 				ui.Box(c).Size(1, 14).Background(tc.ToolbarBorder)
@@ -318,62 +400,22 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					dropHalf.Background(tc.ToolbarControlHover)
 				}
 				dropHalf.Menu(func(m *ui.Menu) {
-					if m.Item("Finder").Chosen() {
-						if a.Workspace != nil && a.Workspace.RootDir != "" {
-							mygo.Shell.ShowItemInFolder(a.Workspace.RootDir)
-						} else {
-							a.openWorkspaceFolder()
-						}
+					if m.Item(menuChecked(target == "finder", "Finder")).Chosen() {
+						a.ExternalOpenTarget = "finder"
+						a.openInFinder("")
 					}
-					if m.Item("Editor Mode").Shortcut(ui.Cmd, ui.Key2).Chosen() {
-						a.Mode = ModeEditor
-						a.IsGitClientOpen = false
+					if m.Item(menuChecked(target == "zed", "Zed")).Chosen() {
+						a.ExternalOpenTarget = "zed"
+						a.openExternalEditor("")
 					}
-					if m.Item(menuChecked(a.ShowBottomTerminal, "Terminal")).Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
-						a.ShowBottomTerminal = !a.ShowBottomTerminal
-					}
-					m.Separator()
-					if m.Item("Workflow Board").Chosen() {
-						a.openBoardSurface()
-					}
-					if m.Item("Git Client").Chosen() {
-						a.openGitClientSurface()
-					}
-					if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
-						sessID := ""
-						if a.Terminal != nil {
-							sessID = a.Terminal.ActiveSessionID
-						}
-						a.OpenTerminalSnippetsModal(sessID, "", "")
-					}
-					m.Separator()
-					if m.Item("Toggle Theme").Shortcut(ui.Cmd, ui.KeySlash).Chosen() {
-						a.ThemeMgr.Toggle()
-					}
-					if m.Item("Settings...").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
-						a.openSettings()
+					if m.Item(menuChecked(target == "terminal", "Terminal")).Chosen() {
+						a.ExternalOpenTarget = "terminal"
+						a.openExternalTerminal("")
 					}
 				})
 			})
 
-			// Trailing ZCode utility icons: Export/Copy, Help, Terminal, and Right Sidebar toggle
-			if IconButton(c, tc, icons.TablerUpload, 14).Shrink(0).Clicked() {
-				if a.Agent != nil {
-					var sb strings.Builder
-					for _, msg := range a.Agent.Messages {
-						if msg != nil && msg.Text != "" {
-							sb.WriteString(msg.Role)
-							sb.WriteString(": ")
-							sb.WriteString(msg.Text)
-							sb.WriteString("\n\n")
-						}
-					}
-					if out := strings.TrimSpace(sb.String()); out != "" {
-						mygo.Clipboard.WriteText(out)
-						c.AddToast(ui.Toast{Title: "Thread Copied", Description: title, Type: "success"})
-					}
-				}
-			}
+			// Trailing ZCode utility icons: Help, Terminal (internal bottom drawer), and Right Sidebar toggle
 			if IconButton(c, tc, icons.TablerHelp, 14).Shrink(0).Clicked() {
 				a.openSettings(settings.SettingsTabShortcuts)
 			}

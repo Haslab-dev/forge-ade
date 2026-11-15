@@ -318,6 +318,17 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 								mygo.Shell.ShowItemInFolder(path)
 							}
 						}
+						m.Separator()
+						if m.Item(menuChecked(a.EditorShellInPane, "Open Shell in Split Pane")).Chosen() {
+							a.EditorShellInPane = !a.EditorShellInPane
+						}
+						if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+							sessID := ""
+							if a.Terminal != nil {
+								sessID = a.Terminal.ActiveSessionID
+							}
+							a.OpenTerminalSnippetsModal(sessID, "", "")
+						}
 					})
 				}
 
@@ -348,6 +359,8 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			}
 		}
 
+		actionBtn(icons.TablerTerminal, "Shell", a.EditorShellInPane, func() { a.EditorShellInPane = !a.EditorShellInPane })
+
 		splitLabel := "Split"
 		if len(em.Panes) > 1 {
 			splitLabel = "Single"
@@ -375,100 +388,124 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 	if em == nil {
 		return
 	}
-	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
 
 	ui.Column(c).Fill().Children(func() {
 		a.renderEditorTabBar(c)
 
-		if em.ActivePath != "" && strings.HasSuffix(strings.ToLower(em.ActivePath), ".pdf") {
-			full := em.ActivePath
-			if a.Workspace != nil && !filepath.IsAbs(full) {
-				full = a.Workspace.ResolveFullPath(full)
-			}
-			a.renderPdfViewerPane(c, tc, full, filepath.Base(em.ActivePath))
-			return
-		}
-
-		if em.ActivePath != "" && isDeckOrMotionFile(em.ActivePath) {
-			a.renderDeckPane(c)
-			return
-		}
-
-		if em.IsDiffView {
-			a.renderEditorDiff(c)
-			return
-		}
-
-		// Multi-pane layout (EditorPaneState parity): N weighted panes with
-		// 3px drag handles between them; the active pane keeps breadcrumbs,
-		// minimap and the inline AI bar.
-		em.EnsurePanes()
-		if panes := em.PaneDocs(); panes != nil {
+		if a.EditorShellInPane {
 			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-				for i, panePath := range panes {
-					panePath, paneIdx := panePath, i
-					if i > 0 {
-						handle := ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(4).FillHeight().Cursor(ui.CursorResizeEW)
-						dx, _, held := handle.Dragged()
-						if handle.DoubleClicked() {
-							eq := 1.0 / float32(len(panes))
-							for k := range panes {
-								em.SetPaneWeight(k, eq)
-							}
-						} else if held && dx != 0 {
-							delta := dx / 600.0
-							em.SetPaneWeight(paneIdx-1, em.PaneWeight(paneIdx-1)+delta)
-							em.SetPaneWeight(paneIdx, em.PaneWeight(paneIdx)-delta)
-						}
-						if held || handle.Hovered() {
-							handle.Background(tc.Accent)
-						} else {
-							handle.Background(t.Border)
-						}
-					}
-					ui.Column(c).Grow(em.PaneWeight(paneIdx)).FillHeight().Children(func() {
-						paneDoc := em.GetDoc(panePath)
-						if paneDoc == nil {
-							ui.Column(c).Grow(1).Center().Children(func() {
-								ui.Text(c, "No file").FontSize(12).TextColor(tc.TextMuted)
-							})
-							return
-						}
-						paneDoc.Editor.SoftWrap = em.SoftWrap
-						em.ApplyTheme(paneDoc.Editor)
-						closedPane := false
-						paneHdr := ui.Row(c.Key(fmt.Sprintf("pane-hdr-%d", paneIdx))).Height(28).Padding(0, 12).Gap(6).AlignItems(ui.Center).
-							BorderWidth(0, 0, 1, 0).BorderColor(t.Border)
-						paneHdr.Children(func() {
-							if panePath == em.ActivePath {
-								ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
-							}
-							ui.Text(c, paneDoc.RelativePath).FontSize(12).FontWeight(500).Grow(1).SingleLine()
-							if IconButton(c, tc, icons.TablerX, 11).Clicked() {
-								closedPane = true
-								em.ClosePane(paneIdx)
-							}
-						})
-						if !closedPane && paneHdr.Clicked() {
-							em.ActivePane = paneIdx
-							em.ActivePath = panePath
-						}
-						if panePath == em.ActivePath {
-							a.renderEditorSingle(c)
-						} else {
-							ui.Column(c).Grow(1).FillWidth().Children(func() {
-								mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
-							})
-						}
-					})
-				}
+				ui.Column(c).Grow(1).FillHeight().Children(func() {
+					a.renderEditorContent(c)
+				})
+
+				LeftResizeHandle(c, &a.EditorShellPaneWidth, 240, 900, 380)
+
+				a.renderEditorShellPane(c, tc)
 			})
 			return
 		}
 
-		a.renderEditorSingle(c)
+		a.renderEditorContent(c)
 	})
+}
+
+// renderEditorContent renders diff, PDF, deck, multi-pane or single editor buffer.
+func (a *AppUI) renderEditorContent(c *ui.Context) {
+	em := a.Editor
+	if em == nil {
+		return
+	}
+	t := c.Theme()
+	tc := a.ThemeMgr.Colors()
+
+	if em.ActivePath != "" && strings.HasSuffix(strings.ToLower(em.ActivePath), ".pdf") {
+		full := em.ActivePath
+		if a.Workspace != nil && !filepath.IsAbs(full) {
+			full = a.Workspace.ResolveFullPath(full)
+		}
+		a.renderPdfViewerPane(c, tc, full, filepath.Base(em.ActivePath))
+		return
+	}
+
+	if em.ActivePath != "" && isDeckOrMotionFile(em.ActivePath) {
+		a.renderDeckPane(c)
+		return
+	}
+
+	if em.IsDiffView {
+		a.renderEditorDiff(c)
+		return
+	}
+
+	// Multi-pane layout (EditorPaneState parity): N weighted panes with
+	// 3px drag handles between them; the active pane keeps breadcrumbs,
+	// minimap and the inline AI bar.
+	em.EnsurePanes()
+	if panes := em.PaneDocs(); panes != nil {
+		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+			for i, panePath := range panes {
+				panePath, paneIdx := panePath, i
+				if i > 0 {
+					handle := ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(4).FillHeight().Cursor(ui.CursorResizeEW)
+					dx, _, held := handle.Dragged()
+					if handle.DoubleClicked() {
+						eq := 1.0 / float32(len(panes))
+						for k := range panes {
+							em.SetPaneWeight(k, eq)
+						}
+					} else if held && dx != 0 {
+						delta := dx / 600.0
+						em.SetPaneWeight(paneIdx-1, em.PaneWeight(paneIdx-1)+delta)
+						em.SetPaneWeight(paneIdx, em.PaneWeight(paneIdx)-delta)
+					}
+					if held || handle.Hovered() {
+						handle.Background(tc.Accent)
+					} else {
+						handle.Background(t.Border)
+					}
+				}
+				ui.Column(c).Grow(em.PaneWeight(paneIdx)).FillHeight().Children(func() {
+					paneDoc := em.GetDoc(panePath)
+					if paneDoc == nil {
+						ui.Column(c).Grow(1).Center().Children(func() {
+							ui.Text(c, "No file").FontSize(12).TextColor(tc.TextMuted)
+						})
+						return
+					}
+					paneDoc.Editor.SoftWrap = em.SoftWrap
+					em.ApplyTheme(paneDoc.Editor)
+					closedPane := false
+					paneHdr := ui.Row(c.Key(fmt.Sprintf("pane-hdr-%d", paneIdx))).Height(28).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+						BorderWidth(0, 0, 1, 0).BorderColor(t.Border)
+					paneHdr.Children(func() {
+						if panePath == em.ActivePath {
+							ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+						}
+						ui.Text(c, paneDoc.RelativePath).FontSize(12).FontWeight(500).Grow(1).SingleLine()
+						if IconButton(c, tc, icons.TablerX, 11).Clicked() {
+							closedPane = true
+							em.ClosePane(paneIdx)
+						}
+					})
+					if !closedPane && paneHdr.Clicked() {
+						em.ActivePane = paneIdx
+						em.ActivePath = panePath
+					}
+					if panePath == em.ActivePath {
+						a.renderEditorSingle(c)
+					} else {
+						ui.Column(c).Grow(1).FillWidth().Children(func() {
+							mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
+						})
+					}
+				})
+			}
+		})
+		return
+	}
+
+	a.renderEditorSingle(c)
 }
 
 func (a *AppUI) renderEditorSingle(c *ui.Context) {
@@ -476,7 +513,6 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 	if em == nil {
 		return
 	}
-	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
 	doc := em.ActiveDoc()
 	if doc == nil {
@@ -552,6 +588,20 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 						a.openRemoteTerminal()
 					}
 
+					uploadBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+						AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
+					uploadBtn.Children(func() {
+						ui.Icon(c, icons.TablerUpload).Width(13).Height(13).TextColor(tc.Accent)
+						ui.Text(c, "Upload Files (SFTP)").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					})
+					if uploadBtn.Hovered() {
+						uploadBtn.Background(tc.Text.Alpha(0.05))
+					}
+					if uploadBtn.Clicked() {
+						a.OpenRemoteFileUploader("")
+					}
+
 					quickBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
 						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
 						AlignItems(ui.Center).Justify(ui.Center).Gap(6)
@@ -566,9 +616,55 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 			})
 			return
 		}
-		ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
-			ui.Text(c, "No file open").FontSize(17).FontWeight(600).TextColor(t.TextMuted)
-			ui.Text(c, "Select a file from the workspace sidebar or press ⌘P to open.").FontSize(13).TextColor(t.TextMuted)
+		ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
+			ui.Icon(c, icons.TablerFileCode).Width(40).Height(40).TextColor(tc.IconMuted.Alpha(0.6))
+			ui.Text(c, "No file open").FontSize(16).FontWeight(600).TextColor(tc.Text)
+			ui.Text(c, "Select a file from the workspace sidebar or press ⌘P to open.").FontSize(12).TextColor(tc.TextMuted)
+			ui.Row(c).Gap(8).Margin(6, 0, 0, 0).Children(func() {
+				openFileBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+					Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
+				openFileBtn.Children(func() {
+					ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.Canvas)
+					ui.Text(c, "Open File (⌘P)").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+				})
+				if openFileBtn.Clicked() {
+					if a.Palette != nil {
+						a.Palette.Toggle()
+					}
+				}
+
+				shellBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+					Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+					AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
+				shellBtn.Children(func() {
+					ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
+					ui.Text(c, "Open Shell in Pane").FontSize(11).FontWeight(500).TextColor(tc.Text)
+				})
+				if shellBtn.Hovered() {
+					shellBtn.Background(tc.Text.Alpha(0.05))
+				}
+				if shellBtn.Clicked() {
+					a.EditorShellInPane = true
+				}
+
+				snipBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+					Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+					AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
+				snipBtn.Children(func() {
+					ui.Icon(c, icons.TablerBook).Width(13).Height(13).TextColor(tc.IconMuted)
+					ui.Text(c, "Snippets (⌥S)").FontSize(11).FontWeight(500).TextColor(tc.Text)
+				})
+				if snipBtn.Hovered() {
+					snipBtn.Background(tc.Text.Alpha(0.05))
+				}
+				if snipBtn.Clicked() {
+					sessID := ""
+					if a.Terminal != nil {
+						sessID = a.Terminal.ActiveSessionID
+					}
+					a.OpenTerminalSnippetsModal(sessID, "", "")
+				}
+			})
 		})
 		return
 	}
@@ -921,4 +1017,91 @@ func (a *AppUI) renderMinimap(c *ui.Context, tc theme.ThemeColors, doc *editor.O
 // editorPosAtLine builds a mygoeditor Pos for a 0-based line.
 func editorPosAtLine(doc *editor.OpenDocument, line int) mygoeditor.Pos {
 	return mygoeditor.Pos{Line: line, Col: 0}
+}
+
+// renderEditorShellPane renders an interactive side terminal pane inside Editor mode.
+func (a *AppUI) renderEditorShellPane(c *ui.Context, tc theme.ThemeColors) {
+	width := a.EditorShellPaneWidth
+	if width < 240 {
+		width = 380
+		a.EditorShellPaneWidth = 380
+	}
+
+	ui.Column(c.Key("editor-shell-pane")).Width(width).FillHeight().
+		Background(tc.Canvas).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
+		// Shell pane header
+		hdr := ui.Row(c.Key("editor-shell-pane-hdr")).Height(28).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border)
+		hdr.ContextMenu(func(m *ui.Menu) {
+			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+				sessID := ""
+				if a.Terminal != nil {
+					sessID = a.Terminal.ActiveSessionID
+				}
+				a.OpenTerminalSnippetsModal(sessID, "", "")
+			}
+			m.Separator()
+			if m.Item("New Tab").Chosen() && a.Terminal != nil {
+				_ = a.Terminal.NewTab("")
+			}
+			if m.Item("Clear Terminal").Chosen() && a.Terminal != nil {
+				a.Terminal.SendInput("\x0c")
+			}
+			if m.Item("Restart Shell").Chosen() && a.Terminal != nil {
+				_ = a.Terminal.Restart()
+			}
+			m.Separator()
+			if m.Item("Close Shell Pane").Chosen() {
+				a.EditorShellInPane = false
+			}
+		})
+		hdr.Children(func() {
+			ui.Icon(c, icons.TablerTerminal).Width(12).Height(12).TextColor(tc.Accent)
+			ui.Text(c, "Shell").FontSize(11).FontWeight(600).TextColor(tc.Text)
+
+			if a.Terminal != nil {
+				a.renderTerminalTabsStrip(c, tc, a.Terminal, "pane-shell")
+			}
+
+			ui.Box(c).Grow(1)
+
+			if IconButton(c, tc, icons.TablerPlus, 11).Clicked() && a.Terminal != nil {
+				_ = a.Terminal.NewTab("")
+			}
+			snipBtn := ui.Row(c.Key("pane-shell-snip")).Height(20).Radius(4).Padding(0, 5).Gap(3).AlignItems(ui.Center).
+				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+			snipBtn.Children(func() {
+				ui.Icon(c, icons.TablerBook).Width(9).Height(9).TextColor(tc.IconMuted)
+				ui.Text(c, "Snippets").FontSize(10).TextColor(tc.Text)
+			})
+			if snipBtn.Hovered() {
+				snipBtn.Background(tc.Text.Alpha(0.08))
+			}
+			if snipBtn.Clicked() {
+				sessID := ""
+				if a.Terminal != nil {
+					sessID = a.Terminal.ActiveSessionID
+				}
+				a.OpenTerminalSnippetsModal(sessID, "", "")
+			}
+			if IconButton(c, tc, icons.TablerEraser, 11).Clicked() && a.Terminal != nil {
+				a.Terminal.SendInput("\x0c")
+			}
+			if IconButton(c, tc, icons.TablerRefresh, 11).Clicked() && a.Terminal != nil {
+				_ = a.Terminal.Restart()
+			}
+			if IconButton(c, tc, icons.TablerX, 11).Clicked() {
+				a.EditorShellInPane = false
+			}
+		})
+
+		// Shell viewport
+		if a.Terminal != nil {
+			a.renderTerminal(c, a.Terminal)
+		} else {
+			ui.Column(c).Grow(1).Center().Children(func() {
+				ui.Text(c, "Terminal not available").FontSize(12).TextColor(tc.TextMuted)
+			})
+		}
+	})
 }

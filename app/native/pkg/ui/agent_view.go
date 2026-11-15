@@ -1553,6 +1553,31 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(termColor)
 				ui.Text(c, fmt.Sprintf("%d", termCount)).FontSize(12).FontWeight(500).TextColor(termColor)
 			})
+			termChip.ContextMenu(func(m *ui.Menu) {
+				if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+					sessID := ""
+					if a.Terminal != nil {
+						sessID = a.Terminal.ActiveSessionID
+					}
+					a.OpenTerminalSnippetsModal(sessID, "", "")
+				}
+				m.Separator()
+				if m.Item(menuChecked(a.ShowBottomTerminal, "Toggle Terminal Dock")).Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
+					a.ShowBottomTerminal = !a.ShowBottomTerminal
+				}
+				if a.Terminal != nil {
+					if m.Item("New Terminal Tab").Chosen() {
+						_ = a.Terminal.NewTab("")
+						a.ShowBottomTerminal = true
+					}
+					if m.Item("Clear Terminal").Chosen() {
+						a.Terminal.SendInput("\x0c")
+					}
+					if m.Item("Restart Shell").Chosen() {
+						_ = a.Terminal.Restart()
+					}
+				}
+			})
 			if termChip.Clicked() {
 				a.ShowBottomTerminal = !a.ShowBottomTerminal
 			}
