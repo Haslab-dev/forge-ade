@@ -323,6 +323,14 @@ type AppUI struct {
 	PeekSymbol    string
 	PeekResults   []editor.PeekMatch
 
+	// JSON Payload Inspector modal
+	ShowJSONModal    bool
+	JSONModalTitle   string
+	JSONModalContent string
+
+	// Plans & Progress Modal
+	ShowPlanModal bool
+
 	// Deck & Presentation tab
 	DeckActiveSlide  int
 	DeckSlideCount   int

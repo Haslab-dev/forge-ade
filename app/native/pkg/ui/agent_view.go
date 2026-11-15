@@ -118,13 +118,7 @@ func (a *AppUI) openFileInEditor(path string) {
 }
 
 func (a *AppUI) showFloatingInspector(c *ui.Context) bool {
-	if a.Mode != ModeAgent || a.AgentViewMode != AgentViewChat || a.InspectorCollapsed || a.ShowRightDrawer || a.chatColumnWidth(c) < 860 || a.Agent == nil {
-		return false
-	}
-	if a.Agent.TaskManager != nil && len(a.Agent.TaskManager.GetTasks()) > 0 {
-		return true
-	}
-	return len(a.Agent.Subagents(a.Agent.ActiveSessionID)) > 0
+	return false
 }
 
 // renderAgentChat renders the active conversation view, message bubbles, task checklist, and prompt composer.
@@ -2198,8 +2192,8 @@ func (a *AppUI) terminalSessionCount() int {
 	return count
 }
 
-// renderTaskTracker draws the ZCode floating Right Inspector Card (Plans,
-// Progress, Terminals, Agents), or a compact top-right pill when collapsed.
+// renderTaskTracker draws a compact top-right pill when active work is running,
+// clicking it opens the Plan & Progress modal. If no work is running, it hides completely.
 func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	if a.Agent == nil {
 		return
@@ -2221,54 +2215,62 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	}
 	allDone := completed == total && total > 0
 
-	// In narrow viewports or when the right drawer is open, keep only a compact
-	// progress pill when tasks exist so it doesn't collide with the drawer.
-	if !a.showFloatingInspector(c) || a.InspectorCollapsed {
-		if len(tasks) == 0 {
-			return
+	subs := a.Agent.Subagents(a.Agent.ActiveSessionID)
+	runningSubs := 0
+	for _, s := range subs {
+		st := strings.ToLower(fmt.Sprintf("%v", s.State))
+		if st == "running" || st == "working" || st == "thinking" || st == "executing" {
+			runningSubs++
 		}
-		pill := ui.Row(c.Key("inspector-pill")).Absolute().Top(12).Right(16).Height(30).Radius(999).
-			Padding(0, 12).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).
-			Background(tc.SurfaceRaised.Alpha(0.95)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
-			Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.18))
-		pill.Children(func() {
-			if current != nil {
-				ui.Spinner(c).Size(11, 11).Label("working")
-			} else if allDone {
-				ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
-					Background(tc.Success.Alpha(0.15)).Children(func() {
-					ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
-				})
-			} else {
-				ui.Icon(c, icons.TablerChecklist).Width(12).Height(12).TextColor(tc.IconMuted)
-			}
-			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600)
-			if current != nil {
-				label := current.Title
-				if current.ActiveForm != "" {
-					label = current.ActiveForm
-				}
-				ui.Text(c, label).FontSize(11).TextColor(tc.TextMuted).MaxWidth(180).SingleLine()
-			}
-			ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
-		})
-		if pill.Clicked() {
-			if a.ShowRightDrawer {
-				a.ShowRightDrawer = false
-			}
-			a.InspectorCollapsed = false
-		}
+	}
+
+	activeSess := a.Agent.ActiveSession()
+	isSessionRunning := a.Agent.IsStreaming || (activeSess != nil && (activeSess.Status == "running" || activeSess.Status == "streaming"))
+
+	// If there is no work to do, hide it completely!
+	hasWork := (current != nil) || (runningSubs > 0) || isSessionRunning
+	if !hasWork {
 		return
 	}
 
-	// ZCode Floating Right Inspector Card
-	card := ui.Column(c.Key("zcode-inspector-card")).Absolute().Top(14).Right(16).Width(296).Radius(12).
-		Padding(14).Gap(10).
-		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
-		Shadow(0, 8, 24, -6, ui.RGBA(0, 0, 0, 0.28))
-	card.Children(func() {
-		a.renderInspectorBody(c, tc, true)
+	// Compact floating top-right pill
+	pill := ui.Row(c.Key("inspector-pill")).Absolute().Top(12).Right(16).Height(30).Radius(999).
+		Padding(0, 12).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Background(tc.SurfaceRaised.Alpha(0.95)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
+		Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.18))
+	pill.Children(func() {
+		if current != nil || isSessionRunning {
+			ui.Spinner(c).Size(11, 11).Label("working")
+		} else if allDone {
+			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Success.Alpha(0.15)).Children(func() {
+				ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
+			})
+		} else {
+			ui.Icon(c, icons.TablerChecklist).Width(12).Height(12).TextColor(tc.IconMuted)
+		}
+		if total > 0 {
+			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600)
+		}
+		label := ""
+		if current != nil {
+			label = current.Title
+			if current.ActiveForm != "" {
+				label = current.ActiveForm
+			}
+		} else if runningSubs > 0 {
+			label = fmt.Sprintf("%d subagent running", runningSubs)
+		} else if isSessionRunning {
+			label = "Working…"
+		}
+		if label != "" {
+			ui.Text(c, label).FontSize(11).TextColor(tc.TextMuted).MaxWidth(180).SingleLine()
+		}
+		ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
 	})
+	if pill.Clicked() {
+		a.ShowPlanModal = true
+	}
 }
 
 // renderInspectorBody renders the Plans, Progress, Terminals, and Agents sections

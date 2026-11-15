@@ -74,6 +74,12 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowPeekModal {
 		a.renderPeekModal(c)
 	}
+	if a.ShowJSONModal {
+		a.renderJSONModal(c)
+	}
+	if a.ShowPlanModal {
+		a.renderPlanModal(c)
+	}
 	a.renderQuestionModal(c)
 	a.renderProjectSearchModal(c)
 }

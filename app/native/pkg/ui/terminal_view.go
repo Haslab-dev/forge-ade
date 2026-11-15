@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/egoist/mygo"
 	termplugin "github.com/egoist/mygo/plugins/terminal"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -213,7 +214,34 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 
 	term := ts.Term()
 	if term != nil {
-		termplugin.View(c, term).Fill().AutoFocus()
+		termplugin.View(c, term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
+			if m.Item("Copy").Shortcut(ui.Cmd, ui.KeyC).Chosen() {
+				// Ghostty copies automatically on select or via keyboard shortcut
+			}
+			if m.Item("Paste").Shortcut(ui.Cmd, ui.KeyV).Chosen() {
+				if text := mygo.Clipboard.ReadText(); text != "" {
+					term.Paste(text)
+				}
+			}
+			if m.Item("Clear Terminal").Shortcut(ui.Cmd, ui.KeyK).Chosen() {
+				ts.SendInput("\x0c")
+			}
+			m.Separator()
+			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+				sessID := ts.ActiveSessionID
+				a.OpenTerminalSnippetsModal(sessID, "", "")
+			}
+			if m.Item("Ask Agent Diagnostic").Chosen() {
+				a.askAgentFromTerminal()
+			}
+			m.Separator()
+			if m.Item("New Tab").Shortcut(ui.Cmd, ui.KeyT).Chosen() {
+				_ = ts.NewTab("")
+			}
+			if m.Item("Restart Shell").Chosen() {
+				_ = ts.Restart()
+			}
+		})
 	} else {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Text(c, "Terminal not available").TextColor(t.TextMuted)
