@@ -70,6 +70,56 @@ func writeCheckpointsMeta(repoPath string, records []CheckpointRecord) error {
 	return os.WriteFile(checkpointsMetaPath(repoPath), data, 0644)
 }
 
+// maxCheckpoints caps the checkpoints.json index. Older entries are pruned
+// after each snapshot so the index cannot grow without bound.
+const maxCheckpoints = 50
+
+// maxCheckpointFileEntries caps how many file paths a file-level snapshot
+// records in its metadata (the copies themselves are unaffected).
+const maxCheckpointFileEntries = 10000
+
+// snapshotExcludedDirs are never copied into file-level snapshots: VCS
+// internals, dependency caches, and the .forge dir itself (snapshots live
+// under it, so copying it would recurse into previous snapshots).
+var snapshotExcludedDirs = map[string]bool{
+	".git":         true,
+	".forge":       true,
+	"node_modules": true,
+	".cache":       true,
+}
+
+// snapshotWorkspace copies the workspace files (minus excluded dirs) into
+// dest as a plain file-level snapshot. Returns the relative paths recorded.
+func snapshotWorkspace(repoPath string, dest string) ([]string, error) {
+	var files []string
+	err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // unreadable entries are skipped, not fatal
+		}
+		rel, relErr := filepath.Rel(repoPath, path)
+		if relErr != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if rel == "." {
+				return nil
+			}
+			if snapshotExcludedDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dest, rel), info.Mode())
+		}
+		if err := copyFile(path, filepath.Join(dest, rel)); err != nil {
+			return nil // skip uncopyable files (permissions, races)
+		}
+		if len(files) < maxCheckpointFileEntries {
+			files = append(files, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return files, err
+}
+
 // CreateCheckpoint snapshots the current state of repoPath for a given session and turn.
 // It uses git stash create / update-ref if git is available, with file-level fallback.
 func CreateCheckpoint(ctx context.Context, repoPath string, sessionID string, turnID string, description string) (*CheckpointRecord, error) {
@@ -126,17 +176,28 @@ func CreateCheckpoint(ctx context.Context, repoPath string, sessionID string, tu
 		}
 	}
 
-	// If not a git repo or git commit creation didn't yield a hash, create snapshot directory
+	// If not a git repo or git commit creation didn't yield a hash, capture a
+	// real file-level snapshot of the workspace (skipping .git, node_modules
+	// and other junk dirs) so restore can copy the files back.
 	if rec.CommitHash == "" {
 		backupDir := filepath.Join(repoPath, ".forge", "snapshots", sessionID, turnID)
-		_ = os.MkdirAll(backupDir, 0755)
+		files, snapErr := snapshotWorkspace(repoPath, backupDir)
+		if snapErr != nil {
+			return nil, fmt.Errorf("file snapshot failed: %w", snapErr)
+		}
 		rec.CommitHash = "local_snapshot"
+		rec.Files = files
 	}
 
-	// Save to metadata index
+	// Save to metadata index, pruned to the most recent entries.
 	records, _ := readCheckpointsMeta(repoPath)
 	records = append(records, rec)
-	_ = writeCheckpointsMeta(repoPath, records)
+	if len(records) > maxCheckpoints {
+		records = records[len(records)-maxCheckpoints:]
+	}
+	if err := writeCheckpointsMeta(repoPath, records); err != nil {
+		return nil, fmt.Errorf("write checkpoints index: %w", err)
+	}
 
 	return &rec, nil
 }
@@ -164,7 +225,13 @@ func RestoreCheckpoint(ctx context.Context, repoPath string, sessionID string, t
 	}
 
 	if target.CommitHash != "" && target.CommitHash != "local_snapshot" && IsGitRepo(ctx, repoPath) {
-		// Restore working tree files from the saved commit/stash hash
+		// Restore tracked working-tree files from the saved commit/stash hash.
+		//
+		// Known limitation: `git checkout <hash> -- .` only rewrites files that
+		// existed in that tree — files created AFTER the checkpoint are left in
+		// place. Removing them was considered and rejected: a snapshot is
+		// scoped to one session's turn, and deleting untracked files that are
+		// not part of the snapshot would risk destroying unrelated user data.
 		out, err := gitCmd(ctx, repoPath, "checkout", target.CommitHash, "--", ".").CombinedOutput()
 		if err != nil {
 			// Fallback: try restore command
@@ -176,7 +243,7 @@ func RestoreCheckpoint(ctx context.Context, repoPath string, sessionID string, t
 		return nil
 	}
 
-	// Local snapshot fallback
+	// File-level snapshot: copy the recorded files back over the workspace.
 	backupDir := filepath.Join(repoPath, ".forge", "snapshots", sessionID, turnID)
 	if info, err := os.Stat(backupDir); err == nil && info.IsDir() {
 		return copyDir(backupDir, repoPath)

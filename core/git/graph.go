@@ -183,17 +183,20 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 		totalCount, _ = strconv.Atoi(strings.TrimSpace(string(countOut)))
 	}
 
-	// 2. Fetch paginated graph commits using format string
-	// Format: %H|%P|%an|%ae|%at|%s|%d
+	// 2. Fetch paginated graph commits using format string. NUL separators
+	// (git %x00) instead of "|": commit subjects may contain pipes, which
+	// previously truncated the message. Format: marker, hash, parents,
+	// author, email, timestamp, decorations, subject (subject LAST so a
+	// pathological NUL inside it cannot displace the decorations).
 	skipArg := fmt.Sprintf("--skip=%d", offset)
 	maxArg := fmt.Sprintf("-n%d", limit)
-	formatArg := "--format=format:GITCOMMIT|%H|%P|%an|%ae|%at|%s|%d"
+	formatArg := "--format=format:GITCOMMIT%x00%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s"
 
 	cmd := gitCmd(ctx, repoPath, "log", "--graph", "--oneline", skipArg, maxArg, formatArg, revRange)
 
 	outBytes, err := cmd.CombinedOutput()
 	if err != nil {
-		return &CommitGraphResult{Commits: []CommitNode{}, TotalCount: 0, HasMore: false}, nil
+		return nil, fmt.Errorf("git log %s: %s", revRange, strings.TrimSpace(string(outBytes)))
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(outBytes))
@@ -202,60 +205,20 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 	pushedSet, stashSet := commitStatusSets(ctx, repoPath, offset+limit+250)
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		idx := strings.Index(line, "GITCOMMIT|")
-		if idx == -1 {
+		node, ok := parseGraphLine(scanner.Text())
+		if !ok {
 			continue
-		}
-
-		graphPrefix := line[:idx]
-		metaStr := line[idx+len("GITCOMMIT|"):]
-		parts := strings.Split(metaStr, "|")
-		if len(parts) < 6 {
-			continue
-		}
-
-		hash := parts[0]
-		parentStr := parts[1]
-		authorName := parts[2]
-		authorEmail := parts[3]
-		tsSec, _ := strconv.ParseInt(parts[4], 10, 64)
-		msg := parts[5]
-
-		var decorations string
-		if len(parts) > 6 {
-			decorations = parts[6]
-		}
-
-		var parents []string
-		if strings.TrimSpace(parentStr) != "" {
-			parents = strings.Split(parentStr, " ")
-		}
-
-		shortHash := hash
-		if len(hash) >= 7 {
-			shortHash = hash[:7]
 		}
 
 		status := "local"
-		if stashSet[hash] {
+		if stashSet[node.Hash] {
 			status = "stash"
-		} else if pushedSet[hash] {
+		} else if pushedSet[node.Hash] {
 			status = "pushed"
 		}
+		node.Status = status
 
-		commits = append(commits, CommitNode{
-			Hash:        hash,
-			ShortHash:   shortHash,
-			Parents:     parents,
-			AuthorName:  authorName,
-			AuthorEmail: authorEmail,
-			Timestamp:   time.Unix(tsSec, 0),
-			Message:     msg,
-			GraphPrefix: graphPrefix,
-			Decorations: decorations,
-			Status:      status,
-		})
+		commits = append(commits, node)
 	}
 
 	hasMore := offset+len(commits) < totalCount
@@ -267,6 +230,54 @@ func (e *Engine) GetCommitGraph(ctx context.Context, repoPath string, offset int
 		Offset:     offset,
 		Limit:      limit,
 	}, nil
+}
+
+// graphLineMarker starts every log record produced by GetCommitGraph's
+// --format; anything before it on the line is --graph artwork.
+const graphLineMarker = "GITCOMMIT\x00"
+
+// parseGraphLine parses one `git log` line into a CommitNode. Splitting on
+// NUL bytes keeps commit subjects intact even when they contain "|".
+func parseGraphLine(line string) (CommitNode, bool) {
+	idx := strings.Index(line, graphLineMarker)
+	if idx == -1 {
+		return CommitNode{}, false
+	}
+
+	parts := strings.Split(line[idx+len(graphLineMarker):], "\x00")
+	// hash, parents, author, email, timestamp, decorations, subject(…)
+	if len(parts) < 7 {
+		return CommitNode{}, false
+	}
+
+	hash := parts[0]
+	parentStr := parts[1]
+	tsSec, err := strconv.ParseInt(parts[4], 10, 64)
+	if err != nil {
+		return CommitNode{}, false
+	}
+
+	var parents []string
+	if strings.TrimSpace(parentStr) != "" {
+		parents = strings.Split(parentStr, " ")
+	}
+
+	shortHash := hash
+	if len(hash) >= 7 {
+		shortHash = hash[:7]
+	}
+
+	return CommitNode{
+		Hash:        hash,
+		ShortHash:   shortHash,
+		Parents:     parents,
+		AuthorName:  parts[2],
+		AuthorEmail: parts[3],
+		Timestamp:   time.Unix(tsSec, 0),
+		Decorations: parts[5],
+		Message:     strings.Join(parts[6:], "\x00"),
+		GraphPrefix: line[:idx],
+	}, true
 }
 
 // commitStatusSets builds sets of commit hashes that are pushed (reachable from

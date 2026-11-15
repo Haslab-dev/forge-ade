@@ -31,6 +31,80 @@ type GitStatusResult struct {
 	Conflicts []FileStatus `json:"conflicts"`
 }
 
+// porcelainEntry is one parsed `git status --porcelain=v2` record.
+type porcelainEntry struct {
+	Kind     string // "1" ordinary, "2" renamed/copied, "u" unmerged, "?" untracked
+	XY       string
+	Path     string
+	OrigPath string // rename source, present only for "2" entries
+}
+
+// parsePorcelainV2Line parses one record of `git status --porcelain=v2`
+// output. Paths in v2 are emitted verbatim (never quoted for spaces) and may
+// contain spaces, so the path is NOT the next strings.Fields token — it is
+// everything after the fixed prefix. Each format has an exact field count:
+//
+//	1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>                       (9 fields)
+//	2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <Xscore> <path>\t<origPath>  (10 fields)
+//	u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>            (11 fields)
+//	? <path>
+//	! <path> (ignored entries)
+//
+// The parser returns ok=false for malformed lines, `#`/comment lines, and
+// ignored (`!`) records, which never appear in status views.
+func parsePorcelainV2Line(line string) (porcelainEntry, bool) {
+	if len(line) < 2 {
+		return porcelainEntry{}, false
+	}
+	switch line[0] {
+	case '?':
+		if line[1] != ' ' {
+			return porcelainEntry{}, false
+		}
+		return porcelainEntry{Kind: "?", Path: unquoteGitPath(line[2:])}, line[2:] != ""
+	case '!':
+		return porcelainEntry{}, false
+	case '1':
+		fields := strings.SplitN(line, " ", 9)
+		if len(fields) != 9 {
+			return porcelainEntry{}, false
+		}
+		return porcelainEntry{Kind: "1", XY: fields[1], Path: unquoteGitPath(fields[8])}, true
+	case '2':
+		fields := strings.SplitN(line, " ", 10)
+		if len(fields) != 10 {
+			return porcelainEntry{}, false
+		}
+		e := porcelainEntry{Kind: "2", XY: fields[1]}
+		// Renamed/copied entries carry "<path>\t<origPath>" in the last field.
+		p, orig, hasOrig := strings.Cut(fields[9], "\t")
+		e.Path = unquoteGitPath(p)
+		if hasOrig {
+			e.OrigPath = unquoteGitPath(orig)
+		}
+		return e, true
+	case 'u':
+		fields := strings.SplitN(line, " ", 11)
+		if len(fields) != 11 {
+			return porcelainEntry{}, false
+		}
+		return porcelainEntry{Kind: "u", XY: fields[1], Path: unquoteGitPath(fields[10])}, true
+	}
+	return porcelainEntry{}, false
+}
+
+// unquoteGitPath removes the C-style quoting git wraps around paths that
+// contain control characters (with core.quotepath=false, unicode names stay
+// verbatim; only exotic bytes get quoted).
+func unquoteGitPath(p string) string {
+	if len(p) >= 2 && p[0] == '"' && p[len(p)-1] == '"' {
+		if unq, err := strconv.Unquote(p); err == nil {
+			return unq
+		}
+	}
+	return p
+}
+
 // GetStatus returns lightweight git status using porcelain v2 format.
 // Results are cached per repo for statusTTL; concurrent callers within that
 // window share one cached result instead of each spawning `git status`
@@ -157,8 +231,10 @@ func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusR
 	}
 	// -uall lists every untracked FILE individually (VS Code behavior) instead
 	// of collapsing an untracked directory into a single "? dir/" entry whose
-	// filename is empty and can't be staged/opened.
-	cmd := gitCmd(ctx, repoPath, "status", "--porcelain=v2", "-b", "-uall")
+	// filename is empty and can't be staged/opened. core.quotepath=false keeps
+	// unicode filenames verbatim (otherwise git C-quotes them); the parser
+	// still unquotes for the control-character case.
+	cmd := gitCmd(ctx, repoPath, "-c", "core.quotepath=false", "status", "--porcelain=v2", "-b", "-uall")
 
 	outBytes, err := cmd.CombinedOutput()
 	// If index.lock contention happened (e.g. during branch checkout), retry once
@@ -168,19 +244,15 @@ func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusR
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		cmdRetry := gitCmd(ctx, repoPath, "status", "--porcelain=v2", "-b", "-uall")
+		cmdRetry := gitCmd(ctx, repoPath, "-c", "core.quotepath=false", "status", "--porcelain=v2", "-b", "-uall")
 		outBytes, err = cmdRetry.CombinedOutput()
 	}
 
 	if err != nil {
-		branch := e.resolveBranch(ctx, repoPath)
-		return &GitStatusResult{
-			Branch:    branch,
-			Staged:    []FileStatus{},
-			Unstaged:  []FileStatus{},
-			Untracked: []FileStatus{},
-			Conflicts: []FileStatus{},
-		}, nil
+		// Surface the real failure instead of fabricating a clean status:
+		// callers must be able to tell "no changes" apart from "git is broken"
+		// (missing repo, corrupt index, git not installed, ...).
+		return nil, fmt.Errorf("git status %s: %s", repoPath, strings.TrimSpace(string(outBytes)))
 	}
 
 	res := &GitStatusResult{
@@ -199,87 +271,55 @@ func (e *Engine) runGitStatus(ctx context.Context, repoPath string) (*GitStatusR
 			continue
 		}
 
-		parts := strings.Fields(line)
-		if len(parts) == 0 {
+		entry, ok := parsePorcelainV2Line(line)
+		if !ok {
 			continue
 		}
 
-		if parts[0] == "?" {
-			// Untracked file: ? path
-			if len(parts) >= 2 {
-				path := parts[1]
-				res.Untracked = append(res.Untracked, FileStatus{
-					Path:    path,
-					Dir:     dirOf(path),
-					Staging: "untracked",
-					Status:  "?",
+		switch entry.Kind {
+		case "1", "2":
+			// Ordinary (1) or renamed/copied (2) changed entry. XY is two
+			// chars: X = index (staged) state, Y = worktree (unstaged) state.
+			if len(entry.XY) != 2 {
+				continue
+			}
+			stagedChar := string(entry.XY[0])
+			unstagedChar := string(entry.XY[1])
+
+			if stagedChar != "." {
+				res.Staged = append(res.Staged, FileStatus{
+					Path:    entry.Path,
+					Dir:     dirOf(entry.Path),
+					Staging: "staged",
+					Status:  stagedChar,
 				})
 			}
-			continue
-		}
+			if unstagedChar != "." {
+				res.Unstaged = append(res.Unstaged, FileStatus{
+					Path:    entry.Path,
+					Dir:     dirOf(entry.Path),
+					Staging: "unstaged",
+					Status:  unstagedChar,
+				})
+			}
 
-		if parts[0] == "u" && len(parts) >= 10 {
-			// Unmerged (conflict) entry:
-			// u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
-			xy := parts[1]
-			path := parts[10]
+		case "u":
+			// Unmerged (conflict) entry: XY is e.g. UU, AU, UA, DU, AA, DD.
 			res.Conflicts = append(res.Conflicts, FileStatus{
-				Path:    path,
-				Dir:     dirOf(path),
+				Path:    entry.Path,
+				Dir:     dirOf(entry.Path),
 				Staging: "conflict",
-				Status:  xy, // e.g. UU, AU, UA, DU, UD, AA, DD
+				Status:  entry.XY,
 			})
-			continue
-		}
 
-		if parts[0] == "1" && len(parts) >= 9 {
-			// Ordinary changed entry: 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
-			xy := parts[1]
-			path := parts[8]
-
-			stagedChar := string(xy[0])
-			unstagedChar := string(xy[1])
-
-			if stagedChar != "." {
-				res.Staged = append(res.Staged, FileStatus{
-					Path:    path,
-					Dir:     dirOf(path),
-					Staging: "staged",
-					Status:  stagedChar,
-				})
-			}
-			if unstagedChar != "." {
-				res.Unstaged = append(res.Unstaged, FileStatus{
-					Path:    path,
-					Dir:     dirOf(path),
-					Staging: "unstaged",
-					Status:  unstagedChar,
-				})
-			}
-		} else if parts[0] == "2" && len(parts) >= 10 {
-			// Renamed/copied entry: 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <Xscore> <path>
-			xy := parts[1]
-			path := parts[9]
-
-			stagedChar := string(xy[0])
-			unstagedChar := string(xy[1])
-
-			if stagedChar != "." {
-				res.Staged = append(res.Staged, FileStatus{
-					Path:    path,
-					Dir:     dirOf(path),
-					Staging: "staged",
-					Status:  stagedChar,
-				})
-			}
-			if unstagedChar != "." {
-				res.Unstaged = append(res.Unstaged, FileStatus{
-					Path:    path,
-					Dir:     dirOf(path),
-					Staging: "unstaged",
-					Status:  unstagedChar,
-				})
-			}
+		case "?":
+			// Untracked file: ? <path>
+			res.Untracked = append(res.Untracked, FileStatus{
+				Path:    entry.Path,
+				Dir:     dirOf(entry.Path),
+				Staging: "untracked",
+				Status:  "?",
+			})
 		}
 	}
 
@@ -524,24 +564,46 @@ func (e *Engine) Discard(ctx context.Context, repoPath string, paths []string) e
 	return nil
 }
 
-// Commit creates a git commit. If no changes are staged, it stages all changes before committing.
+// Commit creates a git commit. If the first attempt fails (e.g. an
+// index.lock race or a hook raced with staging), the retry stages ONLY the
+// paths that were already staged before the first attempt — never
+// `git add -A`, which would silently sweep unrelated working-tree changes
+// (secrets, WIP, generated files) into the commit.
 func (e *Engine) Commit(ctx context.Context, repoPath string, message string) error {
 	defer e.invalidate(repoPath)
 	if strings.TrimSpace(message) == "" {
 		return fmt.Errorf("commit message cannot be empty")
 	}
-	cmd := gitCmd(ctx, repoPath, "commit", "-m", message)
-	_, err := cmd.CombinedOutput()
-	if err != nil {
-		// Stage all changes and commit (standard IDE auto-stage behavior)
-		addCmd := gitCmd(ctx, repoPath, "add", "-A")
-		_ = addCmd.Run()
 
-		cmd2 := gitCmd(ctx, repoPath, "commit", "-m", message)
-		out2, err2 := cmd2.CombinedOutput()
-		if err2 != nil {
-			return fmt.Errorf("%s", string(out2))
+	// Capture the already-staged paths up front (quotepath=false keeps
+	// unicode filenames verbatim so the retry re-stages the exact paths).
+	stagedOut, _ := gitCmd(ctx, repoPath, "-c", "core.quotepath=false", "diff", "--cached", "--name-only").Output()
+	var stagedPaths []string
+	for _, l := range strings.Split(string(stagedOut), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			stagedPaths = append(stagedPaths, l)
 		}
+	}
+
+	cmd := gitCmd(ctx, repoPath, "commit", "-m", message)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+
+	if len(stagedPaths) == 0 {
+		// Nothing was staged to re-stage — retrying could only widen the
+		// commit, so surface the original failure.
+		return fmt.Errorf("git commit: %s", strings.TrimSpace(string(out)))
+	}
+
+	addArgs := append([]string{"add", "--"}, stagedPaths...)
+	_ = gitCmd(ctx, repoPath, addArgs...).Run()
+
+	cmd2 := gitCmd(ctx, repoPath, "commit", "-m", message)
+	out2, err2 := cmd2.CombinedOutput()
+	if err2 != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(out2)))
 	}
 	return nil
 }

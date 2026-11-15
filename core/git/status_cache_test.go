@@ -19,7 +19,7 @@ import (
 // cachedAt right before waking the waiter, which made the TTL branch taken.
 func TestGetStatusWaiterSurvivesInvalidationDuringWait(t *testing.T) {
 	e := NewEngine()
-	repo := t.TempDir()
+	repo := newRealRepo(t)
 
 	// Simulate an in-flight fetch registered by another caller.
 	inFlight := &statusEntry{done: make(chan struct{})}
@@ -64,7 +64,7 @@ func TestGetStatusWaiterSurvivesInvalidationDuringWait(t *testing.T) {
 // instead of waiting for the new fetch.
 func TestGetStatusWaiterFollowsReplacement(t *testing.T) {
 	e := NewEngine()
-	repo := t.TempDir()
+	repo := newRealRepo(t)
 
 	first := &statusEntry{done: make(chan struct{})}
 	e.statusCache[repo] = first
@@ -117,7 +117,7 @@ func TestGetStatusWaiterFollowsReplacement(t *testing.T) {
 // lock misuse. Run with -race in CI.
 func TestGetStatusInvalidationStorm(t *testing.T) {
 	e := NewEngine()
-	repo := t.TempDir()
+	repo := newRealRepo(t)
 
 	stop := make(chan struct{})
 	go func() {
@@ -185,11 +185,38 @@ func TestResolveBranchNeverUnknown(t *testing.T) {
 	defer os.Remove(lockFile)
 
 	e.Invalidate(repo)
-	stLocked, err := e.GetStatus(ctx, repo)
+	// A stale index.lock no longer breaks modern git status reads; the engine
+	// must reflect whatever git actually reports.
+	var stLocked *GitStatusResult
+	stLocked, err = e.GetStatus(ctx, repo)
 	if err != nil {
 		t.Fatalf("GetStatus with index.lock: %v", err)
 	}
 	if stLocked.Branch != "feature-alpha" {
 		t.Fatalf("expected branch 'feature-alpha' even with lock, got %q", stLocked.Branch)
 	}
+}
+
+// newRealRepo creates a temp directory initialized as a git repository with
+// one commit, so status plumbing tests exercise real `git status` output.
+func newRealRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	ctx := context.Background()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := gitCmd(ctx, repo, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %s", args, string(out))
+		}
+	}
+	run("init", "-q")
+	run("config", "user.name", "Test User")
+	run("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README.md")
+	run("commit", "-q", "-m", "init")
+	return repo
 }

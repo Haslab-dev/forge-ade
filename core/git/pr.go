@@ -335,6 +335,28 @@ func runGlabCommand(ctx context.Context, repoPath string, host string, args ...s
 	return stdout.Bytes(), nil
 }
 
+// gitlabStateFromText extracts the MR state from glab's human-readable
+// `mr view` output (a "state: opened" style line, case-insensitive). GitLab
+// states are opened/closed/merged; they map to the uppercase OPEN/CLOSED/
+// MERGED used by the PR layer. Unknown text yields "UNKNOWN" — never a
+// fabricated OPEN.
+func gitlabStateFromText(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(strings.ToLower(line))
+		if rest, ok := strings.CutPrefix(line, "state:"); ok {
+			switch strings.TrimSpace(rest) {
+			case "opened", "open":
+				return "OPEN"
+			case "closed":
+				return "CLOSED"
+			case "merged":
+				return "MERGED"
+			}
+		}
+	}
+	return "UNKNOWN"
+}
+
 // GetPullRequests lists pull requests or GitLab merge requests for the repository.
 func (e *Engine) GetPullRequests(ctx context.Context, repoPath string, state string) ([]PullRequestItem, error) {
 	state = strings.ToLower(strings.TrimSpace(state))
@@ -498,7 +520,8 @@ func (e *Engine) GetPullRequestDetail(ctx context.Context, repoPath string, prNu
 				}, nil
 			}
 		}
-		// Fallback without json
+		// Fallback without json: extract the real state from glab's text
+		// output (a "state: opened" style line) instead of fabricating OPEN.
 		outText, errText := runGlabCommand(ctx, repoPath, source.Host, "mr", "view", fmt.Sprintf("%d", prNumber))
 		if errText != nil {
 			return nil, errText
@@ -506,7 +529,7 @@ func (e *Engine) GetPullRequestDetail(ctx context.Context, repoPath string, prNu
 		return &PullRequestDetail{
 			Number: prNumber,
 			Title:  fmt.Sprintf("Merge Request !%d", prNumber),
-			State:  "OPEN",
+			State:  gitlabStateFromText(string(outText)),
 			Body:   string(outText),
 			Files:  []PullRequestFile{},
 		}, nil
