@@ -74,7 +74,15 @@ func (a *AppUI) scanWorkspaceDecks() []string {
 	return results
 }
 
-// openDeckViewer initializes or reloads the Deck & Motion WebView.
+// deckDismissed latches the pane's close action: without it renderDeckPane
+// re-opened the deck one frame after closeDeckViewer nilled the webview,
+// making the close button a no-op. It clears when a new deck is requested.
+// Deck pane state is UI-thread-only, like the rest of AppUI.
+var deckDismissed bool
+
+// openDeckViewer initializes or reloads the Deck & Motion WebView. Remote
+// (ssh://) paths are tracked but never loaded into a file:// web view; the
+// pane shows an honest empty state instead.
 func (a *AppUI) openDeckViewer(fullPath string) {
 	if fullPath == "" {
 		decks := a.scanWorkspaceDecks()
@@ -94,6 +102,14 @@ func (a *AppUI) openDeckViewer(fullPath string) {
 		a.DeckMode = "deck"
 	}
 
+	// A new deck request revokes a previous dismissal and resets playback
+	// state so slide counters don't leak across decks.
+	deckDismissed = false
+	if a.DeckCurrentPath != fullPath {
+		a.DeckActiveSlide = 0
+		a.DeckIsPlaying = false
+	}
+
 	if a.DeckWebView != nil && !a.DeckWebView.IsDestroyed() {
 		if a.DeckCurrentPath == fullPath {
 			return
@@ -103,7 +119,7 @@ func (a *AppUI) openDeckViewer(fullPath string) {
 	}
 
 	a.DeckCurrentPath = fullPath
-	if a.Window != nil && mygo.WebViewAvailable() && fullPath != "" {
+	if a.Window != nil && mygo.WebViewAvailable() && fullPath != "" && !strings.HasPrefix(fullPath, "ssh://") {
 		if _, err := os.Stat(fullPath); err == nil {
 			wv, err := a.Window.NewWebView(mygo.WebViewOptions{
 				URL: "file://" + fullPath,
@@ -115,7 +131,8 @@ func (a *AppUI) openDeckViewer(fullPath string) {
 	}
 }
 
-// closeDeckViewer tears down the active deck webview.
+// closeDeckViewer tears down the active deck webview and latches the
+// dismissal until a new deck is requested.
 func (a *AppUI) closeDeckViewer() {
 	if a.DeckWebView != nil && !a.DeckWebView.IsDestroyed() {
 		a.DeckWebView.Destroy()
@@ -123,21 +140,26 @@ func (a *AppUI) closeDeckViewer() {
 	a.DeckWebView = nil
 	a.DeckCurrentPath = ""
 	a.DeckFilesScanned = false
+	deckDismissed = true
 }
 
 // renderDeckPane renders the full Presentation & Motion Deck viewer tab.
 func (a *AppUI) renderDeckPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	if !a.DeckFilesScanned {
+	if !a.DeckFilesScanned && !deckDismissed {
 		a.DeckFiles = a.scanWorkspaceDecks()
 		a.DeckFilesScanned = true
 	}
 
-	if a.DeckCurrentPath == "" && len(a.DeckFiles) > 0 {
-		a.openDeckViewer(a.DeckFiles[0])
-	} else if a.DeckWebView == nil && a.DeckCurrentPath != "" {
-		a.openDeckViewer(a.DeckCurrentPath)
+	// Auto (re-)open only while the pane has not been dismissed; a closed
+	// deck stays closed until a new deck is requested.
+	if !deckDismissed {
+		if a.DeckCurrentPath == "" && len(a.DeckFiles) > 0 {
+			a.openDeckViewer(a.DeckFiles[0])
+		} else if a.DeckWebView == nil && a.DeckCurrentPath != "" && !strings.HasPrefix(a.DeckCurrentPath, "ssh://") {
+			a.openDeckViewer(a.DeckCurrentPath)
+		}
 	}
 
 	isMotion := a.DeckMode == "motion" || strings.Contains(strings.ToLower(a.DeckCurrentPath), "motion") || strings.HasSuffix(strings.ToLower(a.DeckCurrentPath), ".mp4")
@@ -274,6 +296,18 @@ func (a *AppUI) renderDeckPane(c *ui.Context) {
 		// Body: Native WebKit preview or Fallback State
 		if a.DeckWebView != nil && !a.DeckWebView.IsDestroyed() {
 			ui.WebView(c, a.DeckWebView).Grow(1).FillWidth()
+		} else if strings.HasPrefix(a.DeckCurrentPath, "ssh://") {
+			// Remote paths can't load in a file:// web view — say so instead
+			// of attempting a broken load.
+			ui.Column(c).Grow(1).Center().Padding(24).Gap(10).Children(func() {
+				ui.Box(c).Size(48, 48).Radius(24).Background(tc.Accent.Alpha(0.12)).
+					Center().Children(func() {
+					ui.Icon(c, icons.TablerServer).Width(24).Height(24).TextColor(tc.Accent)
+				})
+				ui.Text(c, "Remote preview not available yet").FontSize(14).FontWeight(600)
+				ui.Text(c, "Deck and motion previews over SSH connections are not supported yet.").FontSize(11).TextColor(tc.TextMuted).Center()
+				ui.Text(c, a.DeckCurrentPath).FontSize(10).TextColor(tc.TextMuted).MaxWidth(320).SingleLine()
+			})
 		} else {
 			// Empty / Placeholder state
 			ui.Column(c).Grow(1).Center().Padding(24).Gap(12).Children(func() {

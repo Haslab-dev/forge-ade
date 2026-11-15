@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -347,10 +348,38 @@ func (ws *WorkspaceState) FilteredFiles() []WorkspaceFile {
 }
 
 // ResolveFullPath converts a relative workspace path to an absolute path.
+// It is idempotent: absolute paths already under RootDir return unchanged
+// (search backends such as ripgrep return absolute paths, and joining them
+// again produced /root/root/file double prefixes that broke every click
+// navigation), absolute paths outside RootDir return as-is, and relative
+// paths join under RootDir as before.
 func (ws *WorkspaceState) ResolveFullPath(rel string) string {
 	ws.mu.RLock()
+	root := ws.RootDir
+	ws.mu.RUnlock()
+
+	if rel == "" {
+		return root
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "ssh://") {
+		return filepath.Clean(rel)
+	}
+	return filepath.Join(root, rel)
+}
+
+// FilesUnder returns the indexed files at rel itself or underneath it (for a
+// folder: every recursive child), thread-safely.
+func (ws *WorkspaceState) FilesUnder(rel string) []WorkspaceFile {
+	ws.mu.RLock()
 	defer ws.mu.RUnlock()
-	return filepath.Join(ws.RootDir, rel)
+	rel = strings.TrimSuffix(strings.TrimSuffix(rel, "/"), string(filepath.Separator))
+	var out []WorkspaceFile
+	for _, f := range ws.Files {
+		if f.RelativePath == rel || strings.HasPrefix(f.RelativePath, rel+"/") {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // CreateFile creates a new empty file at relPath and refreshes the workspace index.
@@ -428,16 +457,29 @@ const (
 
 // SearchFiles greps the workspace's tracked files for a case-insensitive
 // substring and returns up to 200 hits, mirroring forge-ade's project
-// search. Binary-looking files are skipped.
-func (ws *WorkspaceState) SearchFiles(query string) []FileSearchHit {
+// search. Binary-looking files are skipped. The file index is read under the
+// state's read lock (snapshot copy), and ctx cancellation stops the scan.
+func (ws *WorkspaceState) SearchFiles(ctx context.Context, query string) []FileSearchHit {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
 		return nil
 	}
+	// Snapshot the index under RLock; the reads below are file IO and must
+	// not hold the lock (Refresh writes it from watcher goroutines).
+	ws.mu.RLock()
+	files := make([]WorkspaceFile, len(ws.Files))
+	copy(files, ws.Files)
+	ws.mu.RUnlock()
+
 	var hits []FileSearchHit
-	for _, f := range ws.Files {
+	for _, f := range files {
 		if f.IsDir || len(hits) >= searchMaxHits {
 			break
+		}
+		select {
+		case <-ctx.Done():
+			return hits
+		default:
 		}
 		data, err := os.ReadFile(f.FullPath)
 		if err != nil || len(data) > searchMaxFileBytes {
@@ -468,7 +510,7 @@ func (ws *WorkspaceState) SearchFiles(query string) []FileSearchHit {
 			}
 			text := strings.TrimSpace(string(data)[lineStart:lineEnd])
 			if len(text) > 160 {
-				text = text[:160] + "…"
+				text = truncationSafe(text, 160) + "…"
 			}
 			hits = append(hits, FileSearchHit{
 				Path:      f.RelativePath,
@@ -481,6 +523,19 @@ func (ws *WorkspaceState) SearchFiles(query string) []FileSearchHit {
 		}
 	}
 	return hits
+}
+
+// truncationSafe cuts s to at most max runes so multi-byte UTF-8 is never
+// split mid-rune.
+func truncationSafe(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 // isBinary reports whether data looks binary (NUL byte in the first 8 KB).

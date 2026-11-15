@@ -1,11 +1,13 @@
 package editor
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -16,6 +18,10 @@ import (
 )
 
 const maxDiffCacheEntries = 64
+
+// utf8BOM is stripped from file content at open and re-added on save so the
+// byte-for-byte round trip preserves the original encoding.
+const utf8BOM = "\uFEFF"
 
 // MinimapBucket represents one vertical slice of a document's minimap.
 type MinimapBucket struct {
@@ -31,12 +37,29 @@ type OpenDocument struct {
 	Editor       *mygoeditor.State
 	Diff         *mygoeditor.DiffState
 	DiskContent  string
+	// HasCRLF records the file's dominant line ending, detected from the raw
+	// bytes at open; saves restore it (buffers hold \n internally).
+	HasCRLF bool
+	// HasBOM records a leading UTF-8 BOM stripped at open; saves re-add it.
+	HasBOM bool
+	// ModTime is the on-disk mtime at open (refreshed after each save) so the
+	// save path can detect external modifications.
+	ModTime time.Time
 
 	minimapMu         sync.Mutex
 	minimapReady      bool
 	minimapVersion    uint64
 	minimapMaxBuckets int
 	minimapBuckets    []MinimapBucket
+}
+
+// detectCRLF reports whether CRLF is the file's dominant line ending:
+// CRLF wins when \r\n occurs more often than bare \n. Mixed files default
+// to LF, as most editors do.
+func detectCRLF(raw []byte) bool {
+	crlf := bytes.Count(raw, []byte("\r\n"))
+	lf := bytes.Count(raw, []byte("\n"))
+	return crlf > lf-crlf
 }
 
 // MinimapSummary returns a cached compact representation of the buffer for minimap rendering.
@@ -143,25 +166,105 @@ type EditorManager struct {
 	RemoteFS              *remotefs.Manager
 	WorkspaceDir          string
 	OnDefinitionRequested func(symbol string, matches []PeekMatch)
+
+	// Discard-confirmation contract (UI wave wires the modal):
+	//
+	//   ConfirmBeforeDiscard turns the close paths into Request* checks: when
+	//   a target buffer is Modified, the close is staged in PendingDiscard
+	//   and OnConfirmDiscard is invoked instead of closing.
+	//   OnConfirmDiscard receives the dirty paths and a decide callback —
+	//   call ResolveDiscard(true) to force-close them, ResolveDiscard(false)
+	//   to keep them open.
+	ConfirmBeforeDiscard bool
+	OnConfirmDiscard     func(paths []string, decide func(discard bool))
+	PendingDiscard       []string
+
+	// OnConfirmOverwrite is consulted before a save clobbers a file that
+	// changed on disk since it was opened (mtime mismatch). nil → proceed.
+	OnConfirmOverwrite func(path string, decide func(proceed bool))
+	pendingOverwrite   string
+
+	// OnConfirmReplace is consulted before a workspace-wide Replace All
+	// writes files; matchCount quotes how many matching lines were found.
+	// nil → proceed without asking. (The RakitKode SearchManager is an
+	// external module, so this replace-confirm contract lives here where
+	// the UI layer can wire it.)
+	OnConfirmReplace func(matchCount int, decide func(proceed bool))
+
+	// OnSaveError surfaces save failures from internal paths (overwrite
+	// resolution) so the UI layer can toast them; nil → StatusMsg only.
+	OnSaveError func(path string, err error)
+
+	// OnTabClosed fires after a tab was fully closed, including the bulk
+	// close paths, so the UI layer can release per-file resources such as
+	// PDF/deck webviews. nil → ignored.
+	OnTabClosed func(path string)
+
+	// OnStateChanged requests a redraw after async resolutions (discard /
+	// overwrite decisions). nil → ignored.
+	OnStateChanged func()
+
+	// TerminalSessions binds editor terminal tabs (terminal://… paths) to
+	// TerminalState tab IDs so each editor terminal tab owns a distinct PTY.
+	TerminalSessions map[string]int
 }
 
 // NewEditorManager creates and initializes an EditorManager.
 func NewEditorManager() *EditorManager {
 	return &EditorManager{
-		docs:           make(map[string]*OpenDocument),
-		patchDiffs:     make(map[string]*mygoeditor.DiffState),
-		patchHashes:    make(map[string]uint64),
-		readOnlyStates: make(map[string]*mygoeditor.State),
-		readOnlyHashes: make(map[string]uint64),
-		OpenTabPaths:   make([]string, 0),
-		SoftWrap:       false,
-		IsSplit:        false,
-		PinnedTabs:     make(map[string]bool),
-		ReadOnlyTabs:   make(map[string]bool),
-		IsDiffView:     false,
-		DiffLayout:     0,
-		DiffInline:     "Words",
+		docs:             make(map[string]*OpenDocument),
+		patchDiffs:       make(map[string]*mygoeditor.DiffState),
+		patchHashes:      make(map[string]uint64),
+		readOnlyStates:   make(map[string]*mygoeditor.State),
+		readOnlyHashes:   make(map[string]uint64),
+		OpenTabPaths:     make([]string, 0),
+		SoftWrap:         false,
+		IsSplit:          false,
+		PinnedTabs:       make(map[string]bool),
+		ReadOnlyTabs:     make(map[string]bool),
+		IsDiffView:       false,
+		DiffLayout:       0,
+		DiffInline:       "Words",
+		TerminalSessions: make(map[string]int),
 	}
+}
+
+// fireTabClosed invokes OnTabClosed outside the manager lock.
+func (em *EditorManager) fireTabClosed(path string) {
+	if em.OnTabClosed != nil {
+		em.OnTabClosed(path)
+	}
+}
+
+// fireStateChanged invokes OnStateChanged (nil-safe redraw request).
+func (em *EditorManager) fireStateChanged() {
+	if em.OnStateChanged != nil {
+		em.OnStateChanged()
+	}
+}
+
+// BindTerminalSession records which TerminalState tab (by ID) backs an editor
+// terminal tab, so closing or re-showing the tab targets the same PTY.
+func (em *EditorManager) BindTerminalSession(tabPath string, sessionID int) {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if em.TerminalSessions == nil {
+		em.TerminalSessions = make(map[string]int)
+	}
+	em.TerminalSessions[tabPath] = sessionID
+}
+
+// TerminalSessionFor returns the TerminalState tab ID bound to an editor
+// terminal tab.
+func (em *EditorManager) TerminalSessionFor(tabPath string) (int, bool) {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+	id, ok := em.TerminalSessions[tabPath]
+	return id, ok
+}
+
+func (em *EditorManager) unbindTerminalLocked(tabPath string) {
+	delete(em.TerminalSessions, tabPath)
 }
 
 // EditorFont returns the code font at ForgeADE metrics: Geist Mono at 13px, line-height 1.65.
@@ -237,6 +340,15 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 		em.StatusMsg = fmt.Sprintf("Error reading %s: %v", relPath, err)
 		return nil, err
 	}
+
+	// Preserve the file's own conventions: a leading UTF-8 BOM and the
+	// dominant CRLF line ending are stripped from the buffers and restored
+	// at save time.
+	hasBOM := bytes.HasPrefix(contentBytes, []byte(utf8BOM))
+	if hasBOM {
+		contentBytes = contentBytes[len(utf8BOM):]
+	}
+	hasCRLF := detectCRLF(contentBytes)
 	content := string(contentBytes)
 
 	origBuf := mygoeditor.NewBuffer(content)
@@ -245,12 +357,20 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 	lang := mygoeditor.LanguageFor(filepath.Base(fullPath))
 	origBuf.SetLanguage(lang)
 	editBuf.SetLanguage(lang)
+	lineEnding := "\n"
+	if hasCRLF {
+		lineEnding = "\r\n"
+	}
+	origBuf.SetLineEnding(lineEnding)
+	editBuf.SetLineEnding(lineEnding)
 
 	doc := &OpenDocument{
 		RelativePath: relPath,
 		FullPath:     fullPath,
 		Original:     origBuf,
 		DiskContent:  content,
+		HasCRLF:      hasCRLF,
+		HasBOM:       hasBOM,
 		Editor: &mygoeditor.State{
 			Buffer:     editBuf,
 			DiffBase:   origBuf,
@@ -265,6 +385,11 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 			LineSelection: true,
 			Wrap:          em.SoftWrap,
 		},
+	}
+	if !strings.HasPrefix(fullPath, "ssh://") {
+		if info, err := os.Stat(fullPath); err == nil {
+			doc.ModTime = info.ModTime()
+		}
 	}
 
 	em.ApplyTheme(doc.Editor)
@@ -528,15 +653,26 @@ func (em *EditorManager) GetOrCreateReadOnlyEditor(key, path, content string, tm
 	return st
 }
 
-// CloseTab removes an open tab.
+// CloseTab removes an open tab. When OnTabClosed is set it fires afterwards
+// (outside the manager lock) so the UI layer can release per-file resources.
 func (em *EditorManager) CloseTab(fullPath string) {
 	em.mu.Lock()
-	defer em.mu.Unlock()
+	closed := em.closeTabLocked(fullPath)
+	em.mu.Unlock()
+	if closed {
+		em.fireTabClosed(fullPath)
+	}
+}
 
+// closeTabLocked removes the tab's state; reports whether it existed.
+func (em *EditorManager) closeTabLocked(fullPath string) bool {
+	found := false
 	newTabs := make([]string, 0, len(em.OpenTabPaths))
 	for _, p := range em.OpenTabPaths {
 		if p != fullPath {
 			newTabs = append(newTabs, p)
+		} else {
+			found = true
 		}
 	}
 	em.OpenTabPaths = newTabs
@@ -544,6 +680,7 @@ func (em *EditorManager) CloseTab(fullPath string) {
 	delete(em.PinnedTabs, fullPath)
 	delete(em.ReadOnlyTabs, fullPath)
 	em.deletePatchDiffLocked(fullPath)
+	em.unbindTerminalLocked(fullPath)
 
 	if em.ActivePath == fullPath {
 		if len(em.OpenTabPaths) > 0 {
@@ -602,6 +739,181 @@ func (em *EditorManager) CloseTab(fullPath string) {
 			}
 		}
 	}
+	return found
+}
+
+// ── Close-with-confirmation contract ───────────────────────────────────────
+//
+// The Request* methods are the UI-facing close entry points: when
+// ConfirmBeforeDiscard is set and any target buffer has unsaved changes, the
+// close is staged in PendingDiscard and OnConfirmDiscard fires instead, and
+// ResolveDiscard completes or cancels it.
+
+// RequestClose closes one tab, asking before discarding unsaved changes.
+func (em *EditorManager) RequestClose(path string) {
+	if em.requestDiscardConfirm([]string{path}) {
+		return
+	}
+	em.CloseTab(path)
+}
+
+// RequestCloseOthers closes every tab except keepPath (pinned tabs stay),
+// asking before discarding unsaved changes.
+func (em *EditorManager) RequestCloseOthers(keepPath string) {
+	tabs := em.OpenTabs()
+	targets := make([]string, 0, len(tabs))
+	for _, p := range tabs {
+		if p != keepPath && em.closeable(p) {
+			targets = append(targets, p)
+		}
+	}
+	if em.requestDiscardConfirm(targets) {
+		return
+	}
+	em.CloseOthers(keepPath)
+}
+
+// RequestCloseAll closes every unpinned tab, asking before discarding
+// unsaved changes.
+func (em *EditorManager) RequestCloseAll() {
+	tabs := em.OpenTabs()
+	targets := make([]string, 0, len(tabs))
+	for _, p := range tabs {
+		if em.closeable(p) {
+			targets = append(targets, p)
+		}
+	}
+	if em.requestDiscardConfirm(targets) {
+		return
+	}
+	em.CloseAll()
+}
+
+// RequestCloseLeft closes every tab left of basePath (pinned tabs stay),
+// asking before discarding unsaved changes.
+func (em *EditorManager) RequestCloseLeft(basePath string) {
+	tabs := em.OpenTabs()
+	targets := make([]string, 0, len(tabs))
+	seen := false
+	for _, p := range tabs {
+		if p == basePath {
+			seen = true
+			continue
+		}
+		if !seen && em.closeable(p) {
+			targets = append(targets, p)
+		}
+	}
+	if em.requestDiscardConfirm(targets) {
+		return
+	}
+	for _, p := range targets {
+		em.CloseTab(p)
+	}
+}
+
+// RequestCloseRight closes every tab right of basePath (pinned tabs stay),
+// asking before discarding unsaved changes.
+func (em *EditorManager) RequestCloseRight(basePath string) {
+	tabs := em.OpenTabs()
+	targets := make([]string, 0, len(tabs))
+	seen := false
+	for _, p := range tabs {
+		if p == basePath {
+			seen = true
+			continue
+		}
+		if seen && em.closeable(p) {
+			targets = append(targets, p)
+		}
+	}
+	if em.requestDiscardConfirm(targets) {
+		return
+	}
+	em.CloseToRight(basePath)
+}
+
+// ResolveDiscard completes a pending discard confirmation: discard=true
+// force-closes the pending paths (firing OnTabClosed per path), false keeps
+// them open. Either way PendingDiscard clears and a redraw is requested.
+func (em *EditorManager) ResolveDiscard(discard bool) {
+	em.mu.Lock()
+	pending := em.PendingDiscard
+	em.PendingDiscard = nil
+	em.mu.Unlock()
+	if discard {
+		for _, p := range pending {
+			em.CloseTab(p)
+		}
+	}
+	em.fireStateChanged()
+}
+
+// closeable reports whether a tab may be closed by bulk actions (pinned
+// tabs are protected).
+func (em *EditorManager) closeable(fullPath string) bool {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+	return em.closeableLocked(fullPath)
+}
+
+// requestDiscardConfirm stages a discard confirmation when
+// ConfirmBeforeDiscard is set and any target buffer is Modified: it merges
+// the dirty paths into PendingDiscard and invokes OnConfirmDiscard
+// (nil-checked). Clean targets close immediately, as they are safe; the
+// reported true means the dirty subset waits for ResolveDiscard.
+func (em *EditorManager) requestDiscardConfirm(targets []string) bool {
+	if !em.ConfirmBeforeDiscard || len(targets) == 0 {
+		return false
+	}
+	em.mu.Lock()
+	dirty := em.collectDirtyLocked(targets)
+	if len(dirty) == 0 {
+		em.mu.Unlock()
+		return false
+	}
+	merged := make([]string, len(em.PendingDiscard), len(em.PendingDiscard)+len(dirty))
+	copy(merged, em.PendingDiscard)
+	for _, p := range dirty {
+		if !containsString(merged, p) {
+			merged = append(merged, p)
+		}
+	}
+	em.PendingDiscard = merged
+	cb := em.OnConfirmDiscard
+	em.mu.Unlock()
+
+	for _, p := range targets {
+		if !containsString(dirty, p) {
+			em.CloseTab(p)
+		}
+	}
+	if cb != nil {
+		cb(dirty, em.ResolveDiscard)
+	}
+	em.fireStateChanged()
+	return true
+}
+
+// collectDirtyLocked returns the target paths whose buffers have unsaved
+// changes.
+func (em *EditorManager) collectDirtyLocked(targets []string) []string {
+	var dirty []string
+	for _, p := range targets {
+		if doc, ok := em.docs[p]; ok && doc != nil && doc.Editor != nil && doc.Editor.Buffer != nil && doc.Editor.Buffer.Modified() {
+			dirty = append(dirty, p)
+		}
+	}
+	return dirty
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // RenameOpenTab updates tab/buffer/pane keys in place so unsaved edits survive renames.
@@ -650,15 +962,17 @@ func (em *EditorManager) RenameOpenTab(oldFull, newFull, newRel string) {
 // CloseAll closes all open tabs and clears buffers.
 func (em *EditorManager) CloseAll() {
 	em.mu.Lock()
-	defer em.mu.Unlock()
 	kept := make([]string, 0, len(em.OpenTabPaths))
+	var removed []string
 	for _, p := range em.OpenTabPaths {
 		if em.PinnedTabs[p] {
 			kept = append(kept, p) // pinned tabs survive Close All
 			continue
 		}
+		removed = append(removed, p)
 		delete(em.docs, p)
 		delete(em.ReadOnlyTabs, p)
+		em.unbindTerminalLocked(p)
 	}
 	em.OpenTabPaths = kept
 	em.clearDiffCachesLocked()
@@ -675,6 +989,62 @@ func (em *EditorManager) CloseAll() {
 		em.IsSplit = false
 		em.ActivePane = 0
 	}
+	em.mu.Unlock()
+	for _, p := range removed {
+		em.fireTabClosed(p)
+	}
+}
+
+// CloseAllForWorkspace closes every tab whose path is not under rootDir —
+// including pinned tabs — for workspace switches; PinnedTabs surviving a
+// previous workspace must not leak into the new one.
+func (em *EditorManager) CloseAllForWorkspace(rootDir string) {
+	em.mu.Lock()
+	kept := make([]string, 0, len(em.OpenTabPaths))
+	var removed []string
+	for _, p := range em.OpenTabPaths {
+		if pathUnderDir(p, rootDir) {
+			kept = append(kept, p)
+			continue
+		}
+		removed = append(removed, p)
+		delete(em.docs, p)
+		delete(em.PinnedTabs, p)
+		delete(em.ReadOnlyTabs, p)
+		em.deletePatchDiffLocked(p)
+		em.unbindTerminalLocked(p)
+	}
+	em.OpenTabPaths = kept
+	em.clearDiffCachesLocked()
+	if !em.containsPath(em.ActivePath) {
+		if len(em.OpenTabPaths) > 0 {
+			em.ActivePath = em.OpenTabPaths[len(em.OpenTabPaths)-1]
+		} else {
+			em.ActivePath = ""
+		}
+	}
+	if len(em.OpenTabPaths) <= 1 {
+		em.Panes = nil
+		em.PaneWeights = nil
+		em.IsSplit = false
+		em.ActivePane = 0
+	}
+	em.mu.Unlock()
+	for _, p := range removed {
+		em.fireTabClosed(p)
+	}
+}
+
+// pathUnderDir reports whether path is inside dir (dir "" closes everything).
+func pathUnderDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (em *EditorManager) containsPath(p string) bool {
@@ -689,29 +1059,32 @@ func (em *EditorManager) containsPath(p string) bool {
 // CloseOthers closes all tabs except keepPath.
 func (em *EditorManager) CloseOthers(keepPath string) {
 	em.mu.Lock()
-	defer em.mu.Unlock()
-
 	kept := make([]string, 0, len(em.OpenTabPaths))
+	var removed []string
 	for _, p := range em.OpenTabPaths {
 		if p == keepPath || em.PinnedTabs[p] {
 			kept = append(kept, p) // keepPath + pinned tabs stay
 			continue
 		}
+		removed = append(removed, p)
 		delete(em.docs, p)
 		delete(em.ReadOnlyTabs, p)
 		em.deletePatchDiffLocked(p)
+		em.unbindTerminalLocked(p)
 	}
 	em.OpenTabPaths = kept
 	if !em.containsPath(em.ActivePath) {
 		em.ActivePath = keepPath
+	}
+	em.mu.Unlock()
+	for _, p := range removed {
+		em.fireTabClosed(p)
 	}
 }
 
 // CloseToRight closes all tabs to the right of basePath.
 func (em *EditorManager) CloseToRight(basePath string) {
 	em.mu.Lock()
-	defer em.mu.Unlock()
-
 	idx := -1
 	for i, p := range em.OpenTabPaths {
 		if p == basePath {
@@ -720,22 +1093,30 @@ func (em *EditorManager) CloseToRight(basePath string) {
 		}
 	}
 	if idx < 0 || idx == len(em.OpenTabPaths)-1 {
+		em.mu.Unlock()
 		return
 	}
 
 	kept := make([]string, 0, len(em.OpenTabPaths))
+	var removed []string
 	for i, p := range em.OpenTabPaths {
 		if i <= idx || em.PinnedTabs[p] {
 			kept = append(kept, p)
 			continue
 		}
+		removed = append(removed, p)
 		delete(em.docs, p)
 		delete(em.ReadOnlyTabs, p)
 		em.deletePatchDiffLocked(p)
+		em.unbindTerminalLocked(p)
 	}
 	em.OpenTabPaths = kept
 	if !em.containsPath(em.ActivePath) {
 		em.ActivePath = basePath
+	}
+	em.mu.Unlock()
+	for _, p := range removed {
+		em.fireTabClosed(p)
 	}
 }
 
@@ -793,38 +1174,188 @@ func (em *EditorManager) OpenTabs() []string {
 }
 
 // SaveActiveFile persists modifications to disk and resets the diff baseline.
+// The saved-mark on the active buffer clears so Modified() turns false, and
+// the file's line endings and BOM are restored before the bytes hit disk.
+// When OnConfirmOverwrite is set and the file changed on disk since it was
+// opened, the save is routed through that callback instead of proceeding.
 func (em *EditorManager) SaveActiveFile() error {
 	em.mu.Lock()
-	defer em.mu.Unlock()
-
 	doc := em.docs[em.ActivePath]
 	if doc == nil {
+		em.mu.Unlock()
 		return fmt.Errorf("no active document to save")
 	}
 
-	newText := doc.Editor.Buffer.String()
+	// External-change conflict: the file changed on disk behind the buffer.
+	// With a confirm hook, defer to it; without one, save anyway (previous
+	// behavior).
+	if em.OnConfirmOverwrite != nil && !strings.HasPrefix(doc.FullPath, "ssh://") && !doc.ModTime.IsZero() {
+		if info, err := os.Stat(doc.FullPath); err == nil && !info.ModTime().Equal(doc.ModTime) {
+			path := doc.FullPath
+			em.pendingOverwrite = path
+			cb := em.OnConfirmOverwrite
+			em.mu.Unlock()
+			cb(path, em.ResolveOverwrite)
+			return nil
+		}
+	}
+
+	err := em.saveDocLocked(doc, doc.Editor.Buffer.String())
+	saveErrCb := em.OnSaveError
+	savePath := doc.FullPath
+	em.mu.Unlock()
+	if err != nil && saveErrCb != nil {
+		saveErrCb(savePath, err)
+	}
+	return err
+}
+
+// ResolveOverwrite completes a pending external-change confirmation:
+// proceed=true adopts the on-disk state and saves over it, false leaves the
+// buffer untouched. Either way the pending state clears and a redraw fires.
+func (em *EditorManager) ResolveOverwrite(proceed bool) {
+	em.mu.Lock()
+	path := em.pendingOverwrite
+	em.pendingOverwrite = ""
+	doc := em.docs[path]
+	if !proceed || path == "" || doc == nil {
+		em.mu.Unlock()
+		em.fireStateChanged()
+		return
+	}
+	// Overwrite confirmed: adopt the current on-disk mtime as the baseline so
+	// the conflict check passes and the save proceeds.
+	if info, err := os.Stat(path); err == nil {
+		doc.ModTime = info.ModTime()
+	}
+	err := em.saveDocLocked(doc, doc.Editor.Buffer.String())
+	cb := em.OnSaveError
+	em.mu.Unlock()
+	if err != nil && cb != nil {
+		cb(path, err)
+	}
+	em.fireStateChanged()
+}
+
+// SetDocTextAndSave applies newText to an open document and persists it
+// (workspace Replace All keeps open buffers as the source of truth for their
+// files, so editor state and disk agree afterwards).
+func (em *EditorManager) SetDocTextAndSave(path, newText string) error {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	doc := em.docs[path]
+	if doc == nil {
+		return fmt.Errorf("document %s is not open", path)
+	}
+	doc.Editor.Buffer.Set(newText)
+	return em.saveDocLocked(doc, doc.Editor.Buffer.String())
+}
+
+// SaveAllDirty persists every modified open buffer (AutoSave). Clean buffers
+// are skipped. Each save funnels through saveDocLocked so atomic writes,
+// CRLF/BOM restoration, MarkSaved, and the diff-baseline rebuild apply
+// uniformly. Save errors surface through OnSaveError when wired; the first
+// error is also returned.
+func (em *EditorManager) SaveAllDirty() (saved int, err error) {
+	type saveFailure struct {
+		path string
+		err  error
+	}
+	var failures []saveFailure
+
+	em.mu.Lock()
+	for _, doc := range em.docs {
+		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+			continue
+		}
+		if !doc.Editor.Buffer.Modified() {
+			continue
+		}
+		if saveErr := em.saveDocLocked(doc, doc.Editor.Buffer.String()); saveErr != nil {
+			failures = append(failures, saveFailure{path: doc.FullPath, err: saveErr})
+		} else {
+			saved++
+		}
+	}
+	em.mu.Unlock()
+
+	if len(failures) > 0 {
+		err = failures[0].err
+		if cb := em.OnSaveError; cb != nil {
+			for _, f := range failures {
+				cb(f.path, f.err)
+			}
+		}
+		em.fireStateChanged()
+	}
+	return saved, err
+}
+
+// saveDocLocked persists doc with the given (LF) buffer text: restores the
+// file's CRLF/BOM conventions, writes atomically preserving the file mode,
+// marks the buffer saved, rebuilds the diff baseline, and refreshes the
+// stored mtime. Callers hold em.mu.
+func (em *EditorManager) saveDocLocked(doc *OpenDocument, newText string) error {
+	out := newText
+	if doc.HasBOM {
+		out = utf8BOM + out
+	}
+	if doc.HasCRLF {
+		out = strings.ReplaceAll(out, "\n", "\r\n")
+	}
+
 	if strings.HasPrefix(doc.FullPath, "ssh://") && em.RemoteFS != nil {
-		isRemote, err := em.RemoteFS.WriteFile(doc.FullPath, []byte(newText))
+		isRemote, err := em.RemoteFS.WriteFile(doc.FullPath, []byte(out))
 		if isRemote && err != nil {
 			em.StatusMsg = fmt.Sprintf("Error saving remote %s: %v", doc.RelativePath, err)
 			return err
 		}
 	} else {
-		if err := os.WriteFile(doc.FullPath, []byte(newText), 0644); err != nil {
+		if err := writeFileAtomic(doc.FullPath, []byte(out)); err != nil {
 			em.StatusMsg = fmt.Sprintf("Error saving %s: %v", doc.RelativePath, err)
 			return err
+		}
+		if info, err := os.Stat(doc.FullPath); err == nil {
+			doc.ModTime = info.ModTime()
 		}
 	}
 
 	doc.DiskContent = newText
+	// The write succeeded: the current buffer text is the saved text.
+	doc.Editor.Buffer.MarkSaved()
+
 	newOrig := mygoeditor.NewBuffer(newText)
 	lang := mygoeditor.LanguageFor(filepath.Base(doc.FullPath))
 	newOrig.SetLanguage(lang)
+	lineEnding := "\n"
+	if doc.HasCRLF {
+		lineEnding = "\r\n"
+	}
+	newOrig.SetLineEnding(lineEnding)
 
 	doc.Original = newOrig
 	doc.Editor.DiffBase = newOrig
 	doc.Diff.Old = newOrig
 	em.StatusMsg = fmt.Sprintf("Saved %s", doc.RelativePath)
+	return nil
+}
+
+// writeFileAtomic replaces path's content without clobbering its permissions:
+// the existing mode is preserved, bytes land in a same-directory temp file,
+// and a rename swaps it into place. The temp file is cleaned up on failure.
+func writeFileAtomic(path string, data []byte) error {
+	mode := os.FileMode(0644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	tmp := fmt.Sprintf("%s.forge-tmp-%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return nil
 }
 

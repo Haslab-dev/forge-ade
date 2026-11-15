@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -10,7 +11,9 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
-// openPdfViewer initializes or switches the PDF viewer for a file.
+// openPdfViewer initializes or switches the PDF viewer for a file. Remote
+// (ssh://) files are tracked but never loaded: a file:// URL over an ssh://
+// path cannot render, so the pane shows an honest empty state instead.
 func (a *AppUI) openPdfViewer(fullPath string) {
 	if fullPath == "" {
 		return
@@ -23,6 +26,14 @@ func (a *AppUI) openPdfViewer(fullPath string) {
 		a.PDFWebView = nil
 	}
 	a.PDFCurrentPath = fullPath
+	if strings.HasPrefix(fullPath, "ssh://") {
+		a.PDFFileSize = 0
+		a.PDFFileSizePath = ""
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	}
 	if fi, err := os.Stat(fullPath); err == nil {
 		a.PDFFileSize = fi.Size()
 		a.PDFFileSizePath = fullPath
@@ -72,6 +83,30 @@ func (a *AppUI) renderPdfViewerPane(c *ui.Context, tc theme.ThemeColors, fullPat
 		default:
 			fileSizeStr = fmt.Sprintf("%.1f MB", float64(sz)/(1024*1024))
 		}
+	}
+
+	// Remote files cannot render in a file:// web view — an honest empty
+	// state beats a broken load (ssh:// was previously mangled into
+	// "file://ssh://host/..." which always failed).
+	if strings.HasPrefix(fullPath, "ssh://") {
+		ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
+			ui.Row(c).Height(38).Padding(0, 12).Gap(8).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+				ui.Icon(c, icons.TablerFileText).Width(15).Height(15).TextColor(tc.Error)
+				ui.Text(c, fileName).FontSize(12).FontWeight(600).SingleLine()
+				Badge(c, tc, "PDF", tc.Error)
+			})
+			ui.Column(c).Grow(1).Center().Gap(10).Padding(24).Children(func() {
+				ui.Box(c).Size(56, 56).Radius(12).Background(tc.Error.Alpha(0.12)).
+					AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerServer).Width(28).Height(28).TextColor(tc.Error)
+				})
+				ui.Text(c, "Remote preview not available yet").FontSize(14).FontWeight(600)
+				ui.Text(c, "PDF previews over SSH connections are not supported yet.").FontSize(12).TextColor(tc.TextMuted)
+				ui.Text(c, fullPath).FontSize(11).TextColor(tc.TextMuted.Alpha(0.7)).MaxWidth(380).SingleLine()
+			})
+		})
+		return
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {

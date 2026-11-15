@@ -151,18 +151,14 @@ func (a *AppUI) renderProjectSearchModal(c *ui.Context) {
 								Padding(0, 6, 0, 24).Gap(6).AlignItems(ui.Center)
 							row.Children(func() {
 								ui.Text(c, fmt.Sprintf("%d", h.Line)).FontSize(10).TextColor(tc.TextMuted)
-								line := h.Content
-								if len(line) > 84 {
-									line = line[:84] + "…"
-								}
-								ui.Text(c, line).FontSize(11).Grow(1).SingleLine()
+								ui.Text(c, truncRunes(h.Content, 84)).FontSize(11).Grow(1).SingleLine()
 							})
 							if row.Hovered() {
 								row.Background(tc.Text.Alpha(0.04))
 							}
 							if row.Clicked() {
 								a.ShowProjectSearch = false
-								a.openSearchResult(p, h.Line, a.FileSearchQuery)
+								a.openSearchResultChecked(p, h.Line, a.FileSearchQuery)
 							}
 						}
 					}

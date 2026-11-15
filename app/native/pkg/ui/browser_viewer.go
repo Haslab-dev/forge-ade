@@ -105,17 +105,41 @@ func (a *AppUI) renderBrowserPane(c *ui.Context) {
 		return
 	}
 
+	page := a.BrowserWebView.Page()
+
+	// The web engine exposes no navigation-changed callback, but it does
+	// expose the current URL and history state: sync the address bar (links,
+	// redirects) and gate back/forward on real history every frame.
+	if cur := page.URL(); cur != "" && cur != a.BrowserURLCurrent {
+		a.BrowserURLCurrent = cur
+		if a.BrowserURLInput != cur {
+			a.BrowserURLInput = cur
+		}
+	}
+	canGoBack := page.CanGoBack()
+	canGoForward := page.CanGoForward()
+
 	// Toolbar: back / forward / reload, URL bar, zoom controls.
 	ui.Row(c).Height(36).Padding(0, 8).Gap(5).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-		if IconButton(c, tc, icons.TablerArrowLeft, 13).Clicked() {
-			a.BrowserWebView.Page().GoBack()
+		backBtn := IconButton(c, tc, icons.TablerArrowLeft, 13)
+		if canGoBack {
+			if backBtn.Clicked() {
+				page.GoBack()
+			}
+		} else {
+			backBtn.Tooltip("No previous page")
 		}
-		if IconButton(c, tc, icons.TablerArrowRight, 13).Clicked() {
-			a.BrowserWebView.Page().GoForward()
+		fwdBtn := IconButton(c, tc, icons.TablerArrowRight, 13)
+		if canGoForward {
+			if fwdBtn.Clicked() {
+				page.GoForward()
+			}
+		} else {
+			fwdBtn.Tooltip("No next page")
 		}
 		if IconButton(c, tc, icons.TablerRefresh, 13).Clicked() {
-			a.BrowserWebView.Page().Reload()
+			page.Reload()
 		}
 		urlBox := ui.Row(c).Height(26).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Grow(1)
@@ -165,10 +189,12 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
 	sessionID := ""
+	var subs []*rakitagent.Session
 	if a.Agent != nil {
+		// The nil guard covers every Agent access below, not just the ID.
 		sessionID = a.Agent.ActiveSessionID
+		subs = a.Agent.Subagents(sessionID)
 	}
-	subs := a.Agent.Subagents(sessionID)
 
 	// If a specific subagent is selected, display its live chat/steering view
 	if a.SelectedSubagentID != "" {

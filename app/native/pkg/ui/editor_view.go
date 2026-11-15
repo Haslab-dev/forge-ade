@@ -10,6 +10,7 @@ import (
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
@@ -66,7 +67,9 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 
 		gitChanges := 0
 		if a.Git != nil {
-			gitChanges = len(a.Git.Staged) + len(a.Git.Unstaged) + len(a.Git.Untracked)
+			// Render from a snapshot: Refresh goroutines write these fields.
+			gm := a.Git.Snapshot()
+			gitChanges = len(gm.Staged) + len(gm.Unstaged) + len(gm.Untracked)
 		}
 
 		ui.Column(c).Width(ActivityBarWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).
@@ -247,7 +250,7 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						}
 						if closeBtn.Clicked() {
 							closedThisTab = true
-							em.CloseTab(path)
+							a.closeEditorTab(path)
 						}
 					})
 					if isActive {
@@ -308,13 +311,13 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 							}
 							m.Separator()
 							if m.Item("Close Tab").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
-								em.CloseTab(path)
+								a.closeEditorTab(path)
 							}
 							if m.Item("Close Others").Chosen() {
-								em.CloseOthers(path)
+								em.RequestCloseOthers(path)
 							}
 							if m.Item("Close All").Chosen() {
-								em.CloseAll()
+								em.RequestCloseAll()
 							}
 							return
 						}
@@ -335,28 +338,19 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						}
 						m.Separator()
 						if m.Item("Close").Shortcut(ui.Ctrl, ui.KeyW).Chosen() {
-							em.CloseTab(path)
+							a.closeEditorTab(path)
 						}
 						if m.Item("Close Others").Chosen() {
-							em.CloseOthers(path)
+							em.RequestCloseOthers(path)
 						}
 						if m.Item("Close to the Left").Chosen() {
-							seen := false
-							for _, p := range em.OpenTabs() {
-								if p == path {
-									seen = true
-									continue
-								}
-								if !seen && !em.IsPinned(p) {
-									em.CloseTab(p)
-								}
-							}
+							em.RequestCloseLeft(path)
 						}
 						if m.Item("Close to the Right").Chosen() {
-							em.CloseToRight(path)
+							em.RequestCloseRight(path)
 						}
 						if m.Item("Close All").Chosen() {
-							em.CloseAll()
+							em.RequestCloseAll()
 						}
 						m.Separator()
 						if len(em.Panes) > 1 {
@@ -445,7 +439,11 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 		actionBtn(icons.TablerRefresh, "Wrap", em.SoftWrap, func() { em.SoftWrap = !em.SoftWrap })
 		actionBtn(icons.TablerWand, "Format", false, func() { a.formatActiveDocument(c) })
 		actionBtn(icons.TablerSparkles, "Edit with AI", a.InlineAI != nil && a.InlineAI.Open, func() { a.openInlineAI() })
-		actionBtn(icons.TablerDeviceFloppy, "Save", false, func() { _ = em.SaveActiveFile() })
+		actionBtn(icons.TablerDeviceFloppy, "Save", false, func() {
+			if err := em.SaveActiveFile(); err != nil {
+				a.queueToast(ui.Toast{Title: "Save failed", Description: err.Error(), Type: "error"})
+			}
+		})
 	})
 }
 
@@ -890,7 +888,9 @@ func (a *AppUI) renderEditorDiff(c *ui.Context) {
 // renderStatusBar draws the 26px editor status bar.
 func (a *AppUI) renderStatusBar(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	projectName := filepath.Base(a.Workspace.RootDir)
+	// Same naming as the header: "General" when no folder is open (a bare
+	// filepath.Base("") used to render a lone "." chip).
+	projectName := resolveProjectName(a.Workspace.RootDir)
 
 	curPath := ""
 	lineCol := "Ln 1, Col 1"
@@ -962,7 +962,7 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 		if curPath != "" {
 			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.FileIconSVG(curPath)).Width(12).Height(12).TextColor(tc.IconMuted)
-				statusText(curPath)
+				statusText(truncRunes(curPath, 60))
 			})
 		}
 		ui.Box(c).Grow(1)
@@ -1011,19 +1011,20 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 		statusText(fmt.Sprintf("%d lines · %s", lineCount, langLabel))
 		statusText("UTF-8")
 
-		if a.Git != nil && a.Git.Branch != "" {
-			branchChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center)
-			branchChip.Children(func() {
-				ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
-				ui.Text(c, a.Git.Branch).FontSize(11).FontWeight(500).TextColor(tc.Accent)
-			})
-			if branchChip.Hovered() {
-				branchChip.Background(tc.Accent.Alpha(0.12))
-			}
-			if branchChip.Clicked() {
-				a.ShowBranchModal = true
-				a.BranchSearchQuery = ""
-				if a.Git != nil {
+		if a.Git != nil {
+			branch := a.Git.Snapshot().Branch
+			if branch != "" {
+				branchChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+				branchChip.Children(func() {
+					ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
+					ui.Text(c, branch).FontSize(11).FontWeight(500).TextColor(tc.Accent)
+				})
+				if branchChip.Hovered() {
+					branchChip.Background(tc.Accent.Alpha(0.12))
+				}
+				if branchChip.Clicked() {
+					a.ShowBranchModal = true
+					a.BranchSearchQuery = ""
 					a.Git.Refresh()
 				}
 			}
@@ -1127,12 +1128,16 @@ func editorPosAtLine(doc *editor.OpenDocument, line int) mygoeditor.Pos {
 	return mygoeditor.Pos{Line: line, Col: 0}
 }
 
-// openEditorTerminalTab opens a terminal tab directly in the main editor pane (CodeEditorPane parity).
+// openEditorTerminalTab opens a terminal tab directly in the main editor pane
+// (CodeEditorPane parity). Every tab owns a real, distinct PTY session: the
+// terminal manager spawns a new session first and the editor tab binds to it;
+// if the session cannot be created no tab is added.
 func (a *AppUI) openEditorTerminalTab(title string) {
 	if a.Editor == nil {
 		return
 	}
-	if title == "" && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+	isRemote := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
+	if title == "" && isRemote {
 		_, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
 		folder := filepath.Base(remotePath)
 		if folder == "." || folder == "/" || folder == "" {
@@ -1140,22 +1145,54 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 		}
 		title = fmt.Sprintf("SSH: %s (%s)", displayHost, folder)
 	}
-	tabID := a.Editor.OpenTerminalTab(title)
-	if a.Terminal != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") && a.Engine != nil && a.Engine.RemoteFS != nil {
-		client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
-		if isRemote && client != nil {
+	if a.Terminal == nil {
+		a.queueToast(ui.Toast{Title: "Terminal unavailable", Description: "The terminal manager is not ready", Type: "error"})
+		return
+	}
+	cwd := a.Workspace.RootDir
+	if cwd == "" || isRemote {
+		cwd = "" // manager default (or remote command below)
+	}
+	// Distinct session per editor tab: spawn before adding the tab so a
+	// failed spawn leaves the editor untouched.
+	if err := a.Terminal.NewTab(cwd); err != nil {
+		a.queueToast(ui.Toast{Title: "Could not open terminal", Description: err.Error(), Type: "error"})
+		return
+	}
+	if isRemote && a.Engine != nil && a.Engine.RemoteFS != nil {
+		if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
 			prog, args, env := client.SSHCommand(remotePath)
 			a.Terminal.Command = append([]string{prog}, args...)
 			a.Terminal.Env = env
 			a.Terminal.Title = title
-			_ = a.Terminal.Restart()
+			if err := a.Terminal.Restart(); err != nil {
+				a.queueToast(ui.Toast{Title: "Could not open remote terminal", Description: err.Error(), Type: "error"})
+				a.closeTerminalSessionByID(a.Terminal, a.activeTerminalSessionID())
+				return
+			}
 		}
 	}
-	_ = tabID
+	tabID := a.Editor.OpenTerminalTab(title)
+	if sessionID := a.activeTerminalSessionID(); sessionID > 0 {
+		a.Editor.BindTerminalSession(tabID, sessionID)
+	}
 	a.Mode = ModeEditor
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}
+}
+
+// activeTerminalSessionID returns the TerminalState's active tab ID, 0 when
+// none exists.
+func (a *AppUI) activeTerminalSessionID() int {
+	if a.Terminal == nil {
+		return 0
+	}
+	tabs, active := a.Terminal.SnapshotTabs()
+	if active < 0 || active >= len(tabs) {
+		return 0
+	}
+	return tabs[active].ID
 }
 
 // renderEditorMainTerminal renders the interactive terminal directly in the main editor area (CodeEditorPane parity).
@@ -1191,7 +1228,7 @@ func (a *AppUI) renderEditorMainTerminal(c *ui.Context, tc theme.ThemeColors, ta
 			}
 			m.Separator()
 			if m.Item("Close Tab").Chosen() {
-				a.Editor.CloseTab(tabPath)
+				a.closeEditorTab(tabPath)
 			}
 		})
 		hdr.Children(func() {
@@ -1232,12 +1269,16 @@ func (a *AppUI) renderEditorMainTerminal(c *ui.Context, tc theme.ThemeColors, ta
 				_ = a.Terminal.Restart()
 			}
 			if IconButton(c, tc, icons.TablerX, 12).Clicked() {
-				a.Editor.CloseTab(tabPath)
+				a.closeEditorTab(tabPath)
 			}
 		})
 
-		// Full-height interactive terminal viewport
+		// Full-height interactive terminal viewport — this tab's own session,
+		// not whatever tab happens to be active in the terminal manager.
 		if a.Terminal != nil {
+			if sessionID, ok := a.Editor.TerminalSessionFor(tabPath); ok {
+				a.selectTerminalSessionByID(a.Terminal, sessionID)
+			}
 			a.renderTerminal(c, a.Terminal)
 		} else {
 			ui.Column(c).Grow(1).Center().Children(func() {
@@ -1255,100 +1296,49 @@ func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *edito
 	return el.ContextMenu(func(m *ui.Menu) {
 		sym := a.symbolUnderCursor(doc)
 		wsDir := a.Workspace.RootDir
+		em := a.Editor
+
+		// Symbol scans walk the whole workspace, so they run off the render
+		// thread and apply results on the UI thread (same panes as before).
+		scanAsync := func(action, notFound string, scan func(symbol, wsDir string) []editor.PeekMatch) {
+			if sym == "" {
+				return
+			}
+			go func() {
+				matches := scan(sym, wsDir)
+				a.runOnUI(func() {
+					a.applyPeekMatches(action, notFound, sym, matches)
+				})
+			}()
+		}
 
 		// 1. Navigation / LSP
 		if m.Item("Go to Definition").Shortcut(0, ui.KeyF12).Chosen() {
 			if sym != "" {
-				matches := a.Editor.FindDefinitions(sym, wsDir)
-				if len(matches) == 1 {
-					a.openSearchResult(matches[0].Path, matches[0].Line, "")
-				} else if len(matches) > 1 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = sym
-					a.PeekResults = matches
-				} else {
-					c.AddToast(ui.Toast{Title: "Go to Definition", Description: "No definition found for " + sym, Type: "info"})
-				}
+				scanAsync("Go to Definition", "No definition found for ", em.FindDefinitions)
 			} else {
 				doc.Editor.Run(mygoeditor.GoToDefinition)
 			}
 		}
 
 		if m.Item("Go to Declaration").Shortcut(ui.Ctrl, ui.KeyF12).Chosen() {
-			if sym != "" {
-				matches := a.Editor.FindDefinitions(sym, wsDir)
-				if len(matches) == 1 {
-					a.openSearchResult(matches[0].Path, matches[0].Line, "")
-				} else if len(matches) > 1 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = sym
-					a.PeekResults = matches
-				} else {
-					c.AddToast(ui.Toast{Title: "Go to Declaration", Description: "No declaration found for " + sym, Type: "info"})
-				}
-			}
+			scanAsync("Go to Declaration", "No declaration found for ", em.FindDefinitions)
 		}
 
 		if m.Item("Go to Type Definition").Shortcut(ui.Shift, ui.KeyF12).Chosen() {
-			if sym != "" {
-				matches := a.Editor.FindTypeDefinitions(sym, wsDir)
-				if len(matches) == 1 {
-					a.openSearchResult(matches[0].Path, matches[0].Line, "")
-				} else if len(matches) > 1 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = sym
-					a.PeekResults = matches
-				} else {
-					c.AddToast(ui.Toast{Title: "Go to Type Definition", Description: "No type definition found for " + sym, Type: "info"})
-				}
-			}
+			scanAsync("Go to Type Definition", "No type definition found for ", em.FindTypeDefinitions)
 		}
 
 		if m.Item("Go to Implementation").Shortcut(ui.Cmd, ui.KeyF12).Chosen() {
-			if sym != "" {
-				matches := a.Editor.FindImplementations(sym, wsDir)
-				if len(matches) == 1 {
-					a.openSearchResult(matches[0].Path, matches[0].Line, "")
-				} else if len(matches) > 1 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = sym
-					a.PeekResults = matches
-				} else {
-					c.AddToast(ui.Toast{Title: "Go to Implementation", Description: "No implementation found for " + sym, Type: "info"})
-				}
-			}
+			scanAsync("Go to Implementation", "No implementation found for ", em.FindImplementations)
 		}
 
 		if m.Item("Find All References").Shortcut(ui.Alt|ui.Shift, ui.KeyF12).Chosen() {
-			if sym != "" {
-				matches := a.Editor.FindReferences(sym, wsDir)
-				if len(matches) > 0 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = sym
-					a.PeekResults = matches
-				} else {
-					c.AddToast(ui.Toast{Title: "Find References", Description: "No references found for " + sym, Type: "info"})
-				}
-			}
+			scanAsync("Find All References", "No references found for ", em.FindReferences)
 		}
 
-		if m.Item("Show Incoming Calls").Shortcut(ui.Alt|ui.Shift, ui.KeyH).Chosen() {
-			if sym != "" {
-				matches := a.Editor.FindReferences(sym, wsDir)
-				if len(matches) > 0 {
-					a.ShowPeekModal = true
-					a.PeekSymbol = "calls to " + sym
-					a.PeekResults = matches
-				} else {
-					c.AddToast(ui.Toast{Title: "Incoming Calls", Description: "No callers found for " + sym, Type: "info"})
-				}
-			}
-		}
-
-		if m.Item("Show Outgoing Calls").Chosen() {
-			if sym != "" {
-				c.AddToast(ui.Toast{Title: "Outgoing Calls", Description: "Tracing calls from " + sym, Type: "info"})
-			}
+		if m.Item("Find References").Shortcut(ui.Alt|ui.Shift, ui.KeyH).Chosen() {
+			scanAsync("Find References", "No references found for ", em.FindReferences)
 		}
 
 		m.Separator()
@@ -1417,11 +1407,59 @@ func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *edito
 			mygo.Clipboard.WriteText(permalink)
 			c.AddToast(ui.Toast{Title: "Permalink Copied", Description: permalink, Type: "success"})
 		}
-
-		if m.Item("View File History").Chosen() {
-			a.IsGitClientOpen = true
-			a.SelectedFile = doc.RelativePath
-			c.AddToast(ui.Toast{Title: "File History", Description: doc.RelativePath, Type: "info"})
-		}
 	})
+}
+
+// applyPeekMatches applies a finished symbol scan exactly as the inline
+// context-menu actions did: a single match opens the file at the match,
+// multiple matches open the peek modal, none toasts.
+func (a *AppUI) applyPeekMatches(action, notFoundPrefix, sym string, matches []editor.PeekMatch) {
+	switch {
+	case len(matches) == 1:
+		a.openSearchResultChecked(matches[0].Path, matches[0].Line, "")
+	case len(matches) > 1:
+		a.ShowPeekModal = true
+		a.PeekSymbol = sym
+		a.PeekResults = matches
+	default:
+		a.queueToast(ui.Toast{Title: action, Description: notFoundPrefix + sym, Type: "info"})
+	}
+}
+
+// closeEditorTab is the UI-facing close for every close control in the
+// editor surface: editor-managed terminal tabs tear down their own PTY
+// session, then the Request* path runs (discard confirmation aware).
+func (a *AppUI) closeEditorTab(path string) {
+	if strings.HasPrefix(path, "terminal://") && a.Terminal != nil {
+		if sessionID, ok := a.Editor.TerminalSessionFor(path); ok {
+			a.closeTerminalSessionByID(a.Terminal, sessionID)
+		}
+	}
+	a.Editor.RequestClose(path)
+}
+
+// closeTerminalSessionByID closes the TerminalState tab with the given ID,
+// if it still exists.
+func (a *AppUI) closeTerminalSessionByID(ts *terminal.TerminalState, sessionID int) {
+	tabs, _ := ts.SnapshotTabs()
+	for _, tab := range tabs {
+		if tab.ID == sessionID {
+			ts.CloseTab(tab.Index)
+			return
+		}
+	}
+}
+
+// selectTerminalSessionByID makes the bound session the TerminalState's
+// active tab so the editor pane renders its own PTY, not a shared one.
+func (a *AppUI) selectTerminalSessionByID(ts *terminal.TerminalState, sessionID int) {
+	tabs, active := ts.SnapshotTabs()
+	for _, tab := range tabs {
+		if tab.ID == sessionID {
+			if active != tab.Index {
+				ts.SelectTab(tab.Index)
+			}
+			return
+		}
+	}
 }

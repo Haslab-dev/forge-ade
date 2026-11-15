@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -46,6 +47,36 @@ type cachedImage struct {
 	err      error
 }
 
+// imageCacheCap bounds the decoded-image cache; decoded bitmaps are the
+// largest objects the app keeps, so an unbounded map grows without limit.
+const imageCacheCap = 32
+
+// imageLRUState tracks insertion/recency order for the image cache. It is
+// UI-thread-only state (render calls getImage), like the rest of AppUI.
+var (
+	imageLRUMu    sync.Mutex
+	imageLRUOrder []string
+)
+
+// imageCacheTouch records a use (move-to-front) and evicts the
+// oldest-inserted entries beyond the cap.
+func imageCacheTouch(cache map[string]*cachedImage, fullPath string) {
+	imageLRUMu.Lock()
+	defer imageLRUMu.Unlock()
+	for i, p := range imageLRUOrder {
+		if p == fullPath {
+			imageLRUOrder = append(imageLRUOrder[:i], imageLRUOrder[i+1:]...)
+			break
+		}
+	}
+	imageLRUOrder = append([]string{fullPath}, imageLRUOrder...)
+	for len(imageLRUOrder) > imageCacheCap {
+		evict := imageLRUOrder[len(imageLRUOrder)-1]
+		imageLRUOrder = imageLRUOrder[:len(imageLRUOrder)-1]
+		delete(cache, evict)
+	}
+}
+
 // getImage retrieves or decodes the image source, cached by fullPath and file modTime.
 func (a *AppUI) getImage(fullPath string) *cachedImage {
 	if a.imageCache == nil {
@@ -57,6 +88,7 @@ func (a *AppUI) getImage(fullPath string) *cachedImage {
 	}
 	mod := info.ModTime().UnixNano()
 	if cached, ok := a.imageCache[fullPath]; ok && cached.modTime == mod && cached.src != nil {
+		imageCacheTouch(a.imageCache, fullPath)
 		return cached
 	}
 
@@ -129,6 +161,7 @@ func (a *AppUI) getImage(fullPath string) *cachedImage {
 	}
 
 	a.imageCache[fullPath] = ci
+	imageCacheTouch(a.imageCache, fullPath)
 	return ci
 }
 
@@ -375,15 +408,18 @@ func (a *AppUI) renderImageViewer(c *ui.Context, tc theme.ThemeColors, fullPath,
 			}
 		})
 
-		// 2. Interactive Image Canvas
+		// 2. Interactive Image Canvas. Backdrops come from the active theme's
+		// semantic tokens (never raw hex): canvas for the default grid tone,
+		// the code background for the dark swatch, the overlay surface for
+		// the light swatch — whatever the current palette defines them to be.
 		canvasBg := tc.Canvas
 		switch bgStyle {
 		case "dark":
-			canvasBg = ui.RGBA(14, 14, 18, 255)
+			canvasBg = tc.CodeBackground
 		case "light":
-			canvasBg = ui.RGBA(255, 255, 255, 255)
+			canvasBg = tc.SurfaceOverlay
 		case "grid":
-			canvasBg = ui.RGBA(20, 20, 26, 255)
+			canvasBg = tc.Canvas
 		}
 
 		if ci.err != nil || ci.src == nil {
@@ -423,13 +459,13 @@ func (a *AppUI) renderImageViewer(c *ui.Context, tc theme.ThemeColors, fullPath,
 					BorderWidth(1).BorderColor(tc.Border.Alpha(0.3)).
 					Shadow(0, 10, 32, -4, ui.RGBA(0, 0, 0, 0.45))
 
-				// If checkerboard background is chosen, give the card a subtle tile/grid tone
+				// Give the card a tone related to the chosen backdrop.
 				if bgStyle == "grid" {
-					imgCard.Background(ui.RGBA(28, 28, 36, 255))
+					imgCard.Background(tc.SurfaceRaised)
 				} else if bgStyle == "light" {
-					imgCard.Background(ui.RGBA(255, 255, 255, 255))
+					imgCard.Background(tc.SurfaceOverlay)
 				} else {
-					imgCard.Background(ui.RGBA(12, 12, 16, 255))
+					imgCard.Background(tc.CodeBackground)
 				}
 
 				imgCard.Children(func() {

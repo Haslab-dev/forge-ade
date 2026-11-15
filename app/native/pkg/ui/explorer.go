@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -205,8 +206,13 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 	})
 }
 
+// maxOpenTextBytes guards the explorer against loading huge text files into
+// an editor buffer (10 MB matches the SearchManager's replace ceiling).
+const maxOpenTextBytes = 10 << 20
+
 // openExplorerNode opens a file from the explorer: database files inspect in
-// the DB pane, everything else opens in the editor, as forge-ade does.
+// the DB pane, binary/preview formats route to their viewers, and text files
+// open in the editor, as forge-ade does.
 func (a *AppUI) openExplorerNode(node *FileTreeNode) {
 	a.SelectedFile = node.RelativePath
 	ext := strings.ToLower(filepath.Ext(node.RelativePath))
@@ -219,8 +225,45 @@ func (a *AppUI) openExplorerNode(node *FileTreeNode) {
 	}
 	if a.Mode == ModeAgent {
 		a.openSidePreviewFile(nil, node.RelativePath)
-	} else {
-		_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+		return
+	}
+	a.openExplorerFileInEditor(node.FullPath, node.RelativePath)
+}
+
+// openExplorerFileInEditor opens a file in the editor surface from the
+// explorer, routing formats with dedicated viewers before any text loading:
+// PDFs and decks go to their viewer panes, images to the image viewer (all
+// three are ActivePath-driven and never load the bytes as text), and
+// oversized text files are refused with a toast instead of stalling the
+// buffer.
+func (a *AppUI) openExplorerFileInEditor(fullPath, relPath string) {
+	lower := strings.ToLower(relPath)
+	em := a.Editor
+	switch {
+	case strings.HasSuffix(lower, ".pdf"):
+		a.openPdfViewer(fullPath)
+		em.ActivePath = fullPath
+		return
+	case isDeckOrMotionFile(lower):
+		a.openDeckViewer(fullPath)
+		em.ActivePath = fullPath
+		return
+	case isImageOrSVG(lower):
+		em.ActivePath = fullPath
+		return
+	}
+	if !strings.HasPrefix(fullPath, "ssh://") {
+		if info, err := os.Stat(fullPath); err == nil && info.Size() > maxOpenTextBytes {
+			a.queueToast(ui.Toast{
+				Title:       "File too large to open",
+				Description: fmt.Sprintf("%s is larger than 10 MB", relPath),
+				Type:        "error",
+			})
+			return
+		}
+	}
+	if _, err := em.OpenFile(fullPath, relPath); err != nil {
+		a.queueToast(ui.Toast{Title: "Open failed", Description: err.Error(), Type: "error"})
 	}
 }
 
@@ -234,7 +277,7 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 					a.openSidePreviewFile(c, node.RelativePath)
 				}
 				if m.Item("Open in Editor").Chosen() {
-					_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+					a.openExplorerFileInEditor(node.FullPath, node.RelativePath)
 					a.Mode = ModeEditor
 				}
 				m.Separator()
@@ -243,7 +286,7 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 					a.openExplorerNode(node)
 				}
 				if m.Item("Open in Editor").Chosen() {
-					_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+					a.openExplorerFileInEditor(node.FullPath, node.RelativePath)
 					a.Mode = ModeEditor
 				}
 				m.Separator()
@@ -317,16 +360,22 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 }
 
 // deleteExplorerNode deletes a file or folder (to the system trash locally,
-// over SFTP remotely) and refreshes the workspace.
+// over SFTP remotely) and refreshes the workspace. Every open tab under the
+// deleted path — the node itself and, for folders, all children — closes via
+// the discard-confirmation contract.
 func (a *AppUI) deleteExplorerNode(c *ui.Context, node *FileTreeNode) {
 	rel := node.RelativePath
-	if !node.IsDir && rel == a.SelectedFile {
-		if doc := a.Editor.GetDoc(node.FullPath); doc != nil {
-			a.Editor.CloseTab(node.FullPath)
+	for _, f := range a.Workspace.FilesUnder(rel) {
+		if a.Editor.GetDoc(f.FullPath) != nil {
+			a.Editor.RequestClose(f.FullPath)
 		}
+	}
+	if a.Editor.GetDoc(node.FullPath) != nil {
+		a.Editor.RequestClose(node.FullPath)
 	}
 	go func() {
 		if err := a.Workspace.DeleteFile(rel); err != nil {
+			a.queueToast(ui.Toast{Title: "Delete failed", Description: err.Error(), Type: "error"})
 			if a.Window != nil {
 				a.Window.Invalidate()
 			}
@@ -465,7 +514,7 @@ func (a *AppUI) renderFilesPane(c *ui.Context) {
 							closeBtn.Background(tc.Text.Alpha(0.06))
 						}
 						if closeBtn.Clicked() {
-							a.Editor.CloseTab(path)
+							a.closeEditorTab(path)
 						}
 					})
 					if active {

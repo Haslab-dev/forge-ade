@@ -6,20 +6,38 @@ package ui
 // replace-all row — powered by the shared RakitKode search manager.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/Haslab-dev/RakitKode/gitignore"
+	rkignore "github.com/Haslab-dev/RakitKode/ignore"
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
+
+// truncRunes cuts s to at most max runes so multi-byte UTF-8 is never split
+// mid-rune (thread_find.go's preview pattern).
+func truncRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
 
 // renderFileSearch draws the Search side pane of the editor activity bar.
 func (a *AppUI) renderFileSearch(c *ui.Context) {
@@ -158,11 +176,7 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 					Padding(0, 6, 0, 20).Gap(6).AlignItems(ui.Center)
 				row.Children(func() {
 					ui.Text(c, fmt.Sprintf("%d", hit.Line)).FontSize(10).TextColor(tc.TextMuted)
-					line := hit.Text
-					if len(line) > 60 {
-						line = line[:60] + "…"
-					}
-					ui.Text(c, line).FontSize(11).Grow(1).SingleLine()
+					ui.Text(c, truncRunes(hit.Text, 60)).FontSize(11).Grow(1).SingleLine()
 				})
 				if a.SelectedFile == hit.Path {
 					row.Background(tc.Accent.Alpha(0.08))
@@ -170,7 +184,8 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 					row.Background(tc.Text.Alpha(0.04))
 				}
 				if row.Clicked() {
-					a.openSearchResult(hit.Path, 0, a.FileSearchQuery)
+					// Files-mode hits carry a line too — jump to it.
+					a.openSearchResultChecked(hit.Path, hit.Line, a.FileSearchQuery)
 				}
 			}
 		})
@@ -196,6 +211,9 @@ func (a *AppUI) renderSearchToggle(c *ui.Context, tc theme.ThemeColors, label, t
 }
 
 // runEditorSearch executes the active mode's search off the render path.
+// The goroutine collects results locally and applies them on the UI thread —
+// render reads FileSearchHits/ContentHits/FileSearchBusy every frame, so
+// they are never written from the background goroutine directly.
 func (a *AppUI) runEditorSearch() {
 	query := strings.TrimSpace(a.FileSearchQuery)
 	if a.FileSearchMode != "content" {
@@ -211,15 +229,19 @@ func (a *AppUI) runEditorSearch() {
 		a.ContentHitsAt = signature
 		a.FileSearchBusy = true
 		ws := a.Workspace
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		go func() {
-			hits := ws.SearchFiles(query)
-			if a.ContentHitsAt == signature {
-				a.FileSearchHits = hits
-			}
-			a.FileSearchBusy = false
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
+			defer cancel()
+			hits := ws.SearchFiles(ctx, query)
+			a.runOnUI(func() {
+				if a.ContentHitsAt == signature {
+					a.FileSearchHits = hits
+				}
+				a.FileSearchBusy = false
+				if a.Window != nil {
+					a.Window.Invalidate()
+				}
+			})
 		}()
 		return
 	}
@@ -243,9 +265,6 @@ func (a *AppUI) runEditorSearch() {
 		a.Window.Invalidate()
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = ctx
 		opts := search.SearchOptions{
 			Query:          query,
 			MatchCase:      a.FileSearchCase,
@@ -255,21 +274,31 @@ func (a *AppUI) runEditorSearch() {
 			Limit:          200,
 		}
 		hits, err := a.Engine.SearchMgr.SearchContentWithOptions(opts)
-		a.FileSearchBusy = false
-		if err == nil && a.ContentHitsAt == signature {
-			a.ContentHits = hits
-		}
-		if a.Window != nil {
-			a.Window.Invalidate()
-		}
+		a.runOnUI(func() {
+			a.FileSearchBusy = false
+			if err == nil && a.ContentHitsAt == signature {
+				a.ContentHits = hits
+			}
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		})
 	}()
 }
 
-// runEditorReplaceAll applies replace-all across the workspace.
+// runEditorReplaceAll applies replace-all across the workspace, routing
+// through the OnConfirmReplace contract (EditorManager field the UI layer
+// wires; nil → proceed as before) and keeping open editor buffers as the
+// source of truth for their files so a later save cannot revert the replace.
 func (a *AppUI) runEditorReplaceAll() {
 	if a.Engine == nil || a.Engine.SearchMgr == nil || a.Workspace == nil {
 		return
 	}
+	root := a.Workspace.RootDir
+	if root == "" {
+		return
+	}
+	confirm := a.Editor.OnConfirmReplace
 	a.FileSearchBusy = true
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -285,20 +314,231 @@ func (a *AppUI) runEditorReplaceAll() {
 			},
 			Replacement: a.FileSearchReplace,
 		}
-		res, err := a.Engine.SearchMgr.ReplaceAll(opts)
-		a.FileSearchBusy = false
-		if a.Window != nil {
-			msg := fmt.Sprintf("Replaced %d occurrences in %d files", res.TotalReplacements, res.FilesChanged)
-			if err != nil {
-				msg = err.Error()
-			}
-			// Toasts must be added on the main thread via Invalidate; carry
-			// the message through the status surface.
-			a.ContentHitsAt = ""
-			a.SearchStatusMsg = msg
-			a.Window.Invalidate()
+
+		// Count matching lines first so the confirmation can quote a number.
+		countOpts := opts.SearchOptions
+		countOpts.Limit = 100000
+		hits, err := a.Engine.SearchMgr.SearchContentWithOptions(countOpts)
+		if err != nil {
+			a.queueToast(ui.Toast{Title: "Search failed", Description: err.Error(), Type: "error"})
+			a.runOnUI(func() {
+				a.FileSearchBusy = false
+				if a.Window != nil {
+					a.Window.Invalidate()
+				}
+			})
+			return
 		}
+		if len(hits) == 0 {
+			a.runOnUI(func() {
+				a.FileSearchBusy = false
+				a.SearchStatusMsg = "No matches"
+				if a.Window != nil {
+					a.Window.Invalidate()
+				}
+			})
+			return
+		}
+
+		if confirm != nil {
+			decided := make(chan bool, 1)
+			a.runOnUI(func() {
+				confirm(len(hits), func(proceed bool) {
+					decided <- proceed
+				})
+			})
+			if <-decided == false {
+				a.runOnUI(func() {
+					a.FileSearchBusy = false
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
+				})
+				return
+			}
+		}
+
+		res, err := a.replaceAcrossWorkspace(root, opts)
+		a.runOnUI(func() {
+			a.FileSearchBusy = false
+			a.ContentHitsAt = "" // force a fresh search next time
+			if err != nil {
+				a.SearchStatusMsg = err.Error()
+				a.queueToast(ui.Toast{Title: "Replace failed", Description: err.Error(), Type: "error"})
+			} else {
+				a.SearchStatusMsg = fmt.Sprintf("Replaced %d occurrences in %d files", res.TotalReplacements, res.FilesChanged)
+			}
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		})
 	}()
+}
+
+// replaceAcrossWorkspace applies the replacement on disk with the same
+// matching semantics as SearchManager.ReplaceAll (ripgrep-equivalent regex,
+// gitignore-aware walk, binary/oversize skip), except for files open in the
+// editor: for those the replacement applies to the in-memory buffer and is
+// persisted through the editor manager (atomic write, mode/CRLF/BOM
+// preservation, saved-mark), so editor state and disk agree and a later save
+// cannot silently revert the replace.
+func (a *AppUI) replaceAcrossWorkspace(root string, opts search.ReplaceOptions) (search.ReplaceResult, error) {
+	var result search.ReplaceResult
+	if strings.HasPrefix(root, "ssh://") {
+		return result, fmt.Errorf("replace across remote workspaces is not supported yet")
+	}
+	re, err := buildReplaceRegex(opts.SearchOptions)
+	if err != nil {
+		return result, err
+	}
+	gi := gitignore.Load(root)
+
+	// Collect the open documents first: their paths are excluded from the
+	// disk rewrite below.
+	openPaths := make(map[string]bool)
+	for _, p := range a.Editor.OpenTabs() {
+		if a.Editor.GetDoc(p) != nil && !strings.HasPrefix(p, "terminal://") {
+			openPaths[p] = true
+		}
+	}
+
+	// matchedOpen records which open paths matched on disk so their buffers
+	// get the replacement applied too (a buffer with unsaved edits may no
+	// longer match the on-disk text the walk saw).
+	matchedOpen := make(map[string]bool)
+
+	err = filepath.Walk(root, func(p string, info os.FileInfo, werr error) error {
+		if werr != nil || info == nil {
+			return nil
+		}
+		if info.IsDir() {
+			if rkignore.Name(info.Name()) || (gi != nil && gi.MatchDir(info.Name())) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.Size() > 5*1024*1024 {
+			return nil
+		}
+		content, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		if bytes.IndexByte(content, 0) != -1 || !re.Match(content) {
+			return nil
+		}
+		if openPaths[p] {
+			matchedOpen[p] = true
+			return nil
+		}
+		s := string(content)
+		out := replaceAllPreservingCase(re, s, opts)
+		if out == s {
+			return nil
+		}
+		if werr := writeFilePreservingMode(p, []byte(out), info.Mode()); werr != nil {
+			return nil
+		}
+		result.FilesChanged++
+		result.TotalReplacements += len(re.FindAllString(s, -1))
+		result.Files = append(result.Files, p)
+		return nil
+	})
+	if err != nil {
+		return result, err
+	}
+
+	// Open buffers are the source of truth: apply the replacement to their
+	// current text (preserving unsaved edits) and persist through the editor
+	// manager so disk and buffer agree.
+	for p := range matchedOpen {
+		doc := a.Editor.GetDoc(p)
+		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+			continue
+		}
+		bufText := doc.Editor.Buffer.String()
+		out := replaceAllPreservingCase(re, bufText, opts)
+		if out == bufText {
+			continue
+		}
+		result.TotalReplacements += len(re.FindAllString(bufText, -1))
+		if serr := a.Editor.SetDocTextAndSave(p, out); serr != nil {
+			if result.Files == nil {
+				result.Files = []string{p}
+			} else {
+				result.Files = append(result.Files, p)
+			}
+			result.FilesChanged++
+			return result, fmt.Errorf("replacing in %s: %w", filepath.Base(p), serr)
+		}
+		result.FilesChanged++
+		result.Files = append(result.Files, p)
+	}
+	return result, nil
+}
+
+// buildReplaceRegex mirrors RakitKode's SearchManager regex construction so
+// the replace applies exactly the matches the user previewed.
+func buildReplaceRegex(opts search.SearchOptions) (*regexp.Regexp, error) {
+	pattern := opts.Query
+	if !opts.UseRegex {
+		pattern = regexp.QuoteMeta(pattern)
+	}
+	if opts.MatchWholeWord {
+		pattern = `\b(?:` + pattern + `)\b`
+	}
+	if !opts.MatchCase {
+		pattern = `(?i)` + pattern
+	}
+	return regexp.Compile(pattern)
+}
+
+// replaceAllPreservingCase applies the replacement, honoring PreserveCase
+// the way the RakitKode manager does.
+func replaceAllPreservingCase(re *regexp.Regexp, s string, opts search.ReplaceOptions) string {
+	return re.ReplaceAllStringFunc(s, func(m string) string {
+		if opts.PreserveCase {
+			return preserveCaseReplacement(m, opts.Replacement)
+		}
+		return opts.Replacement
+	})
+}
+
+func preserveCaseReplacement(match, replacement string) string {
+	if match == strings.ToUpper(match) && strings.ToLower(match) != match {
+		return strings.ToUpper(replacement)
+	}
+	r := []rune(match)
+	if len(r) > 0 && unicode.IsUpper(r[0]) {
+		rr := []rune(replacement)
+		if len(rr) > 0 {
+			rr[0] = unicode.ToUpper(rr[0])
+		}
+		return string(rr)
+	}
+	return replacement
+}
+
+// writeFilePreservingMode writes data to p with the file's existing mode.
+func writeFilePreservingMode(p string, data []byte, mode os.FileMode) error {
+	if err := os.WriteFile(p, data, mode.Perm()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// openSearchResultChecked wraps openSearchResult (app.go) so open failures
+// surface as a toast instead of a silent no-op.
+func (a *AppUI) openSearchResultChecked(relPath string, line int, query string) {
+	if relPath == "" || a.Workspace == nil {
+		return
+	}
+	full := a.Workspace.ResolveFullPath(relPath)
+	if _, err := a.Editor.OpenFile(full, relPath); err != nil {
+		a.queueToast(ui.Toast{Title: "Open failed", Description: err.Error(), Type: "error"})
+		return
+	}
+	a.openSearchResult(relPath, line, query)
 }
 
 // renderContentSearchResults draws content-mode hits grouped by file.
@@ -352,11 +592,7 @@ func (a *AppUI) renderContentSearchResults(c *ui.Context, tc theme.ThemeColors) 
 						Padding(0, 6, 0, 20).Gap(6).AlignItems(ui.Center)
 					row.Children(func() {
 						ui.Text(c, fmt.Sprintf("%d", h.Line)).FontSize(10).TextColor(tc.TextMuted)
-						line := h.Content
-						if len(line) > 60 {
-							line = line[:60] + "…"
-						}
-						ui.Text(c, line).FontSize(11).Grow(1).SingleLine()
+						ui.Text(c, truncRunes(h.Content, 60)).FontSize(11).Grow(1).SingleLine()
 					})
 					if row.Hovered() {
 						row.Background(tc.Text.Alpha(0.04))
@@ -376,6 +612,11 @@ func (a *AppUI) openSearchHitAtLine(relPath string, line int, query string) {
 	full := a.Workspace.ResolveFullPath(relPath)
 	doc, err := a.Editor.OpenFile(full, relPath)
 	if err != nil || doc == nil {
+		desc := "file could not be opened"
+		if err != nil {
+			desc = err.Error()
+		}
+		a.queueToast(ui.Toast{Title: "Open failed", Description: desc, Type: "error"})
 		return
 	}
 	buf := doc.Editor.Buffer
