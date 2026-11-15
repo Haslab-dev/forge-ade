@@ -98,6 +98,79 @@ func (gm *GitManager) redraw() {
 	}
 }
 
+// GitSnapshot is a consistent point-in-time copy of GitManager state for
+// render paths. Background goroutines (Refresh, loadHistoryAndBranches,
+// Fetch/Pull/Push) write the exported fields under mu, so reading fields
+// directly from the render thread races; always render from a Snapshot.
+type GitSnapshot struct {
+	RootDir               string
+	Branch                string
+	Staged                []internalgit.FileStatus
+	Unstaged              []internalgit.FileStatus
+	Untracked             []internalgit.FileStatus
+	Conflicts             []internalgit.FileStatus
+	Commits               []internalgit.CommitNode
+	Branches              []string
+	StatusMsg             string
+	CommitMsg             string
+	CommitSummary         string
+	CommitDesc            string
+	IsGeneratingAI        bool
+	IsFetching            bool
+	IsPulling             bool
+	IsPushing             bool
+	SelectedCommitHash    string
+	SelectedCommitDiff    string
+	SelectedCommitMessage string
+	SelectedCommitAuthor  string
+	SelectedCommitFiles   []CommitFileDiff
+	LoadingCommitDiff     bool
+	DiscardPendingPath    string
+}
+
+// Snapshot returns the render-relevant state under RLock. Slice fields are
+// returned without copying: writers only ever replace them wholesale (never
+// mutate elements in place), so a returned slice is a stable snapshot.
+func (gm *GitManager) Snapshot() GitSnapshot {
+	gm.mu.RLock()
+	defer gm.mu.RUnlock()
+	return GitSnapshot{
+		RootDir:               gm.RootDir,
+		Branch:                gm.Branch,
+		Staged:                gm.Staged,
+		Unstaged:              gm.Unstaged,
+		Untracked:             gm.Untracked,
+		Conflicts:             gm.Conflicts,
+		Commits:               gm.Commits,
+		Branches:              gm.Branches,
+		StatusMsg:             gm.StatusMsg,
+		CommitMsg:             gm.CommitMsg,
+		CommitSummary:         gm.CommitSummary,
+		CommitDesc:            gm.CommitDesc,
+		IsGeneratingAI:        gm.IsGeneratingAI,
+		IsFetching:            gm.IsFetching,
+		IsPulling:             gm.IsPulling,
+		IsPushing:             gm.IsPushing,
+		SelectedCommitHash:    gm.SelectedCommitHash,
+		SelectedCommitDiff:    gm.SelectedCommitDiff,
+		SelectedCommitMessage: gm.SelectedCommitMessage,
+		SelectedCommitAuthor:  gm.SelectedCommitAuthor,
+		SelectedCommitFiles:   gm.SelectedCommitFiles,
+		LoadingCommitDiff:     gm.LoadingCommitDiff,
+		DiscardPendingPath:    gm.DiscardPendingPath,
+	}
+}
+
+// SetCommitMessage sets the commit message fields under lock. Safe from any
+// goroutine; render paths read these through Snapshot.
+func (gm *GitManager) SetCommitMessage(msg, summary, desc string) {
+	gm.mu.Lock()
+	gm.CommitMsg = msg
+	gm.CommitSummary = summary
+	gm.CommitDesc = desc
+	gm.mu.Unlock()
+}
+
 // SetWorkspace updates the repository root, resets cached state, and refreshes.
 func (gm *GitManager) SetWorkspace(rootDir string) {
 	gm.mu.Lock()
@@ -151,10 +224,10 @@ func (gm *GitManager) GetCachedFileDiff(relPath string) (string, bool) {
 }
 
 // Refresh updates branch information, porcelain file status, history, and branches.
+// The git status exec runs without the lock held so concurrent callers and
+// render-path Snapshot reads never block on it.
 func (gm *GitManager) Refresh() {
 	gm.mu.Lock()
-	defer gm.mu.Unlock()
-
 	gm.fileDiffCache = make(map[string]string)
 	gm.fileDiffPending = make(map[string]bool)
 	if gm.RootDir != gm.cachedRootDir {
@@ -163,26 +236,45 @@ func (gm *GitManager) Refresh() {
 		gm.remoteSourceLoading = false
 		gm.cachedRootDir = gm.RootDir
 	}
+	eng := gm.engine
+	root := gm.RootDir
+	gm.mu.Unlock()
 
-	if gm.engine == nil {
+	if eng == nil {
 		return
 	}
 
-	st, err := gm.engine.GetGitStatus(gm.RootDir)
+	st, err := eng.GetGitStatus(root)
 	if err != nil {
-		gm.StatusMsg = fmt.Sprintf("Git error: %v", err)
+		gm.mu.Lock()
+		if gm.RootDir == root {
+			gm.StatusMsg = fmt.Sprintf("Git error: %v", err)
+		}
+		gm.mu.Unlock()
+		gm.redraw()
 		return
 	}
 
-	gm.Branch = st.Branch
-	gm.Staged = st.Staged
-	gm.Unstaged = st.Unstaged
-	gm.Untracked = st.Untracked
-	gm.Conflicts = st.Conflicts
-	gm.StatusMsg = fmt.Sprintf("Refreshed (Branch: %s)", st.Branch)
+	gm.mu.Lock()
+	if gm.RootDir == root {
+		gm.Branch = st.Branch
+		gm.Staged = st.Staged
+		gm.Unstaged = st.Unstaged
+		gm.Untracked = st.Untracked
+		gm.Conflicts = st.Conflicts
+		gm.StatusMsg = fmt.Sprintf("Refreshed (Branch: %s)", st.Branch)
+	}
+	gm.mu.Unlock()
 
 	// Fetch history, branches & remote source in background
 	go gm.loadHistoryAndBranches()
+	gm.redraw()
+}
+
+// RefreshAsync runs Refresh on a goroutine. Use from render paths and event
+// handlers so multi-second git execs never block the frame.
+func (gm *GitManager) RefreshAsync() {
+	go gm.Refresh()
 }
 
 func (gm *GitManager) loadHistoryAndBranches() {
@@ -234,10 +326,13 @@ func (gm *GitManager) loadHistoryAndBranches() {
 
 // Stage stages a single file.
 func (gm *GitManager) Stage(path string) {
-	if gm.engine == nil {
+	gm.mu.RLock()
+	eng, root := gm.engine, gm.RootDir
+	gm.mu.RUnlock()
+	if eng == nil {
 		return
 	}
-	_ = gm.engine.GitStage(gm.RootDir, []string{path})
+	_ = eng.GitStage(root, []string{path})
 	gm.Refresh()
 	if gm.OnNeedRedraw != nil {
 		gm.OnNeedRedraw()
@@ -246,10 +341,13 @@ func (gm *GitManager) Stage(path string) {
 
 // StageAll stages all modified and untracked files.
 func (gm *GitManager) StageAll() {
-	if gm.engine == nil {
+	gm.mu.RLock()
+	eng, root := gm.engine, gm.RootDir
+	gm.mu.RUnlock()
+	if eng == nil {
 		return
 	}
-	_ = gm.engine.GitStage(gm.RootDir, []string{"."})
+	_ = eng.GitStage(root, []string{"."})
 	gm.Refresh()
 	if gm.OnNeedRedraw != nil {
 		gm.OnNeedRedraw()
@@ -258,10 +356,13 @@ func (gm *GitManager) StageAll() {
 
 // Unstage unstages a staged file back to the working tree.
 func (gm *GitManager) Unstage(path string) {
-	if gm.engine == nil {
+	gm.mu.RLock()
+	eng, root := gm.engine, gm.RootDir
+	gm.mu.RUnlock()
+	if eng == nil {
 		return
 	}
-	_ = gm.engine.GitUnstage(gm.RootDir, []string{path})
+	_ = eng.GitUnstage(root, []string{path})
 	gm.Refresh()
 	if gm.OnNeedRedraw != nil {
 		gm.OnNeedRedraw()
@@ -298,7 +399,10 @@ func (gm *GitManager) UnstageAll() {
 	}
 	gm.mu.RUnlock()
 	if len(stagedPaths) > 0 {
-		_ = gm.engine.GitUnstage(gm.RootDir, stagedPaths)
+		gm.mu.RLock()
+		eng, root := gm.engine, gm.RootDir
+		gm.mu.RUnlock()
+		_ = eng.GitUnstage(root, stagedPaths)
 	}
 	gm.Refresh()
 	if gm.OnNeedRedraw != nil {
@@ -325,7 +429,10 @@ func (gm *GitManager) Fetch() error {
 			gm.OnNeedRedraw()
 		}
 	}()
-	err := gm.engine.GitFetch(gm.RootDir)
+	gm.mu.RLock()
+	eng, root := gm.engine, gm.RootDir
+	gm.mu.RUnlock()
+	err := eng.GitFetch(root)
 	gm.Refresh()
 	return err
 }
@@ -349,7 +456,10 @@ func (gm *GitManager) Pull() error {
 			gm.OnNeedRedraw()
 		}
 	}()
-	err := gm.engine.GitPull(gm.RootDir)
+	gm.mu.RLock()
+	eng, root := gm.engine, gm.RootDir
+	gm.mu.RUnlock()
+	err := eng.GitPull(root)
 	gm.Refresh()
 	return err
 }
@@ -373,7 +483,10 @@ func (gm *GitManager) Push() error {
 			gm.OnNeedRedraw()
 		}
 	}()
-	err := gm.engine.GitPush(gm.RootDir)
+	gm.mu.RLock()
+	eng, root := gm.engine, gm.RootDir
+	gm.mu.RUnlock()
+	err := eng.GitPush(root)
 	gm.Refresh()
 	return err
 }
@@ -399,8 +512,12 @@ func (gm *GitManager) SelectCommit(hash string) {
 	}
 	gm.mu.Unlock()
 	gm.redraw()
+	eng := gm.engine
+	gm.mu.RLock()
+	root := gm.RootDir
+	gm.mu.RUnlock()
 	go func() {
-		diff := gm.engine.GetCommitDiff(gm.RootDir, hash)
+		diff := eng.GetCommitDiff(root, hash)
 		files := splitCommitDiff(diff)
 		gm.mu.Lock()
 		if gm.SelectedCommitHash == hash {
@@ -467,7 +584,10 @@ func (gm *GitManager) Commit(msg string) error {
 		return fmt.Errorf("commit message cannot be empty")
 	}
 
-	err := gm.engine.GitCommit(gm.RootDir, msg)
+	gm.mu.RLock()
+	root := gm.RootDir
+	gm.mu.RUnlock()
+	err := gm.engine.GitCommit(root, msg)
 	gm.mu.Lock()
 	if err != nil {
 		gm.StatusMsg = fmt.Sprintf("Commit error: %v", err)
@@ -491,7 +611,10 @@ func (gm *GitManager) SwitchBranch(branch string) error {
 	if gm.engine == nil {
 		return fmt.Errorf("no engine available")
 	}
-	err := gm.engine.GitCheckout(gm.RootDir, branch)
+	gm.mu.RLock()
+	root := gm.RootDir
+	gm.mu.RUnlock()
+	err := gm.engine.GitCheckout(root, branch)
 	gm.Refresh()
 	if gm.OnNeedRedraw != nil {
 		gm.OnNeedRedraw()
@@ -504,7 +627,10 @@ func (gm *GitManager) CreateBranch(name string) error {
 	if gm.engine == nil {
 		return fmt.Errorf("no engine available")
 	}
-	err := gm.engine.GitCreateBranch(gm.RootDir, name)
+	gm.mu.RLock()
+	root := gm.RootDir
+	gm.mu.RUnlock()
+	err := gm.engine.GitCreateBranch(root, name)
 	gm.Refresh()
 	if gm.OnNeedRedraw != nil {
 		gm.OnNeedRedraw()
@@ -527,11 +653,15 @@ func (gm *GitManager) GenerateAICommit(instruction string) {
 		gm.OnNeedRedraw()
 	}
 
+	gm.mu.RLock()
+	root := gm.RootDir
+	eng := gm.engine
+	gm.mu.RUnlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		msg, err := gm.engine.GenerateAICommit(ctx, gm.RootDir, instruction)
+		msg, err := eng.GenerateAICommit(ctx, root, instruction)
 		gm.mu.Lock()
 		gm.IsGeneratingAI = false
 		clean := strings.TrimSpace(msg)

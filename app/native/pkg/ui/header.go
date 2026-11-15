@@ -82,9 +82,9 @@ func (a *AppUI) gitDirtySummary() (files, additions, deletions int) {
 	if a.Git == nil || a.Workspace == nil || a.Workspace.RootDir == "" {
 		return 0, 0, 0
 	}
-	gm := a.Git
-	files = len(gm.Conflicts) + len(gm.Staged) + len(gm.Unstaged) + len(gm.Untracked)
-	for _, f := range gm.Staged {
+	snap := a.Git.Snapshot()
+	files = len(snap.Conflicts) + len(snap.Staged) + len(snap.Unstaged) + len(snap.Untracked)
+	for _, f := range snap.Staged {
 		if f.Additions > 0 {
 			additions += int(f.Additions)
 		}
@@ -92,7 +92,7 @@ func (a *AppUI) gitDirtySummary() (files, additions, deletions int) {
 			deletions += int(f.Deletions)
 		}
 	}
-	for _, f := range gm.Unstaged {
+	for _, f := range snap.Unstaged {
 		if f.Additions > 0 {
 			additions += int(f.Additions)
 		}
@@ -282,7 +282,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 							a.ShowBranchModal = true
 							a.BranchSearchQuery = ""
 							if a.Git != nil {
-								a.Git.Refresh()
+								a.Git.RefreshAsync()
 							}
 						}
 						if m.Item("Open Workflow Board").Chosen() {

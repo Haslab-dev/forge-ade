@@ -29,9 +29,11 @@ type prPaneState struct {
 	Items            []internalgit.PullRequestItem
 	Selected         int // index into Items, -1 = none
 	Detail           *internalgit.PullRequestDetail
+	DetailError      string // set when GetPullRequestDetail fails; enables Retry
 	DetailDiff       string
 	DetailFiles      []mygoeditor.FilePatch
 	DetailDiffParsed string
+	DiffError        string // set when GetPullRequestDiff fails; enables Retry
 	LoadingDiff      bool
 	Merging          bool
 	Reviewing        bool
@@ -76,7 +78,9 @@ func (a *AppUI) wtPane() *worktreePaneState {
 	return a.WTPane
 }
 
-// loadPRs fetches the PR/MR list off the render path.
+// loadPRs fetches the PR/MR list off the render path. Background goroutines
+// never write pane fields directly — results publish through runOnUI so the
+// render thread reads consistent state.
 func (a *AppUI) loadPRs(state string) {
 	pp := a.prPane()
 	gm := a.Git
@@ -92,25 +96,28 @@ func (a *AppUI) loadPRs(state string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		items, err := gm.Engine().GitEngine.GetPullRequests(ctx, gm.RootDir, state)
-		pp.Loading = false
-		if err != nil {
-			pp.Error = err.Error()
-		} else {
-			pp.Items = items
-			pp.Loaded = true
-			pp.Selected = -1
-			pp.Detail = nil
-			pp.DetailDiff = ""
-			pp.DetailFiles = nil
-			pp.DetailDiffParsed = ""
-		}
-		if a.Window != nil {
-			a.Window.Invalidate()
-		}
+		a.runOnUI(func() {
+			pp.Loading = false
+			if err != nil {
+				pp.Error = err.Error()
+			} else {
+				pp.Items = items
+				pp.Loaded = true
+				pp.Selected = -1
+				pp.Detail = nil
+				pp.DetailError = ""
+				pp.DetailDiff = ""
+				pp.DetailFiles = nil
+				pp.DetailDiffParsed = ""
+				pp.DiffError = ""
+			}
+		})
 	}()
 }
 
-// selectPR loads the selected PR's detail and unified diff.
+// selectPR loads the selected PR's detail and unified diff. Detail and diff
+// failures set DetailError / DiffError so the pane shows an honest error
+// state with a Retry button instead of an endless spinner.
 func (a *AppUI) selectPR(index int) {
 	pp := a.prPane()
 	gm := a.Git
@@ -119,9 +126,11 @@ func (a *AppUI) selectPR(index int) {
 	}
 	pp.Selected = index
 	pp.Detail = nil
+	pp.DetailError = ""
 	pp.DetailDiff = ""
 	pp.DetailFiles = nil
 	pp.DetailDiffParsed = ""
+	pp.DiffError = ""
 	pp.LoadingDiff = true
 	pr := pp.Items[index]
 	if a.Window != nil {
@@ -131,16 +140,24 @@ func (a *AppUI) selectPR(index int) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		detail, err := gm.Engine().GitEngine.GetPullRequestDetail(ctx, gm.RootDir, pr.Number)
-		pp.Detail = detail
-		if err == nil {
-			if diff, derr := gm.Engine().GitEngine.GetPullRequestDiff(ctx, gm.RootDir, pr.Number); derr == nil {
+		if err != nil {
+			a.runOnUI(func() {
+				pp.Detail = nil
+				pp.DetailError = err.Error()
+				pp.LoadingDiff = false
+			})
+			return
+		}
+		diff, derr := gm.Engine().GitEngine.GetPullRequestDiff(ctx, gm.RootDir, pr.Number)
+		a.runOnUI(func() {
+			pp.Detail = detail
+			if derr != nil {
+				pp.DiffError = derr.Error()
+			} else {
 				pp.DetailDiff = diff
 			}
-		}
-		pp.LoadingDiff = false
-		if a.Window != nil {
-			a.Window.Invalidate()
-		}
+			pp.LoadingDiff = false
+		})
 	}()
 }
 
@@ -151,6 +168,7 @@ func (a *AppUI) prAction(label string, run func(ctx context.Context) error) {
 	if gm == nil || pp.Selected < 0 || pp.Selected >= len(pp.Items) {
 		return
 	}
+	state := pp.State
 	pp.Merging = true
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -159,19 +177,18 @@ func (a *AppUI) prAction(label string, run func(ctx context.Context) error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		err := run(ctx)
-		pp.Merging = false
-		if err != nil {
-			pp.Error = err.Error()
-		} else {
-			pp.Error = ""
-			a.loadPRs(pp.State)
-			if label == "Checkout" {
-				gm.Refresh()
+		a.runOnUI(func() {
+			pp.Merging = false
+			if err != nil {
+				pp.Error = err.Error()
+			} else {
+				pp.Error = ""
+				a.loadPRs(state)
+				if label == "Checkout" {
+					gm.RefreshAsync()
+				}
 			}
-		}
-		if a.Window != nil {
-			a.Window.Invalidate()
-		}
+		})
 	}()
 }
 
@@ -278,18 +295,21 @@ func (a *AppUI) renderGitPRsSurface(c *ui.Context, tc theme.ThemeColors, gm *git
 				if submit.Clicked() && !pp.Creating && strings.TrimSpace(pp.CreateTitle) != "" {
 					pp.Creating = true
 					title, body, base, head, draft := pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead, pp.CreateDraft
+					state := pp.State
 					go func() {
 						ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 						defer cancel()
 						_, err := gm.Engine().GitEngine.CreatePullRequest(ctx, gm.RootDir, title, body, base, head, draft)
-						pp.Creating = false
-						if err != nil {
-							pp.Error = err.Error()
-						} else {
-							pp.CreateOpen = false
-							pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead = "", "", "", ""
-						}
-						a.loadPRs(pp.State)
+						a.runOnUI(func() {
+							pp.Creating = false
+							if err != nil {
+								pp.Error = err.Error()
+							} else {
+								pp.CreateOpen = false
+								pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead = "", "", "", ""
+							}
+							a.loadPRs(state)
+						})
 					}()
 				}
 			})
@@ -362,9 +382,21 @@ func (a *AppUI) renderGitPRsSurface(c *ui.Context, tc theme.ThemeColors, gm *git
 			}
 			pr := pp.Items[pp.Selected]
 			if pp.Detail == nil {
-				ui.Column(c).Grow(1).Center().Children(func() {
-					ui.Spinner(c).Size(16, 16).Label("Loading details")
-				})
+				if pp.DetailError != "" {
+					// Honest failure state instead of an endless spinner.
+					ui.Column(c).Grow(1).Center().Gap(8).Padding(20).Children(func() {
+						ui.Icon(c, icons.TablerAlertTriangle).Width(24).Height(24).TextColor(tc.Error)
+						ui.Text(c, "Could not load details").FontSize(12).FontWeight(600).TextColor(tc.Text)
+						ui.Text(c, pp.DetailError).FontSize(11).TextColor(tc.TextMuted).MaxWidth(320)
+						if uiButton(c, tc, "Retry", tc.Accent).Clicked() {
+							a.selectPR(pp.Selected)
+						}
+					})
+				} else {
+					ui.Column(c).Grow(1).Center().Children(func() {
+						ui.Spinner(c).Size(16, 16).Label("Loading details")
+					})
+				}
 				return
 			}
 			a.renderPRDetail(c, tc, gm, pr)
@@ -489,6 +521,19 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 				}
 			}
 			pp := a.prPane()
+			if pp.DiffError != "" && pp.DetailDiff == "" {
+				// Diff fetch failed — surface the error with a retry rather
+				// than silently rendering without the diff.
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(4, 0).
+					Background(tc.Error.Alpha(0.08)).Radius(6).Children(func() {
+					ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Error)
+					ui.Text(c, "Diff failed to load: "+pp.DiffError).FontSize(11).TextColor(tc.Error).Grow(1)
+					retry := ui.Text(c, "Retry").FontSize(11).FontWeight(600).TextColor(tc.Accent)
+					if retry.Clicked() {
+						a.selectPR(pp.Selected)
+					}
+				})
+			}
 			if pp.DetailDiff != "" {
 				ui.Text(c, "Diff").FontSize(12).FontWeight(600)
 				if pp.DetailDiffParsed != pp.DetailDiff {
@@ -561,24 +606,25 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 	}).Grow(1)
 }
 
-// renderGitWorktreesSurface is the Worktrees management tab.
+// renderGitWorktreesSurface is the Worktrees management tab. Worktree execs
+// run on goroutines; every pane mutation publishes through runOnUI so the
+// render thread never races the worker.
 func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager) {
 	wt := a.wtPane()
 	if !wt.Loaded && !wt.Loading && wt.Error == "" {
 		wt.Loading = true
 		go func() {
 			items, err := gm.ListWorktrees()
-			wt.Loading = false
-			if err != nil {
-				wt.Error = err.Error()
-			} else {
-				wt.Items = items
-				wt.Loaded = true
-				wt.Error = ""
-			}
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
+			a.runOnUI(func() {
+				wt.Loading = false
+				if err != nil {
+					wt.Error = err.Error()
+				} else {
+					wt.Items = items
+					wt.Loaded = true
+					wt.Error = ""
+				}
+			})
 		}()
 	}
 
@@ -602,17 +648,16 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 			wt.Busy = true
 			go func() {
 				err := gm.PruneWorktrees()
-				wt.Busy = false
-				if err != nil {
-					wt.Error = err.Error()
-				} else {
-					wt.Error = ""
-					wt.Items = nil
-					wt.Loaded = false
-				}
-				if a.Window != nil {
-					a.Window.Invalidate()
-				}
+				a.runOnUI(func() {
+					wt.Busy = false
+					if err != nil {
+						wt.Error = err.Error()
+					} else {
+						wt.Error = ""
+						wt.Items = nil
+						wt.Loaded = false
+					}
+				})
 			}()
 		}
 		newBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).
@@ -657,25 +702,24 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 					path, br, createNew := wt.CreatePath, wt.CreateBr, wt.CreateNewBr
 					go func() {
 						err := gm.CreateWorktree(path, br, createNew)
-						wt.Busy = false
-						if err != nil {
-							wt.Error = err.Error()
-						} else {
-							wt.CreateOpen = false
-							wt.CreatePath, wt.CreateBr = "", ""
-							wt.Items = nil
-							wt.Loaded = false
-						}
-						if a.Window != nil {
-							a.Window.Invalidate()
-						}
+						a.runOnUI(func() {
+							wt.Busy = false
+							if err != nil {
+								wt.Error = err.Error()
+							} else {
+								wt.CreateOpen = false
+								wt.CreatePath, wt.CreateBr = "", ""
+								wt.Items = nil
+								wt.Loaded = false
+							}
+						})
 					}()
 				}
 			})
 		})
 	}
 
-	rootClean := filepath.Clean(gm.RootDir)
+	rootClean := filepath.Clean(gm.Snapshot().RootDir)
 	scroll := ui.Scroll(c)
 	scroll.Children(func() {
 		col := ui.Column(c).Gap(4).Padding(10)
@@ -720,16 +764,15 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 							path := w.Path
 							go func() {
 								err := gm.RemoveWorktree(path, false)
-								wt.Busy = false
-								if err != nil {
-									wt.Error = err.Error()
-								} else {
-									wt.Items = nil
-									wt.Loaded = false
-								}
-								if a.Window != nil {
-									a.Window.Invalidate()
-								}
+								a.runOnUI(func() {
+									wt.Busy = false
+									if err != nil {
+										wt.Error = err.Error()
+									} else {
+										wt.Items = nil
+										wt.Loaded = false
+									}
+								})
 							}()
 						}
 						del.ContextMenu(func(m *ui.Menu) {
@@ -738,16 +781,15 @@ func (a *AppUI) renderGitWorktreesSurface(c *ui.Context, tc theme.ThemeColors, g
 								path := w.Path
 								go func() {
 									err := gm.RemoveWorktree(path, true)
-									wt.Busy = false
-									if err != nil {
-										wt.Error = err.Error()
-									} else {
-										wt.Items = nil
-										wt.Loaded = false
-									}
-									if a.Window != nil {
-										a.Window.Invalidate()
-									}
+									a.runOnUI(func() {
+										wt.Busy = false
+										if err != nil {
+											wt.Error = err.Error()
+										} else {
+											wt.Items = nil
+											wt.Loaded = false
+										}
+									})
 								}()
 							}
 						})

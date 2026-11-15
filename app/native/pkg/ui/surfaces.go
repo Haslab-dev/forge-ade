@@ -39,7 +39,7 @@ func (a *AppUI) openGitClientSurface() {
 		a.AgentViewMode = AgentViewGit
 	}
 	if a.Git != nil {
-		go a.Git.Refresh()
+		a.Git.RefreshAsync()
 	}
 	a.loadGitRemoteURL()
 }
@@ -381,17 +381,20 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 		return
 	}
 	tc := a.ThemeMgr.Colors()
+	// Render from a point-in-time snapshot: Refresh/Fetch/Pull/Push goroutines
+	// write the manager's exported fields under its lock.
+	snap := gm.Snapshot()
 
 	ui.Column(c).Fill().Background(tc.Canvas).Children(func() {
 		// Toolbar
 		ui.Row(c).Height(52).Padding(0, 16).Gap(8).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-			if gm.Branch != "" {
+			if snap.Branch != "" {
 				branchPill := ui.Row(c).Height(30).Radius(8).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
 				branchPill.Children(func() {
 					ui.Icon(c, icons.TablerGitBranch).Width(13).Height(13).TextColor(tc.Accent)
-					ui.Text(c, gm.Branch).FontSize(12).FontWeight(600)
+					ui.Text(c, snap.Branch).FontSize(12).FontWeight(600)
 					ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
 				})
 				if branchPill.Clicked() {
@@ -407,7 +410,7 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 				Tab  int
 				Name string
 			}{
-				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked))},
+				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(snap.Staged)+len(snap.Unstaged)+len(snap.Untracked))},
 				{git.GitTabHistory, "History"},
 				{git.GitTabBranches, "Branches"},
 				{git.GitTabPRs, prLabel},
@@ -470,19 +473,16 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 				if b.Clicked() && !busy {
 					go func() {
 						if err := run(); err != nil {
-							c.AddToast(ui.Toast{Title: label + " Failed", Description: err.Error(), Type: "error"})
+							a.queueToast(ui.Toast{Title: label + " Failed", Description: err.Error(), Type: "error"})
 						} else {
-							c.AddToast(ui.Toast{Title: label + " Completed", Type: "success"})
-						}
-						if a.Window != nil {
-							a.Window.Invalidate()
+							a.queueToast(ui.Toast{Title: label + " Completed", Type: "success"})
 						}
 					}()
 				}
 			}
-			remoteBtn(icons.TablerArrowDown, "Fetch Origin", gm.IsFetching, func() error { return gm.Fetch() })
-			remoteBtn(icons.TablerArrowDown, "Pull", gm.IsPulling, func() error { return gm.Pull() })
-			remoteBtn(icons.TablerArrowUp, "Push", gm.IsPushing, func() error { return gm.Push() })
+			remoteBtn(icons.TablerArrowDown, "Fetch Origin", snap.IsFetching, func() error { return gm.Fetch() })
+			remoteBtn(icons.TablerArrowDown, "Pull", snap.IsPulling, func() error { return gm.Pull() })
+			remoteBtn(icons.TablerArrowUp, "Push", snap.IsPushing, func() error { return gm.Push() })
 
 			refreshBtn := ui.Row(c).Size(30, 30).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
 				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
@@ -490,10 +490,8 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 				ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
 			})
 			if refreshBtn.Clicked() {
-				go func() {
-					gm.Refresh()
-					a.loadGitRemoteURL()
-				}()
+				gm.RefreshAsync()
+				a.loadGitRemoteURL()
 			}
 
 			closeBtn := ui.Row(c).Size(30, 30).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
@@ -537,6 +535,7 @@ func (a *AppUI) renderGitChangesSurface(c *ui.Context, tc theme.ThemeColors, gm 
 
 // renderGitBranchesSurface renders branch list + create at full width.
 func (a *AppUI) renderGitBranchesSurface(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager) {
+	snap := gm.Snapshot()
 	ui.Column(c).Grow(1).Children(func() {
 		ui.Row(c).Padding(12, 16).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.TextInput(c, &gm.NewBranchName).Placeholder("New branch name…").Width(260)
@@ -551,21 +550,18 @@ func (a *AppUI) renderGitBranchesSurface(c *ui.Context, tc theme.ThemeColors, gm
 				gm.NewBranchName = ""
 				go func() {
 					if err := gm.CreateBranch(name); err != nil {
-						c.AddToast(ui.Toast{Title: "Branch Error", Description: err.Error(), Type: "error"})
+						a.queueToast(ui.Toast{Title: "Branch Error", Description: err.Error(), Type: "error"})
 					} else {
-						c.AddToast(ui.Toast{Title: "Branch Created", Description: name, Type: "success"})
-					}
-					if a.Window != nil {
-						a.Window.Invalidate()
+						a.queueToast(ui.Toast{Title: "Branch Created", Description: name, Type: "success"})
 					}
 				}()
 			}
 		})
 		ui.Scroll(c).Grow(1).Padding(8, 16).Children(func() {
 			ui.Column(c).Gap(2).Children(func() {
-				for _, b := range gm.Branches {
+				for _, b := range snap.Branches {
 					branch := b
-					isCurrent := branch == gm.Branch
+					isCurrent := branch == snap.Branch
 					row := ui.Row(c.Key("gbr-"+branch)).Height(34).Radius(6).Padding(0, 10).Gap(8).AlignItems(ui.Center)
 					row.Children(func() {
 						ui.Icon(c, icons.TablerGitBranch).Width(13).Height(13).TextColor(tc.IconMuted)
@@ -594,6 +590,9 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 	if a.GitHistoryWidth == 0 {
 		a.GitHistoryWidth = 420
 	}
+	// Render from a point-in-time snapshot; SelectCommit's goroutine publishes
+	// SelectedCommit* fields under the manager's lock.
+	snap := gm.Snapshot()
 	ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 		// Left: search + commit list (drag-resizable, GitClientView parity)
 		ui.Column(c).Width(a.GitHistoryWidth).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
@@ -604,7 +603,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 					ui.TextInput(c, &gm.SearchQuery).Placeholder("Search commits by message, author, SHA...").Grow(1)
 				})
 			})
-			if len(gm.Commits) == 0 {
+			if len(snap.Commits) == 0 {
 				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 					ui.Icon(c, icons.TablerGitCommit).Width(28).Height(28).TextColor(tc.IconMuted)
 					ui.Text(c, "No commits yet").FontSize(12).TextColor(tc.TextMuted)
@@ -614,7 +613,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 			ui.Scroll(c).Grow(1).Children(func() {
 				ui.Column(c).Padding(4, 8).Gap(2).Children(func() {
 					query := strings.ToLower(strings.TrimSpace(gm.SearchQuery))
-					for _, commit := range gm.Commits {
+					for _, commit := range snap.Commits {
 						cm := commit
 						if query != "" &&
 							!strings.Contains(strings.ToLower(cm.Message), query) &&
@@ -622,7 +621,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 							!strings.Contains(strings.ToLower(cm.Hash), query) {
 							continue
 						}
-						isSel := gm.SelectedCommitHash == cm.Hash
+						isSel := snap.SelectedCommitHash == cm.Hash
 						row := ui.Column(c.Key("gcm-"+cm.Hash)).Radius(8).Padding(8, 10).Gap(2)
 						row.Children(func() {
 							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -671,7 +670,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 
 		// Right: commit detail
 		ui.Column(c).Grow(1).Children(func() {
-			if gm.SelectedCommitHash == "" {
+			if snap.SelectedCommitHash == "" {
 				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 					ui.Icon(c, icons.TablerGitCommit).Width(32).Height(32).TextColor(tc.IconMuted)
 					ui.Text(c, "Select a commit to inspect").FontSize(13).TextColor(tc.TextMuted)
@@ -682,8 +681,8 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 			// Detail header: message, author, hash, stats
 			ui.Column(c).Padding(14, 16).Gap(6).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, gm.SelectedCommitMessage).FontSize(14).FontWeight(700).Grow(1).SingleLine()
-					shortH := gm.SelectedCommitHash
+					ui.Text(c, snap.SelectedCommitMessage).FontSize(14).FontWeight(700).Grow(1).SingleLine()
+					shortH := snap.SelectedCommitHash
 					if len(shortH) > 8 {
 						shortH = shortH[:8]
 					}
@@ -691,14 +690,14 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 				})
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerUser).Width(12).Height(12).TextColor(tc.IconMuted)
-					ui.Text(c, gm.SelectedCommitAuthor).FontSize(12).TextColor(tc.TextMuted)
-					if len(gm.SelectedCommitFiles) > 0 {
+					ui.Text(c, snap.SelectedCommitAuthor).FontSize(12).TextColor(tc.TextMuted)
+					if len(snap.SelectedCommitFiles) > 0 {
 						add, del := 0, 0
-						for _, f := range gm.SelectedCommitFiles {
+						for _, f := range snap.SelectedCommitFiles {
 							add += f.Additions
 							del += f.Deletions
 						}
-						ui.Text(c, fmt.Sprintf("%d files changed", len(gm.SelectedCommitFiles))).FontSize(12).TextColor(tc.TextMuted)
+						ui.Text(c, fmt.Sprintf("%d files changed", len(snap.SelectedCommitFiles))).FontSize(12).TextColor(tc.TextMuted)
 						ui.Text(c, fmt.Sprintf("+%d", add)).FontSize(12).FontWeight(600).TextColor(tc.DiffAdditionForeground)
 						ui.Text(c, fmt.Sprintf("-%d", del)).FontSize(12).FontWeight(600).TextColor(tc.DiffDeletionForeground)
 					}
@@ -706,13 +705,13 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 			})
 
 			// Per-file diffs
-			if gm.LoadingCommitDiff {
+			if snap.LoadingCommitDiff {
 				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 					ui.Spinner(c).Size(16, 16).Label("Loading commit diff...")
 				})
 				return
 			}
-			if len(gm.SelectedCommitFiles) == 0 {
+			if len(snap.SelectedCommitFiles) == 0 {
 				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 					ui.Icon(c, icons.TablerGitCommit).Width(26).Height(26).TextColor(tc.IconMuted)
 					ui.Text(c, "No file changes in this commit").FontSize(12).TextColor(tc.TextMuted)
@@ -721,8 +720,11 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 			}
 			ui.Scroll(c).Grow(1).Padding(12, 16).Children(func() {
 				ui.Column(c).Gap(12).Children(func() {
-					for i := range gm.SelectedCommitFiles {
-						f := &gm.SelectedCommitFiles[i]
+					// Build lazy per-file diff states in place: the snapshot
+					// contract guarantees writers replace the slice wholesale
+					// and never mutate elements, so this is race-free.
+					for i := range snap.SelectedCommitFiles {
+						f := &snap.SelectedCommitFiles[i]
 						ui.Column(c).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Gap(0).Clip().Children(func() {
 							ui.Row(c).Height(34).Padding(0, 12).Gap(8).AlignItems(ui.Center).
 								BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
@@ -740,7 +742,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 								}
 							})
 							if f.Diff == nil && a.Editor != nil {
-								key := "commit/" + gm.SelectedCommitHash + "/" + f.Path
+								key := "commit/" + snap.SelectedCommitHash + "/" + f.Path
 								f.Diff = a.Editor.OpenPatchDiffKeyed(key, f.Patch, a.ThemeMgr)
 							}
 							if d, ok := f.Diff.(*mygoeditor.DiffState); ok && d != nil {

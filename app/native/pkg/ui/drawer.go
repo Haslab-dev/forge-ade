@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/llm"
@@ -19,6 +20,11 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	internalgit "github.com/hasdev/forge-ade/core/git"
 )
+
+// gitOpsBusy guards git mutations (commit, stage/unstage all) triggered from
+// the render path: only one runs at a time, and buttons render a busy state
+// until the background goroutine publishes completion via runOnUI.
+var gitOpsBusy atomic.Bool
 
 func (a *AppUI) rightDrawerTabMeta(dirtyFiles int) (title string, icon *ui.SVG, count int) {
 	switch a.RightDrawerTab {
@@ -62,10 +68,12 @@ func (a *AppUI) rightDrawerTabMeta(dirtyFiles int) (title string, icon *ui.SVG, 
 func (a *AppUI) renderRightDrawer(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	// Responsive clamping for small displays
+	// Responsive clamping for small displays. The max matches the resize
+	// handle's clamp (min(750, winW*0.6)) so dragging feels 1:1; the 280
+	// floor keeps controls usable on tiny windows.
 	drawerWidth := a.RightDrawerWidth
 	if winW, _ := c.Size(); winW > 0 {
-		maxAllowed := winW * 0.55
+		maxAllowed := minF(750, winW*0.6)
 		if drawerWidth > maxAllowed {
 			drawerWidth = maxAllowed
 		}
@@ -369,11 +377,15 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	}
 
 	var conflicts, staged, unstaged []internalgit.FileStatus
+	var snap git.GitSnapshot
 	if gm != nil {
-		conflicts = gm.Conflicts
-		staged = gm.Staged
-		unstaged = append(unstaged, gm.Unstaged...)
-		unstaged = append(unstaged, gm.Untracked...)
+		// Render from a point-in-time snapshot: Refresh/Stage/Commit goroutines
+		// write the exported fields under the manager's lock.
+		snap = gm.Snapshot()
+		conflicts = snap.Conflicts
+		staged = snap.Staged
+		unstaged = append(unstaged, snap.Unstaged...)
+		unstaged = append(unstaged, snap.Untracked...)
 	}
 
 	totalFiles := len(conflicts) + len(staged) + len(unstaged)
@@ -382,8 +394,10 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 		ui.Text(c, "Working Tree").FontSize(12).FontWeight(600)
 		ui.Box(c).Grow(1)
-		if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() && gm != nil {
-			gm.Refresh()
+		if gm != nil && gitOpsBusy.Load() {
+			ui.Spinner(c).Size(12, 12).Label("Git")
+		} else if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() && gm != nil {
+			gm.RefreshAsync()
 		}
 		ui.Text(c, fmt.Sprintf("%d changes", totalFiles)).FontSize(11).TextColor(tc.TextMuted)
 	})
@@ -394,7 +408,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 			ui.Text(c, "No changes detected").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
 			ui.Text(c, "Working tree is clean. Modified files will appear here.").FontSize(12).TextColor(tc.TextMuted).MaxWidth(240)
 			if ContrastCTA(c, tc, "Refresh changes").Clicked() && gm != nil {
-				gm.Refresh()
+				gm.RefreshAsync()
 			}
 		})
 		return
@@ -469,11 +483,16 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 						unstageAllBtn.Children(func() {
 							ui.Text(c, "Unstage All").FontSize(10).TextColor(tc.TextMuted)
 						})
-						if unstageAllBtn.Hovered() {
+						if unstageAllBtn.Hovered() && !gitOpsBusy.Load() {
 							unstageAllBtn.Background(tc.Text.Alpha(0.06))
 						}
-						if unstageAllBtn.Clicked() && gm != nil {
-							gm.UnstageAll()
+						if unstageAllBtn.Clicked() && gm != nil && gitOpsBusy.CompareAndSwap(false, true) {
+							go func() {
+								gm.UnstageAll()
+								a.runOnUI(func() {
+									gitOpsBusy.Store(false)
+								})
+							}()
 						}
 					})
 					for _, f := range staged {
@@ -517,11 +536,16 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 						stageAllBtn.Children(func() {
 							ui.Text(c, "Stage All").FontSize(10).TextColor(tc.TextMuted)
 						})
-						if stageAllBtn.Hovered() {
+						if stageAllBtn.Hovered() && !gitOpsBusy.Load() {
 							stageAllBtn.Background(tc.Text.Alpha(0.06))
 						}
-						if stageAllBtn.Clicked() && gm != nil {
-							gm.StageAll()
+						if stageAllBtn.Clicked() && gm != nil && gitOpsBusy.CompareAndSwap(false, true) {
+							go func() {
+								gm.StageAll()
+								a.runOnUI(func() {
+									gitOpsBusy.Store(false)
+								})
+							}()
 						}
 					})
 					for _, f := range unstaged {
@@ -539,7 +563,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 							}
 							Badge(c, tc, statusLabel, tc.Accent)
 
-							if gm != nil && gm.DiscardPendingPath == f.Path {
+							if gm != nil && snap.DiscardPendingPath == f.Path {
 								confirmBtn := ui.Row(c.Key("discard-ok-"+f.Path)).Height(18).Radius(4).Padding(0, 5).AlignItems(ui.Center).
 									Background(tc.Error.Alpha(0.18)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.45))
 								confirmBtn.Children(func() {
@@ -621,38 +645,56 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 
 					ui.Box(c).Grow(1)
 
-					// Commit button
-					canCommit := strings.TrimSpace(gm.CommitSummary) != "" && totalFiles > 0
-					branchName := gm.Branch
+					// Commit button. Stage/commit run on a background goroutine
+					// (they can take seconds) guarded by gitOpsBusy; results
+					// and toasts publish back through runOnUI.
+					busy := gitOpsBusy.Load()
+					canCommit := strings.TrimSpace(snap.CommitSummary) != "" && totalFiles > 0
+					branchName := snap.Branch
 					if branchName == "" {
 						branchName = "main"
 					}
 					btnText := fmt.Sprintf("Commit to %s", branchName)
 					commitBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).Justify(ui.Center)
-					if canCommit {
+					switch {
+					case busy:
+						commitBtn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+						commitBtn.Children(func() {
+							ui.Spinner(c).Size(11, 11).Label("Committing…")
+						})
+					case canCommit:
 						commitBtn.Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
 						commitBtn.Children(func() {
 							ui.Icon(c, icons.TablerCheck).Width(11).Height(11).TextColor(tc.AccentForeground)
 							ui.Text(c, btnText).FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 						})
-						if commitBtn.Clicked() {
-							if len(staged) == 0 && len(unstaged) > 0 {
-								gm.StageAll()
-							}
-							fullMsg := gm.CommitSummary
-							if strings.TrimSpace(gm.CommitDesc) != "" {
-								fullMsg += "\n\n" + gm.CommitDesc
-							}
-							err := gm.Commit(fullMsg)
-							if err != nil {
-								c.AddToast(ui.Toast{Title: "Commit Error", Description: err.Error(), Type: "error"})
-							} else {
-								c.AddToast(ui.Toast{Title: "Committed", Description: gm.CommitSummary, Type: "success"})
-								gm.CommitSummary = ""
-								gm.CommitDesc = ""
-							}
+						if commitBtn.Clicked() && gitOpsBusy.CompareAndSwap(false, true) {
+							summary, desc := snap.CommitSummary, snap.CommitDesc
+							stageFirst := len(staged) == 0 && len(unstaged) > 0
+							go func() {
+								if stageFirst {
+									gm.StageAll()
+								}
+								fullMsg := summary
+								if strings.TrimSpace(desc) != "" {
+									fullMsg += "\n\n" + desc
+								}
+								err := gm.Commit(fullMsg)
+								a.runOnUI(func() {
+									gitOpsBusy.Store(false)
+									if err != nil {
+										a.queueToast(ui.Toast{Title: "Commit Error", Description: err.Error(), Type: "error"})
+									} else {
+										a.queueToast(ui.Toast{Title: "Committed", Description: summary, Type: "success"})
+										gm.SetCommitMessage("", "", "")
+										// Drop the stale selection so the next change
+										// set auto-selects a file that still exists.
+										a.SelectedDiffPath = ""
+									}
+								})
+							}()
 						}
-					} else {
+					default:
 						commitBtn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
 						commitBtn.Children(func() {
 							ui.Text(c, btnText).FontSize(11).TextColor(tc.TextMuted)
@@ -687,7 +729,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 
 			repoDir := a.Workspace.RootDir
 			if repoDir == "" && gm != nil {
-				repoDir = gm.RootDir
+				repoDir = snap.RootDir
 			}
 			if repoDir == "" && a.Agent != nil {
 				repoDir = a.Agent.WorkspacePath()
@@ -827,34 +869,40 @@ func (a *AppUI) sendSideChat(text string) {
 	}
 
 	engine := a.Engine
+	root := a.Workspace.RootDir
+	// The stream callback runs on an LLM goroutine: buffer the text locally
+	// and publish every delta through runOnUI so render never races reply.Text.
 	go func() {
+		streamed := ""
 		defer func() {
-			a.SideChatStreaming = false
-			reply.Done = true
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
+			final := streamed
+			a.runOnUI(func() {
+				reply.Text = final
+				reply.Done = true
+				a.SideChatStreaming = false
+			})
 		}()
 		if engine == nil || engine.LLMClient == nil {
-			reply.Text = "No LLM provider configured. Set one up in Settings → Models & Providers."
+			streamed = "No LLM provider configured. Set one up in Settings → Models & Providers."
 			return
 		}
 		msgs := []llm.LLMMessage{{
 			Role:    "user",
-			Content: "Workspace: " + a.Workspace.RootDir + "\n\n" + text,
+			Content: "Workspace: " + root + "\n\n" + text,
 		}}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		_, err := engine.LLMClient.ChatWithStream(ctx, msgs, nil, func(deltaContent, deltaReasoning string) {
 			if deltaContent != "" {
-				reply.Text += deltaContent
-			}
-			if a.Window != nil {
-				a.Window.Invalidate()
+				streamed += deltaContent
+				partial := streamed
+				a.runOnUI(func() {
+					reply.Text = partial
+				})
 			}
 		})
-		if err != nil && reply.Text == "" {
-			reply.Text = fmt.Sprintf("LLM request failed: %v", err)
+		if err != nil && streamed == "" {
+			streamed = fmt.Sprintf("LLM request failed: %v", err)
 		}
 	}()
 }
@@ -879,17 +927,21 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 	}
 
 	ui.Column(c).Fill().Children(func() {
+		// Render from a point-in-time snapshot; Refresh/Fetch/Pull/Push run on
+		// goroutines and publish under the manager's lock.
+		snap := gm.Snapshot()
+
 		// Header row with Branch pill + Remotes (Fetch, Pull, Push) + Refresh
 		ui.Row(c).Height(40).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			ui.Text(c, "Source Control").FontSize(12).FontWeight(600)
 
-			if gm.Branch != "" {
+			if snap.Branch != "" {
 				branchPill := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
 					Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
 				branchPill.Children(func() {
 					ui.Icon(c, icons.TablerGitBranch).Width(11).Height(11).TextColor(tc.Accent)
-					ui.Text(c, gm.Branch).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+					ui.Text(c, snap.Branch).FontSize(11).FontWeight(600).TextColor(tc.Accent)
 				})
 				if branchPill.Clicked() {
 					a.ShowBranchModal = true
@@ -898,64 +950,35 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 
 			ui.Box(c).Grow(1)
 
-			// Fetch button
-			fetchBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
-				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-			fetchBtn.Children(func() {
-				ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(tc.IconMuted)
-				ui.Text(c, "Fetch").FontSize(10).TextColor(tc.Text)
-			})
-			if fetchBtn.Hovered() {
-				fetchBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if fetchBtn.Clicked() {
-				go func() {
-					_ = gm.Fetch()
-					c.AddToast(ui.Toast{Title: "Fetched Remotes", Type: "info"})
-				}()
-			}
-
-			// Pull button
-			pullBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
-				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-			pullBtn.Children(func() {
-				ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(tc.IconMuted)
-				ui.Text(c, "Pull").FontSize(10).TextColor(tc.Text)
-			})
-			if pullBtn.Hovered() {
-				pullBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if pullBtn.Clicked() {
-				go func() {
-					err := gm.Pull()
-					if err != nil {
-						c.AddToast(ui.Toast{Title: "Pull Error", Description: err.Error(), Type: "error"})
+			// Remote op buttons: spinner while their goroutine is running.
+			remoteBtn := func(label string, icon *ui.SVG, busy bool, run func() error, doneTitle, doneType string) {
+				b := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
+					Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+				b.Children(func() {
+					if busy {
+						ui.Spinner(c).Size(10, 10).Label(label)
 					} else {
-						c.AddToast(ui.Toast{Title: "Pull Completed", Type: "success"})
+						ui.Icon(c, icon).Width(10).Height(10).TextColor(tc.IconMuted)
 					}
-				}()
+					ui.Text(c, label).FontSize(10).TextColor(tc.Text)
+				})
+				if b.Hovered() && !busy {
+					b.Background(tc.Text.Alpha(0.06))
+				}
+				if b.Clicked() && !busy {
+					go func() {
+						err := run()
+						if err != nil {
+							a.queueToast(ui.Toast{Title: label + " Error", Description: err.Error(), Type: "error"})
+						} else {
+							a.queueToast(ui.Toast{Title: doneTitle, Type: doneType})
+						}
+					}()
+				}
 			}
-
-			// Push button
-			pushBtn := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
-				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-			pushBtn.Children(func() {
-				ui.Icon(c, icons.TablerArrowUp).Width(10).Height(10).TextColor(tc.IconMuted)
-				ui.Text(c, "Push").FontSize(10).TextColor(tc.Text)
-			})
-			if pushBtn.Hovered() {
-				pushBtn.Background(tc.Text.Alpha(0.06))
-			}
-			if pushBtn.Clicked() {
-				go func() {
-					err := gm.Push()
-					if err != nil {
-						c.AddToast(ui.Toast{Title: "Push Error", Description: err.Error(), Type: "error"})
-					} else {
-						c.AddToast(ui.Toast{Title: "Pushed to Remote", Type: "success"})
-					}
-				}()
-			}
+			remoteBtn("Fetch", icons.TablerArrowDown, snap.IsFetching, func() error { return gm.Fetch() }, "Fetched Remotes", "info")
+			remoteBtn("Pull", icons.TablerArrowDown, snap.IsPulling, func() error { return gm.Pull() }, "Pull Completed", "success")
+			remoteBtn("Push", icons.TablerArrowUp, snap.IsPushing, func() error { return gm.Push() }, "Pushed to Remote", "success")
 
 			// Refresh button
 			refreshBtn := ui.Row(c).Size(24, 24).Radius(4).AlignItems(ui.Center).Justify(ui.Center).
@@ -967,7 +990,7 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 				refreshBtn.Background(tc.Text.Alpha(0.06))
 			}
 			if refreshBtn.Clicked() {
-				go gm.Refresh()
+				gm.RefreshAsync()
 			}
 		})
 
@@ -979,7 +1002,7 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 				Label string
 				Icon  *ui.SVG
 			}{
-				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(gm.Conflicts)+len(gm.Staged)+len(gm.Unstaged)+len(gm.Untracked)), icons.TablerFileDiff},
+				{git.GitTabChanges, fmt.Sprintf("Changes (%d)", len(snap.Conflicts)+len(snap.Staged)+len(snap.Unstaged)+len(snap.Untracked)), icons.TablerFileDiff},
 				{git.GitTabHistory, "History", icons.TablerHistory},
 				{git.GitTabBranches, "Branches", icons.TablerGitBranch},
 			}
@@ -1006,11 +1029,11 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 		case git.GitTabHistory:
 			ui.Column(c).Grow(1).FillHeight().Children(func() {
 				// Commit List
-				ui.Scroll(c).Height(minF(220, float32(len(gm.Commits))*38+10)).Children(func() {
+				ui.Scroll(c).Height(minF(220, float32(len(snap.Commits))*38+10)).Children(func() {
 					ui.Column(c).Padding(4, 6).Gap(2).Children(func() {
-						for _, commit := range gm.Commits {
+						for _, commit := range snap.Commits {
 							cm := commit
-							isSel := gm.SelectedCommitHash == cm.Hash
+							isSel := snap.SelectedCommitHash == cm.Hash
 							row := ui.Column(c.Key("commit-"+cm.Hash)).Radius(6).Padding(6, 8).Gap(2)
 							row.Children(func() {
 								ui.Text(c, cm.Message).FontSize(11).FontWeight(600).SingleLine().TextColor(tc.Text)
@@ -1033,24 +1056,24 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 				})
 
 				// Commit Diff Viewer (when a commit is selected)
-				if gm.SelectedCommitHash != "" {
+				if snap.SelectedCommitHash != "" {
 					ui.Column(c).Grow(1).FillHeight().Children(func() {
 						ui.Row(c).Height(28).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 							Background(tc.SurfaceRaised).BorderWidth(1, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
 							ui.Icon(c, icons.TablerGitCommit).Width(11).Height(11).TextColor(tc.Accent)
-							shortH := gm.SelectedCommitHash
+							shortH := snap.SelectedCommitHash
 							if len(shortH) > 8 {
 								shortH = shortH[:8]
 							}
 							ui.Text(c, fmt.Sprintf("Commit Diff (%s)", shortH)).FontSize(11).FontWeight(600).TextColor(tc.Text)
 						})
 
-						if gm.LoadingCommitDiff {
+						if snap.LoadingCommitDiff {
 							ui.Column(c).Grow(1).Center().Children(func() {
 								ui.Text(c, "Loading commit diff...").FontSize(11).TextColor(tc.TextMuted)
 							})
-						} else if gm.SelectedCommitDiff != "" {
-							d := a.Editor.OpenPatchDiff("commit.diff", gm.SelectedCommitDiff, a.ThemeMgr)
+						} else if snap.SelectedCommitDiff != "" {
+							d := a.Editor.OpenPatchDiff("commit.diff", snap.SelectedCommitDiff, a.ThemeMgr)
 							if d != nil {
 								mygoeditor.DiffView(c, d).Grow(1).FillWidth()
 							}
@@ -1078,18 +1101,18 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 						gm.NewBranchName = ""
 						go func() {
 							if err := gm.CreateBranch(name); err != nil {
-								c.AddToast(ui.Toast{Title: "Branch Error", Description: err.Error(), Type: "error"})
+								a.queueToast(ui.Toast{Title: "Branch Error", Description: err.Error(), Type: "error"})
 							} else {
-								c.AddToast(ui.Toast{Title: "Branch Created", Description: name, Type: "success"})
+								a.queueToast(ui.Toast{Title: "Branch Created", Description: name, Type: "success"})
 							}
 						}()
 					}
 				})
 				ui.Scroll(c).Grow(1).Padding(8).Children(func() {
 					ui.Column(c).Gap(2).Children(func() {
-						for _, b := range gm.Branches {
+						for _, b := range snap.Branches {
 							branch := b
-							isCurrent := branch == gm.Branch
+							isCurrent := branch == snap.Branch
 							row := ui.Row(c.Key("branch-"+branch)).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
 							row.Children(func() {
 								ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -1301,12 +1324,17 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 }
 
 func (a *AppUI) checkoutBranch(branch string) {
-	if a.Git == nil {
+	gm := a.Git
+	if gm == nil {
 		return
 	}
 	go func() {
-		if err := a.Git.SwitchBranch(branch); err == nil {
-			a.Workspace.GitBranch = branch
+		if err := gm.SwitchBranch(branch); err == nil {
+			// Publish state mutations on the UI thread; the workspace rescan
+			// (potentially slow over remote file systems) stays off-thread.
+			a.runOnUI(func() {
+				a.Workspace.GitBranch = branch
+			})
 			a.Workspace.Refresh()
 			if a.Window != nil {
 				a.Window.Invalidate()
@@ -1317,12 +1345,15 @@ func (a *AppUI) checkoutBranch(branch string) {
 }
 
 func (a *AppUI) createBranch(branch string) {
-	if a.Git == nil || strings.TrimSpace(branch) == "" {
+	gm := a.Git
+	if gm == nil || strings.TrimSpace(branch) == "" {
 		return
 	}
 	go func() {
-		if err := a.Git.CreateBranch(strings.TrimSpace(branch)); err == nil {
-			a.Workspace.GitBranch = branch
+		if err := gm.CreateBranch(strings.TrimSpace(branch)); err == nil {
+			a.runOnUI(func() {
+				a.Workspace.GitBranch = branch
+			})
 			a.Workspace.Refresh()
 			if a.Window != nil {
 				a.Window.Invalidate()
@@ -1475,7 +1506,7 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		if diffMode {
 			repoDir := a.Workspace.RootDir
 			if repoDir == "" && a.Git != nil {
-				repoDir = a.Git.RootDir
+				repoDir = a.Git.Snapshot().RootDir
 			}
 			if repoDir == "" && a.Agent != nil {
 				repoDir = a.Agent.WorkspacePath()
@@ -1556,7 +1587,8 @@ func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *g
 			row := ui.Row(c.Key(fmt.Sprintf("hunk-%s-%d", path, i))).Height(24).Radius(6).Padding(0, 6).Gap(6).AlignItems(ui.Center)
 			row.Children(func() {
 				ui.Text(c, header).FontSize(10).Font("monospace").TextColor(tc.Accent).Grow(1).SingleLine()
-				reverted := a.HunkRevertPaths[path+"#"+fmt.Sprint(i)]
+				revertKey := path + "#" + fmt.Sprint(i)
+				reverted := a.HunkRevertPaths[revertKey]
 				if reverted {
 					ui.Text(c, "reverted").FontSize(9).TextColor(tc.Success)
 				} else {
@@ -1566,13 +1598,16 @@ func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *g
 						ui.Text(c, "Revert").FontSize(9).FontWeight(600).TextColor(tc.Warning)
 					})
 					if btn.Clicked() {
-						a.HunkRevertPaths[path+"#"+fmt.Sprint(i)] = true
+						a.runOnUI(func() {
+							a.HunkRevertPaths[revertKey] = true
+						})
 						go func() {
 							if rerr := gm.RevertDiffHunk(path, i); rerr != nil {
-								a.HunkRevertPaths[path+"#"+fmt.Sprint(i)] = false
-							}
-							if a.Window != nil {
-								a.Window.Invalidate()
+								// Roll the marker back on the UI thread so the
+								// render pass never races the revert goroutine.
+								a.runOnUI(func() {
+									a.HunkRevertPaths[revertKey] = false
+								})
 							}
 						}()
 					}
