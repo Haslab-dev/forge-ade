@@ -25,7 +25,7 @@ WEBVIEW_DIR  := app/webview
 CLI_BIN_DIR  := dist
 
 define BUMP
-node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));const v=p.version.split('.').map(Number);$(1);p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');console.log('version ->',p.version,'(build',p.build+')')"
+node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));const v=p.version.split('.').map(Number);$(1);p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');if(fs.existsSync('web/package.json')){const wp=JSON.parse(fs.readFileSync('web/package.json','utf8'));wp.version=p.version;fs.writeFileSync('web/package.json',JSON.stringify(wp,null,2)+'\n');}console.log('version ->',p.version,'(build',p.build+')')"
 endef
 
 .PHONY: help
