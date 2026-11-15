@@ -162,11 +162,7 @@ func (a *AppUI) renderProjectSearchModal(c *ui.Context) {
 							}
 							if row.Clicked() {
 								a.ShowProjectSearch = false
-								a.openSearchHitAtLine(p, h.Line, a.FileSearchQuery)
-								a.Mode = ModeEditor
-								if a.Window != nil {
-									a.Window.Invalidate()
-								}
+								a.openSearchResult(p, h.Line, a.FileSearchQuery)
 							}
 						}
 					}

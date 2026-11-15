@@ -170,14 +170,7 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 					row.Background(tc.Text.Alpha(0.04))
 				}
 				if row.Clicked() {
-					full := a.Workspace.ResolveFullPath(hit.Path)
-					if doc, err := a.Editor.OpenFile(full, hit.Path); err == nil && doc != nil {
-						if hit.ByteStart >= 0 && hit.ByteStart < doc.Editor.Buffer.Len() {
-							doc.Editor.Select(hit.ByteStart, hit.ByteStart+len(strings.ToLower(a.FileSearchQuery)))
-							doc.Editor.GoTo(doc.Editor.CursorPos())
-						}
-					}
-					a.SelectedFile = hit.Path
+					a.openSearchResult(hit.Path, 0, a.FileSearchQuery)
 				}
 			}
 		})

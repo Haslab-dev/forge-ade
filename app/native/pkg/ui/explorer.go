@@ -217,7 +217,11 @@ func (a *AppUI) openExplorerNode(node *FileTreeNode) {
 		}
 		return
 	}
-	_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+	if a.Mode == ModeAgent {
+		a.openSidePreviewFile(nil, node.RelativePath)
+	} else {
+		_, _ = a.Editor.OpenFile(node.FullPath, node.RelativePath)
+	}
 }
 
 // attachExplorerMenu gives an explorer row forge-ade's file context menu:

@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -74,6 +75,9 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowPeekModal {
 		a.renderPeekModal(c)
 	}
+	if a.ShowRenameSymbolModal {
+		a.renderRenameSymbolModal(c)
+	}
 	if a.ShowJSONModal {
 		a.renderJSONModal(c)
 	}
@@ -109,23 +113,13 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 			if pm.SelectedIndex >= 0 && pm.SelectedIndex < len(matches) {
 				selected := matches[pm.SelectedIndex].File.RelativePath
 				pm.Close()
-				full := a.Workspace.ResolveFullPath(selected)
-				_, _ = a.Editor.OpenFile(full, selected)
-				a.SelectedFile = selected
-				a.IsGitClientOpen = false
-				a.Mode = ModeEditor
+				a.openSearchResult(selected, 0, "")
 			}
 		case palette.PaletteSymbols:
 			if pm.SelectedIndex >= 0 && pm.SelectedIndex < len(symbols) {
 				hit := symbols[pm.SelectedIndex]
 				pm.Close()
-				full := a.Workspace.ResolveFullPath(hit.Path)
-				if doc, err := a.Editor.OpenFile(full, hit.Path); err == nil && doc != nil && hit.Line > 0 {
-					a.jumpDocumentToLine(doc, hit.Line, 0)
-				}
-				a.SelectedFile = hit.Path
-				a.IsGitClientOpen = false
-				a.Mode = ModeEditor
+				a.openSearchResult(hit.Path, hit.Line, "")
 			}
 		case palette.PaletteLine:
 			if line, col, ok := palette.LineJumpSpec(pm.Query); ok {
@@ -1598,11 +1592,7 @@ func (a *AppUI) renderPeekModal(c *ui.Context) {
 							})
 							if jumpBtn.Clicked() || row.Clicked() {
 								a.ShowPeekModal = false
-								_, _ = a.Editor.OpenFile(thisM.Path, filepath.Base(thisM.Path))
-								if doc := a.Editor.ActiveDoc(); doc != nil {
-									a.jumpDocumentToLine(doc, thisM.Line, thisM.Col)
-								}
-								a.Mode = ModeEditor
+								a.openSearchResult(thisM.Path, thisM.Line, "")
 							}
 						})
 						if row.Hovered() {
@@ -1612,5 +1602,56 @@ func (a *AppUI) renderPeekModal(c *ui.Context) {
 				})
 			})
 		})
+	})
+}
+
+func (a *AppUI) renderRenameSymbolModal(c *ui.Context) {
+	tc := a.ThemeMgr.Colors()
+	ui.Modal(c, &a.ShowRenameSymbolModal, func() {
+		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(12).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					ui.Icon(c, icons.TablerPencil).Width(16).Height(16).TextColor(tc.Accent)
+					ui.Text(c, "Rename Symbol").FontSize(14).FontWeight(600).TextColor(tc.Text)
+				})
+				ui.Text(c, fmt.Sprintf("Rename '%s' across current file", a.RenameSymbolTarget)).FontSize(11).TextColor(tc.TextMuted)
+				in := ui.TextInput(c, &a.RenameSymbolNewName).Grow(1).AutoFocus()
+				doRename := func() {
+					oldSym := strings.TrimSpace(a.RenameSymbolTarget)
+					newSym := strings.TrimSpace(a.RenameSymbolNewName)
+					if oldSym == "" || newSym == "" || oldSym == newSym {
+						a.ShowRenameSymbolModal = false
+						return
+					}
+					count := 0
+					if doc := a.Editor.ActiveDoc(); doc != nil && doc.Editor != nil && doc.Editor.Buffer != nil {
+						text := doc.Editor.Buffer.String()
+						if strings.Contains(text, oldSym) {
+							count = strings.Count(text, oldSym)
+							newText := strings.ReplaceAll(text, oldSym, newSym)
+							doc.Editor.Buffer.Edit(mygoeditor.Edit{Start: 0, End: doc.Editor.Buffer.Len(), Text: newText})
+						}
+					}
+					c.AddToast(ui.Toast{
+						Title:       "Symbol Renamed",
+						Description: fmt.Sprintf("Renamed %d occurrences of '%s' to '%s'", count, oldSym, newSym),
+						Type:        "success",
+					})
+					a.ShowRenameSymbolModal = false
+				}
+				if in.Submitted() {
+					doRename()
+				}
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					ui.Box(c).Grow(1)
+					if ui.Button(c, "Cancel").Clicked() {
+						a.ShowRenameSymbolModal = false
+					}
+					if ui.PrimaryButton(c, "Rename").Clicked() {
+						doRename()
+					}
+				})
+			})
 	})
 }

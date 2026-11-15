@@ -323,6 +323,11 @@ type AppUI struct {
 	PeekSymbol    string
 	PeekResults   []editor.PeekMatch
 
+	// Rename Symbol modal
+	ShowRenameSymbolModal bool
+	RenameSymbolTarget    string
+	RenameSymbolNewName   string
+
 	// JSON Payload Inspector modal
 	ShowJSONModal    bool
 	JSONModalTitle   string
@@ -816,7 +821,6 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if cmdOrCtrlShift(ui.KeyF) {
 		// Project search modal (Zed style), prefilled with the selection.
-		a.Mode = ModeEditor
 		a.openProjectSearch()
 	}
 	if cmdOrCtrl(ui.KeyY) && a.Agent != nil && a.Agent.ActiveSession() != nil {
@@ -835,6 +839,33 @@ func (a *AppUI) View(c *ui.Context) {
 		// Format Document (Shift-Alt-F).
 		a.formatActiveDocument(c)
 	}
+	if c.Shortcut(0, ui.KeyF12) && a.Mode == ModeEditor {
+		doc := a.Editor.ActiveDoc()
+		if doc != nil {
+			sym := a.symbolUnderCursor(doc)
+			if sym != "" {
+				matches := a.Editor.FindDefinitions(sym, a.Workspace.RootDir)
+				if len(matches) == 1 {
+					a.openSearchResult(matches[0].Path, matches[0].Line, "")
+				} else if len(matches) > 1 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = sym
+					a.PeekResults = matches
+				}
+			}
+		}
+	}
+	if c.Shortcut(0, ui.KeyF2) && a.Mode == ModeEditor {
+		doc := a.Editor.ActiveDoc()
+		if doc != nil {
+			sym := a.symbolUnderCursor(doc)
+			if sym != "" {
+				a.ShowRenameSymbolModal = true
+				a.RenameSymbolTarget = sym
+				a.RenameSymbolNewName = sym
+			}
+		}
+	}
 	if cmdOrCtrl(ui.KeyF) && a.Mode == ModeAgent && a.Agent != nil && a.Agent.ActiveSession() != nil {
 		// Find-in-thread, as forge-ade's ⌘F ThreadFindBar in the chat surface.
 		a.ShowThreadFind = !a.ShowThreadFind
@@ -850,7 +881,6 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if cmdOrCtrlShift(ui.KeyO) {
 		// Go to symbol (⌘⇧O) — the "@" palette mode.
-		a.Mode = ModeEditor
 		a.Palette.OpenSymbols()
 		a.Palette.Query = "@"
 	}
@@ -1248,6 +1278,50 @@ func (a *AppUI) recordRecentWorkspace(dir string) {
 		a.RecentWorkspaces = a.RecentWorkspaces[:recentWorkspacesCap]
 	}
 	saveRecentWorkspaces(a.RecentWorkspaces)
+}
+
+// openSearchResult opens a search result (file or symbol) according to current mode:
+// in Agent mode, it opens in the right sidebar without leaving agent chat;
+// in Editor mode, it opens in the main editor pane.
+func (a *AppUI) openSearchResult(relPath string, line int, query string) {
+	if relPath == "" {
+		return
+	}
+	full := a.Workspace.ResolveFullPath(relPath)
+	doc, _ := a.Editor.OpenFile(full, relPath)
+	if doc != nil && line > 0 {
+		a.jumpDocumentToLine(doc, line, 0)
+	}
+	a.SelectedFile = relPath
+
+	if a.Mode == ModeAgent {
+		// Agent mode: keep agent chat in main pane, open file in right sidebar!
+		a.openSideFile(relPath)
+		if doc != nil && line > 0 && doc.Editor != nil {
+			a.jumpDocumentToLine(doc, line, 0)
+		}
+	} else {
+		// Editor mode: open in main pane
+		a.Mode = ModeEditor
+		a.IsGitClientOpen = false
+	}
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// symbolUnderCursor returns the identifier under the active cursor or current selection.
+func (a *AppUI) symbolUnderCursor(doc *editor.OpenDocument) string {
+	if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+		return ""
+	}
+	selText := strings.TrimSpace(doc.Editor.SelectedText())
+	if selText != "" && !strings.ContainsAny(selText, " \t\r\n(){}[],;:") {
+		return selText
+	}
+	cursor := doc.Editor.Cursor()
+	word, _, _ := editor.WordAtOffset(doc.Editor.Buffer, cursor)
+	return word
 }
 
 // openSideFile opens a workspace file in the right sidebar's file tabs, as

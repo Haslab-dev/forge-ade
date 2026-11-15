@@ -980,6 +980,264 @@ func isDeclaration(line, symbol string) bool {
 	return false
 }
 
+// FindReferences scans open files and workspace files for usages and call sites of the symbol.
+func (em *EditorManager) FindReferences(symbol, wsDir string) []PeekMatch {
+	if symbol == "" {
+		return nil
+	}
+	var matches []PeekMatch
+
+	em.mu.RLock()
+	for p, doc := range em.docs {
+		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+			continue
+		}
+		lines := strings.Split(doc.Editor.Buffer.String(), "\n")
+		for i, line := range lines {
+			if strings.Contains(line, symbol) {
+				col := strings.Index(line, symbol)
+				if col < 0 {
+					col = 0
+				}
+				matches = append(matches, PeekMatch{
+					Path:    p,
+					Line:    i + 1,
+					Col:     col + 1,
+					Preview: strings.TrimSpace(line),
+					Symbol:  symbol,
+				})
+				if len(matches) >= 50 {
+					break
+				}
+			}
+		}
+	}
+	em.mu.RUnlock()
+
+	if len(matches) < 50 && wsDir != "" {
+		_ = filepath.WalkDir(wsDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d == nil {
+				return nil
+			}
+			if d.IsDir() {
+				if strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules" || d.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := filepath.Ext(path)
+			if ext != ".go" && ext != ".ts" && ext != ".tsx" && ext != ".js" && ext != ".py" && ext != ".rs" && ext != ".json" {
+				return nil
+			}
+			data, rErr := os.ReadFile(path)
+			if rErr != nil {
+				return nil
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				if strings.Contains(line, symbol) {
+					col := strings.Index(line, symbol)
+					if col < 0 {
+						col = 0
+					}
+					matches = append(matches, PeekMatch{
+						Path:    path,
+						Line:    i + 1,
+						Col:     col + 1,
+						Preview: strings.TrimSpace(line),
+						Symbol:  symbol,
+					})
+					if len(matches) >= 50 {
+						return filepath.SkipAll
+					}
+				}
+			}
+			return nil
+		})
+	}
+
+	return matches
+}
+
+// FindTypeDefinitions scans open files and workspace files for type declarations.
+func (em *EditorManager) FindTypeDefinitions(symbol, wsDir string) []PeekMatch {
+	if symbol == "" {
+		return nil
+	}
+	var matches []PeekMatch
+
+	em.mu.RLock()
+	for p, doc := range em.docs {
+		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+			continue
+		}
+		lines := strings.Split(doc.Editor.Buffer.String(), "\n")
+		for i, line := range lines {
+			if isTypeDeclaration(line, symbol) {
+				col := strings.Index(line, symbol)
+				if col < 0 {
+					col = 0
+				}
+				matches = append(matches, PeekMatch{
+					Path:    p,
+					Line:    i + 1,
+					Col:     col + 1,
+					Preview: strings.TrimSpace(line),
+					Symbol:  symbol,
+				})
+			}
+		}
+	}
+	em.mu.RUnlock()
+
+	if len(matches) == 0 && wsDir != "" {
+		_ = filepath.WalkDir(wsDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d == nil {
+				return nil
+			}
+			if d.IsDir() {
+				if strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules" || d.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := filepath.Ext(path)
+			if ext != ".go" && ext != ".ts" && ext != ".tsx" && ext != ".js" && ext != ".py" && ext != ".rs" {
+				return nil
+			}
+			data, rErr := os.ReadFile(path)
+			if rErr != nil {
+				return nil
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				if isTypeDeclaration(line, symbol) {
+					col := strings.Index(line, symbol)
+					if col < 0 {
+						col = 0
+					}
+					matches = append(matches, PeekMatch{
+						Path:    path,
+						Line:    i + 1,
+						Col:     col + 1,
+						Preview: strings.TrimSpace(line),
+						Symbol:  symbol,
+					})
+					if len(matches) >= 20 {
+						return filepath.SkipAll
+					}
+				}
+			}
+			return nil
+		})
+	}
+	return matches
+}
+
+// FindImplementations scans open files and workspace files for implementations.
+func (em *EditorManager) FindImplementations(symbol, wsDir string) []PeekMatch {
+	if symbol == "" {
+		return nil
+	}
+	var matches []PeekMatch
+
+	em.mu.RLock()
+	for p, doc := range em.docs {
+		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+			continue
+		}
+		lines := strings.Split(doc.Editor.Buffer.String(), "\n")
+		for i, line := range lines {
+			if isImplementation(line, symbol) {
+				col := strings.Index(line, symbol)
+				if col < 0 {
+					col = 0
+				}
+				matches = append(matches, PeekMatch{
+					Path:    p,
+					Line:    i + 1,
+					Col:     col + 1,
+					Preview: strings.TrimSpace(line),
+					Symbol:  symbol,
+				})
+			}
+		}
+	}
+	em.mu.RUnlock()
+
+	if len(matches) == 0 && wsDir != "" {
+		_ = filepath.WalkDir(wsDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d == nil {
+				return nil
+			}
+			if d.IsDir() {
+				if strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules" || d.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			ext := filepath.Ext(path)
+			if ext != ".go" && ext != ".ts" && ext != ".tsx" && ext != ".js" && ext != ".py" && ext != ".rs" {
+				return nil
+			}
+			data, rErr := os.ReadFile(path)
+			if rErr != nil {
+				return nil
+			}
+			lines := strings.Split(string(data), "\n")
+			for i, line := range lines {
+				if isImplementation(line, symbol) {
+					col := strings.Index(line, symbol)
+					if col < 0 {
+						col = 0
+					}
+					matches = append(matches, PeekMatch{
+						Path:    path,
+						Line:    i + 1,
+						Col:     col + 1,
+						Preview: strings.TrimSpace(line),
+						Symbol:  symbol,
+					})
+					if len(matches) >= 20 {
+						return filepath.SkipAll
+					}
+				}
+			}
+			return nil
+		})
+	}
+	return matches
+}
+
+func isTypeDeclaration(line, symbol string) bool {
+	patterns := []string{
+		"type " + symbol,
+		"interface " + symbol,
+		"class " + symbol,
+		"struct " + symbol,
+		"enum " + symbol,
+	}
+	for _, p := range patterns {
+		if strings.Contains(line, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isImplementation(line, symbol string) bool {
+	if strings.Contains(line, "func (") && strings.Contains(line, ") "+symbol+"(") {
+		return true
+	}
+	if strings.Contains(line, "implements ") && strings.Contains(line, symbol) {
+		return true
+	}
+	if strings.Contains(line, "impl ") && strings.Contains(line, symbol) {
+		return true
+	}
+	return false
+}
+
 // WordCompletions scans the buffer for words matching the prefix.
 func WordCompletions(buf *mygoeditor.Buffer, prefix string) []mygoeditor.Completion {
 	if prefix == "" {

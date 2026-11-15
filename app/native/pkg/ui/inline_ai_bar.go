@@ -8,6 +8,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"go/format"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
+	"github.com/hasdev/forge-ade/app/native/pkg/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	coreeditor "github.com/hasdev/forge-ade/core/editor"
@@ -208,27 +210,74 @@ func (a *AppUI) startInlineAIGenerate() {
 	}
 }
 
-// formatActiveDocument formats the open file via the core editor tooling
+// formatDocument formats the given file via Go's go/format (for .go) or core editor tooling
 // (prettier-backed), matching the webview's Format Document action.
-func (a *AppUI) formatActiveDocument(c *ui.Context) {
-	doc := a.Editor.ActiveDoc()
-	if doc == nil {
+func (a *AppUI) formatDocument(c *ui.Context, doc *editor.OpenDocument) {
+	if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
 		return
 	}
-	tooling := newEditorTooling(a.Workspace.RootDir)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	text := doc.Editor.Buffer.String()
-	formatted, err := tooling.FormatCode(ctx, doc.FullPath, text)
+	var formatted string
+	var err error
+
+	if strings.HasSuffix(doc.FullPath, ".go") {
+		var formattedBytes []byte
+		formattedBytes, err = format.Source([]byte(text))
+		if err == nil {
+			formatted = string(formattedBytes)
+		}
+	} else {
+		tooling := newEditorTooling(a.Workspace.RootDir)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		formatted, err = tooling.FormatCode(ctx, doc.FullPath, text)
+	}
+
 	if err != nil || formatted == "" || formatted == text {
-		if err != nil {
+		if err != nil && c != nil {
 			c.AddToast(ui.Toast{Title: "Format failed", Description: err.Error(), Type: "error"})
 		}
 		return
 	}
 	buf := doc.Editor.Buffer
 	buf.Edit(mygoeditor.Edit{Start: 0, End: buf.Len(), Text: formatted})
-	c.AddToast(ui.Toast{Title: "Formatted", Description: doc.RelativePath, Type: "success"})
+	if c != nil {
+		c.AddToast(ui.Toast{Title: "Formatted", Description: doc.RelativePath, Type: "success"})
+	}
+}
+
+// formatActiveDocument formats the currently active document.
+func (a *AppUI) formatActiveDocument(c *ui.Context) {
+	a.formatDocument(c, a.Editor.ActiveDoc())
+}
+
+// formatDocumentSelection formats the currently selected range in the document.
+func (a *AppUI) formatDocumentSelection(c *ui.Context, doc *editor.OpenDocument) {
+	if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+		return
+	}
+	sel := doc.Editor.Selection()
+	start, end := sel.Anchor, sel.Head
+	if start > end {
+		start, end = end, start
+	}
+	if start == end {
+		a.formatDocument(c, doc)
+		return
+	}
+	buf := doc.Editor.Buffer
+	selectedText := buf.Slice(start, end)
+	if strings.HasSuffix(doc.FullPath, ".go") {
+		formattedBytes, err := format.Source([]byte(selectedText))
+		if err == nil && len(formattedBytes) > 0 {
+			buf.Edit(mygoeditor.Edit{Start: start, End: end, Text: string(formattedBytes)})
+			if c != nil {
+				c.AddToast(ui.Toast{Title: "Selection Formatted", Description: doc.RelativePath, Type: "success"})
+			}
+			return
+		}
+	}
+	a.formatDocument(c, doc)
 }
 
 // openSidePreviewFile renders image/markdown previews in the drawer Files

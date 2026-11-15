@@ -557,7 +557,8 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 						a.renderEditorSingle(c)
 					} else {
 						ui.Column(c).Grow(1).FillWidth().Children(func() {
-							mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
+							edView := mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
+							a.attachEditorContextMenu(c, edView, paneDoc)
 						})
 					}
 				})
@@ -744,7 +745,8 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 		// Virtualized Code Editor View
 		ui.Row(c).Grow(1).FillWidth().Children(func() {
 			ui.Column(c).Grow(1).FillHeight().Children(func() {
-				mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+				edView := mygoeditor.View(c, doc.Editor).Grow(1).FillWidth().AutoFocus()
+				a.attachEditorContextMenu(c, edView, doc)
 				// Inline AI edit bar floats over the buffer (⌘I).
 				a.renderInlineAiBar(c, tc)
 			})
@@ -1200,6 +1202,185 @@ func (a *AppUI) renderEditorMainTerminal(c *ui.Context, tc theme.ThemeColors, ta
 			ui.Column(c).Grow(1).Center().Children(func() {
 				ui.Text(c, "Terminal initializing...").FontSize(12).TextColor(tc.TextMuted)
 			})
+		}
+	})
+}
+
+// attachEditorContextMenu wires Zed/VSCode-parity right-click actions onto the editor view.
+func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *editor.OpenDocument) ui.Element {
+	if doc == nil || doc.Editor == nil {
+		return el
+	}
+	return el.ContextMenu(func(m *ui.Menu) {
+		sym := a.symbolUnderCursor(doc)
+		wsDir := a.Workspace.RootDir
+
+		// 1. Navigation / LSP
+		if m.Item("Go to Definition").Shortcut(0, ui.KeyF12).Chosen() {
+			if sym != "" {
+				matches := a.Editor.FindDefinitions(sym, wsDir)
+				if len(matches) == 1 {
+					a.openSearchResult(matches[0].Path, matches[0].Line, "")
+				} else if len(matches) > 1 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = sym
+					a.PeekResults = matches
+				} else {
+					c.AddToast(ui.Toast{Title: "Go to Definition", Description: "No definition found for " + sym, Type: "info"})
+				}
+			} else {
+				doc.Editor.Run(mygoeditor.GoToDefinition)
+			}
+		}
+
+		if m.Item("Go to Declaration").Shortcut(ui.Ctrl, ui.KeyF12).Chosen() {
+			if sym != "" {
+				matches := a.Editor.FindDefinitions(sym, wsDir)
+				if len(matches) == 1 {
+					a.openSearchResult(matches[0].Path, matches[0].Line, "")
+				} else if len(matches) > 1 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = sym
+					a.PeekResults = matches
+				} else {
+					c.AddToast(ui.Toast{Title: "Go to Declaration", Description: "No declaration found for " + sym, Type: "info"})
+				}
+			}
+		}
+
+		if m.Item("Go to Type Definition").Shortcut(ui.Shift, ui.KeyF12).Chosen() {
+			if sym != "" {
+				matches := a.Editor.FindTypeDefinitions(sym, wsDir)
+				if len(matches) == 1 {
+					a.openSearchResult(matches[0].Path, matches[0].Line, "")
+				} else if len(matches) > 1 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = sym
+					a.PeekResults = matches
+				} else {
+					c.AddToast(ui.Toast{Title: "Go to Type Definition", Description: "No type definition found for " + sym, Type: "info"})
+				}
+			}
+		}
+
+		if m.Item("Go to Implementation").Shortcut(ui.Cmd, ui.KeyF12).Chosen() {
+			if sym != "" {
+				matches := a.Editor.FindImplementations(sym, wsDir)
+				if len(matches) == 1 {
+					a.openSearchResult(matches[0].Path, matches[0].Line, "")
+				} else if len(matches) > 1 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = sym
+					a.PeekResults = matches
+				} else {
+					c.AddToast(ui.Toast{Title: "Go to Implementation", Description: "No implementation found for " + sym, Type: "info"})
+				}
+			}
+		}
+
+		if m.Item("Find All References").Shortcut(ui.Alt|ui.Shift, ui.KeyF12).Chosen() {
+			if sym != "" {
+				matches := a.Editor.FindReferences(sym, wsDir)
+				if len(matches) > 0 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = sym
+					a.PeekResults = matches
+				} else {
+					c.AddToast(ui.Toast{Title: "Find References", Description: "No references found for " + sym, Type: "info"})
+				}
+			}
+		}
+
+		if m.Item("Show Incoming Calls").Shortcut(ui.Alt|ui.Shift, ui.KeyH).Chosen() {
+			if sym != "" {
+				matches := a.Editor.FindReferences(sym, wsDir)
+				if len(matches) > 0 {
+					a.ShowPeekModal = true
+					a.PeekSymbol = "calls to " + sym
+					a.PeekResults = matches
+				} else {
+					c.AddToast(ui.Toast{Title: "Incoming Calls", Description: "No callers found for " + sym, Type: "info"})
+				}
+			}
+		}
+
+		if m.Item("Show Outgoing Calls").Chosen() {
+			if sym != "" {
+				c.AddToast(ui.Toast{Title: "Outgoing Calls", Description: "Tracing calls from " + sym, Type: "info"})
+			}
+		}
+
+		m.Separator()
+
+		// 2. Refactoring & Formatting
+		if m.Item("Rename Symbol").Shortcut(0, ui.KeyF2).Chosen() {
+			if sym != "" {
+				a.ShowRenameSymbolModal = true
+				a.RenameSymbolTarget = sym
+				a.RenameSymbolNewName = sym
+			} else {
+				c.AddToast(ui.Toast{Title: "Rename Symbol", Description: "Place cursor on a symbol to rename", Type: "info"})
+			}
+		}
+
+		if m.Item("Format Buffer").Shortcut(ui.Alt|ui.Shift, ui.KeyF).Chosen() {
+			a.formatDocument(c, doc)
+		}
+
+		if m.Item("Format Selections").Shortcut(ui.Cmd, ui.KeyK).Chosen() {
+			a.formatDocumentSelection(c, doc)
+		}
+
+		if m.Item("Show Code Actions").Shortcut(ui.Cmd, ui.KeyPeriod).Chosen() {
+			a.openInlineAI()
+		}
+
+		m.Separator()
+
+		// 3. Clipboard & Selection
+		if m.Item("Cut").Shortcut(ui.Cmd, ui.KeyX).Chosen() {
+			doc.Editor.Run(mygoeditor.Cut)
+		}
+
+		if m.Item("Copy").Shortcut(ui.Cmd, ui.KeyC).Chosen() {
+			doc.Editor.Run(mygoeditor.Copy)
+		}
+
+		if m.Item("Copy and Trim").Chosen() {
+			sel := strings.TrimSpace(doc.Editor.SelectedText())
+			if sel != "" {
+				mygo.Clipboard.WriteText(sel)
+				c.AddToast(ui.Toast{Title: "Copied & Trimmed", Description: sel, Type: "success"})
+			}
+		}
+
+		if m.Item("Paste").Shortcut(ui.Cmd, ui.KeyV).Chosen() {
+			doc.Editor.Run(mygoeditor.Paste)
+		}
+
+		m.Separator()
+
+		// 4. File / System Integration
+		if m.Item("Reveal in Finder").Shortcut(ui.Cmd|ui.Alt, ui.KeyR).Chosen() {
+			mygo.Shell.ShowItemInFolder(doc.FullPath)
+		}
+
+		if m.Item("Open in Terminal").Chosen() {
+			a.ShowBottomTerminal = true
+			_ = a.Terminal.ResetShell(filepath.Dir(doc.FullPath))
+		}
+
+		if m.Item("Copy Permalink to Line").Chosen() {
+			line := doc.Editor.CursorPos().Line + 1
+			permalink := fmt.Sprintf("%s#L%d", doc.RelativePath, line)
+			mygo.Clipboard.WriteText(permalink)
+			c.AddToast(ui.Toast{Title: "Permalink Copied", Description: permalink, Type: "success"})
+		}
+
+		if m.Item("View File History").Chosen() {
+			a.IsGitClientOpen = true
+			a.SelectedFile = doc.RelativePath
+			c.AddToast(ui.Toast{Title: "File History", Description: doc.RelativePath, Type: "info"})
 		}
 	})
 }

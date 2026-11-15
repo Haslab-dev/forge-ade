@@ -1492,7 +1492,8 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 				mygoeditor.DiffView(c, d).Grow(1).FillWidth()
 			}
 		} else {
-			mygoeditor.View(c, doc.Editor).Grow(1).FillWidth()
+			edView := mygoeditor.View(c, doc.Editor).Grow(1).FillWidth()
+			a.attachEditorContextMenu(c, edView, doc)
 		}
 		// Keep the drawer preview in sync with the editor-mode active tab.
 		ui.Row(c).Height(26).Padding(0, 12).Gap(6).AlignItems(ui.Center).
