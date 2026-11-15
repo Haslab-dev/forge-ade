@@ -16,6 +16,12 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
+// modal shows a dialog via ui.Modal, resetting default panel padding, background,
+// and shadow so the custom-styled child card renders as the single crisp dialog overlay.
+func (a *AppUI) modal(c *ui.Context, open *bool, fn func()) ui.Element {
+	return ui.Modal(c, open, fn).Padding(0).Background(ui.Transparent).Shadow(0, 0, 0, 0, ui.Transparent)
+}
+
 // renderModals orchestrates all popup modals and overlay dialogs.
 func (a *AppUI) renderModals(c *ui.Context) {
 	if a.Palette != nil && a.Palette.IsOpen {
@@ -137,9 +143,9 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 		}
 	}
 
-	ui.Modal(c, &pm.IsOpen, func() {
+	a.modal(c, &pm.IsOpen, func() {
 		panel := ui.Column(c).Width(576).Radius(16).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
-			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55))
+			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip()
 		panel.Children(func() {
 			// Search row
 			ui.Row(c).Padding(14).Gap(8).AlignItems(ui.Center).
@@ -330,9 +336,9 @@ func (a *AppUI) renderThemePickerModal(c *ui.Context) {
 	}
 	tc := tm.Colors()
 
-	ui.Modal(c, &tm.IsOpen, func() {
+	a.modal(c, &tm.IsOpen, func() {
 		ui.Column(c).Width(420).Radius(14).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16).Gap(12).
-			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerPalette).Width(16).Height(16).TextColor(tc.Accent)
@@ -480,9 +486,9 @@ func (a *AppUI) renderPermissionModal(c *ui.Context) {
 	req := mgr.ActiveReq
 	tc := a.ThemeMgr.Colors()
 
-	ui.Modal(c, nil, func() {
+	a.modal(c, nil, func() {
 		ui.Column(c).Width(480).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Children(func() {
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.TablerShieldAlert).Width(18).Height(18).TextColor(tc.Warning)
 				ui.Text(c, "Agent Permission Request").FontSize(14).FontWeight(600)
@@ -519,9 +525,9 @@ func (a *AppUI) renderPermissionModal(c *ui.Context) {
 
 func (a *AppUI) renderNewFileModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowNewFileModal, func() {
+	a.modal(c, &a.ShowNewFileModal, func() {
 		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().
 			Children(func() {
 				ui.Text(c, "Create New File").FontSize(14).FontWeight(600)
 				in := ui.TextInput(c, &a.NewFileName).Placeholder("filename.go (or path/to/file.ext)...").Grow(1).AutoFocus()
@@ -561,9 +567,9 @@ func (a *AppUI) renderNewFileModal(c *ui.Context) {
 
 func (a *AppUI) renderNewFolderModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowNewFolderModal, func() {
+	a.modal(c, &a.ShowNewFolderModal, func() {
 		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().
 			Children(func() {
 				ui.Text(c, "Create New Folder").FontSize(14).FontWeight(600)
 				in := ui.TextInput(c, &a.NewFolderName).Placeholder("folder_name (or path/to/folder)...").Grow(1).AutoFocus()
@@ -722,10 +728,10 @@ func (a *AppUI) renderNewTaskModal(c *ui.Context) {
 		modalWidth = winW * 0.92
 	}
 
-	ui.Modal(c, &a.ShowNewTaskModal, func() {
+	a.modal(c, &a.ShowNewTaskModal, func() {
 		ui.Column(c).Width(modalWidth).Height(500).Radius(14).
 			Background(tc.Sidebar).BorderWidth(1).BorderColor(tc.Border).
-			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).
+			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().
 			Children(func() {
 
 				// 1. Header
@@ -1061,9 +1067,9 @@ func (a *AppUI) renderTaskActionsMenu(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	sess := a.Agent.ActiveSession()
 
-	ui.Modal(c, &a.ShowTaskMenuModal, func() {
+	a.modal(c, &a.ShowTaskMenuModal, func() {
 		ui.Column(c).Width(280).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(6).Gap(2).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().
 			Children(func() {
 				menuItem := func(icon *ui.SVG, label string, danger bool, onPick func()) {
 					var btn ui.Element
@@ -1185,9 +1191,9 @@ func (a *AppUI) renderTaskActionsMenu(c *ui.Context) {
 
 func (a *AppUI) renderRenameModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowRenameModal, func() {
+	a.modal(c, &a.ShowRenameModal, func() {
 		ui.Column(c).Width(380).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().
 			Children(func() {
 				ui.Text(c, "Rename Task").FontSize(14).FontWeight(600)
 				in := ui.TextInput(c, &a.RenameSessionTitle).Grow(1).AutoFocus()
@@ -1231,9 +1237,9 @@ func (a *AppUI) renderRenameModal(c *ui.Context) {
 
 func (a *AppUI) renderBranchModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowBranchModal, func() {
+	a.modal(c, &a.ShowBranchModal, func() {
 		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Children(func() {
 					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -1338,7 +1344,7 @@ func (a *AppUI) renderNewBoardTaskModal(c *ui.Context) {
 	}
 	tc := a.ThemeMgr.Colors()
 
-	ui.Modal(c, &a.ShowNewBoardTaskModal, func() {
+	a.modal(c, &a.ShowNewBoardTaskModal, func() {
 		modal := ui.Column(c).Width(460).Radius(16).Background(tc.Surface).
 			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip()
 
@@ -1545,7 +1551,7 @@ func (a *AppUI) renderPeekModal(c *ui.Context) {
 		return
 	}
 
-	ui.Modal(c, &a.ShowPeekModal, func() {
+	a.modal(c, &a.ShowPeekModal, func() {
 		modal := ui.Column(c).Width(600).MaxHeight(420).Radius(12).
 			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 16, 40, -10, ui.RGBA(0, 0, 0, 0.6)).Clip()
@@ -1607,9 +1613,9 @@ func (a *AppUI) renderPeekModal(c *ui.Context) {
 
 func (a *AppUI) renderRenameSymbolModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowRenameSymbolModal, func() {
+	a.modal(c, &a.ShowRenameSymbolModal, func() {
 		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(12).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
+			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().
 			Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 					ui.Icon(c, icons.TablerPencil).Width(16).Height(16).TextColor(tc.Accent)

@@ -345,7 +345,7 @@ func (a *AppUI) deleteExplorerNode(c *ui.Context, node *FileTreeNode) {
 // renderRenameFileModal renders the file/folder rename dialog.
 func (a *AppUI) renderRenameFileModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
-	ui.Modal(c, &a.ShowRenameFileModal, func() {
+	a.modal(c, &a.ShowRenameFileModal, func() {
 		ui.Column(c).Width(420).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
 			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).
 			Children(func() {

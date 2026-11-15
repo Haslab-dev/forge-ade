@@ -85,7 +85,7 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 		})
 	}
 
-	ui.Modal(c, &a.ShowUsageModal, func() {
+	a.modal(c, &a.ShowUsageModal, func() {
 		modal := ui.Column(c).Width(520).Radius(18).
 			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip()

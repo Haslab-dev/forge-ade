@@ -622,9 +622,9 @@ func (a *AppUI) renderJSONResponseCard(c *ui.Context, tc theme.ThemeColors, m *a
 func (a *AppUI) renderJSONModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	ui.Modal(c, &a.ShowJSONModal, func() {
+	a.modal(c, &a.ShowJSONModal, func() {
 		ui.Column(c).Width(680).Height(500).Radius(12).Background(tc.Surface).
-			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 			// Header
 			ui.Row(c).Height(50).Padding(0, 16).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
@@ -717,9 +717,9 @@ func (a *AppUI) renderPlanModal(c *ui.Context) {
 		percent = (completed * 100) / total
 	}
 
-	ui.Modal(c, &a.ShowPlanModal, func() {
+	a.modal(c, &a.ShowPlanModal, func() {
 		ui.Column(c).Width(620).Height(520).Radius(12).Background(tc.Surface).
-			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 			// Header
 			ui.Row(c).Height(54).Padding(0, 18).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {

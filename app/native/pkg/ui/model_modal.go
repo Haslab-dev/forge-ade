@@ -333,11 +333,11 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		}
 	}
 
-	ui.Modal(c, &a.ShowModelPalette, func() {
+	a.modal(c, &a.ShowModelPalette, func() {
 		// 540px popup card matching ForgeADE ModelProviderPaletteModal metrics
 		ui.Column(c).Width(540).Height(450).Radius(16).
 			Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
-			Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 
 			// 1. Search Bar Header
 			ui.Row(c).Height(44).Padding(0, 12).Gap(8).AlignItems(ui.Center).

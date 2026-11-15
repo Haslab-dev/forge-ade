@@ -62,7 +62,7 @@ func (a *AppUI) renderTerminalSnippetsModal(c *ui.Context) {
 		return
 	}
 
-	ui.Modal(c, &a.ShowTerminalSnippetsModal, func() {
+	a.modal(c, &a.ShowTerminalSnippetsModal, func() {
 		modal := ui.Column(c).Width(680).MaxHeight(600).Radius(12).
 			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 16, 48, -12, ui.RGBA(0, 0, 0, 0.65)).Clip()

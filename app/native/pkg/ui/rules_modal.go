@@ -113,7 +113,7 @@ func (a *AppUI) renderUnifiedRulesModal(c *ui.Context) {
 
 	tc := a.ThemeMgr.Colors()
 
-	ui.Modal(c, &a.ShowRulesModal, func() {
+	a.modal(c, &a.ShowRulesModal, func() {
 		modal := ui.Column(c).Width(840).Height(580).Radius(16).
 			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip()

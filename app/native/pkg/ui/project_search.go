@@ -52,7 +52,7 @@ func (a *AppUI) renderProjectSearchModal(c *ui.Context) {
 	}
 	tc := a.ThemeMgr.Colors()
 
-	ui.Modal(c, &a.ShowProjectSearch, func() {
+	a.modal(c, &a.ShowProjectSearch, func() {
 		panel := ui.Column(c).Width(720).MaxHeight(560).Radius(16).Background(tc.SurfaceOverlay).
 			BorderWidth(1).BorderColor(tc.Border).Padding(14).Gap(10).Clip().
 			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55))

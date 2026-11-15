@@ -327,9 +327,9 @@ func (a *AppUI) connectSSHShell(cfg remotefs.SSHConfig) {
 func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	ui.Modal(c, &a.ShowSSHModal, func() {
+	a.modal(c, &a.ShowSSHModal, func() {
 		ui.Column(c).Width(720).Height(520).Radius(12).Background(tc.Surface).
-			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 			// Header (Fixed)
 			ui.Row(c).Height(52).Padding(0, 18).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
@@ -360,9 +360,9 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 			})
 
 			// Body: Left Saved Hosts List + Right Connection Form
-			ui.Row(c).Grow(1).Children(func() {
+			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
 				// Left Saved Hosts Sidebar (Termius-like host list)
-				ui.Column(c).Width(230).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
+				ui.Column(c).Width(230).FillHeight().Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
 					// Sidebar Top: Header + New Host button
 					ui.Row(c).Height(36).Padding(0, 10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 						ui.Text(c, "SAVED HOSTS").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
@@ -551,19 +551,19 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 				})
 
 				// Right Form Container (Termius-like server configuration with fixed footer)
-				ui.Column(c).Grow(1).Children(func() {
+				ui.Column(c).Grow(1).FillHeight().Children(func() {
 					// Form Top Bar
-					ui.Row(c).Height(38).Padding(0, 18).AlignItems(ui.Center).
-						Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+					ui.Row(c).Height(36).Padding(0, 18).AlignItems(ui.Center).
+						Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
 						headerTitle := "New Remote Host"
 						if a.SSHSelectedConfigID != "" {
 							lbl := a.SSHLabel
 							if lbl == "" {
 								lbl = a.SSHHost
 							}
-							headerTitle = fmt.Sprintf("Host: %s", lbl)
+							headerTitle = fmt.Sprintf("Config: %s", lbl)
 						}
-						ui.Text(c, headerTitle).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
+						ui.Text(c, headerTitle).FontSize(11).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
 
 						if a.SSHHost != "" {
 							quickShellBtn := ui.Row(c.Key("quick-shell-btn")).Height(22).Radius(4).Padding(0, 8).Gap(4).
@@ -600,7 +600,7 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 
 					// Scrollable Form Body
 					ui.Scroll(c).Grow(1).Children(func() {
-						ui.Column(c).Padding(16, 20).Gap(12).Children(func() {
+						ui.Column(c).Padding(14, 18).Gap(10).Children(func() {
 							// Error Banner
 							if a.SSHErrorMsg != "" {
 								ui.Row(c).Radius(6).Padding(8, 10).Gap(8).Background(tc.Error.Alpha(0.12)).
@@ -775,7 +775,7 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 					})
 
 					// FIXED FOOTER (PINNED AT BOTTOM OUTSIDE SCROLL)
-					ui.Row(c).Height(52).Padding(0, 20).Background(tc.Surface).
+					ui.Row(c).Height(50).Padding(0, 18).Background(tc.Surface).
 						BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).AlignItems(ui.Center).Children(func() {
 						if a.SSHIsConnecting {
 							ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -785,7 +785,7 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 						}
 						ui.Spacer(c)
 
-						cancelBtn := ui.Row(c.Key("ssh-cancel-btn")).Height(32).Radius(6).Padding(0, 14).
+						cancelBtn := ui.Row(c.Key("ssh-cancel-btn")).Height(30).Radius(6).Padding(0, 14).
 							BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 						cancelBtn.Children(func() {
 							ui.Text(c, "Cancel").FontSize(11).TextColor(tc.TextMuted)
@@ -799,7 +799,7 @@ func (a *AppUI) renderSSHConnectModal(c *ui.Context) {
 
 						ui.Box(c).Width(8)
 
-						connectBtn := ui.Row(c.Key("ssh-connect-btn")).Height(32).Radius(6).Padding(0, 16).
+						connectBtn := ui.Row(c.Key("ssh-connect-btn")).Height(30).Radius(6).Padding(0, 16).
 							Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 						connectBtn.Children(func() {
 							label := "Connect & Open Workspace"
@@ -841,9 +841,9 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 		}
 	}
 
-	ui.Modal(c, &a.ShowSSHQuickMenu, func() {
+	a.modal(c, &a.ShowSSHQuickMenu, func() {
 		ui.Column(c).Width(480).Radius(12).Background(tc.Surface).
-			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 			// Header
 			ui.Row(c).Height(62).Padding(0, 16).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
@@ -1057,9 +1057,9 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 		a.ShowRemoteUploadModal = false
 	}
 
-	ui.Modal(c, &a.ShowRemoteUploadModal, func() {
+	a.modal(c, &a.ShowRemoteUploadModal, func() {
 		ui.Column(c).Width(600).Radius(12).Background(tc.Surface).
-			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Children(func() {
+			BorderWidth(1).BorderColor(tc.Border).Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 			// Header
 			ui.Row(c).Height(56).Padding(0, 16).AlignItems(ui.Center).
 				Background(tc.Canvas).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
