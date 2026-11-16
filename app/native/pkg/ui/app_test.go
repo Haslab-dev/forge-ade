@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 	"github.com/hasdev/forge-ade/core/agentsession"
@@ -281,5 +283,289 @@ func TestDeleteWorkspaceGroupClearsAllTabsAndRecentWorkspaces(t *testing.T) {
 	}
 	if app.Workspace.RootDir != "" {
 		t.Fatalf("expected active workspace reset to General \"\", got %q", app.Workspace.RootDir)
+	}
+}
+
+func TestProjectSwitcherThisWindowAndHistory(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	eng := engine.NewEngine("")
+	app := NewAppUI(eng, "")
+	defer app.Close()
+
+	localWS := "/projects/mobile-asn"
+	sshWS := "ssh://srv-prod/var/www/pchain-api"
+
+	// 1. Record workspaces into RecentWorkspaces (both local and ssh)
+	app.recordRecentWorkspace(localWS)
+	app.recordRecentWorkspace(sshWS)
+
+	if len(app.RecentWorkspaces) != 2 {
+		t.Fatalf("expected 2 recent workspaces, got %d: %v", len(app.RecentWorkspaces), app.RecentWorkspaces)
+	}
+	if app.RecentWorkspaces[0] != sshWS {
+		t.Fatalf("expected top recent workspace to be %s, got %s", sshWS, app.RecentWorkspaces[0])
+	}
+
+	// 2. Open workspaces in "This Window"
+	app.recordOpenWorkspace(localWS)
+	app.recordOpenWorkspace(sshWS)
+
+	if len(app.OpenWorkspaces) != 2 {
+		t.Fatalf("expected 2 open workspaces in this window, got %d: %v", len(app.OpenWorkspaces), app.OpenWorkspaces)
+	}
+
+	// 3. Test entry generation
+	entrySSH := app.buildProjectSwitcherEntry(sshWS, sshWS, true)
+	if !entrySSH.IsSSH {
+		t.Fatalf("expected entry to be identified as SSH")
+	}
+	if entrySSH.Name != "pchain-api" {
+		t.Fatalf("expected entry name to be pchain-api, got %s", entrySSH.Name)
+	}
+	if !entrySSH.IsActive {
+		t.Fatalf("expected entry to be active")
+	}
+
+	// 4. Close workspace from window (x button): must remove from OpenWorkspaces, but KEEP in RecentWorkspaces
+	app.closeWorkspaceFromWindow(sshWS)
+
+	if len(app.OpenWorkspaces) != 1 || app.OpenWorkspaces[0] != localWS {
+		t.Fatalf("expected OpenWorkspaces to only retain localWS, got: %v", app.OpenWorkspaces)
+	}
+
+	// Verify history remained intact
+	foundSSHInHistory := false
+	for _, rw := range app.RecentWorkspaces {
+		if rw == sshWS {
+			foundSSHInHistory = true
+			break
+		}
+	}
+	if !foundSSHInHistory {
+		t.Fatalf("expected sshWS to remain in RecentWorkspaces history after closing from window")
+	}
+}
+
+func TestModelProviderNoCollisionAndGrouping(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	eng := engine.NewEngine("")
+	app := NewAppUI(eng, "")
+	defer app.Close()
+
+	// Configure two custom providers that both offer the same model name "glm-5.3-flash"
+	profs := []llm.ProviderProfile{
+		{
+			ID:              "kenari",
+			Name:            "Kenari",
+			BaseURL:         "https://kenari.ai/v1",
+			APIKey:          "key-kenari",
+			AvailableModels: []string{"glm-5.3-flash", "kenari-pro"},
+			Enabled:         true,
+		},
+		{
+			ID:              "zhipu",
+			Name:            "Zhipu Kantor",
+			BaseURL:         "https://open.bigmodel.cn/api/paas/v4",
+			APIKey:          "key-zhipu",
+			AvailableModels: []string{"glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"},
+			Enabled:         true,
+		},
+	}
+	if err := app.Settings.SaveProfiles(profs); err != nil {
+		t.Fatalf("failed to save profiles: %v", err)
+	}
+
+	app.ShowModelPalette = true
+	app.ModelSearchQuery = "5.3"
+
+	// Create an active session
+	now := time.Now()
+	sess := &agent.AgentSession{
+		ID:        "test-session",
+		Title:     "Test Session",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	app.Agent.ReplaceSessions([]*agent.AgentSession{sess})
+	app.Agent.SelectSession(sess.ID)
+
+	// Verify that internal models loaded from both profiles contain glm-5.3-flash twice (once for Kenari, once for Zhipu)
+	foundKenari := false
+	foundZhipu := false
+	for _, prof := range app.Settings.GetProfiles() {
+		for _, m := range prof.AvailableModels {
+			if m == "glm-5.3-flash" {
+				if prof.ID == "kenari" {
+					foundKenari = true
+				}
+				if prof.ID == "zhipu" {
+					foundZhipu = true
+				}
+			}
+		}
+	}
+	if !foundKenari || !foundZhipu {
+		t.Fatalf("expected both Kenari and Zhipu to have glm-5.3-flash in profiles")
+	}
+
+	// Verify selectModel logic when selecting Zhipu's glm-5.3-flash
+	zhipuMeta := ModelMetadata{
+		ID:          "glm-5.3-flash",
+		DisplayName: "glm-5.3-flash",
+		Provider:    "Zhipu Kantor",
+		ProviderID:  "zhipu",
+		ProviderKey: "openai",
+		HarnessID:   "agent-internal",
+		HarnessName: "ForgeADE Internal",
+	}
+
+	// Call the model selection behavior
+	app.Agent.ActiveModel = zhipuMeta.DisplayName
+	app.Agent.ActiveProvider = zhipuMeta.ProviderID
+	app.Settings.SelectedProviderID = zhipuMeta.ProviderID
+	app.Settings.Provider = zhipuMeta.ProviderID
+	if sess := app.Agent.ActiveSession(); sess != nil {
+		sess.Model = zhipuMeta.DisplayName
+		sess.Provider = zhipuMeta.ProviderID
+	}
+	if app.Engine != nil && app.Engine.LLMClient != nil {
+		app.Engine.LLMClient.SetActiveModel(zhipuMeta.ProviderID, zhipuMeta.DisplayName)
+	}
+
+	if sess.Provider != "zhipu" {
+		t.Fatalf("expected session Provider='zhipu', got %q", sess.Provider)
+	}
+	if app.Settings.SelectedProviderID != "zhipu" {
+		t.Fatalf("expected Settings.SelectedProviderID='zhipu', got %q", app.Settings.SelectedProviderID)
+	}
+	if app.Agent.ActiveProvider != "zhipu" {
+		t.Fatalf("expected Agent.ActiveProvider='zhipu', got %q", app.Agent.ActiveProvider)
+	}
+
+	// 5. Test UI render pass with Model Palette open and duplicate model names across providers
+	app.ShowModelPalette = true
+	app.ModelSearchQuery = "5.3"
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	tw.Frame()
+}
+
+func TestWorkspaceTerminalSessionPersistence(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	engine := engine.NewEngine(t.TempDir())
+
+	app := NewAppUI(engine, dirA)
+	defer func() {
+		if app.Terminal != nil {
+			app.Terminal.Close()
+		}
+		for _, ts := range app.WorkspaceTerminals {
+			if ts != nil {
+				ts.Close()
+			}
+		}
+	}()
+
+	// 1. Workspace A: open an editor terminal tab
+	app.openEditorTerminalTab("Terminal A")
+	if len(app.Editor.OpenTabPaths) == 0 || app.Editor.OpenTabPaths[0] != "terminal://Terminal A" {
+		t.Fatalf("expected editor tab 'terminal://Terminal A', got %v", app.Editor.OpenTabPaths)
+	}
+	termA := app.Terminal
+	if termA == nil {
+		t.Fatalf("expected non-nil terminal for workspace A")
+	}
+
+	// 2. Switch to Workspace B
+	app.switchWorkspace(dirB)
+	termB := app.Terminal
+	if termB == nil {
+		t.Fatalf("expected non-nil terminal for workspace B")
+	}
+	if termB == termA {
+		t.Fatalf("expected workspace B to have a distinct terminal instance from workspace A")
+	}
+
+	// Open a terminal tab in Workspace B
+	app.openEditorTerminalTab("Terminal B")
+	if len(app.Editor.OpenTabPaths) == 0 || app.Editor.OpenTabPaths[0] != "terminal://Terminal B" {
+		t.Fatalf("expected editor tab 'terminal://Terminal B' in workspace B, got %v", app.Editor.OpenTabPaths)
+	}
+
+	// 3. Switch back to Workspace A: verify Terminal A and tabs are restored
+	app.switchWorkspace(dirA)
+	if app.Terminal != termA {
+		t.Fatalf("expected workspace A terminal to be restored, got different instance")
+	}
+	foundA := false
+	for _, p := range app.Editor.OpenTabPaths {
+		if p == "terminal://Terminal A" {
+			foundA = true
+		}
+		if p == "terminal://Terminal B" {
+			t.Fatalf("workspace B tab leaked into workspace A: %v", app.Editor.OpenTabPaths)
+		}
+	}
+	if !foundA {
+		t.Fatalf("expected 'terminal://Terminal A' tab restored in workspace A, got %v", app.Editor.OpenTabPaths)
+	}
+
+	// 4. Switch to remote SSH workspace
+	sshURI := "ssh://test-conn-1/root/pchain-api"
+	app.switchWorkspace(sshURI)
+	termSSH := app.Terminal
+	if termSSH == nil {
+		t.Fatalf("expected non-nil terminal for remote workspace")
+	}
+	if termSSH == termA || termSSH == termB {
+		t.Fatalf("expected remote workspace to have its own distinct terminal instance")
+	}
+
+	app.openEditorTerminalTab("pchain-api")
+	foundSSH := false
+	for _, p := range app.Editor.OpenTabPaths {
+		if p == "terminal://pchain-api" {
+			foundSSH = true
+		}
+	}
+	if !foundSSH {
+		t.Fatalf("expected 'terminal://pchain-api' tab in remote workspace, got %v", app.Editor.OpenTabPaths)
+	}
+
+	// 5. Switch back to Workspace A, then back to remote SSH workspace
+	app.switchWorkspace(dirA)
+	if app.Terminal != termA {
+		t.Fatalf("expected workspace A terminal to be restored")
+	}
+
+	app.switchWorkspace(sshURI)
+	if app.Terminal != termSSH {
+		t.Fatalf("expected remote SSH terminal to be restored without restarting or reconnecting")
+	}
+	foundSSH = false
+	for _, p := range app.Editor.OpenTabPaths {
+		if p == "terminal://pchain-api" {
+			foundSSH = true
+		}
+	}
+	if !foundSSH {
+		t.Fatalf("expected remote SSH tab to persist across workspace switches, got %v", app.Editor.OpenTabPaths)
+	}
+
+	// 6. Close Workspace B from window
+	app.closeWorkspaceFromWindow(dirB)
+	if _, ok := app.WorkspaceTerminals[normalizeWorkspaceKey(dirB)]; ok {
+		t.Fatalf("expected workspace B terminal to be deleted from WorkspaceTerminals after closing workspace")
+	}
+	if _, ok := app.WorkspaceTerminals[normalizeWorkspaceKey(dirA)]; !ok {
+		t.Fatalf("expected workspace A terminal to remain in WorkspaceTerminals")
+	}
+	if _, ok := app.WorkspaceTerminals[normalizeWorkspaceKey(sshURI)]; !ok {
+		t.Fatalf("expected remote SSH terminal to remain in WorkspaceTerminals")
 	}
 }

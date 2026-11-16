@@ -263,8 +263,86 @@ func (em *EditorManager) TerminalSessionFor(tabPath string) (int, bool) {
 	return id, ok
 }
 
+// TerminalSessionCount returns how many editor terminal tabs are currently tracked.
+func (em *EditorManager) TerminalSessionCount() int {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+	return len(em.TerminalSessions)
+}
+
 func (em *EditorManager) unbindTerminalLocked(tabPath string) {
 	delete(em.TerminalSessions, tabPath)
+}
+
+// WorkspaceEditorSnapshot preserves open tabs, layout, and terminal bindings for a workspace.
+type WorkspaceEditorSnapshot struct {
+	OpenTabPaths     []string
+	ActivePath       string
+	PinnedTabs       map[string]bool
+	ReadOnlyTabs     map[string]bool
+	Panes            []string
+	PaneWeights      []float32
+	ActivePane       int
+	TerminalSessions map[string]int
+}
+
+// TakeSnapshot creates an isolated snapshot of the current workspace editor tabs and layout.
+func (em *EditorManager) TakeSnapshot() *WorkspaceEditorSnapshot {
+	if em == nil {
+		return nil
+	}
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+
+	snap := &WorkspaceEditorSnapshot{
+		OpenTabPaths:     append([]string{}, em.OpenTabPaths...),
+		ActivePath:       em.ActivePath,
+		PinnedTabs:       make(map[string]bool, len(em.PinnedTabs)),
+		ReadOnlyTabs:     make(map[string]bool, len(em.ReadOnlyTabs)),
+		Panes:            append([]string{}, em.Panes...),
+		PaneWeights:      append([]float32{}, em.PaneWeights...),
+		ActivePane:       em.ActivePane,
+		TerminalSessions: make(map[string]int, len(em.TerminalSessions)),
+	}
+	for k, v := range em.PinnedTabs {
+		snap.PinnedTabs[k] = v
+	}
+	for k, v := range em.ReadOnlyTabs {
+		snap.ReadOnlyTabs[k] = v
+	}
+	for k, v := range em.TerminalSessions {
+		snap.TerminalSessions[k] = v
+	}
+	return snap
+}
+
+// RestoreSnapshot restores open tabs, layout, and terminal bindings from a snapshot.
+func (em *EditorManager) RestoreSnapshot(snap *WorkspaceEditorSnapshot) {
+	if em == nil || snap == nil {
+		return
+	}
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	em.OpenTabPaths = append([]string{}, snap.OpenTabPaths...)
+	em.ActivePath = snap.ActivePath
+	em.PinnedTabs = make(map[string]bool, len(snap.PinnedTabs))
+	for k, v := range snap.PinnedTabs {
+		em.PinnedTabs[k] = v
+	}
+	em.ReadOnlyTabs = make(map[string]bool, len(snap.ReadOnlyTabs))
+	for k, v := range snap.ReadOnlyTabs {
+		em.ReadOnlyTabs[k] = v
+	}
+	em.Panes = append([]string{}, snap.Panes...)
+	em.PaneWeights = append([]float32{}, snap.PaneWeights...)
+	em.ActivePane = snap.ActivePane
+	if em.TerminalSessions == nil {
+		em.TerminalSessions = make(map[string]int)
+	}
+	for k, v := range snap.TerminalSessions {
+		em.TerminalSessions[k] = v
+	}
 }
 
 // EditorFont returns the code font at ForgeADE metrics: Geist Mono at 13px, line-height 1.65.
@@ -413,14 +491,32 @@ func (em *EditorManager) OpenTerminalTab(title string) string {
 			termCount++
 		}
 	}
-	if title == "" {
+	baseTitle := title
+	if baseTitle == "" {
 		if termCount > 0 {
-			title = fmt.Sprintf("Terminal %d", termCount+1)
+			baseTitle = fmt.Sprintf("Terminal %d", termCount+1)
 		} else {
-			title = "Terminal"
+			baseTitle = "Terminal"
 		}
 	}
-	tabID := fmt.Sprintf("terminal://%s", title)
+	tabID := fmt.Sprintf("terminal://%s", baseTitle)
+	if title != "" {
+		counter := 2
+		for {
+			collision := false
+			for _, p := range em.OpenTabPaths {
+				if p == tabID {
+					collision = true
+					break
+				}
+			}
+			if !collision {
+				break
+			}
+			tabID = fmt.Sprintf("terminal://%s (%d)", baseTitle, counter)
+			counter++
+		}
+	}
 
 	found := false
 	for _, p := range em.OpenTabPaths {

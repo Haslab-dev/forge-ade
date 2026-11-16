@@ -14,7 +14,7 @@ import (
 )
 
 // renderTerminalTabsStrip draws the clickable tab strip for a TerminalState.
-func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts *terminal.TerminalState, keyPrefix string) {
+func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts *terminal.TerminalState, keyPrefix string, onSelect ...func(snap terminal.TerminalTabSnapshot)) {
 	if ts == nil {
 		return
 	}
@@ -60,6 +60,15 @@ func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts 
 					if m.Item("New Tab").Chosen() {
 						if ts != nil {
 							_ = ts.NewTab("")
+							tabsAfter, activeAfter := ts.SnapshotTabs()
+							if len(tabsAfter) > 0 && activeAfter >= 0 && activeAfter < len(tabsAfter) {
+								if len(onSelect) > 0 && onSelect[0] != nil {
+									onSelect[0](tabsAfter[activeAfter])
+								}
+							}
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
 						}
 					}
 					if m.Item("Clear Terminal").Chosen() {
@@ -77,8 +86,17 @@ func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts 
 						if ts != nil {
 							if ts.TabCount() > 0 {
 								ts.CloseTab(tabSnap.Index)
+								tabsAfter, activeAfter := ts.SnapshotTabs()
+								if len(tabsAfter) > 0 && activeAfter >= 0 && activeAfter < len(tabsAfter) {
+									if len(onSelect) > 0 && onSelect[0] != nil {
+										onSelect[0](tabsAfter[activeAfter])
+									}
+								}
 							} else {
 								_ = ts.Restart()
+							}
+							if a.Window != nil {
+								a.Window.Invalidate()
 							}
 						}
 					}
@@ -103,13 +121,28 @@ func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts 
 						closedThisTab = true
 						if ts.TabCount() > 0 {
 							ts.CloseTab(tabSnap.Index)
+							tabsAfter, activeAfter := ts.SnapshotTabs()
+							if len(tabsAfter) > 0 && activeAfter >= 0 && activeAfter < len(tabsAfter) {
+								if len(onSelect) > 0 && onSelect[0] != nil {
+									onSelect[0](tabsAfter[activeAfter])
+								}
+							}
 						} else {
 							_ = ts.Restart()
+						}
+						if a.Window != nil {
+							a.Window.Invalidate()
 						}
 					}
 				})
 				if !closedThisTab && tab.Clicked() && !isActive && ts.TabCount() > 0 {
 					ts.SelectTab(tabSnap.Index)
+					if len(onSelect) > 0 && onSelect[0] != nil {
+						onSelect[0](tabSnap)
+					}
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
 				}
 			}
 		})
@@ -126,6 +159,14 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 		hdr := ui.Row(c).Height(TerminalHeaderHeight).Padding(0, 14).Gap(10).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border)
 		hdr.ContextMenu(func(m *ui.Menu) {
+			if m.Item("Add Snippet...").Chosen() {
+				sessID := ""
+				if a.Terminal != nil {
+					sessID = a.Terminal.ActiveSessionID
+				}
+				clipText := mygo.Clipboard.ReadText()
+				a.OpenAddSnippetModal(sessID, clipText)
+			}
 			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 				sessID := ""
 				if a.Terminal != nil {
@@ -152,9 +193,20 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			}
 		})
 		hdr.Children(func() {
-			ui.Text(c, "Terminal").FontSize(13).FontWeight(600)
+			termTitle := "Terminal"
+			if a.Workspace != nil && a.Workspace.RootDir != "" {
+				termTitle = resolveProjectName(a.Workspace.RootDir)
+			}
+			ui.Text(c, termTitle).FontSize(13).FontWeight(600)
 			shellName := "zsh"
-			if a.Settings != nil && a.Settings.DefaultShell != "" {
+			if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+				connID, _, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+				host := a.resolveSSHDisplayHost(connID)
+				if host == "" {
+					host = displayHost
+				}
+				shellName = fmt.Sprintf("ssh (%s)", host)
+			} else if a.Settings != nil && a.Settings.DefaultShell != "" {
 				shellName = filepath.Base(a.Settings.DefaultShell)
 			}
 			ui.Text(c, shellName).FontSize(12).TextColor(tc.TextMuted)
@@ -171,6 +223,14 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			moreBtn.Menu(func(m *ui.Menu) {
 				if m.Item("Ask Agent Diagnostic").Chosen() {
 					a.askAgentFromTerminal()
+				}
+				if m.Item("Add Snippet...").Chosen() {
+					sessID := ""
+					if a.Terminal != nil {
+						sessID = a.Terminal.ActiveSessionID
+					}
+					clipText := mygo.Clipboard.ReadText()
+					a.OpenAddSnippetModal(sessID, clipText)
 				}
 				if m.Item("Terminal Snippets").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 					sessID := ""
@@ -213,6 +273,10 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 	t := c.Theme()
 
 	term := ts.Term()
+	if term == nil && ts.IsExited() && ts.TabCount() <= 1 {
+		_ = ts.Restart()
+		term = ts.Term()
+	}
 	if term != nil {
 		termplugin.View(c, term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
 			// No "Copy" item: the terminal copies on select (copy-on-select)
@@ -227,6 +291,11 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 				ts.SendInput("\x0c")
 			}
 			m.Separator()
+			if m.Item("Add Snippet...").Chosen() {
+				sessID := ts.ActiveSessionID
+				clipText := mygo.Clipboard.ReadText()
+				a.OpenAddSnippetModal(sessID, clipText)
+			}
 			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 				sessID := ts.ActiveSessionID
 				a.OpenTerminalSnippetsModal(sessID, "", "")

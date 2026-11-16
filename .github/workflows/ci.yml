@@ -82,5 +82,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: forge-native-app
-          path: dist/forge-native.app
+          name: forge-ade-app
+          path: build/ForgeADE.app

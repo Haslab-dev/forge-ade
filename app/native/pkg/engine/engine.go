@@ -74,11 +74,13 @@ const automationFireEvent events.EventType = "automations:fire"
 func NewEngine(dataDir string) *Engine {
 	if dataDir == "" {
 		home, _ := os.UserHomeDir()
-		// Prefer existing ForgeADE data directory so all real sessions,
-		// profiles, providers, and settings are seamlessly shared!
+		// ForgeADE data directory holds sessions, profiles, providers, and settings.
 		dataDir = filepath.Join(home, ".forge-ade")
 		if _, err := os.Stat(dataDir); os.IsNotExist(err) {
-			dataDir = filepath.Join(home, ".forge-native")
+			legacy := filepath.Join(home, ".forge-native")
+			if _, lerr := os.Stat(legacy); lerr == nil {
+				dataDir = legacy
+			}
 		}
 	}
 	_ = os.MkdirAll(dataDir, 0755)
@@ -183,6 +185,22 @@ func (e *Engine) DisconnectSSH(connID string) error {
 		return nil
 	}
 	return e.RemoteFS.Disconnect(connID)
+}
+
+// ReconnectSSH attempts to re-establish an existing remote SSH session.
+func (e *Engine) ReconnectSSH(connID string) (*remotefs.ConnectionStatus, error) {
+	if e.RemoteFS == nil {
+		return nil, fmt.Errorf("remote fs manager not initialized")
+	}
+	return e.RemoteFS.Reconnect(connID)
+}
+
+// IsSSHConnected reports whether remote connection connID is active.
+func (e *Engine) IsSSHConnected(connID string) bool {
+	if e.RemoteFS == nil {
+		return false
+	}
+	return e.RemoteFS.IsConnected(connID)
 }
 
 // ListSSHConnections lists all registered remote SSH sessions.
@@ -387,7 +405,9 @@ func (e *Engine) StartWatcher(rootDir string, onChange func()) {
 	}
 
 	e.Watcher.Start()
-	_ = e.Watcher.WatchDir(rootDir)
+	go func(root string) {
+		_ = e.Watcher.WatchDir(root)
+	}(rootDir)
 
 	e.watcherMu.Lock()
 	e.watcherOnChange = onChange

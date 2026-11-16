@@ -35,7 +35,7 @@ func main() {
 		}
 	}
 
-	log.Printf("Starting ForgeADE Native for workspace: %s", targetDir)
+	log.Printf("Starting ForgeADE for workspace: %s", targetDir)
 
 	// Initialize native CGO-free domain engine (RakitKode + Git + DBViewer)
 	eng := engine.NewEngine("")
@@ -57,7 +57,7 @@ func main() {
 		appUI := nativeui.NewAppUI(eng, targetDir)
 
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:          "ForgeADE Native",
+			Title:          "ForgeADE",
 			TitleBarStyle:  mygo.TitleBarHiddenInset,
 			TitleBarHeight: int(nativeui.WorkspaceTopBarHeight),
 			Width:          1280,

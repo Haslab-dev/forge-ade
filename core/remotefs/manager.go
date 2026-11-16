@@ -18,6 +18,7 @@ import (
 type Manager struct {
 	mu           sync.RWMutex
 	clients      map[string]*Client
+	configs      map[string]SSHConfig
 	activeConnID string
 	bus          *events.Bus
 	// hostKeyDir stores trust-on-first-use SSH host keys (one 0600 file per
@@ -31,6 +32,7 @@ type Manager struct {
 func NewManager(dataDir string) *Manager {
 	return &Manager{
 		clients:    make(map[string]*Client),
+		configs:    make(map[string]SSHConfig),
 		hostKeyDir: filepath.Join(dataDir, "ssh_host_keys"),
 	}
 }
@@ -115,6 +117,7 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 
 	m.mu.Lock()
 	m.clients[cfg.ID] = client
+	m.configs[cfg.ID] = cfg
 	m.activeConnID = cfg.ID
 	m.mu.Unlock()
 
@@ -123,10 +126,7 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 	host := cfg.Host
 	client.StartWatcher(func(discErr error) {
 		m.mu.Lock()
-		if m.activeConnID == connID {
-			m.activeConnID = ""
-		}
-		delete(m.clients, connID)
+		client.closed = true
 		m.mu.Unlock()
 
 		m.emitEvent(events.SSHDisconnected, map[string]interface{}{
@@ -177,6 +177,7 @@ func (m *Manager) Disconnect(id string) error {
 	}
 
 	delete(m.clients, id)
+	delete(m.configs, id)
 	if m.activeConnID == id {
 		m.activeConnID = ""
 	}
@@ -189,6 +190,31 @@ func (m *Manager) Disconnect(id string) error {
 	})
 
 	return client.Close()
+}
+
+// Reconnect attempts to re-establish an existing SSH/SFTP connection by ID.
+func (m *Manager) Reconnect(id string) (*ConnectionStatus, error) {
+	m.mu.RLock()
+	cfg, ok := m.configs[id]
+	if !ok {
+		if c, exists := m.clients[id]; exists && c != nil {
+			cfg = c.Config()
+			ok = true
+		}
+	}
+	m.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("no saved configuration for connection %s", id)
+	}
+	return m.Connect(cfg)
+}
+
+// IsConnected reports whether connection id is registered and active.
+func (m *Manager) IsConnected(id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.clients[id]
+	return ok && c != nil && !c.closed
 }
 
 // CloseAll closes all active SSH/SFTP clients.

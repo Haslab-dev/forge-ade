@@ -48,6 +48,15 @@ func (dm *DatabaseManager) ScanDatabases() {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
+	if dm.Workspace == nil || dm.Workspace.IsRemote() {
+		dm.Databases = nil
+		dm.ActiveDBPath = ""
+		dm.Info = nil
+		dm.ActiveTable = ""
+		dm.QueryResult = nil
+		return
+	}
+
 	var dbs []string
 	if dm.Workspace != nil {
 		for _, f := range dm.Workspace.Files {
@@ -89,6 +98,9 @@ func quoteSQLIdent(name string) string {
 
 // Inspect loads database metadata, tables, and column schemas.
 func (dm *DatabaseManager) Inspect(path string) {
+	if strings.HasPrefix(path, "ssh://") {
+		return
+	}
 	dm.mu.Lock()
 	dm.ActiveDBPath = path
 	dm.StatusMsg = "Inspecting schema..."

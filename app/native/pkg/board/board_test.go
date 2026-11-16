@@ -6,7 +6,7 @@ import (
 )
 
 func TestBoardManager(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "forge-native-board-test")
+	tmpDir, err := os.MkdirTemp("", "forge-ade-board-test")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}

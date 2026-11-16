@@ -14,6 +14,7 @@ import (
 
 	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
@@ -345,7 +346,7 @@ func NewSettingsManager(engine *engine.Engine, onSaved func(provider, model stri
 		Provider:            "",
 		Model:               "",
 		MaxTokens:           4096,
-		DefaultShell:        "/bin/bash",
+		DefaultShell:        terminal.DefaultUserShell(),
 		AutoSave:            true,
 		OnModelSaved:        onSaved,
 		NewProviderProtocol: "openai",

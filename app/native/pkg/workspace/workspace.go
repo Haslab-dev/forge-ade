@@ -91,7 +91,9 @@ func NewWorkspaceState(rootDir string) *WorkspaceState {
 		RootDir:    rootDir,
 		loadedDirs: map[string]bool{"": true},
 	}
-	ws.Refresh()
+	if !strings.HasPrefix(rootDir, "ssh://") {
+		ws.Refresh()
+	}
 	return ws
 }
 
@@ -120,45 +122,53 @@ func (ws *WorkspaceState) Refresh() {
 		return
 	}
 
-	// Handle remote SSH directory scanning
+	// Handle remote SSH directory scanning (depth 1 lazy scan — single SFTP request, 0 lag)
 	if strings.HasPrefix(ws.RootDir, "ssh://") && ws.RemoteFS != nil {
-		var walkRemote func(dirURI string, depth int)
-		walkRemote = func(dirURI string, depth int) {
-			if depth > 3 || count >= maxFiles {
-				return
-			}
-			entries, isRemote, err := ws.RemoteFS.ListDirectory(dirURI)
-			if !isRemote || err != nil {
-				return
-			}
-			for _, entry := range entries {
-				if entry == nil {
-					continue
-				}
-				name := filepath.Base(entry.Path)
-				if strings.HasPrefix(name, ".") && name != ".env" {
-					continue
-				}
-				if entry.IsDir && (name == "node_modules" || name == ".git" || name == "dist" || name == "build" || name == ".next") {
-					continue
-				}
-				rel := strings.TrimPrefix(entry.Path, ws.RootDir)
-				rel = strings.TrimPrefix(rel, "/")
-				files = append(files, WorkspaceFile{
-					RelativePath: rel,
-					FullPath:     entry.Path,
-					IsDir:        entry.IsDir,
-					Size:         entry.Size,
-				})
-				count++
-				if entry.IsDir {
-					walkRemote(entry.Path, depth+1)
-				}
-			}
+		rootDir := ws.RootDir
+		rfs := ws.RemoteFS
+		ws.mu.Unlock()
+
+		entries, isRemote, err := rfs.ListDirectory(rootDir)
+		if !isRemote || err != nil {
+			ws.mu.Lock()
+			return
 		}
-		walkRemote(ws.RootDir, 0)
+		var files []WorkspaceFile
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			name := filepath.Base(entry.Path)
+			if strings.HasPrefix(name, ".") && name != ".env" {
+				continue
+			}
+			if entry.IsDir && (name == "node_modules" || name == ".git" || name == "dist" || name == "build" || name == ".next" || name == "vendor") {
+				continue
+			}
+			rel := strings.TrimPrefix(entry.Path, rootDir)
+			rel = strings.TrimPrefix(rel, "/")
+			files = append(files, WorkspaceFile{
+				RelativePath: rel,
+				FullPath:     entry.Path,
+				IsDir:        entry.IsDir,
+				Size:         entry.Size,
+			})
+		}
+
+		sort.Slice(files, func(i, j int) bool {
+			if files[i].IsDir != files[j].IsDir {
+				return files[i].IsDir
+			}
+			return strings.ToLower(files[i].RelativePath) < strings.ToLower(files[j].RelativePath)
+		})
+
+		ws.mu.Lock()
 		ws.Files = files
+		ws.loadedDirs = map[string]bool{"": true}
 		ws.Version++
+		if ws.SelectedPath == "" && len(files) > 0 {
+			ws.SelectedPath = files[0].RelativePath
+		}
 		return
 	}
 
@@ -245,13 +255,11 @@ func binarySuffix(name string) bool {
 }
 
 // loadedDirs remembers which folders have been lazily listed.
-// LoadDir lists ONE directory live (webview GetDirectoryTree parity,
-// ~0.2ms) and merges it into the cached file index so expanding a folder
-// in the explorer always shows its real children, even when the initial
-// snapshot budget never reached that depth.
+// LoadDir lists ONE directory live (local ~0.2ms, SFTP ~15ms) and merges it
+// into the cached file index so expanding a folder in the explorer always shows its real children.
 func (ws *WorkspaceState) LoadDir(rel string) {
 	ws.mu.Lock()
-	if ws.RootDir == "" || strings.HasPrefix(ws.RootDir, "ssh://") {
+	if ws.RootDir == "" {
 		ws.mu.Unlock()
 		return
 	}
@@ -263,8 +271,61 @@ func (ws *WorkspaceState) LoadDir(rel string) {
 		return
 	}
 	ws.loadedDirs[rel] = true
+	rootDir := ws.RootDir
+	rfs := ws.RemoteFS
+	isRemote := strings.HasPrefix(rootDir, "ssh://")
+	ws.mu.Unlock()
 
-	root := ws.RootDir
+	if isRemote && rfs != nil {
+		targetURI := rootDir
+		if rel != "" && rel != "." {
+			targetURI = strings.TrimRight(rootDir, "/") + "/" + rel
+		}
+		entries, ok, err := rfs.ListDirectory(targetURI)
+		if !ok || err != nil {
+			return
+		}
+		var newFiles []WorkspaceFile
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			name := filepath.Base(entry.Path)
+			if strings.HasPrefix(name, ".") && name != ".env" {
+				continue
+			}
+			if entry.IsDir && (name == "node_modules" || name == ".git" || name == "dist" || name == "build" || name == ".next" || name == "vendor") {
+				continue
+			}
+			childRel := strings.TrimPrefix(entry.Path, rootDir)
+			childRel = strings.TrimPrefix(childRel, "/")
+			newFiles = append(newFiles, WorkspaceFile{
+				RelativePath: childRel,
+				FullPath:     entry.Path,
+				IsDir:        entry.IsDir,
+				Size:         entry.Size,
+			})
+		}
+		ws.mu.Lock()
+		known := map[string]bool{}
+		for _, f := range ws.Files {
+			known[f.RelativePath] = true
+		}
+		addedAny := false
+		for _, nf := range newFiles {
+			if !known[nf.RelativePath] {
+				ws.Files = append(ws.Files, nf)
+				addedAny = true
+			}
+		}
+		if addedAny {
+			ws.Version++
+		}
+		ws.mu.Unlock()
+		return
+	}
+
+	root := rootDir
 	dir := rel
 	if rel == "." || rel == "" {
 		dir = ""
@@ -275,9 +336,9 @@ func (ws *WorkspaceState) LoadDir(rel string) {
 	}
 	entries, err := os.ReadDir(full)
 	if err != nil {
-		ws.mu.Unlock()
 		return
 	}
+	ws.mu.Lock()
 	known := map[string]bool{}
 	for _, f := range ws.Files {
 		known[f.RelativePath] = true

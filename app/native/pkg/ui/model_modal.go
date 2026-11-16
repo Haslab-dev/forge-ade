@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Haslab-dev/RakitKode/llm"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -15,6 +16,7 @@ type ModelMetadata struct {
 	ID            string
 	DisplayName   string
 	Provider      string
+	ProviderID    string
 	ProviderKey   string
 	HarnessID     string
 	HarnessName   string
@@ -76,13 +78,17 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 	var internalModels []ModelMetadata
 	seenInternal := make(map[string]bool)
 	addInternalModel := func(m ModelMetadata) {
-		if !seenInternal[m.ID] {
-			seenInternal[m.ID] = true
+		key := fmt.Sprintf("%s::%s", m.ProviderID, m.ID)
+		if m.ProviderID == "" {
+			key = fmt.Sprintf("%s::%s", m.Provider, m.ID)
+		}
+		if !seenInternal[key] {
+			seenInternal[key] = true
 			internalModels = append(internalModels, m)
 		}
 	}
 
-	// 1. Load models from all Custom Provider Profiles configured in Settings (e.g. Kenari, Ollama, OpenAI, Anthropic)
+	// 1. Load models from all Custom Provider Profiles configured in Settings (e.g. Kenari, Zhipu, Ollama, OpenAI, Anthropic)
 	if a.Settings != nil {
 		for _, prof := range a.Settings.GetProfiles() {
 			if !prof.Enabled && len(a.Settings.GetProfiles()) > 1 {
@@ -92,27 +98,33 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 			if strings.Contains(strings.ToLower(prof.BaseURL), "anthropic") || strings.EqualFold(prof.ID, "anthropic") {
 				proto = "anthropic"
 			}
+			provName := prof.Name
+			if provName == "" {
+				provName = prof.ID
+			}
 			// Load both selected models and available models from this profile
 			for _, mName := range prof.SelectedModels {
 				addInternalModel(ModelMetadata{
 					ID:            mName,
 					DisplayName:   mName,
-					Provider:      prof.Name,
+					Provider:      provName,
+					ProviderID:    prof.ID,
 					ProviderKey:   proto,
 					HarnessID:     "agent-internal",
 					HarnessName:   "ForgeADE Internal",
-					ContextWindow: prof.Name,
+					ContextWindow: provName,
 				})
 			}
 			for _, mName := range prof.AvailableModels {
 				addInternalModel(ModelMetadata{
 					ID:            mName,
 					DisplayName:   mName,
-					Provider:      prof.Name,
+					Provider:      provName,
+					ProviderID:    prof.ID,
 					ProviderKey:   proto,
 					HarnessID:     "agent-internal",
 					HarnessName:   "ForgeADE Internal",
-					ContextWindow: prof.Name,
+					ContextWindow: provName,
 				})
 			}
 		}
@@ -124,10 +136,15 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		if provName == "" {
 			provName = "Configured"
 		}
+		provID := a.Settings.SelectedProviderID
+		if provID == "" {
+			provID = a.Settings.Provider
+		}
 		addInternalModel(ModelMetadata{
 			ID:            a.Settings.Model,
 			DisplayName:   a.Settings.Model,
 			Provider:      provName,
+			ProviderID:    provID,
 			ProviderKey:   a.Settings.Provider,
 			HarnessID:     "agent-internal",
 			HarnessName:   "ForgeADE Internal",
@@ -143,6 +160,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				ID:            cfg.Model,
 				DisplayName:   cfg.Model,
 				Provider:      cfg.ProviderID,
+				ProviderID:    cfg.ProviderID,
 				ProviderKey:   cfg.ProviderID,
 				HarnessID:     "agent-internal",
 				HarnessName:   "ForgeADE Internal",
@@ -158,6 +176,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				ID:            m,
 				DisplayName:   m,
 				Provider:      "custom",
+				ProviderID:    "custom",
 				ProviderKey:   "custom",
 				HarnessID:     "agent-internal",
 				HarnessName:   "ForgeADE Internal",
@@ -181,7 +200,8 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		for _, m := range internalModels {
 			if strings.Contains(strings.ToLower(m.DisplayName), search) ||
 				strings.Contains(strings.ToLower(m.ID), search) ||
-				strings.Contains(strings.ToLower(m.Provider), search) {
+				strings.Contains(strings.ToLower(m.Provider), search) ||
+				strings.Contains(strings.ToLower(m.ProviderID), search) {
 				visibleModels = append(visibleModels, m)
 			}
 		}
@@ -191,11 +211,13 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 					continue
 				}
 				for _, sm := range ag.SupportedModels {
-					if strings.Contains(strings.ToLower(sm), search) {
+					if strings.Contains(strings.ToLower(sm), search) ||
+						strings.Contains(strings.ToLower(ag.Name), search) {
 						visibleModels = append(visibleModels, ModelMetadata{
 							ID:            sm,
 							DisplayName:   sm,
 							Provider:      ag.Name,
+							ProviderID:    ag.ID,
 							ProviderKey:   ag.Type,
 							HarnessID:     ag.ID,
 							HarnessName:   ag.Name,
@@ -209,16 +231,18 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		tabLower := strings.ToLower(a.SelectedProviderTab)
 		for _, m := range internalModels {
 			mProv := strings.ToLower(m.Provider)
+			mPID := strings.ToLower(m.ProviderID)
 			mKey := strings.ToLower(m.ProviderKey)
 			mID := strings.ToLower(m.ID)
 			matches := tabLower == "all" ||
 				strings.EqualFold(m.Provider, a.SelectedProviderTab) ||
+				strings.EqualFold(m.ProviderID, a.SelectedProviderTab) ||
 				strings.EqualFold(m.ProviderKey, a.SelectedProviderTab) ||
-				(tabLower == "anthropic" && (strings.Contains(mID, "claude") || strings.Contains(mProv, "anthropic"))) ||
-				(tabLower == "openai" && (strings.Contains(mID, "gpt") || strings.Contains(mKey, "openai") || strings.Contains(mProv, "openai"))) ||
-				(tabLower == "google" || tabLower == "gemini") && (strings.Contains(mID, "gemini") || strings.Contains(mProv, "gemini") || strings.Contains(mProv, "google")) ||
-				(tabLower == "deepseek" && (strings.Contains(mID, "deepseek") || strings.Contains(mProv, "deepseek"))) ||
-				(tabLower == "ollama" && (strings.Contains(mProv, "ollama") || m.IsLocal))
+				(tabLower == "anthropic" && (strings.Contains(mID, "claude") || strings.Contains(mProv, "anthropic") || strings.Contains(mPID, "anthropic"))) ||
+				(tabLower == "openai" && (strings.Contains(mID, "gpt") || strings.Contains(mKey, "openai") || strings.Contains(mProv, "openai") || strings.Contains(mPID, "openai"))) ||
+				(tabLower == "google" || tabLower == "gemini") && (strings.Contains(mID, "gemini") || strings.Contains(mProv, "gemini") || strings.Contains(mProv, "google") || strings.Contains(mPID, "google")) ||
+				(tabLower == "deepseek" && (strings.Contains(mID, "deepseek") || strings.Contains(mProv, "deepseek") || strings.Contains(mPID, "deepseek"))) ||
+				(tabLower == "ollama" && (strings.Contains(mProv, "ollama") || strings.Contains(mPID, "ollama") || m.IsLocal))
 			if matches {
 				visibleModels = append(visibleModels, m)
 			}
@@ -233,6 +257,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 							ID:            sm,
 							DisplayName:   sm,
 							Provider:      ag.Name,
+							ProviderID:    ag.ID,
 							ProviderKey:   ag.Type,
 							HarnessID:     ag.ID,
 							HarnessName:   ag.Name,
@@ -244,6 +269,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 							ID:            ag.Model,
 							DisplayName:   ag.Model,
 							Provider:      ag.Name,
+							ProviderID:    ag.ID,
 							ProviderKey:   ag.Type,
 							HarnessID:     ag.ID,
 							HarnessName:   ag.Name,
@@ -256,76 +282,113 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		}
 	}
 
-	selectModel := func(modelID, displayName, harnessID string) {
-		a.Agent.ActiveModel = displayName
-		a.SelectedAgentModel = displayName
-		if harnessID != "" {
-			a.SelectedHarnessID = harnessID
-			a.SelectedAgentID = harnessID
-			a.Agent.ActiveAgentID = harnessID
-			if harnessID == "agent-internal" {
+	selectModel := func(m ModelMetadata) {
+		a.Agent.ActiveModel = m.DisplayName
+		a.SelectedAgentModel = m.DisplayName
+		if m.HarnessID != "" {
+			a.SelectedHarnessID = m.HarnessID
+			a.SelectedAgentID = m.HarnessID
+			a.Agent.ActiveAgentID = m.HarnessID
+			if m.HarnessID == "agent-internal" {
 				a.Agent.ActiveAgentType = "internal"
 			} else {
 				a.Agent.ActiveAgentType = "acp"
 			}
 		}
 		if sess := a.Agent.ActiveSession(); sess != nil {
-			sess.Model = displayName
-			if harnessID != "" {
-				sess.AgentID = harnessID
-				if harnessID != "agent-internal" {
+			sess.Model = m.DisplayName
+			if m.HarnessID != "" {
+				sess.AgentID = m.HarnessID
+				if m.HarnessID != "agent-internal" {
 					sess.AgentType = "acp"
 				} else {
 					sess.AgentType = "internal"
 				}
 			}
+			if m.HarnessID == "agent-internal" {
+				if m.ProviderID != "" {
+					sess.Provider = m.ProviderID
+				} else if m.Provider != "" {
+					sess.Provider = m.Provider
+				}
+			}
 			a.Agent.SaveSessionToDisk(sess)
 		}
-		if harnessID == "agent-internal" {
+		if m.HarnessID == "agent-internal" {
+			if m.ProviderID != "" {
+				a.Agent.ActiveProvider = m.ProviderID
+			} else if m.Provider != "" {
+				a.Agent.ActiveProvider = m.Provider
+			}
 			if a.Settings != nil {
-				a.Settings.Model = displayName
+				a.Settings.Model = m.DisplayName
 				// Sync provider profile if found
+				var targetProf *llm.ProviderProfile
 				for _, prof := range a.Settings.GetProfiles() {
-					matched := false
-					for _, am := range prof.AvailableModels {
-						if am == displayName {
-							matched = true
-							break
-						}
+					if m.ProviderID != "" && prof.ID == m.ProviderID {
+						p := prof
+						targetProf = &p
+						break
 					}
-					if !matched {
-						for _, sm := range prof.SelectedModels {
-							if sm == displayName {
+					if prof.Name == m.Provider || prof.ID == m.Provider {
+						p := prof
+						targetProf = &p
+						break
+					}
+				}
+				if targetProf == nil {
+					// Fallback to model match if ProviderID wasn't set
+					for _, prof := range a.Settings.GetProfiles() {
+						matched := false
+						for _, am := range prof.AvailableModels {
+							if am == m.DisplayName {
 								matched = true
 								break
 							}
 						}
-					}
-					if matched {
-						a.Settings.SelectedProviderID = prof.ID
-						a.Settings.Provider = prof.ID
-						a.Settings.BaseURL = prof.BaseURL
-						a.Settings.APIKey = prof.APIKey
-						if a.Engine != nil && a.Engine.LLMClient != nil {
-							a.Engine.LLMClient.SetActiveModel(prof.ID, displayName)
+						if !matched {
+							for _, sm := range prof.SelectedModels {
+								if sm == m.DisplayName {
+									matched = true
+									break
+								}
+							}
 						}
-						break
+						if matched {
+							p := prof
+							targetProf = &p
+							break
+						}
 					}
 				}
-			}
-			if a.Engine != nil && a.Engine.LLMClient != nil {
-				prov := a.Engine.LLMClient.FindProviderForModel(displayName)
-				if prov != "" {
-					a.Engine.LLMClient.SetActiveModel(prov, displayName)
+				if targetProf != nil {
+					a.Settings.SelectedProviderID = targetProf.ID
+					a.Settings.Provider = targetProf.ID
+					a.Settings.BaseURL = targetProf.BaseURL
+					a.Settings.APIKey = targetProf.APIKey
+					if a.Engine != nil && a.Engine.LLMClient != nil {
+						a.Engine.LLMClient.SetActiveModel(targetProf.ID, m.DisplayName)
+					}
+				} else if a.Engine != nil && a.Engine.LLMClient != nil {
+					prov := a.Engine.LLMClient.FindProviderForModel(m.DisplayName)
+					if prov != "" {
+						a.Engine.LLMClient.SetActiveModel(prov, m.DisplayName)
+					} else {
+						a.Engine.LLMClient.SetActiveModelByID(m.DisplayName)
+					}
+				}
+			} else if a.Engine != nil && a.Engine.LLMClient != nil {
+				if m.ProviderID != "" {
+					a.Engine.LLMClient.SetActiveModel(m.ProviderID, m.DisplayName)
 				} else {
-					a.Engine.LLMClient.SetActiveModelByID(displayName)
+					a.Engine.LLMClient.SetActiveModelByID(m.DisplayName)
 				}
 			}
 		}
 		a.ShowModelPalette = false
 		c.AddToast(ui.Toast{
 			Title:       "Model Selected",
-			Description: fmt.Sprintf("%s · %s", harnessID, displayName),
+			Description: fmt.Sprintf("%s · %s (%s)", m.HarnessName, m.DisplayName, m.Provider),
 			Type:        "info",
 		})
 		if a.Window != nil {
@@ -334,8 +397,8 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 	}
 
 	a.modal(c, &a.ShowModelPalette, func() {
-		// 540px popup card matching ForgeADE ModelProviderPaletteModal metrics
-		ui.Column(c).Width(540).Height(450).Radius(16).
+		// 580px popup card matching ForgeADE ModelProviderPaletteModal metrics
+		ui.Column(c).Width(580).Height(480).Radius(16).
 			Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 24, 64, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
 
@@ -345,7 +408,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				ui.Icon(c, icons.TablerSearch).Width(15).Height(15).TextColor(tc.IconMuted)
 				in := ui.TextInput(c, &a.ModelSearchQuery).Placeholder("Search models, providers, or harnesses...").Grow(1).AutoFocus()
 				if in.Submitted() && len(visibleModels) > 0 {
-					selectModel(visibleModels[0].ID, visibleModels[0].DisplayName, visibleModels[0].HarnessID)
+					selectModel(visibleModels[0])
 				}
 
 				if a.ModelSearchQuery != "" {
@@ -450,7 +513,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 									}
 									dup := false
 									for _, p := range pills {
-										if strings.EqualFold(p.Label, pName) || strings.EqualFold(p.ID, pName) {
+										if strings.EqualFold(p.Label, pName) || strings.EqualFold(p.ID, prof.ID) {
 											dup = true
 											break
 										}
@@ -464,7 +527,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 											ID    string
 											Label string
 											Icon  string
-										}{prof.Name, pName, proto})
+										}{prof.ID, pName, proto})
 									}
 								}
 							}
@@ -498,16 +561,65 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 						})
 					}
 
-					// Scrollable Models List
+					// Group models by Provider
+					type modelGroup struct {
+						Key         string
+						Title       string
+						Icon        string
+						HarnessName string
+						Models      []ModelMetadata
+					}
+
+					var modelGroups []modelGroup
+					grpMap := make(map[string]int)
+
+					for _, m := range visibleModels {
+						grpKey := m.Provider
+						if grpKey == "" {
+							grpKey = m.ProviderID
+						}
+						if grpKey == "" {
+							grpKey = "Other"
+						}
+						if isSearching && m.HarnessID != "agent-internal" {
+							grpKey = m.HarnessName
+						}
+
+						idx, exists := grpMap[grpKey]
+						if !exists {
+							idx = len(modelGroups)
+							grpMap[grpKey] = idx
+							icon := m.ProviderKey
+							if icon == "" {
+								icon = "openai"
+							}
+							modelGroups = append(modelGroups, modelGroup{
+								Key:         grpKey,
+								Title:       grpKey,
+								Icon:        icon,
+								HarnessName: m.HarnessName,
+								Models:      nil,
+							})
+						}
+						modelGroups[idx].Models = append(modelGroups[idx].Models, m)
+					}
+
+					// Scrollable Models List Grouped by Provider
 					ui.Scroll(c).Grow(1).Children(func() {
-						ui.Column(c).Gap(2).Children(func() {
+						ui.Column(c).Gap(6).Children(func() {
 							if len(visibleModels) == 0 {
 								ui.Column(c).Grow(1).Padding(48, 16).Center().Gap(10).Children(func() {
 									if isSearching {
 										ui.Text(c, fmt.Sprintf("No models found matching \"%s\"", a.ModelSearchQuery)).FontSize(12).TextColor(tc.TextMuted)
 										customBtn := ui.PrimaryButton(c, fmt.Sprintf("+ Use custom \"%s\"", a.ModelSearchQuery)).FontSize(12)
 										if customBtn.Clicked() {
-											selectModel(a.ModelSearchQuery, a.ModelSearchQuery, a.SelectedHarnessID)
+											selectModel(ModelMetadata{
+												ID:          a.ModelSearchQuery,
+												DisplayName: a.ModelSearchQuery,
+												HarnessID:   a.SelectedHarnessID,
+												HarnessName: "Custom",
+												Provider:    "Custom",
+											})
 										}
 									} else {
 										ui.Icon(c, icons.TablerCpu).Width(32).Height(32).TextColor(tc.IconMuted)
@@ -521,49 +633,81 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 										}
 									}
 								})
+								return
 							}
 
-							for _, model := range visibleModels {
-								m := model
-								// Exact (or word-boundary prefix) match only: a plain
-								// HasPrefix highlighted "gpt-4" when "gpt-4o" was active.
-								active := a.Agent.ActiveModel
-								isModelSelected := active != "" &&
-									(active == m.DisplayName || strings.HasPrefix(active, m.DisplayName+" "))
-								row := ui.Row(c.Key("mod-row-"+m.ID)).Height(30).Radius(8).Padding(0, 8).Gap(8).AlignItems(ui.Center)
-								row.Children(func() {
-									icons.RenderProviderIcon(c, m.ProviderKey, 14)
-									ui.Text(c, m.DisplayName).FontSize(12).FontWeight(func() int {
-										if isModelSelected {
-											return 600
+							for _, grp := range modelGroups {
+								thisGrp := grp
+								ui.Column(c.Key("grp-col-" + thisGrp.Key)).Gap(2).Children(func() {
+									// Section Header for Provider
+									grpHeader := ui.Row(c.Key("grp-hdr-"+thisGrp.Key)).Height(24).Padding(6, 6, 2, 6).Gap(6).AlignItems(ui.Center)
+									grpHeader.Children(func() {
+										icons.RenderProviderIcon(c, thisGrp.Icon, 12)
+										ui.Text(c, strings.ToUpper(thisGrp.Title)).FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted)
+										ui.Box(c).Grow(1)
+										countStr := fmt.Sprintf("%d", len(thisGrp.Models))
+										if len(thisGrp.Models) == 1 {
+											countStr += " model"
+										} else {
+											countStr += " models"
 										}
-										return 400
-									}()).Grow(1).SingleLine()
+										ui.Text(c, countStr).FontSize(9).FontWeight(500).TextColor(tc.TextMuted.Alpha(0.6))
+									})
 
-									if m.IsLocal {
-										badge := ui.Row(c).Radius(4).Padding(1, 5).Background(tc.Success.Alpha(0.15))
-										badge.Children(func() {
-											ui.Text(c, "Local").FontSize(9).FontWeight(600).TextColor(tc.Success)
+									// Rows for each model in this provider group
+									for _, model := range thisGrp.Models {
+										m := model
+										active := a.Agent.ActiveModel
+										isModelSelected := false
+										if a.SelectedHarnessID == m.HarnessID {
+											if m.HarnessID == "agent-internal" {
+												isModelSelected = active != "" &&
+													(active == m.DisplayName || strings.HasPrefix(active, m.DisplayName+" "))
+												if a.Settings != nil && a.Settings.SelectedProviderID != "" && m.ProviderID != "" {
+													isModelSelected = isModelSelected && (m.ProviderID == a.Settings.SelectedProviderID || m.Provider == a.Settings.Provider)
+												}
+											} else {
+												isModelSelected = (a.SelectedAgentModel == m.DisplayName || active == m.DisplayName)
+											}
+										}
+
+										rowKey := fmt.Sprintf("mod-row-%s-%s-%s", m.HarnessID, m.ProviderID, m.ID)
+										row := ui.Row(c.Key(rowKey)).Height(30).Radius(8).Padding(0, 8).Gap(8).AlignItems(ui.Center)
+										row.Children(func() {
+											icons.RenderProviderIcon(c, m.ProviderKey, 14)
+											ui.Text(c, m.DisplayName).FontSize(12).FontWeight(func() int {
+												if isModelSelected {
+													return 600
+												}
+												return 400
+											}()).Grow(1).SingleLine()
+
+											if m.IsLocal {
+												badge := ui.Row(c).Radius(4).Padding(1, 5).Background(tc.Success.Alpha(0.15))
+												badge.Children(func() {
+													ui.Text(c, "Local").FontSize(9).FontWeight(600).TextColor(tc.Success)
+												})
+											}
+
+											if m.Provider != "" {
+												ui.Text(c, m.Provider).FontSize(10).TextColor(tc.TextMuted)
+											}
+
+											if isModelSelected {
+												ui.Icon(c, icons.TablerCheck).Width(13).Height(13).TextColor(tc.Accent)
+											}
 										})
-									}
 
-									if m.ContextWindow != "" {
-										ui.Text(c, m.ContextWindow).FontSize(10).TextColor(tc.TextMuted)
-									}
-
-									if isModelSelected {
-										ui.Icon(c, icons.TablerCheck).Width(13).Height(13).TextColor(tc.Accent)
+										if isModelSelected {
+											row.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+										} else if row.Hovered() {
+											row.Background(tc.Text.Alpha(0.04))
+										}
+										if row.Clicked() {
+											selectModel(m)
+										}
 									}
 								})
-
-								if isModelSelected {
-									row.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-								} else if row.Hovered() {
-									row.Background(tc.Text.Alpha(0.04))
-								}
-								if row.Clicked() {
-									selectModel(m.ID, m.DisplayName, m.HarnessID)
-								}
 							}
 						})
 					})

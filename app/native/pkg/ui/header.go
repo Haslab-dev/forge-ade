@@ -243,11 +243,15 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					}
 				}
 
-				// Project switcher button + active title
+				// Project switcher button + active title (Zed style)
 				projectBtn := ui.Row(c.Key("hdr-project")).Height(24).Radius(6).Padding(0, 6).Gap(5).
 					AlignItems(ui.Center).Shrink(0).Cursor(ui.CursorPointer)
 				projectBtn.Children(func() {
-					ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
+					icon := icons.TablerFolder
+					if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+						icon = icons.TablerServer
+					}
+					ui.Icon(c, icon).Width(14).Height(14).TextColor(tc.IconMuted)
 					if a.Mode != ModeAgent {
 						ui.Text(c, projectName).FontSize(12).FontWeight(500).MaxWidth(110).SingleLine()
 					}
@@ -255,9 +259,9 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				if projectBtn.Hovered() {
 					projectBtn.Background(tc.ToolbarControlHover)
 				}
-				projectBtn.Menu(func(m *ui.Menu) {
-					a.workspaceMenuItems(m)
-				})
+				if projectBtn.Clicked() {
+					a.OpenProjectSwitcherModal()
+				}
 
 				ui.Text(c, title).FontSize(13).FontWeight(600).MaxWidth(260).MinWidth(0).SingleLine()
 

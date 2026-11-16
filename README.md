@@ -35,7 +35,7 @@ ForgeADE menerapkan arsitektur **Modular Monolith dengan Hexagonal Boundaries** 
 │                                                                              │
 │   [ACTIVE / PRIMARY TARGET]                [OBSOLETE / ARCHIVED REFERENCE]   │
 │   app/native/                              app/webview/                      │
-│   ├── cmd/forge-native                     ├── main.go (Wails v3 backend)    │
+│   ├── cmd/forge-ade                        ├── main.go (Wails v3 backend)    │
 │   └── pkg/                                 └── frontend/ (React 19 + Vite)   │
 │       ├── ui/ (MyGo GPU views & modals)                                      │
 │       ├── agent/ (session & prompt engine) ───────────────────────────────── │
@@ -74,7 +74,7 @@ forge-ade/
 ├── app/
 │   ├── native/            ★ [ACTIVE TARGET] Native desktop app (MyGo + GPU UI)
 │   │   ├── cmd/
-│   │   │   └── forge-native/  Entry point binary native desktop
+│   │   │   └── forge-ade/     Entry point binary native desktop
 │   │   ├── pkg/
 │   │   │   ├── ui/        Screens, main chat, drawer, modals, theme, PDF/Deck viewer
 │   │   │   ├── agent/     Autonomous agent runner, ACP client, CLI manager, prompt history
@@ -91,7 +91,7 @@ forge-ade/
 ├── core/                  Shared UI-agnostic Go domain packages (17 packages)
 ├── docs/                  ARCHITECTURE.md, ADR/, DESIGN_SYSTEM.md
 ├── web/                   Marketing landing page (deployed to Cloudflare Pages)
-├── dist/                  Output directory for built binaries (`forge-native`)
+├── build/                 Output directory for built binaries (`forge-ade`)
 └── Makefile               Automation entry point
 ```
 
@@ -142,11 +142,11 @@ Native ForgeADE (`app/native/`) memiliki kesetaraan fitur penuh (1:1 feature par
 ### Menjalankan Native App
 ```bash
 # Build dan jalankan langsung native app
-go run ./app/native/cmd/forge-native
+go run ./app/native/cmd/forge-ade
 
-# Atau kompilasi ke folder dist/
-go build -o dist/forge-native ./app/native/cmd/forge-native
-./dist/forge-native
+# Atau kompilasi ke folder build/
+go build -o build/forge-ade ./app/native/cmd/forge-ade
+./build/forge-ade
 ```
 
 ### Melalui Makefile

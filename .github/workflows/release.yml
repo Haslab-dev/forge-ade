@@ -24,12 +24,12 @@ jobs:
         run: make native-app
 
       - name: Zip bundle
-        run: ditto -c -k --keepParent dist/forge-native.app ForgeADE-Native-${{ github.ref_name }}.zip
+        run: ditto -c -k --keepParent build/ForgeADE.app ForgeADE-${{ github.ref_name }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: forge-native
-          path: ForgeADE-Native-${{ github.ref_name }}.zip
+          name: forge-ade
+          path: ForgeADE-${{ github.ref_name }}.zip
 
 
   release:
@@ -40,10 +40,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-          path: dist
+          path: build
 
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
-          files: dist/*
+          files: build/*

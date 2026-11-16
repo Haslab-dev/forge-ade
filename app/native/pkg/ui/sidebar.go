@@ -440,9 +440,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										if group.FolderPath != "" && !sameWorkspacePath(curWs, group.FolderPath) {
 											a.switchWorkspace(group.FolderPath)
 										}
-										if a.Workspace != nil {
-											a.Workspace.Refresh()
-										}
 										a.LeftSidebarView = "files"
 									})
 								}
@@ -483,9 +480,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									}
 									if !sameWorkspacePath(curWs, group.FolderPath) {
 										a.switchWorkspace(group.FolderPath)
-									}
-									if a.Workspace != nil {
-										a.Workspace.Refresh()
 									}
 									a.LeftSidebarView = "files"
 								}
@@ -879,11 +873,18 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 func resolveProjectName(folderPath string) string {
 	clean := strings.TrimSpace(folderPath)
 	if strings.HasPrefix(clean, "ssh://") {
-		base := filepath.Base(filepath.Clean(clean))
-		if base == "." || base == "/" || base == "" {
-			return "General"
+		_, remotePath, displayHost, folderName := parseSSHWorkspaceURI(clean)
+		if folderName != "" && folderName != "remote-root" && folderName != "." && folderName != "/" {
+			return folderName
 		}
-		return base
+		if displayHost != "" {
+			return displayHost
+		}
+		base := filepath.Base(filepath.Clean(remotePath))
+		if base != "." && base != "/" && base != "" {
+			return base
+		}
+		return "remote"
 	}
 	norm := agentsession.NormalizeWorkspacePath(clean)
 	if norm == "" {
@@ -1112,7 +1113,7 @@ func (a *AppUI) isFolderExpanded(relPath string, depth int) bool {
 	if expanded, exists := a.ExpandedFileTreeFolders[relPath]; exists {
 		return expanded
 	}
-	return depth == 0 // Top-level folders default to expanded
+	return false // Folders default to collapsed
 }
 
 // renderFileTree renders the workspace file explorer: 35px header, filter

@@ -92,7 +92,8 @@ func (a *AppUI) loadUIPrefs() {
 		a.ShowLeftSidebar = p.ShowLeftSidebar
 	}
 	a.ShowRightDrawer = p.ShowRightDrawer
-	a.ShowBottomTerminal = p.ShowBottomTerminal
+	// Terminal dock starts closed on app launch (deliberately not auto-opened on startup).
+	a.ShowBottomTerminal = false
 	a.FollowAgent = p.FollowAgent
 	// Intentional reset: the app always opens in chat view; agent_view_mode
 	// is deliberately not persisted.

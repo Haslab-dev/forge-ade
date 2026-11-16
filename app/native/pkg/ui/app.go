@@ -78,55 +78,57 @@ const (
 
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
 type AppUI struct {
-	Engine                *engine.Engine
-	Window                *mygo.Window
-	Workspace             *workspace.WorkspaceState
-	Editor                *editor.EditorManager
-	Terminal              *terminal.TerminalState
-	Agent                 *agent.AgentState
-	Git                   *git.GitManager
-	Database              *database.DatabaseManager
-	Palette               *palette.PaletteManager
-	Settings              *settings.SettingsManager
-	ThemeMgr              *theme.ThemeManager
-	ACPMgr                *agent.ACPManager
-	CLIMgr                *agent.AgentCLIManager
-	Board                 *board.BoardManager
-	Mode                  int      // ModeAgent, ModeEditor, or ModeSettings
-	PrevMode              int      // Mode to restore when closing Settings
-	ActiveTaskKind        string   // "agent" or "cli"
-	ShowLeftSidebar       bool     // Left sidebar visibility
-	LeftSidebarView       string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
-	SideFileTabs          []string // files opened in the right sidebar from the explorer
-	ActiveSideFile        string
-	ShowBottomTerminal    bool    // Collapsible bottom terminal drawer
-	BottomTerminalHeight  float32 // Resizable terminal height
-	ShowRightDrawer       bool    // Collapsible right side pane
-	RightDrawerWidth      float32 // Resizable right pane width
-	LeftSidebarWidth      float32 // Resizable left sidebar width
-	RightDrawerTab        int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
-	EditorActivity        int     // ActivityExplorer, ActivityGit, ActivityDatabase
-	SelectedFile          string
-	FileSearchQuery       string
-	FileSearchHits        []workspace.FileSearchHit
-	FileSearchMode        string // "files" | "content" (ProjectSearchModal parity)
-	FileSearchCase        bool
-	FileSearchRegex       bool
-	FileSearchWholeWord   bool
-	FileSearchGlob        string
-	FileSearchReplaceOpen bool
-	FileSearchReplace     string
-	FileSearchBusy        bool
-	SearchStatusMsg       string
-	ContentHits           []search.RankedResult
-	ContentHitsAt         string
-	SelectedDiffPath      string
-	SideChatMessages      []*agent.ChatMessage
-	SideChatInput         string
-	SideChatModel         string
-	SideChatMode          string // "full", "ask", "plan"
-	SideChatStreaming     bool
-	SideChatMd            markdown.Options
+	Engine                   *engine.Engine
+	Window                   *mygo.Window
+	Workspace                *workspace.WorkspaceState
+	Editor                   *editor.EditorManager
+	Terminal                 *terminal.TerminalState
+	WorkspaceTerminals       map[string]*terminal.TerminalState
+	WorkspaceEditorSnapshots map[string]*editor.WorkspaceEditorSnapshot
+	Agent                    *agent.AgentState
+	Git                      *git.GitManager
+	Database                 *database.DatabaseManager
+	Palette                  *palette.PaletteManager
+	Settings                 *settings.SettingsManager
+	ThemeMgr                 *theme.ThemeManager
+	ACPMgr                   *agent.ACPManager
+	CLIMgr                   *agent.AgentCLIManager
+	Board                    *board.BoardManager
+	Mode                     int      // ModeAgent, ModeEditor, or ModeSettings
+	PrevMode                 int      // Mode to restore when closing Settings
+	ActiveTaskKind           string   // "agent" or "cli"
+	ShowLeftSidebar          bool     // Left sidebar visibility
+	LeftSidebarView          string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	SideFileTabs             []string // files opened in the right sidebar from the explorer
+	ActiveSideFile           string
+	ShowBottomTerminal       bool    // Collapsible bottom terminal drawer
+	BottomTerminalHeight     float32 // Resizable terminal height
+	ShowRightDrawer          bool    // Collapsible right side pane
+	RightDrawerWidth         float32 // Resizable right pane width
+	LeftSidebarWidth         float32 // Resizable left sidebar width
+	RightDrawerTab           int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
+	EditorActivity           int     // ActivityExplorer, ActivityGit, ActivityDatabase
+	SelectedFile             string
+	FileSearchQuery          string
+	FileSearchHits           []workspace.FileSearchHit
+	FileSearchMode           string // "files" | "content" (ProjectSearchModal parity)
+	FileSearchCase           bool
+	FileSearchRegex          bool
+	FileSearchWholeWord      bool
+	FileSearchGlob           string
+	FileSearchReplaceOpen    bool
+	FileSearchReplace        string
+	FileSearchBusy           bool
+	SearchStatusMsg          string
+	ContentHits              []search.RankedResult
+	ContentHitsAt            string
+	SelectedDiffPath         string
+	SideChatMessages         []*agent.ChatMessage
+	SideChatInput            string
+	SideChatModel            string
+	SideChatMode             string // "full", "ask", "plan"
+	SideChatStreaming        bool
+	SideChatMd               markdown.Options
 
 	// Composer autocomplete state (slash commands / @-mentions): visibility
 	// derives from the composer text each frame; the dismissal latches hold
@@ -221,66 +223,70 @@ type AppUI struct {
 	ChangesCardCollapsed map[int]bool
 	InspectorCollapsed   bool
 
-	ShowNewFileModal        bool
-	NewFileName             string
-	ShowNewFolderModal      bool
-	NewFolderName           string
-	ShowNewTaskModal        bool
-	NewTaskTitle            string
-	NewTaskWorkspacePath    string // preselected folder for group-level "+ New task"
-	NewTaskAgentType        string // "acp" or "cli"
-	NewTaskSearchQuery      string
-	NewTaskFilterTab        string // "all", "acp", "cli"
-	NewTaskSelectedKind     string // "acp", "cli"
-	NewTaskSelectedAgentID  string
-	NewTaskSelectedName     string
-	NewTaskSelectedExec     string
-	NewTaskSelectedArgs     []string
-	NewTaskUninstalledOpen  bool
-	NewTaskStep             string // "agent" or "workspace"
-	SelectedAgentID         string
-	SelectedAgentModel      string
-	ShowTaskMenuModal       bool
-	ShowRenameModal         bool
-	RenameSessionTitle      string
-	RenameSessionID         string
-	RenameSessionIsCLI      bool
-	ShowRenameFileModal     bool
-	RenameFileOldPath       string
-	RenameFilePath          string
-	ShowBranchModal         bool
-	BranchSearchQuery       string
-	ShowModelPalette        bool
-	ModelSearchQuery        string
-	SelectedHarnessID       string
-	SelectedProviderTab     string
-	CollapsedProjectGroups  map[string]bool
-	ExpandedProjectGroups   map[string]bool
-	ExpandedFileTreeFolders map[string]bool
-	explorerTreeRoot        string
-	explorerTreeVersion     uint64
-	explorerTreeQuery       string
-	explorerTreeCached      []*FileTreeNode
-	ProjectFilter           string   // "all" or a project name (sidebar "All projects" menu)
-	TaskSortBy              string   // "updated" (default) or "created" (sidebar sort menu)
-	RecentWorkspaces        []string // most-recent-first history of opened folders
-	ShowSSHModal            bool
-	ShowSSHQuickMenu        bool
-	SSHLabel                string
-	SSHHost                 string
-	SSHPort                 int
-	SSHPortText             string
-	SSHUser                 string
-	SSHAuthType             string // "key_file", "password", "agent"
-	SSHKeyPath              string
-	SSHUploadStatus         string
-	ShowRemoteUploadModal   bool
-	RemoteUploadTargetDir   string
-	RemoteUploadQueue       []RemoteUploadItem
-	RemoteUploadIsUploading bool
-	uploadQueueMu           sync.Mutex // guards RemoteUploadQueue across dialog/upload goroutines
-	sshConnectGen           int        // SSH connect generation: cancel abandons in-flight results
-	sshSFTPBusyID           string     // saved host currently running the connect-then-SFTP chain
+	ShowNewFileModal         bool
+	NewFileName              string
+	ShowNewFolderModal       bool
+	NewFolderName            string
+	ShowNewTaskModal         bool
+	NewTaskTitle             string
+	NewTaskWorkspacePath     string // preselected folder for group-level "+ New task"
+	NewTaskAgentType         string // "acp" or "cli"
+	NewTaskSearchQuery       string
+	NewTaskFilterTab         string // "all", "acp", "cli"
+	NewTaskSelectedKind      string // "acp", "cli"
+	NewTaskSelectedAgentID   string
+	NewTaskSelectedName      string
+	NewTaskSelectedExec      string
+	NewTaskSelectedArgs      []string
+	NewTaskUninstalledOpen   bool
+	NewTaskStep              string // "agent" or "workspace"
+	SelectedAgentID          string
+	SelectedAgentModel       string
+	ShowTaskMenuModal        bool
+	ShowRenameModal          bool
+	RenameSessionTitle       string
+	RenameSessionID          string
+	RenameSessionIsCLI       bool
+	ShowRenameFileModal      bool
+	RenameFileOldPath        string
+	RenameFilePath           string
+	ShowBranchModal          bool
+	BranchSearchQuery        string
+	ShowModelPalette         bool
+	ModelSearchQuery         string
+	SelectedHarnessID        string
+	SelectedProviderTab      string
+	CollapsedProjectGroups   map[string]bool
+	ExpandedProjectGroups    map[string]bool
+	ExpandedFileTreeFolders  map[string]bool
+	explorerTreeRoot         string
+	explorerTreeVersion      uint64
+	explorerTreeQuery        string
+	explorerTreeCached       []*FileTreeNode
+	ProjectFilter            string   // "all" or a project name (sidebar "All projects" menu)
+	TaskSortBy               string   // "updated" (default) or "created" (sidebar sort menu)
+	RecentWorkspaces         []string // most-recent-first history of opened folders
+	OpenWorkspaces           []string // active workspaces open in this window ("This Window" group)
+	ShowProjectSwitcherModal bool
+	ProjectSwitcherQuery     string
+	projectSwitcherSelected  int
+	ShowSSHModal             bool
+	ShowSSHQuickMenu         bool
+	SSHLabel                 string
+	SSHHost                  string
+	SSHPort                  int
+	SSHPortText              string
+	SSHUser                  string
+	SSHAuthType              string // "key_file", "password", "agent"
+	SSHKeyPath               string
+	SSHUploadStatus          string
+	ShowRemoteUploadModal    bool
+	RemoteUploadTargetDir    string
+	RemoteUploadQueue        []RemoteUploadItem
+	RemoteUploadIsUploading  bool
+	uploadQueueMu            sync.Mutex // guards RemoteUploadQueue across dialog/upload goroutines
+	sshConnectGen            int        // SSH connect generation: cancel abandons in-flight results
+	sshSFTPBusyID            string     // saved host currently running the connect-then-SFTP chain
 
 	// External Open Target in header split button ("terminal" | "finder" | "zed")
 	ExternalOpenTarget string
@@ -455,63 +461,67 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	appUI := &AppUI{
-		Engine:                  engine,
-		Workspace:               workspace.NewWorkspaceState(rootDir),
-		Editor:                  editor.NewEditorManager(),
-		Terminal:                terminal.NewTerminalState(terminalDir),
-		ThemeMgr:                theme.NewThemeManager(),
-		Mode:                    ModeAgent,
-		ActiveTaskKind:          "agent",
-		AgentViewMode:           AgentViewChat,
-		RecentWorkspaces:        loadRecentWorkspaces(),
-		ShowLeftSidebar:         true,
-		LeftSidebarWidth:        LeftSidebarDefault,
-		RightDrawerWidth:        RightDrawerDefault,
-		BottomTerminalHeight:    240,
-		ShowBottomTerminal:      false,
-		ShowRightDrawer:         false,
-		RightDrawerTab:          RightTabLauncher,
-		ExternalOpenTarget:      "terminal",
-		EditorShellPaneWidth:    380,
-		EditorActivity:          ActivityExplorer,
-		NewTaskAgentType:        "acp",
-		NewTaskFilterTab:        "all",
-		NewTaskStep:             "agent",
-		SelectedAgentID:         "agent-agy",
-		SelectedAgentModel:      "gemini-3.8-flash-high",
-		SelectedHarnessID:       "agent-agy",
-		SelectedProviderTab:     "all",
-		CollapsedProjectGroups:  make(map[string]bool),
-		ExpandedProjectGroups:   make(map[string]bool),
-		ProjectFilter:           "all",
-		TaskSortBy:              "updated",
-		ExpandedFileTreeFolders: make(map[string]bool),
-		SSHPort:                 22,
-		SSHPortText:             "22",
-		SSHAuthType:             "key_file",
-		SSHKeyPath:              "~/.ssh/id_ed25519",
-		SSHRemotePath:           "/var/www",
-		SSHSavedConfigs:         make([]remotefs.SSHConfig, 0),
-		SideChatModel:           "Claude 3.7 Sonnet",
-		SideChatMode:            "full",
-		SideChatMessages:        make([]*agent.ChatMessage, 0),
-		QuestionDrafts:          make(map[string]*string),
-		InlineAI:                editor.NewInlineAI(),
-		FileSearchMode:          "files",
-		SideFileDiffMode:        make(map[string]bool),
-		ImageZoom:               make(map[string]float32),
-		ImageFitMode:            make(map[string]bool),
-		ImageBgStyle:            make(map[string]string),
-		SVGViewMode:             make(map[string]string),
-		imageCache:              make(map[string]*cachedImage),
-		SidebarListView:         "project",
-		DeckSlideCount:          1,
-		Snippets:                terminal.NewSnippetManager(engine.DataDir),
-		closeCh:                 make(chan struct{}),
-		tickerDone:              make(chan struct{}),
+		Engine:                   engine,
+		Workspace:                workspace.NewWorkspaceState(rootDir),
+		Editor:                   editor.NewEditorManager(),
+		Terminal:                 terminal.NewTerminalStateDeferred(terminalDir),
+		WorkspaceTerminals:       make(map[string]*terminal.TerminalState),
+		WorkspaceEditorSnapshots: make(map[string]*editor.WorkspaceEditorSnapshot),
+		ThemeMgr:                 theme.NewThemeManager(),
+		Mode:                     ModeAgent,
+		ActiveTaskKind:           "agent",
+		AgentViewMode:            AgentViewChat,
+		RecentWorkspaces:         loadRecentWorkspaces(),
+		ShowLeftSidebar:          true,
+		LeftSidebarWidth:         LeftSidebarDefault,
+		RightDrawerWidth:         RightDrawerDefault,
+		BottomTerminalHeight:     240,
+		ShowBottomTerminal:       false,
+		ShowRightDrawer:          false,
+		RightDrawerTab:           RightTabLauncher,
+		ExternalOpenTarget:       "terminal",
+		EditorShellPaneWidth:     380,
+		EditorActivity:           ActivityExplorer,
+		NewTaskAgentType:         "acp",
+		NewTaskFilterTab:         "all",
+		NewTaskStep:              "agent",
+		SelectedAgentID:          "agent-agy",
+		SelectedAgentModel:       "gemini-3.8-flash-high",
+		SelectedHarnessID:        "agent-agy",
+		SelectedProviderTab:      "all",
+		CollapsedProjectGroups:   make(map[string]bool),
+		ExpandedProjectGroups:    make(map[string]bool),
+		ProjectFilter:            "all",
+		TaskSortBy:               "updated",
+		ExpandedFileTreeFolders:  make(map[string]bool),
+		SSHPort:                  22,
+		SSHPortText:              "22",
+		SSHAuthType:              "key_file",
+		SSHKeyPath:               "~/.ssh/id_ed25519",
+		SSHRemotePath:            "/var/www",
+		SSHSavedConfigs:          make([]remotefs.SSHConfig, 0),
+		SideChatModel:            "Claude 3.7 Sonnet",
+		SideChatMode:             "full",
+		SideChatMessages:         make([]*agent.ChatMessage, 0),
+		QuestionDrafts:           make(map[string]*string),
+		InlineAI:                 editor.NewInlineAI(),
+		FileSearchMode:           "files",
+		SideFileDiffMode:         make(map[string]bool),
+		ImageZoom:                make(map[string]float32),
+		ImageFitMode:             make(map[string]bool),
+		ImageBgStyle:             make(map[string]string),
+		SVGViewMode:              make(map[string]string),
+		imageCache:               make(map[string]*cachedImage),
+		SidebarListView:          "project",
+		DeckSlideCount:           1,
+		Snippets:                 terminal.NewSnippetManager(engine.DataDir),
+		closeCh:                  make(chan struct{}),
+		tickerDone:               make(chan struct{}),
 	}
 
 	appUI.Editor.WorkspaceDir = rootDir
+	normInitial := normalizeWorkspaceKey(rootDir)
+	appUI.WorkspaceTerminals[normInitial] = appUI.Terminal
 	appUI.Editor.OnDefinitionRequested = func(symbol string, matches []editor.PeekMatch) {
 		appUI.ShowPeekModal = true
 		appUI.PeekSymbol = symbol
@@ -737,6 +747,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Editor.RemoteFS = engine.RemoteFS
 	}
 	appUI.LoadSavedSSHConfigs()
+	if appUI.Workspace != nil && appUI.Workspace.RootDir != "" {
+		appUI.recordOpenWorkspace(appUI.Workspace.RootDir)
+	}
 
 	if rootDir != "" && initGit != nil {
 		go initGit.Refresh()
@@ -808,6 +821,9 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		{ID: "appearance", Label: "Toggle Appearance", Detail: "Dark / light", Shortcut: "⌘/", Run: a.toggleAppearance},
 		{ID: "theme", Label: "Pick Theme Palette", Run: func() { a.ThemeMgr.Toggle() }},
 		{ID: "open-folder", Label: "Open Workspace Folder", Shortcut: "⌘O", Run: a.openWorkspaceFolder},
+		{ID: "switch-project", Label: "Switch Workspace / Project (Zed style)...", Detail: "Switch active window workspace or open recent project", Shortcut: "⌥⌘O", Run: func() {
+			a.OpenProjectSwitcherModal()
+		}},
 		{ID: "board", Label: "Show Workflow Board", Run: func() {
 			a.Mode = ModeAgent
 			a.AgentViewMode = AgentViewBoard
@@ -1121,6 +1137,9 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if cmdOrCtrl(ui.KeyBackquote) {
 		a.ShowBottomTerminal = !a.ShowBottomTerminal
+	}
+	if c.Shortcut(ui.Cmd|ui.Alt, ui.KeyO) {
+		a.OpenProjectSwitcherModal()
 	}
 	if c.Shortcut(ui.Alt, ui.KeyS) {
 		sessID := ""
@@ -1542,16 +1561,22 @@ func saveRecentWorkspaces(list []string) {
 // recordRecentWorkspace moves dir to the front of the history (deduped) and
 // persists it. Empty paths (General) and temporary test paths are not recorded.
 func (a *AppUI) recordRecentWorkspace(dir string) {
-	if dir == "" || dir == "/" || strings.HasPrefix(dir, "ssh://") {
+	if dir == "" || dir == "/" {
 		return
 	}
-	norm := agentsession.NormalizeWorkspacePath(dir)
+	norm := dir
+	if !strings.HasPrefix(norm, "ssh://") {
+		norm = agentsession.NormalizeWorkspacePath(dir)
+	}
 	if norm == "" || norm == "/" || agentsession.IsTempTestPath(norm) {
 		return
 	}
 	rest := make([]string, 0, len(a.RecentWorkspaces))
 	for _, p := range a.RecentWorkspaces {
-		normP := agentsession.NormalizeWorkspacePath(p)
+		normP := p
+		if !strings.HasPrefix(normP, "ssh://") {
+			normP = agentsession.NormalizeWorkspacePath(p)
+		}
 		if normP != "" && normP != norm && !agentsession.IsTempTestPath(normP) {
 			rest = append(rest, normP)
 		}
@@ -1561,6 +1586,68 @@ func (a *AppUI) recordRecentWorkspace(dir string) {
 		a.RecentWorkspaces = a.RecentWorkspaces[:recentWorkspacesCap]
 	}
 	saveRecentWorkspaces(a.RecentWorkspaces)
+}
+
+// recordOpenWorkspace registers dir as an active workspace in the current window.
+func (a *AppUI) recordOpenWorkspace(dir string) {
+	if dir == "" || dir == "/" {
+		return
+	}
+	norm := dir
+	if !strings.HasPrefix(norm, "ssh://") {
+		norm = agentsession.NormalizeWorkspacePath(dir)
+	}
+	for _, ws := range a.OpenWorkspaces {
+		if sameWorkspacePath(ws, norm) {
+			return
+		}
+	}
+	a.OpenWorkspaces = append(a.OpenWorkspaces, norm)
+}
+
+// closeWorkspaceFromWindow removes ws from the current window's active group
+// while preserving it in RecentWorkspaces history (Zed-style project switcher).
+func (a *AppUI) closeWorkspaceFromWindow(ws string) {
+	normTarget := normalizeWorkspaceKey(ws)
+	var remaining []string
+	for _, open := range a.OpenWorkspaces {
+		if normalizeWorkspaceKey(open) != normTarget {
+			remaining = append(remaining, open)
+		}
+	}
+	a.OpenWorkspaces = remaining
+
+	// Terminate running terminal processes for this closed workspace
+	if ts, ok := a.WorkspaceTerminals[normTarget]; ok && ts != nil {
+		ts.Close()
+		delete(a.WorkspaceTerminals, normTarget)
+	}
+	delete(a.WorkspaceEditorSnapshots, normTarget)
+
+	cur := ""
+	if a.Workspace != nil {
+		cur = a.Workspace.RootDir
+	}
+	if normalizeWorkspaceKey(cur) == normTarget {
+		if len(remaining) > 0 {
+			a.switchWorkspace(remaining[0])
+		} else {
+			a.switchWorkspace("")
+		}
+	}
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// OpenProjectSwitcherModal opens the Zed-style project switcher palette.
+func (a *AppUI) OpenProjectSwitcherModal() {
+	a.ShowProjectSwitcherModal = true
+	a.ProjectSwitcherQuery = ""
+	a.projectSwitcherSelected = 0
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
 }
 
 // openSearchResult opens a search result (file or symbol) according to current mode:
@@ -1748,16 +1835,33 @@ func (a *AppUI) openWorkspaceFolder() {
 	}()
 }
 
+// resolveSSHDisplayHost returns the friendly host name/IP for a connection ID.
+func (a *AppUI) resolveSSHDisplayHost(connID string) string {
+	for _, cfg := range a.SSHSavedConfigs {
+		if cfg.ID == connID {
+			if cfg.Host != "" {
+				return cfg.Host
+			}
+			if cfg.Label != "" {
+				return cfg.Label
+			}
+		}
+	}
+	return connID
+}
+
+func normalizeWorkspaceKey(dir string) string {
+	if dir == "" || dir == "/" {
+		return ""
+	}
+	if strings.HasPrefix(dir, "ssh://") {
+		return dir
+	}
+	return agentsession.NormalizeWorkspacePath(dir)
+}
+
 func sameWorkspacePath(aDir, bDir string) bool {
-	normA := aDir
-	if !strings.HasPrefix(normA, "ssh://") {
-		normA = agentsession.NormalizeWorkspacePath(aDir)
-	}
-	normB := bDir
-	if !strings.HasPrefix(normB, "ssh://") {
-		normB = agentsession.NormalizeWorkspacePath(bDir)
-	}
-	return normA == normB
+	return normalizeWorkspaceKey(aDir) == normalizeWorkspaceKey(bDir)
 }
 
 // selectAgentSession activates the agent chat session first and switches the
@@ -1887,20 +1991,88 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 	if !strings.HasPrefix(rawDir, "ssh://") {
 		rawDir = agentsession.NormalizeWorkspacePath(dir)
 	}
+
+	prevWs := ""
+	if a.Workspace != nil {
+		prevWs = a.Workspace.RootDir
+	}
+	prevKey := normalizeWorkspaceKey(prevWs)
+	newKey := normalizeWorkspaceKey(rawDir)
+
+	if prevWs != "" && prevKey == newKey {
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	}
+
+	// 1. Stash outgoing workspace state (terminals and editor tabs)
+	if a.WorkspaceTerminals == nil {
+		a.WorkspaceTerminals = make(map[string]*terminal.TerminalState)
+	}
+	if a.WorkspaceEditorSnapshots == nil {
+		a.WorkspaceEditorSnapshots = make(map[string]*editor.WorkspaceEditorSnapshot)
+	}
+	if prevWs != "" && a.Terminal != nil {
+		a.WorkspaceTerminals[prevKey] = a.Terminal
+	}
+	if prevWs != "" && a.Editor != nil {
+		a.WorkspaceEditorSnapshots[prevKey] = a.Editor.TakeSnapshot()
+	}
+
+	// 2. Set up incoming workspace
 	a.Workspace = workspace.NewWorkspaceState(rawDir)
 	a.recordRecentWorkspace(rawDir)
+	if rawDir != "" && rawDir != "/" {
+		a.recordOpenWorkspace(rawDir)
+	}
 	if a.Engine != nil {
 		a.Workspace.RemoteFS = a.Engine.RemoteFS
 		if strings.HasPrefix(rawDir, "ssh://") {
-			a.Workspace.Refresh()
+			connID, _, _, _ := parseSSHWorkspaceURI(rawDir)
+			if !a.Engine.IsSSHConnected(connID) {
+				for _, cfg := range a.SSHSavedConfigs {
+					if cfg.ID == connID {
+						cfgCopy := cfg
+						go func() {
+							_, _ = a.Engine.RemoteFS.Connect(cfgCopy)
+							if a.Workspace != nil && a.Workspace.RootDir == rawDir {
+								a.Workspace.Refresh()
+							}
+							if a.Window != nil {
+								a.Window.Invalidate()
+							}
+						}()
+						break
+					}
+				}
+			} else {
+				go func() {
+					if a.Workspace != nil && a.Workspace.RootDir == rawDir {
+						a.Workspace.Refresh()
+					}
+					if a.Window != nil {
+						a.Window.Invalidate()
+					}
+				}()
+			}
 		}
 	}
+
+	// 3. Restore or initialize editor state for new workspace
 	if a.Editor != nil {
 		a.Editor.WorkspaceDir = rawDir
 		if a.Engine != nil {
 			a.Editor.RemoteFS = a.Engine.RemoteFS
 		}
+		if snap, ok := a.WorkspaceEditorSnapshots[newKey]; ok && snap != nil {
+			a.Editor.RestoreSnapshot(snap)
+		} else {
+			a.Editor.CloseAllForWorkspace(rawDir)
+		}
 	}
+
+	// 4. Update agent workspace
 	if a.Agent != nil {
 		if !keepActiveSession {
 			if sess := a.Agent.ActiveSession(); sess != nil && agentsession.NormalizeWorkspacePath(sess.WorkspacePath) != rawDir {
@@ -1909,22 +2081,39 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 		}
 		a.Agent.SetWorkspacePath(rawDir)
 	}
+
+	// 5. Restore or initialize terminal state for new workspace
 	termDir := rawDir
 	if termDir == "" {
 		home, _ := os.UserHomeDir()
 		termDir = home
 	}
-	if a.Terminal != nil {
+	if existingTerm, ok := a.WorkspaceTerminals[newKey]; ok && existingTerm != nil {
+		a.Terminal = existingTerm
+	} else {
+		ts := terminal.NewTerminalStateDeferred(termDir)
 		if strings.HasPrefix(rawDir, "ssh://") {
-			a.Terminal.Cwd = rawDir
-		} else if a.Terminal.Cwd != termDir {
-			_ = a.Terminal.ResetShell(termDir)
+			ts.Cwd = rawDir
+			if a.Engine != nil && a.Engine.RemoteFS != nil {
+				if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(rawDir); ok && client != nil {
+					prog, args, env := client.SSHCommand(remotePath)
+					ts.Command = append([]string{prog}, args...)
+					ts.Env = env
+					_, remotePath, _, folderName := parseSSHWorkspaceURI(rawDir)
+					if folderName == "" || folderName == "remote-root" || folderName == "." || folderName == "/" {
+						folderName = filepath.Base(remotePath)
+					}
+					if folderName == "" || folderName == "." || folderName == "/" {
+						folderName = "remote"
+					}
+					ts.Title = folderName
+				}
+			}
+		} else {
+			ts.Title = filepath.Base(termDir)
 		}
-	}
-	if a.Editor != nil {
-		// Close only tabs from the outgoing workspace: files under the new
-		// root stay open (their buffers resolve against the new WorkspaceDir).
-		a.Editor.CloseAllForWorkspace(rawDir)
+		a.WorkspaceTerminals[newKey] = ts
+		a.Terminal = ts
 	}
 	// Drop state bound to the old workspace so stale relative paths can never
 	// render the wrong files against the new root.
@@ -1959,13 +2148,21 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 	a.ThreadFindMatches = nil
 
 	if strings.HasPrefix(rawDir, "ssh://") {
-		// Remote SSH workspace
+		// Stop any active local filesystem watcher to prevent background CPU/RAM churn and descriptor leaks
+		if a.Engine != nil {
+			a.Engine.StopWatcher()
+		}
+		if a.Git != nil {
+			a.Git = git.NewGitManagerLazy(nil, "", a.Git.OnFileSelect)
+		}
 		if a.Database != nil {
 			a.Database.Workspace = a.Workspace
 		}
-		if first, ok := a.Workspace.FirstFile(); a.Editor != nil && ok {
-			a.SelectedFile = first.RelativePath
-			_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
+		if a.Editor != nil && len(a.Editor.OpenTabPaths) == 0 {
+			if first, ok := a.Workspace.FirstFile(); ok {
+				a.SelectedFile = first.RelativePath
+				_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
+			}
 		}
 		if a.Window != nil {
 			a.Window.Invalidate()
@@ -2006,9 +2203,11 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 			}
 		})
 	}
-	if first, ok := a.Workspace.FirstFile(); a.Editor != nil && ok {
-		a.SelectedFile = first.RelativePath
-		_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
+	if a.Editor != nil && len(a.Editor.OpenTabPaths) == 0 {
+		if first, ok := a.Workspace.FirstFile(); ok {
+			a.SelectedFile = first.RelativePath
+			_, _ = a.Editor.OpenFile(first.FullPath, first.RelativePath)
+		}
 	}
 	if a.Window != nil {
 		a.Window.Invalidate()

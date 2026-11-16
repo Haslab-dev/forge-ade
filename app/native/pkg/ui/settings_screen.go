@@ -858,10 +858,12 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 											}
 											if sess := a.Agent.ActiveSession(); sess != nil {
 												sess.Model = targetModel
+												sess.Provider = selectedProfile.ID
 												sess.AgentID = "agent-internal"
 												sess.AgentType = "internal"
 												a.Agent.SaveSessionToDisk(sess)
 											}
+											a.Agent.ActiveProvider = selectedProfile.ID
 											a.Agent.ActiveAgentID = "agent-internal"
 											a.Agent.ActiveAgentType = "internal"
 											a.SelectedHarnessID = "agent-internal"
@@ -1214,7 +1216,7 @@ func (a *AppUI) renderSettingsTabShortcuts(c *ui.Context, tc theme.ThemeColors, 
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Text(c, "Default Shell").FontSize(12).FontWeight(600)
-			ui.Select(c, &sm.DefaultShell, []string{"/bin/bash", "/bin/zsh", "/bin/sh"})
+			ui.Select(c, &sm.DefaultShell, []string{"/bin/zsh", "/bin/bash", "/bin/sh"})
 		})
 	})
 

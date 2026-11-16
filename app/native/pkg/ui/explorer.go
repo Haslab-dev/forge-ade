@@ -34,7 +34,7 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 	// expanded folder was never listed, read it live before building the
 	// tree so expanding always reveals real children.
 	var ensureLoaded func(nodes []*FileTreeNode, depth int) bool
-	if a.Workspace.FilterQuery == "" {
+	if a.Workspace.FilterQuery == "" && !a.Workspace.IsRemote() {
 		ensureLoaded = func(nodes []*FileTreeNode, depth int) bool {
 			loadedAny := false
 			for _, n := range nodes {
@@ -123,6 +123,14 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 						a.ExpandedFileTreeFolders[node.RelativePath] = !isOpen
 						if !isOpen {
 							a.explorerTreeVersion = 0
+							if a.Workspace.NeedsLoad(node.RelativePath) {
+								go func(p string) {
+									a.Workspace.LoadDir(p)
+									if a.Window != nil {
+										a.Window.Invalidate()
+									}
+								}(node.RelativePath)
+							}
 						}
 					}
 					a.attachExplorerMenu(c, row, node, tc)
@@ -179,7 +187,14 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 							ui.Text(c, "Refresh Remote Explorer").FontSize(10).FontWeight(500).TextColor(tc.Text)
 						})
 						if refreshBtn.Clicked() {
-							a.Workspace.Refresh()
+							go func() {
+								if a.Workspace != nil {
+									a.Workspace.Refresh()
+								}
+								if a.Window != nil {
+									a.Window.Invalidate()
+								}
+							}()
 						}
 					})
 				} else {

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/egoist/mygo"
@@ -159,7 +160,8 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 				})
 			}
 
-			if a.ShowBottomTerminal {
+			hasActiveEditorTerminal := a.Editor != nil && strings.HasPrefix(a.Editor.ActivePath, "terminal://")
+			if a.ShowBottomTerminal && !hasActiveEditorTerminal {
 				TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
 				a.renderBottomTerminal(c)
 			}
@@ -277,6 +279,14 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 					// Zed-style tab context menu, as forge-ade's tab bar has.
 					tab.ContextMenu(func(m *ui.Menu) {
 						if isTerm {
+							if m.Item("Add Snippet...").Chosen() {
+								sessID := ""
+								if a.Terminal != nil {
+									sessID = a.Terminal.ActiveSessionID
+								}
+								clipText := mygo.Clipboard.ReadText()
+								a.OpenAddSnippetModal(sessID, clipText)
+							}
 							if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 								sessID := ""
 								if a.Terminal != nil {
@@ -369,6 +379,14 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						if m.Item("New Terminal Tab in Editor").Chosen() {
 							a.openEditorTerminalTab("")
 						}
+						if m.Item("Add Snippet...").Chosen() {
+							sessID := ""
+							if a.Terminal != nil {
+								sessID = a.Terminal.ActiveSessionID
+							}
+							clipText := mygo.Clipboard.ReadText()
+							a.OpenAddSnippetModal(sessID, clipText)
+						}
 						if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 							sessID := ""
 							if a.Terminal != nil {
@@ -420,6 +438,14 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 
 		actionBtn(icons.TablerTerminal, "Shell", strings.HasPrefix(em.ActivePath, "terminal://"), func() {
 			a.openEditorTerminalTab("")
+		})
+
+		actionBtn(icons.TablerBook, "Snippets", false, func() {
+			sessID := ""
+			if a.Terminal != nil {
+				sessID = a.Terminal.ActiveSessionID
+			}
+			a.OpenTerminalSnippetsModal(sessID, "", "")
 		})
 
 		splitLabel := "Split"
@@ -914,20 +940,42 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 		Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 		// Remote SSH or Local folder indicator
 		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-			_, _, displayHost, folderName := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			connID, _, displayHost, folderName := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			isConnected := a.Engine != nil && a.Engine.IsSSHConnected(connID)
+			chipColor := tc.Accent
+			statusDot := tc.Success
+			statusExtra := ""
+			if !isConnected {
+				statusDot = tc.Warning
+				statusExtra = " (Disconnected)"
+			}
 			remoteChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center).
-				Background(tc.Accent.Alpha(0.15)).BorderWidth(1, 1, 1, 1).BorderColor(tc.Accent.Alpha(0.3))
+				Background(chipColor.Alpha(0.15)).BorderWidth(1, 1, 1, 1).BorderColor(chipColor.Alpha(0.3)).Cursor(ui.CursorPointer)
 			remoteChip.Children(func() {
-				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.Accent)
-				ui.Box(c).Size(5, 5).Radius(2.5).Background(tc.Success)
-				ui.Text(c, fmt.Sprintf("SSH: %s", displayHost)).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(chipColor)
+				ui.Box(c).Size(5, 5).Radius(2.5).Background(statusDot)
+				ui.Text(c, fmt.Sprintf("SSH: %s%s", displayHost, statusExtra)).FontSize(11).FontWeight(600).TextColor(chipColor)
 				ui.Text(c, fmt.Sprintf("(%s)", folderName)).FontSize(11).TextColor(tc.TextMuted)
 			})
 			if remoteChip.Hovered() {
-				remoteChip.Background(tc.Accent.Alpha(0.25))
+				remoteChip.Background(chipColor.Alpha(0.25))
 			}
 			if remoteChip.Clicked() {
 				a.ShowSSHQuickMenu = true
+			}
+			if !isConnected {
+				reconBtn := ui.Row(c.Key("status-ssh-recon")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+					Background(tc.Warning.Alpha(0.18)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.4)).Cursor(ui.CursorPointer)
+				reconBtn.Children(func() {
+					ui.Icon(c, icons.TablerRefresh).Width(10).Height(10).TextColor(tc.Warning)
+					ui.Text(c, "Reconnect").FontSize(10).FontWeight(600).TextColor(tc.Warning)
+				})
+				if reconBtn.Hovered() {
+					reconBtn.Background(tc.Warning.Alpha(0.3))
+				}
+				if reconBtn.Clicked() {
+					a.ReconnectSSH()
+				}
 			}
 		} else {
 			folderChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
@@ -1137,46 +1185,125 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 		return
 	}
 	isRemote := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
-	if title == "" && isRemote {
-		_, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
-		folder := filepath.Base(remotePath)
-		if folder == "." || folder == "/" || folder == "" {
-			folder = "remote"
+	if title == "" {
+		if isRemote {
+			_, remotePath, _, folder := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			if folder == "" || folder == "remote-root" || folder == "." || folder == "/" {
+				folder = filepath.Base(remotePath)
+			}
+			if folder == "" || folder == "." || folder == "/" {
+				folder = "remote"
+			}
+			title = folder
+		} else {
+			folder := filepath.Base(a.Workspace.RootDir)
+			if folder == "" || folder == "." || folder == "/" {
+				folder = "terminal"
+			}
+			title = folder
 		}
-		title = fmt.Sprintf("SSH: %s (%s)", displayHost, folder)
 	}
+	// Hide bottom terminal dock so the terminal is not duplicated on screen
+	a.ShowBottomTerminal = false
+
 	if a.Terminal == nil {
 		a.queueToast(ui.Toast{Title: "Terminal unavailable", Description: "The terminal manager is not ready", Type: "error"})
 		return
 	}
-	cwd := a.Workspace.RootDir
-	if cwd == "" || isRemote {
-		cwd = "" // manager default (or remote command below)
-	}
-	// Distinct session per editor tab: spawn before adding the tab so a
-	// failed spawn leaves the editor untouched.
-	if err := a.Terminal.NewTab(cwd); err != nil {
-		a.queueToast(ui.Toast{Title: "Could not open terminal", Description: err.Error(), Type: "error"})
-		return
-	}
-	if isRemote && a.Engine != nil && a.Engine.RemoteFS != nil {
-		if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
-			prog, args, env := client.SSHCommand(remotePath)
-			a.Terminal.Command = append([]string{prog}, args...)
-			a.Terminal.Env = env
-			a.Terminal.Title = title
-			if err := a.Terminal.Restart(); err != nil {
-				a.queueToast(ui.Toast{Title: "Could not open remote terminal", Description: err.Error(), Type: "error"})
-				a.closeTerminalSessionByID(a.Terminal, a.activeTerminalSessionID())
+	var sessionID int
+	if isRemote {
+		var prog string
+		var args, env []string
+		if a.Engine != nil && a.Engine.RemoteFS != nil {
+			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
+				prog, args, env = client.SSHCommand(remotePath)
+			}
+		}
+		if prog == "" {
+			connID, remotePath, _, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			foundHost := connID
+			for _, cfg := range a.SSHSavedConfigs {
+				if cfg.ID == connID {
+					user := cfg.User
+					if user == "" {
+						user = "root"
+					}
+					foundHost = fmt.Sprintf("%s@%s", user, cfg.Host)
+					if cfg.Port > 0 && cfg.Port != 22 {
+						args = append(args, "-p", strconv.Itoa(cfg.Port))
+					}
+					break
+				}
+			}
+			prog = "ssh"
+			args = append(args, "-o", "StrictHostKeyChecking=accept-new", foundHost, "-t", fmt.Sprintf("cd '%s' && exec $SHELL -l", remotePath))
+		}
+
+		if a.Editor.TerminalSessionCount() == 0 && a.Terminal.TabCount() == 1 {
+			tabs, _ := a.Terminal.SnapshotTabs()
+			if len(tabs) > 0 {
+				sessionID = tabs[0].ID
+				a.Terminal.Command = append([]string{prog}, args...)
+				a.Terminal.Env = env
+				a.Terminal.Title = title
+				if a.Terminal.Term() == nil || a.Terminal.IsExited() {
+					_ = a.Terminal.Restart()
+				}
+			}
+		} else {
+			if newTab, err := a.Terminal.NewTabCustom(title, a.Workspace.RootDir, append([]string{prog}, args...), env); err == nil && newTab != nil {
+				sessionID = newTab.ID
+			} else if err != nil {
+				a.queueToast(ui.Toast{Title: "Could not open terminal", Description: err.Error(), Type: "error"})
+				return
+			}
+		}
+	} else {
+		if a.Editor.TerminalSessionCount() == 0 && a.Terminal.TabCount() == 1 {
+			tabs, _ := a.Terminal.SnapshotTabs()
+			if len(tabs) > 0 {
+				sessionID = tabs[0].ID
+				if a.Terminal.Term() == nil || a.Terminal.IsExited() {
+					_ = a.Terminal.Restart()
+				}
+			}
+		} else {
+			cwd := a.Workspace.RootDir
+			if err := a.Terminal.NewTab(cwd); err == nil {
+				if tabs, active := a.Terminal.SnapshotTabs(); len(tabs) > 0 && active >= 0 && active < len(tabs) {
+					sessionID = tabs[active].ID
+				}
+			} else {
+				a.queueToast(ui.Toast{Title: "Could not open terminal", Description: err.Error(), Type: "error"})
 				return
 			}
 		}
 	}
+
 	tabID := a.Editor.OpenTerminalTab(title)
-	if sessionID := a.activeTerminalSessionID(); sessionID > 0 {
+	if sessionID > 0 {
 		a.Editor.BindTerminalSession(tabID, sessionID)
 	}
 	a.Mode = ModeEditor
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// restartOrReconnectTerminal refreshes or reconnects the active terminal session.
+func (a *AppUI) restartOrReconnectTerminal() {
+	if a.Terminal == nil {
+		return
+	}
+	isRemote := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
+	if isRemote && a.Engine != nil {
+		connID, _, _, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+		if connID != "" && !a.Engine.IsSSHConnected(connID) {
+			a.ReconnectSSH()
+			return
+		}
+	}
+	_ = a.Terminal.Restart()
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}
@@ -1195,96 +1322,27 @@ func (a *AppUI) activeTerminalSessionID() int {
 	return tabs[active].ID
 }
 
-// renderEditorMainTerminal renders the interactive terminal directly in the main editor area (CodeEditorPane parity).
+// renderEditorMainTerminal renders the interactive terminal directly in the main editor area.
+// The editor tab bar above provides tab switching (1:1 with terminal sessions);
+// the terminal viewport fills the pane cleanly with zero redundant headers or nested strips.
 func (a *AppUI) renderEditorMainTerminal(c *ui.Context, tc theme.ThemeColors, tabPath string) {
-	title := strings.TrimPrefix(tabPath, "terminal://")
-	if title == "" {
-		title = "Terminal"
+	if a.Terminal == nil {
+		ui.Column(c.Key("editor-main-terminal-" + tabPath)).Fill().Background(tc.Canvas).Center().Children(func() {
+			ui.Text(c, "Terminal initializing...").FontSize(12).TextColor(tc.TextMuted)
+		})
+		return
+	}
+
+	if sessionID, ok := a.Editor.TerminalSessionFor(tabPath); ok && sessionID > 0 {
+		a.selectTerminalSessionByID(a.Terminal, sessionID)
+	}
+
+	if a.Terminal.Term() == nil && a.Terminal.IsExited() && a.Terminal.TabCount() <= 1 {
+		_ = a.Terminal.Restart()
 	}
 
 	ui.Column(c.Key("editor-main-terminal-" + tabPath)).Fill().Background(tc.Canvas).Children(func() {
-		// Terminal in-pane header
-		hdr := ui.Row(c.Key("editor-term-hdr-"+tabPath)).Height(32).Padding(0, 14).Gap(10).AlignItems(ui.Center).
-			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border)
-		hdr.ContextMenu(func(m *ui.Menu) {
-			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
-				sessID := ""
-				if a.Terminal != nil {
-					sessID = a.Terminal.ActiveSessionID
-				}
-				a.OpenTerminalSnippetsModal(sessID, "", "")
-			}
-			m.Separator()
-			if m.Item("New Terminal Tab in Editor").Chosen() {
-				a.openEditorTerminalTab("")
-			}
-			if a.Terminal != nil {
-				if m.Item("Clear Terminal").Chosen() {
-					a.Terminal.SendInput("\x0c")
-				}
-				if m.Item("Restart Shell").Chosen() {
-					_ = a.Terminal.Restart()
-				}
-			}
-			m.Separator()
-			if m.Item("Close Tab").Chosen() {
-				a.closeEditorTab(tabPath)
-			}
-		})
-		hdr.Children(func() {
-			ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
-			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
-
-			if a.Terminal != nil {
-				a.renderTerminalTabsStrip(c, tc, a.Terminal, "main-term")
-			}
-
-			ui.Box(c).Grow(1)
-
-			if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-				a.openEditorTerminalTab("")
-			}
-
-			snipBtn := ui.Row(c.Key("main-term-snip")).Height(22).Radius(5).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-				Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
-			snipBtn.Children(func() {
-				ui.Icon(c, icons.TablerBook).Width(10).Height(10).TextColor(tc.IconMuted)
-				ui.Text(c, "Snippets (⌥S)").FontSize(10).TextColor(tc.Text)
-			})
-			if snipBtn.Hovered() {
-				snipBtn.Background(tc.Text.Alpha(0.08))
-			}
-			if snipBtn.Clicked() {
-				sessID := ""
-				if a.Terminal != nil {
-					sessID = a.Terminal.ActiveSessionID
-				}
-				a.OpenTerminalSnippetsModal(sessID, "", "")
-			}
-
-			if IconButton(c, tc, icons.TablerEraser, 12).Clicked() && a.Terminal != nil {
-				a.Terminal.SendInput("\x0c")
-			}
-			if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() && a.Terminal != nil {
-				_ = a.Terminal.Restart()
-			}
-			if IconButton(c, tc, icons.TablerX, 12).Clicked() {
-				a.closeEditorTab(tabPath)
-			}
-		})
-
-		// Full-height interactive terminal viewport — this tab's own session,
-		// not whatever tab happens to be active in the terminal manager.
-		if a.Terminal != nil {
-			if sessionID, ok := a.Editor.TerminalSessionFor(tabPath); ok {
-				a.selectTerminalSessionByID(a.Terminal, sessionID)
-			}
-			a.renderTerminal(c, a.Terminal)
-		} else {
-			ui.Column(c).Grow(1).Center().Children(func() {
-				ui.Text(c, "Terminal initializing...").FontSize(12).TextColor(tc.TextMuted)
-			})
-		}
+		a.renderTerminal(c, a.Terminal)
 	})
 }
 

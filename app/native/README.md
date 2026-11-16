@@ -96,7 +96,7 @@ make test
 make build
 
 # Launch application
-./build/bin/forge-native
+./dist/forge-ade
 ```
 
 ### Keyboard Shortcuts

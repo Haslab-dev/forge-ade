@@ -1,6 +1,9 @@
 package terminal
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -60,21 +63,83 @@ func (ts *TerminalState) SetDefaultShell(shell string) {
 	ts.mu.Unlock()
 }
 
+// DefaultUserShell returns the detected login shell executable for the current user.
+// On macOS / Unix, it checks $SHELL, /bin/zsh, /bin/bash, /bin/sh.
+func DefaultUserShell() string {
+	if sh := strings.TrimSpace(os.Getenv("SHELL")); sh != "" {
+		if _, err := os.Stat(sh); err == nil {
+			return sh
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		if _, err := os.Stat("/bin/zsh"); err == nil {
+			return "/bin/zsh"
+		}
+	}
+	for _, candidate := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "/bin/sh"
+}
+
+// defaultTabTitle returns a friendly title based on cwd (folder name or remote path).
+func defaultTabTitle(cwd string) string {
+	if cwd == "" || cwd == "/" || cwd == "." {
+		return "Terminal"
+	}
+	if strings.HasPrefix(cwd, "ssh://") {
+		trimmed := strings.TrimPrefix(cwd, "ssh://")
+		slashIdx := strings.Index(trimmed, "/")
+		if slashIdx != -1 {
+			rem := trimmed[slashIdx:]
+			b := filepath.Base(rem)
+			if b != "" && b != "/" && b != "." {
+				return b
+			}
+		}
+		return "remote"
+	}
+	b := filepath.Base(cwd)
+	if b == "" || b == "/" || b == "." {
+		return "Terminal"
+	}
+	return b
+}
+
 // localShellCommand resolves the spawn command for a local shell tab: the
-// configured DefaultShell when set, otherwise nil (user's login shell).
+// configured DefaultShell when set, otherwise DefaultUserShell().
+// Automatically includes the login shell flag (-l) so environment variables
+// (.zprofile, .zshrc, .bash_profile, PATH) are properly loaded.
 // Caller holds ts.mu.
 func (ts *TerminalState) localShellCommand() []string {
-	if sh := strings.TrimSpace(ts.defaultShell); sh != "" {
-		return []string{sh}
+	sh := strings.TrimSpace(ts.defaultShell)
+	if sh == "" {
+		sh = DefaultUserShell()
 	}
-	return nil
+	parts := strings.Fields(sh)
+	if len(parts) == 0 {
+		return []string{DefaultUserShell(), "-l"}
+	}
+	hasLoginFlag := false
+	for _, p := range parts {
+		if p == "-l" || p == "--login" {
+			hasLoginFlag = true
+			break
+		}
+	}
+	if !hasLoginFlag {
+		parts = append(parts, "-l")
+	}
+	return parts
 }
 
 // NewTerminalState creates a new terminal manager for the given working directory.
 func NewTerminalState(cwd string) *TerminalState {
 	ts := &TerminalState{
 		Cwd:   cwd,
-		Title: "Terminal",
+		Title: defaultTabTitle(cwd),
 	}
 	_ = ts.Restart()
 	return ts
@@ -158,6 +223,22 @@ func closeTerms(terms ...*termplugin.Terminal) {
 	}
 }
 
+func sanitizeCwd(cwd string) string {
+	if cwd == "" || strings.HasPrefix(cwd, "ssh://") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+		return "."
+	}
+	if stat, err := os.Stat(cwd); err != nil || !stat.IsDir() {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+		return "."
+	}
+	return cwd
+}
+
 func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) (*termplugin.Terminal, error) {
 	oldTerm := tab.Term
 	tab.Term = nil
@@ -167,7 +248,7 @@ func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) (*termplugin.Terminal,
 		tab.Title = "Terminal"
 	}
 	opts := termplugin.Options{
-		Dir: tab.Cwd,
+		Dir: sanitizeCwd(tab.Cwd),
 		OnTitle: func(title string) {
 			ts.mu.Lock()
 			if tab.gen == gen {
@@ -291,19 +372,59 @@ func (ts *TerminalState) SnapshotTabs() ([]TerminalTabSnapshot, int) {
 	return out, ts.ActiveTabIdx
 }
 
-// NewTab spawns a new shell tab in cwd (or the active tab's Cwd when empty) and activates it.
-func (ts *TerminalState) NewTab(cwd string) error {
+// NewTabCustom spawns a new shell tab with explicit title, working directory,
+// command and environment, and activates it.
+func (ts *TerminalState) NewTabCustom(title, cwd string, command, env []string) (*TerminalTab, error) {
 	ts.mu.Lock()
 	ts.ensureActiveTabLocked()
-	if cwd == "" {
-		cwd = ts.Cwd
+	if title == "" {
+		title = "Terminal"
 	}
 	ts.nextTabID++
 	tab := &TerminalTab{
 		ID:      ts.nextTabID,
-		Title:   "Terminal",
+		Title:   title,
 		Cwd:     cwd,
-		Command: ts.localShellCommand(),
+		Command: cloneStrings(command),
+		Env:     cloneStrings(env),
+	}
+	ts.Tabs = append(ts.Tabs, tab)
+	ts.ActiveTabIdx = len(ts.Tabs) - 1
+	old, err := ts.spawnTabLocked(tab)
+	ts.mu.Unlock()
+	closeTerms(old)
+	return tab, err
+}
+
+// NewTab spawns a new shell tab in cwd (or the active tab's Cwd when empty) and activates it.
+// If the active tab was running a remote SSH command or custom command, the new tab
+// inherits that command and environment so remote workspaces spawn remote shells.
+func (ts *TerminalState) NewTab(cwd string) error {
+	ts.mu.Lock()
+	active := ts.ensureActiveTabLocked()
+	if cwd == "" {
+		cwd = ts.Cwd
+	}
+	ts.nextTabID++
+	title := defaultTabTitle(cwd)
+	var cmd, env []string
+	if active != nil && len(active.Command) > 0 {
+		cmd = cloneStrings(active.Command)
+		env = cloneStrings(active.Env)
+		title = active.Title
+	} else if len(ts.Command) > 0 {
+		cmd = cloneStrings(ts.Command)
+		env = cloneStrings(ts.Env)
+		title = ts.Title
+	} else {
+		cmd = ts.localShellCommand()
+	}
+	tab := &TerminalTab{
+		ID:      ts.nextTabID,
+		Title:   title,
+		Cwd:     cwd,
+		Command: cmd,
+		Env:     env,
 	}
 	ts.Tabs = append(ts.Tabs, tab)
 	ts.ActiveTabIdx = len(ts.Tabs) - 1
@@ -334,9 +455,11 @@ func (ts *TerminalState) CloseTab(idx int) {
 	}
 	if len(ts.Tabs) <= 1 {
 		tab := ts.Tabs[0]
-		tab.Command = ts.localShellCommand()
-		tab.Env = nil
-		tab.Title = "Terminal"
+		if !strings.HasPrefix(tab.Cwd, "ssh://") && !strings.HasPrefix(ts.Cwd, "ssh://") {
+			tab.Command = ts.localShellCommand()
+			tab.Env = nil
+			tab.Title = "Terminal"
+		}
 		old, _ = ts.spawnTabLocked(tab)
 		ts.mu.Unlock()
 		closeTerms(old)

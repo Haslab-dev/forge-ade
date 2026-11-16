@@ -17,13 +17,13 @@ PKG_JSON := web/package.json
 VERSION := $(shell node -p "require('./$(PKG_JSON)').version")
 BUILD := $(shell node -p "require('./$(PKG_JSON)').build || 1")
 
-NATIVE_BIN   := dist/forge-native
-NATIVE_APP   := dist/forge-native.app
+NATIVE_BIN   := build/forge-ade
+NATIVE_APP   := build/ForgeADE.app
 NATIVE_DIR   := app/native
-CLI_BIN_DIR  := dist
+CLI_BIN_DIR  := build
 
 define BUMP
-node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));const v=p.version.split('.').map(Number);$(1);p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');console.log('version ->',p.version,'(build',p.build+')')"
+node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$(PKG_JSON)','utf8'));const v=p.version.split('.').map(Number);$(1);p.version=v.join('.');p.build=(p.build||0)+1;fs.writeFileSync('$(PKG_JSON)',JSON.stringify(p,null,2)+'\n');console.log('version ->',p.version,'(build',p.build+')');const plistPath='$(NATIVE_DIR)/packaging/Info.plist';if(fs.existsSync(plistPath)){let plist=fs.readFileSync(plistPath,'utf8');plist=plist.replace(/<key>CFBundleShortVersionString<\\/key>\\s*<string>[^<]+<\\/string>/,'<key>CFBundleShortVersionString</key>\\n\\t<string>'+p.version+'</string>');plist=plist.replace(/<key>CFBundleVersion<\\/key>\\s*<string>[^<]+<\\/string>/,'<key>CFBundleVersion</key>\\n\\t<string>'+p.build+'</string>');fs.writeFileSync(plistPath,plist);}"
 endef
 
 .PHONY: help
@@ -33,28 +33,30 @@ help: ## Show this help
 # ── Native (MyGo) ─────────────────────────────────────────────────
 .PHONY: native
 native: ## Build the native desktop binary (release flags)
-	cd $(NATIVE_DIR) && $(GO) build -trimpath -ldflags="-s -w" -o ../../$(NATIVE_BIN) ./cmd/forge-native
+	cd $(NATIVE_DIR) && $(GO) build -trimpath -ldflags="-s -w" -o ../../$(NATIVE_BIN) ./cmd/forge-ade
 
 .PHONY: native-dev
 native-dev: ## Build the native binary with debug symbols
-	cd $(NATIVE_DIR) && $(GO) build -o ../../$(NATIVE_BIN) ./cmd/forge-native
+	cd $(NATIVE_DIR) && $(GO) build -o ../../$(NATIVE_BIN) ./cmd/forge-ade
 
 .PHONY: native-e2e
 native-e2e: ## Build the native binary with the e2e automation plugin
-	cd $(NATIVE_DIR) && $(GO) build -tags e2e -o ../../$(NATIVE_BIN)-e2e ./cmd/forge-native
+	cd $(NATIVE_DIR) && $(GO) build -tags e2e -o ../../$(NATIVE_BIN)-e2e ./cmd/forge-ade
 
 .PHONY: native-app
 native-app: native ## Build the signed macOS .app bundle
+	@rm -rf $(NATIVE_APP)
 	@mkdir -p $(NATIVE_APP)/Contents/MacOS $(NATIVE_APP)/Contents/Resources
-	cp $(NATIVE_BIN) $(NATIVE_APP)/Contents/MacOS/forge-native
+	cp $(NATIVE_BIN) $(NATIVE_APP)/Contents/MacOS/forge-ade
 	cp $(NATIVE_DIR)/packaging/Info.plist $(NATIVE_APP)/Contents/Info.plist
 	cp $(NATIVE_DIR)/packaging/AppIcon.icns $(NATIVE_APP)/Contents/Resources/AppIcon.icns
-	codesign --force -s - $(NATIVE_APP) 2>/dev/null || true
+	xattr -cr $(NATIVE_APP) 2>/dev/null || true
+	codesign --force --deep -s - $(NATIVE_APP)
 	@echo "bundle: $(NATIVE_APP)"
 
 .PHONY: native-run
 native-run: ## Run the native app from source
-	cd $(NATIVE_DIR) && $(GO) run ./cmd/forge-native
+	cd $(NATIVE_DIR) && $(GO) run ./cmd/forge-ade
 
 # ── CLI ───────────────────────────────────────────────────────────
 .PHONY: cli
@@ -108,4 +110,4 @@ bump-build: ## Bump the build number only
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	rm -rf dist coverage.out
+	rm -rf build dist coverage.out

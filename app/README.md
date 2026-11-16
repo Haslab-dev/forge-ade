@@ -5,7 +5,7 @@ is a delivery surface with its own composition root and packaging:
 
 | Target          | Stack                          | Entry point                        | Dev                  |
 | --------------- | ------------------------------ | ---------------------------------- | -------------------- |
-| `native/`       | Pure Go + MyGo UI              | `cmd/forge-native`                 | `make native-run`    |
+| `native/`       | Pure Go + MyGo UI              | `cmd/forge-ade`                    | `make native-run`    |
 | `webview/`      | Wails v3 + React 19 + Vite     | `main.go` (`internal/app` service) | `make webview-dev`   |
 | `cli/`          | Headless Go binaries           | `forge-agent`, `forge-mcp`, `shelltest` | `make cli`      |
 | `web/`          | *(reserved — empty)*           | —                                  | —                    |

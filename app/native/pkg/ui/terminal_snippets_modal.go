@@ -37,6 +37,19 @@ func (a *AppUI) OpenTerminalSnippetsModal(targetSessionID, draftCommand, draftTi
 	}
 }
 
+// OpenAddSnippetModal opens the snippets dialog with the creation form immediately open.
+func (a *AppUI) OpenAddSnippetModal(targetSessionID, draftCommand string) {
+	title := "New Snippet"
+	if draftCommand != "" {
+		title = "New Command Snippet"
+	}
+	a.OpenTerminalSnippetsModal(targetSessionID, draftCommand, title)
+	a.TerminalSnippetFormOpen = true
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
 // renderTerminalSnippetsModal renders the 1:1 TerminalSnippetModal dialog.
 func (a *AppUI) renderTerminalSnippetsModal(c *ui.Context) {
 	if !a.ShowTerminalSnippetsModal {

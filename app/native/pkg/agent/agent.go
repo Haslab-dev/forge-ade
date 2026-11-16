@@ -223,6 +223,7 @@ type AgentState struct {
 	ListState       ui.ListState
 	MdOpts          markdown.Options
 	ActiveModel     string
+	ActiveProvider  string
 	ActiveAgentID   string
 	ActiveAgentType string
 	ActivePersonaID string
@@ -2099,6 +2100,16 @@ func (as *AgentState) syncActiveSession() {
 		} else if as.ActiveModel != "" {
 			active.Model = as.ActiveModel
 		}
+		if active.Provider != "" {
+			as.ActiveProvider = active.Provider
+		} else if as.ActiveProvider != "" {
+			active.Provider = as.ActiveProvider
+		}
+		if (active.AgentType == "internal" || active.AgentType == "") && as.engine != nil && as.engine.LLMClient != nil {
+			if as.ActiveProvider != "" && as.ActiveModel != "" {
+				as.engine.LLMClient.SetActiveModel(as.ActiveProvider, as.ActiveModel)
+			}
+		}
 		if active.AgentID != "" {
 			as.ActiveAgentID = active.AgentID
 		}
@@ -2321,6 +2332,11 @@ func (as *AgentState) CreateSessionWithInitialPrompt(prompt, agentID string) *Ag
 		model = "gemini-3.8-flash-high"
 	}
 
+	prov := as.ActiveProvider
+	if prov == "" && as.engine != nil && as.engine.LLMClient != nil {
+		prov = as.engine.LLMClient.GetConfig().ProviderID
+	}
+
 	sess := &AgentSession{
 		ID:            id,
 		Title:         title,
@@ -2328,7 +2344,7 @@ func (as *AgentState) CreateSessionWithInitialPrompt(prompt, agentID string) *Ag
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Model:         model,
-		Provider:      "",
+		Provider:      prov,
 		AgentID:       agentID,
 		AgentType:     agentType,
 		WorkspacePath: as.workspacePath,
@@ -2424,6 +2440,11 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 		}
 	}
 
+	prov := as.ActiveProvider
+	if prov == "" && as.engine != nil && as.engine.LLMClient != nil {
+		prov = as.engine.LLMClient.GetConfig().ProviderID
+	}
+
 	sess := &AgentSession{
 		ID:            id,
 		Title:         title,
@@ -2431,7 +2452,7 @@ func (as *AgentState) NewSession(title string) *AgentSession {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Model:         model,
-		Provider:      "",
+		Provider:      prov,
 		AgentID:       agentID,
 		AgentType:     agentType,
 		WorkspacePath: as.workspacePath,

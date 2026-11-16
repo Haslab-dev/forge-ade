@@ -1,4 +1,5 @@
 # Build output
+build/
 build/bin
 build/linux/*.desktop
 frontend/dist

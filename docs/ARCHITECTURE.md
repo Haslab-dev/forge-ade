@@ -59,7 +59,7 @@ History of the previous single-app layout is preserved in
 | Path                | Contents                                                              |
 | ------------------- | --------------------------------------------------------------------- |
 | `core/`             | Shared domain packages (see §3)                                       |
-| `app/native/`       | MyGo desktop app: `pkg/{agent,ui,git,theme,…}`, `cmd/forge-native`    |
+| `app/native/`       | MyGo desktop app: `pkg/{agent,ui,git,theme,…}`, `cmd/forge-ade`       |
 | `app/webview/`      | Wails desktop app: `main.go`, `frontend/` (React 19 + Vite + bun), `build/` (packaging Taskfiles), `internal/{app,bootstrap}` |
 | `app/cli/`          | `forge-agent` (headless sub-agent runner), `forge-mcp` (MCP stdio server), `shelltest` (PTY stress tool) |
 | `app/web/`          | Reserved for the future browser target (intentionally empty)          |

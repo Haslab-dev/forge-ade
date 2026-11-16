@@ -250,6 +250,13 @@ func (c *Client) Config() SSHConfig {
 	return c.config
 }
 
+// IsClosed reports whether this client's SSH/SFTP connection has closed or dropped.
+func (c *Client) IsClosed() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.closed
+}
+
 // StartWatcher begins watching the SSH connection for drops or unexpected disconnects.
 // When disconnected, onDisconnect is called once with the triggering error.
 func (c *Client) StartWatcher(onDisconnect func(err error)) {

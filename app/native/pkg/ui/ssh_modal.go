@@ -24,13 +24,21 @@ func (a *AppUI) openRemoteTerminal() {
 	if a.Engine == nil || a.Engine.RemoteFS == nil {
 		return
 	}
+	if a.Mode == ModeEditor {
+		a.openEditorTerminalTab("")
+		return
+	}
 	client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
 	if isRemote && client != nil {
 		prog, args, env := client.SSHCommand(remotePath)
 		a.ShowBottomTerminal = true
 		a.Terminal.Command = append([]string{prog}, args...)
 		a.Terminal.Env = env
-		a.Terminal.Title = "SSH"
+		_, _, _, folder := parseSSHWorkspaceURI(a.Workspace.RootDir)
+		if folder == "" || folder == "remote-root" {
+			folder = "remote"
+		}
+		a.Terminal.Title = folder
 		_ = a.Terminal.Restart()
 	} else {
 		a.ShowBottomTerminal = true
@@ -379,6 +387,47 @@ func quoteRemotePath(p string) string {
 	return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
 }
 
+// ReconnectSSH re-establishes the active remote SSH workspace connection
+// if the network was dropped or disconnected, refreshing the explorer
+// and restarting any dead terminal tabs.
+func (a *AppUI) ReconnectSSH() {
+	if a.Engine == nil || a.Workspace == nil || !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		return
+	}
+	connID, _, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+	if connID == "" {
+		return
+	}
+	a.queueToast(ui.Toast{Title: "Reconnecting SSH...", Description: fmt.Sprintf("Connecting to %s", displayHost), Type: "info"})
+	go func() {
+		status, err := a.Engine.ReconnectSSH(connID)
+		a.runOnUI(func() {
+			if err != nil {
+				a.queueToast(ui.Toast{Title: "SSH Reconnect Failed", Description: err.Error(), Type: "error"})
+				return
+			}
+			a.queueToast(ui.Toast{Title: "SSH Reconnected", Description: fmt.Sprintf("Connected to %s", status.Host), Type: "success"})
+			if a.Workspace != nil {
+				a.Workspace.Refresh()
+			}
+			// If active terminal is exited, restart it with fresh connection
+			if a.Terminal != nil {
+				if a.Terminal.IsExited() {
+					if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
+						prog, args, env := client.SSHCommand(remotePath)
+						a.Terminal.Command = append([]string{prog}, args...)
+						a.Terminal.Env = env
+					}
+					_ = a.Terminal.Restart()
+				}
+			}
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+		})
+	}()
+}
+
 // DisconnectSSH closes the remote connection and reverts to default workspace.
 func (a *AppUI) DisconnectSSH() {
 	if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
@@ -399,6 +448,24 @@ func (a *AppUI) DisconnectSSH() {
 func (a *AppUI) connectSSHShell(cfg remotefs.SSHConfig) {
 	if a.Terminal == nil {
 		return
+	}
+	if a.Mode == ModeEditor {
+		a.openEditorTerminalTab("")
+		return
+	}
+	if a.Engine != nil && a.Engine.RemoteFS != nil {
+		if client := a.Engine.RemoteFS.GetClient(cfg.ID); client != nil {
+			prog, args, env := client.SSHCommand(cfg.RemotePath)
+			a.ShowBottomTerminal = true
+			a.Terminal.Command = append([]string{prog}, args...)
+			a.Terminal.Env = env
+			a.Terminal.Title = fmt.Sprintf("SSH: %s", cfg.Host)
+			_ = a.Terminal.Restart()
+			if a.Window != nil {
+				a.Window.Invalidate()
+			}
+			return
+		}
 	}
 	userHost := cfg.Host
 	if cfg.User != "" {
@@ -980,12 +1047,20 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 				})
 				ui.Box(c).Width(10)
 				ui.Column(c).Grow(1).Children(func() {
+					isConnected := a.Engine != nil && a.Engine.IsSSHConnected(connID)
 					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, labelDisplay).FontSize(13).FontWeight(600).TextColor(tc.Text)
-						ui.Row(c).Padding(1, 5).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
-							ui.Box(c).Size(5, 5).Radius(2.5).Background(tc.Success)
-							ui.Text(c, "Connected").FontSize(9).FontWeight(600).TextColor(tc.Success)
-						})
+						if isConnected {
+							ui.Row(c).Padding(1, 5).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+								ui.Box(c).Size(5, 5).Radius(2.5).Background(tc.Success)
+								ui.Text(c, "Connected").FontSize(9).FontWeight(600).TextColor(tc.Success)
+							})
+						} else {
+							ui.Row(c).Padding(1, 5).Radius(4).Background(tc.Warning.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+								ui.Box(c).Size(5, 5).Radius(2.5).Background(tc.Warning)
+								ui.Text(c, "Disconnected").FontSize(9).FontWeight(600).TextColor(tc.Warning)
+							})
+						}
 					})
 					subText := fmt.Sprintf("%s • %s", displayHost, remotePath)
 					ui.Text(c, subText).FontSize(11).TextColor(tc.TextMuted).SingleLine()
@@ -1107,6 +1182,11 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 				actionItem(icons.TablerFolderOpen, "Change Remote Directory", fmt.Sprintf("Switch to another path on %s", displayHost), "", false, func() {
 					a.SSHIsChangingDir = !a.SSHIsChangingDir
 					a.SSHNewDirPath = remotePath
+				})
+
+				actionItem(icons.TablerRefresh, "Reconnect SSH Connection", "Restore connection if network was dropped or interrupted", "", false, func() {
+					a.ShowSSHQuickMenu = false
+					a.ReconnectSSH()
 				})
 
 				actionItem(icons.TablerRefresh, "Refresh Remote Explorer", "Reload remote file and directory tree from server", "", false, func() {

@@ -39,7 +39,7 @@ go test ./app/native/...
 go test ./core/...
 
 # 3. Build native binary
-go build -o dist/forge-native ./app/native/cmd/forge-native
+go build -o build/forge-ade ./app/native/cmd/forge-ade
 ```
 
 ## Conventions

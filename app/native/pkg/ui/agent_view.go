@@ -1949,13 +1949,27 @@ func (a *AppUI) workspaceMenuItems(m *ui.Menu) {
 	}
 	for _, ws := range projects {
 		path := ws
-		if m.Item(menuChecked(sameWorkspacePath(path, current), resolveProjectName(path))).Chosen() {
+		label := resolveProjectName(path)
+		if strings.HasPrefix(path, "ssh://") {
+			_, remotePath, displayHost, folder := parseSSHWorkspaceURI(path)
+			if folder == "" || folder == "remote-root" {
+				folder = filepath.Base(remotePath)
+			}
+			label = fmt.Sprintf("SSH: %s (%s)", displayHost, folder)
+		}
+		if m.Item(menuChecked(sameWorkspacePath(path, current), label)).Chosen() {
 			a.switchWorkspace(path)
 		}
 	}
 	m.Separator()
+	if m.Item("Switch Workspace...").Shortcut(ui.Cmd|ui.Alt, ui.KeyO).Chosen() {
+		a.OpenProjectSwitcherModal()
+	}
 	if m.Item("Open folder…").Chosen() {
 		a.openWorkspaceFolder()
+	}
+	if m.Item("Connect SSH Remote Folder...").Shortcut(ui.Cmd|ui.Shift, ui.KeyR).Chosen() {
+		a.OpenSSHModal()
 	}
 	if m.Item(menuChecked(current == "", "General (Work outside project)")).Chosen() {
 		a.switchWorkspace("")

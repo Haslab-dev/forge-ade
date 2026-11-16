@@ -210,7 +210,13 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 		if activeModel == "" {
 			activeModel = cfg.Model
 		} else {
-			prov := as.engine.LLMClient.FindProviderForModel(activeModel)
+			prov := sess.Provider
+			if prov == "" {
+				prov = as.ActiveProvider
+			}
+			if prov == "" {
+				prov = as.engine.LLMClient.FindProviderForModel(activeModel)
+			}
 			if prov != "" {
 				as.engine.LLMClient.SetActiveModel(prov, activeModel)
 			} else {

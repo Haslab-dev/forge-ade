@@ -25,6 +25,9 @@ func (a *AppUI) modal(c *ui.Context, open *bool, fn func()) ui.Element {
 
 // renderModals orchestrates all popup modals and overlay dialogs.
 func (a *AppUI) renderModals(c *ui.Context) {
+	if a.ShowProjectSwitcherModal {
+		a.renderProjectSwitcherModal(c)
+	}
 	if a.Palette != nil && a.Palette.IsOpen {
 		a.renderPaletteModal(c)
 	}
