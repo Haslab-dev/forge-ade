@@ -26,6 +26,12 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 	}
 	as.MdOpts.Theme = a.ThemeMgr.MarkdownTheme()
 	as.MdOpts.WrapCode = true
+	// Reveal at once with no fade animation so markdown.Stream does not schedule
+	// continuous 60fps/120fps AnimationFrame redraws and repeated AST parsing.
+	as.MdOpts.Reveal = &markdown.Reveal{
+		Unit: markdown.AtOnce,
+		Fade: -1,
+	}
 
 	// Custom CodeBlock renderer for standard programming languages
 	as.MdOpts.CodeBlock = func(c *ui.Context, b *markdown.CodeBlockView) {
@@ -966,7 +972,7 @@ func (a *AppUI) renderTurnDesignCard(c *ui.Context, tc theme.ThemeColors, m *age
 	}
 	if targetFile == "" {
 		for _, t := range m.Tools {
-			args := parseToolArgs(t.Command, t.ToolName)
+			args := parseToolArgsCached(t)
 			if isDeckOrMotionFile(args.Path) {
 				targetFile = args.Path
 				break
@@ -1202,7 +1208,7 @@ func (a *AppUI) renderToolMCPCallBlock(c *ui.Context, tc theme.ThemeColors, t *a
 
 // renderToolDesignBlock renders the specialized Forge-Design Tool Execution Card.
 func (a *AppUI) renderToolDesignBlock(c *ui.Context, tc theme.ThemeColors, t *agent.ToolExecution, cleanOut string, failed bool) {
-	args := parseToolArgs(t.Command, t.ToolName)
+	args := parseToolArgsCached(t)
 	targetPath := args.Path
 	if targetPath == "" {
 		if a.Workspace != nil && a.Workspace.RootDir != "" {

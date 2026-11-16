@@ -632,7 +632,7 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, sess
 		if m.ShowTools || (!m.Done && len(ordinary) > 0) {
 			for _, tool := range ordinary {
 				thisTool := tool
-				args := parseToolArgs(thisTool.Command, thisTool.ToolName)
+				args := parseToolArgsCached(thisTool)
 				nl := strings.ToLower(thisTool.ToolName)
 				isSkill := strings.Contains(nl, "skill")
 				isMCPLoad := strings.Contains(nl, "mcp_load") || strings.Contains(nl, "load_mcp") || strings.Contains(nl, "mcp_connect") || strings.Contains(nl, "connect_mcp") || strings.Contains(nl, "mcp_server") || strings.Contains(nl, "list_mcp")
@@ -2682,6 +2682,18 @@ type ParsedToolArgs struct {
 	OldString string
 	NewString string
 	Query     string
+}
+
+func parseToolArgsCached(t *agent.ToolExecution) ParsedToolArgs {
+	if t == nil {
+		return ParsedToolArgs{}
+	}
+	if p, ok := t.ParsedArgs.(ParsedToolArgs); ok {
+		return p
+	}
+	parsed := parseToolArgs(t.Command, t.ToolName)
+	t.ParsedArgs = parsed
+	return parsed
 }
 
 func parseToolArgs(raw string, toolName string) ParsedToolArgs {

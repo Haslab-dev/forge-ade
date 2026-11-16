@@ -766,6 +766,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 func (a *AppUI) renderSideChatPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	a.SideChatMd.Theme = a.ThemeMgr.MarkdownTheme()
+	a.SideChatMd.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 
 	ui.Row(c).Height(40).Padding(0, 12).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {

@@ -14,10 +14,11 @@ import (
 )
 
 func main() {
-	// Tune Go runtime for interactive desktop app
-	debug.SetGCPercent(80)
+	// Tune Go runtime for interactive desktop app: maintain ultra-lean RAM footprint (<30-50MB)
+	// and prevent macOS swap thrashing on memory-constrained systems.
+	debug.SetGCPercent(40)
 	if os.Getenv("GOMEMLIMIT") == "" {
-		debug.SetMemoryLimit(512 * 1024 * 1024)
+		debug.SetMemoryLimit(96 * 1024 * 1024)
 	}
 
 	// Resolve target workspace directory. Bundles launched via Finder /

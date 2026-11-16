@@ -32,6 +32,7 @@ type ToolExecution struct {
 	DurationMs  int64  `json:"durationMs"`
 	Output      string `json:"output"`
 	Expanded    bool   `json:"-"`
+	ParsedArgs  any    `json:"-"`
 }
 
 // FileChange represents a touched file with added and deleted lines.
@@ -171,10 +172,11 @@ type ChatMessage struct {
 	// emitting a harness protocol-state JSON blob (active_skills /
 	// active_system_prompts / plugin catalogs) that some ACP CLIs print to
 	// stdout — forge-ade parses these in-band; native must not show them.
-	SkipHarnessDumps bool      `json:"-"`
-	TotalSteps       int       // steps reported by agent:turn_end
-	Feedback         string    // "up" or "down" (user message feedback)
-	TurnStartedAt    time.Time `json:"-"` // live elapsed while streaming
+	SkipHarnessDumps bool         `json:"-"`
+	TotalSteps       int          // steps reported by agent:turn_end
+	Feedback         string       // "up" or "down" (user message feedback)
+	TurnStartedAt    time.Time    `json:"-"` // live elapsed while streaming
+	cachedSnapshot   *ChatMessage `json:"-"`
 }
 
 // AgentSession represents a single task session in the ForgeADE agent workspace.
@@ -250,6 +252,7 @@ type AgentState struct {
 	Messages           []*ChatMessage // alias for active session messages
 	Invalidate         func()
 	lastInvalidate     time.Time
+	invalidatePending  bool
 	invalidateMu       sync.Mutex
 
 	// streamCancels holds the context cancel funcs of in-flight raw-LLM
@@ -310,7 +313,10 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 		Invalidate:      invalidate,
 		NextID:          1,
 		MdOpts: markdown.Options{
-			Reveal: &markdown.Reveal{Unit: markdown.ByWord},
+			Reveal: &markdown.Reveal{
+				Unit: markdown.AtOnce,
+				Fade: -1,
+			},
 		},
 	}
 
@@ -366,6 +372,9 @@ func snapshotMessageLocked(m *ChatMessage) *ChatMessage {
 	if m == nil {
 		return nil
 	}
+	if m.Done && m.cachedSnapshot != nil {
+		return m.cachedSnapshot
+	}
 	cp := *m
 	if len(m.Tools) > 0 {
 		cp.Tools = make([]*ToolExecution, len(m.Tools))
@@ -399,6 +408,9 @@ func snapshotMessageLocked(m *ChatMessage) *ChatMessage {
 	if m.PendingApproval != nil {
 		pap := *m.PendingApproval
 		cp.PendingApproval = &pap
+	}
+	if m.Done {
+		m.cachedSnapshot = &cp
 	}
 	return &cp
 }
@@ -462,7 +474,22 @@ func (as *AgentState) throttledInvalidate() {
 	}
 	as.invalidateMu.Lock()
 	now := time.Now()
-	if now.Sub(as.lastInvalidate) < 33*time.Millisecond {
+	elapsed := now.Sub(as.lastInvalidate)
+	if elapsed < 33*time.Millisecond {
+		if !as.invalidatePending {
+			as.invalidatePending = true
+			remaining := 33*time.Millisecond - elapsed
+			time.AfterFunc(remaining, func() {
+				as.invalidateMu.Lock()
+				as.lastInvalidate = time.Now()
+				as.invalidatePending = false
+				inv := as.Invalidate
+				as.invalidateMu.Unlock()
+				if inv != nil {
+					inv()
+				}
+			})
+		}
 		as.invalidateMu.Unlock()
 		return
 	}
@@ -573,6 +600,7 @@ func (as *AgentState) MutateMessage(sessionID string, messageID int, fn func(m *
 		}
 		for _, m := range s.Messages {
 			if m.ID == messageID {
+				m.cachedSnapshot = nil
 				fn(m)
 				return
 			}
@@ -594,6 +622,7 @@ func (as *AgentState) ToggleMessageFeedback(sessionID string, messageID int, kin
 		sess = s
 		for _, m := range s.Messages {
 			if m.ID == messageID {
+				m.cachedSnapshot = nil
 				if m.Feedback == kind {
 					m.Feedback = ""
 				} else {
