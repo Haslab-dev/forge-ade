@@ -3,11 +3,14 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/events"
@@ -100,6 +103,32 @@ type ACPManager struct {
 	OnCommands     func(sessionID string, commands []string)
 	OnNeedRedraw   func()
 	eventQueue     chan func()
+
+	// Backpressure bookkeeping. eventQueue is bounded; postEvent NEVER blocks
+	// on it: the publishers run on the agent streaming callbacks (which hold
+	// the RakitKode manager lock per token delta), so a blocking send here
+	// deadlocks the whole engine once the consumer stalls (P0-1).
+	droppedEvents atomic.Int64
+	lastDropLog   atomic.Int64 // unix nano of last saturation log (rate limit)
+
+	// Coalescing for streaming deltas: a burst of token deltas for one
+	// session occupies at most one queue slot at a time (postCoalesced).
+	coalesceMu    sync.Mutex
+	pendingChunks map[string]*deltaChunk
+
+	// Queue lifecycle (Close): sends are guarded by queueMu so closing the
+	// channel can never race a publisher into a send-on-closed panic.
+	queueMu   sync.RWMutex
+	queueDead bool
+	closeOnce sync.Once
+}
+
+// deltaChunk accumulates same-kind deltas for one session until the queued
+// drain closure runs on the consumer goroutine.
+type deltaChunk struct {
+	mu     sync.Mutex
+	buf    string
+	queued bool
 }
 
 // NewACPManager creates and initializes the native ACP integration.
@@ -122,15 +151,143 @@ func NewACPManager(engine *engine.Engine, onRedraw func()) *ACPManager {
 
 func (mgr *ACPManager) processEventQueue() {
 	for fn := range mgr.eventQueue {
-		fn()
+		// A panicking handler must kill neither the consumer loop nor the
+		// app (P1-1): log and keep draining.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[acp] event handler panicked: %v\n%s", r, debugStack())
+				}
+			}()
+			fn()
+		}()
+	}
+}
+
+// debugStack returns the current goroutine stack for panic logs.
+func debugStack() string {
+	buf := make([]byte, 8192)
+	n := runtime.Stack(buf, false)
+	return string(buf[:n])
+}
+
+// noteDropped records a dropped event and logs saturation at most once a
+// minute. Dropping is always preferable to blocking: the publisher holds the
+// agent engine's streaming lock.
+func (mgr *ACPManager) noteDropped() {
+	n := mgr.droppedEvents.Add(1)
+	now := time.Now().UnixNano()
+	last := mgr.lastDropLog.Load()
+	if now-last > int64(time.Minute) && mgr.lastDropLog.CompareAndSwap(last, now) {
+		log.Printf("[acp] event queue saturated: dropped %d events total (streaming continues, stale UI events discarded)", n)
 	}
 }
 
 func (mgr *ACPManager) postEvent(fn func()) {
-	if mgr.eventQueue != nil {
-		mgr.eventQueue <- fn
-	} else {
+	if mgr.eventQueue == nil {
 		fn()
+		return
+	}
+	// Non-blocking send: a full queue must NEVER stall the publisher
+	// goroutine — RakitKode publishes token deltas inline while holding its
+	// manager lock, and a blocked publisher deadlocks every as.mu→RK.mu
+	// caller (the verified P0-1 three-way deadlock).
+	mgr.queueMu.RLock()
+	if mgr.queueDead {
+		mgr.queueMu.RUnlock()
+		return
+	}
+	select {
+	case mgr.eventQueue <- fn:
+	default:
+		mgr.noteDropped()
+	}
+	mgr.queueMu.RUnlock()
+}
+
+// Close stops the event consumer goroutine. Events published after Close are
+// dropped. Safe to call multiple times and from any goroutine.
+func (mgr *ACPManager) Close() {
+	if mgr == nil {
+		return
+	}
+	mgr.closeOnce.Do(func() {
+		if mgr.eventQueue == nil {
+			return
+		}
+		mgr.queueMu.Lock()
+		mgr.queueDead = true
+		close(mgr.eventQueue)
+		mgr.queueMu.Unlock()
+	})
+}
+
+// postDeltaCoalesced merges rapid same-kind streaming deltas for a session:
+// while a drain closure for (kind, session) is queued, further deltas just
+// append to its buffer, so a burst of N chunks costs one queue slot instead
+// of N. Text is never lost — the closure delivers everything accumulated by
+// the time it runs, in order (the queue is FIFO).
+func (mgr *ACPManager) postDeltaCoalesced(sessionID, kind, text string, deliver func(sessionID, text string)) {
+	if deliver == nil || sessionID == "" || text == "" {
+		return
+	}
+	key := kind + ":" + sessionID
+	mgr.coalesceMu.Lock()
+	if mgr.pendingChunks == nil {
+		mgr.pendingChunks = make(map[string]*deltaChunk)
+	}
+	ch := mgr.pendingChunks[key]
+	if ch == nil {
+		ch = &deltaChunk{}
+		mgr.pendingChunks[key] = ch
+	}
+	ch.mu.Lock()
+	ch.buf += text
+	alreadyQueued := ch.queued
+	ch.queued = true
+	ch.mu.Unlock()
+	mgr.coalesceMu.Unlock()
+
+	if alreadyQueued {
+		return
+	}
+
+	for attempt := 0; ; attempt++ {
+		mgr.queueMu.RLock()
+		if mgr.queueDead {
+			mgr.queueMu.RUnlock()
+			ch.mu.Lock()
+			ch.queued = false
+			ch.mu.Unlock()
+			return
+		}
+		select {
+		case mgr.eventQueue <- func() {
+			ch.mu.Lock()
+			buf := ch.buf
+			ch.buf = ""
+			ch.queued = false
+			ch.mu.Unlock()
+			if buf != "" {
+				deliver(sessionID, buf)
+			}
+		}:
+			mgr.queueMu.RUnlock()
+			return
+		default:
+			mgr.queueMu.RUnlock()
+		}
+		if attempt >= 2 {
+			// Queue still full after a few yields: release the queued claim
+			// (the buffered text stays and is flushed by the next delta's
+			// drain) and count the drop. Never block or spin the publisher.
+			ch.mu.Lock()
+			ch.queued = false
+			ch.mu.Unlock()
+			mgr.noteDropped()
+			return
+		}
+		runtime.Gosched()
 	}
 }
 
@@ -726,9 +883,12 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		}
 		text := str(e.Data, "delta", "text", "content")
 		if sessionID != "" && text != "" {
-			mgr.postEvent(func() {
+			// Token deltas are the highest-volume events: coalesce per
+			// session so a saturating queue drops bursts, never the turn
+			// lifecycle events around them (and never blocks the publisher).
+			mgr.postDeltaCoalesced(sessionID, "token", text, func(sid, txt string) {
 				if mgr.OnTokenChunk != nil {
-					mgr.OnTokenChunk(sessionID, text)
+					mgr.OnTokenChunk(sid, txt)
 				}
 			})
 		}
@@ -742,9 +902,9 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		sessionID := sessionKey(e.Data)
 		text := str(e.Data, "delta", "text", "content", "thinking")
 		if sessionID != "" && text != "" {
-			mgr.postEvent(func() {
+			mgr.postDeltaCoalesced(sessionID, "thought", text, func(sid, txt string) {
 				if mgr.OnThoughtChunk != nil {
-					mgr.OnThoughtChunk(sessionID, text)
+					mgr.OnThoughtChunk(sid, txt)
 				}
 			})
 		}

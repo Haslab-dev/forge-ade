@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -139,6 +140,13 @@ func NewEngine(dataDir string) *Engine {
 	// Connect MCP servers and register aliases in background so engine startup is non-blocking.
 	if e.MCPMgr != nil && len(e.MCPMgr.ListServers()) > 0 {
 		go func() {
+			// A panic in background MCP discovery must not kill the app
+			// (P1-6); startup simply continues without MCP tools.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[engine] MCP background sync panicked: %v\n%s", r, debug.Stack())
+				}
+			}()
 			_ = e.SyncMCP(nil)
 		}()
 	}
@@ -498,7 +506,16 @@ func (e *Engine) StartWatcher(rootDir string, onChange func()) {
 			}
 			cb := e.watcherOnChange
 			if cb != nil {
-				e.watcherTimer = time.AfterFunc(150*time.Millisecond, cb)
+				// The debounce callback runs on its own timer goroutine: a
+				// panicking handler must be logged, not fatal (P1-6).
+				e.watcherTimer = time.AfterFunc(150*time.Millisecond, func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("[engine] watcher debounce callback panicked: %v\n%s", r, debug.Stack())
+						}
+					}()
+					cb()
+				})
 			}
 			e.watcherMu.Unlock()
 		})

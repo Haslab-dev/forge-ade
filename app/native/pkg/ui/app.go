@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -152,6 +154,16 @@ type AppUI struct {
 	// its open argument every frame, so it must point at stable state —
 	// passing nil panics on every permission request.
 	PermissionModalOpen bool
+
+	// Backing pointer for the editor discard/overwrite/replace confirm modal.
+	EditorConfirmModalOpen bool
+
+	// Floating turn-status card (ZCode-style: Changes / Branch / Commit /
+	// Progress / Agents), toggled from the composer status strip and the
+	// working pill. subagentFirstSeen timestamps each subagent ID the first
+	// time the card sees it, to render "Running for Xm Ys".
+	ShowTurnStatusCard bool
+	subagentFirstSeen  map[string]time.Time
 
 	// Generic confirm dialog (confirmDialog / renderConfirmDialog): one
 	// pending destructive action at a time; Escape and outside click cancel.
@@ -394,7 +406,7 @@ type AppUI struct {
 	prefsDirty     atomic.Bool // render detected a pref change; ticker persists it
 	prefsSaving    atomic.Bool // a SaveUIPrefs write is in flight
 	lastAutoSaveAt time.Time
-	shellWarned    bool // DefaultShell LookPath failure toasted once
+	shellWarned    atomic.Bool // DefaultShell LookPath failure toasted once (ticker goroutine writes, View may read)
 
 	localLLMOnlineFlag bool      // last probe result for Ollama / LM Studio
 	localLLMCheckedAt  time.Time // when localLLMOnlineFlag was last refreshed
@@ -436,9 +448,23 @@ func (a *AppUI) drainToasts(c *ui.Context) {
 // (tests) have no window, so fn executes inline there.
 func (a *AppUI) runOnUI(fn func()) {
 	if a.Window != nil {
-		a.Window.Update(fn)
+		a.Window.Update(func() {
+			defer recoverFrame("runOnUI")
+			fn()
+		})
 	} else {
+		defer recoverFrame("runOnUI-headless")
 		fn()
+	}
+}
+
+// recoverFrame converts a panicking frame callback into a logged error
+// instead of killing the whole process. A panic mid-frame leaves the tree
+// inconsistent, so the next frame rebuilds from scratch — degraded but
+// alive beats dead.
+func recoverFrame(where string) {
+	if r := recover(); r != nil {
+		log.Printf("[forge-ade] recovered panic in %s: %v\n%s", where, r, debug.Stack())
 	}
 }
 
@@ -625,13 +651,19 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI.ACPMgr.OnTurnDone = func(sessionID string, info agent.TurnEndInfo) {
 		// Finalizes the message, maps the status, records turn changes, and
 		// returns the next queued steer prompt to run in its originating session.
+		// Agent state is lock-guarded, but every UI mutation (Mode, Editor,
+		// FollowAgent) below MUST run on the main thread: this handler executes
+		// on the ACPManager event-consumer goroutine (P1-2).
 		nativeID := appUI.Agent.MapInternalSession(sessionID)
 		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
 			go appUI.Agent.TriggerTurnForSession(nativeID, next)
 		}
 		// Follow Agent: jump the editor to the file the turn edited
 		// (layoutStore.isFollowAgentMode parity).
-		if appUI.FollowAgent {
+		appUI.runOnUI(func() {
+			if !appUI.FollowAgent {
+				return
+			}
 			if changed, ok := appUI.Agent.LastTurnChangedFile(nativeID); ok {
 				full := appUI.Workspace.ResolveFullPath(changed)
 				if _, err := appUI.Editor.OpenFile(full, changed); err == nil {
@@ -641,7 +673,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 					appUI.Window.Invalidate()
 				}
 			}
-		}
+		})
 	}
 
 	appUI.CLIMgr = agent.NewAgentCLIManager(rootDir, func() {
@@ -769,20 +801,29 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 			case <-appUI.closeCh:
 				return
 			case <-ticker.C:
-				if appUI.Agent.HasRunningSession() && appUI.Window != nil {
-					appUI.Window.Invalidate()
-				}
-				if appUI.prefsDirty.CompareAndSwap(true, false) && !appUI.prefsSaving.Swap(true) {
-					go func() {
-						defer appUI.prefsSaving.Store(false)
-						appUI.SaveUIPrefs()
+				// A panicking tick handler must be logged and the ticker must
+				// keep ticking — not take the app down (P1-6).
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("[forge-ade] ticker tick panicked: %v\n%s", r, debug.Stack())
+						}
 					}()
-				}
-				appUI.syncTerminalShell()
-				if appUI.Settings != nil && appUI.Settings.AutoSave && time.Since(appUI.lastAutoSaveAt) >= 30*time.Second {
-					appUI.lastAutoSaveAt = time.Now()
-					appUI.Editor.SaveAllDirty()
-				}
+					if appUI.Agent.HasRunningSession() && appUI.Window != nil {
+						appUI.Window.Invalidate()
+					}
+					if appUI.prefsDirty.CompareAndSwap(true, false) && !appUI.prefsSaving.Swap(true) {
+						go func() {
+							defer appUI.prefsSaving.Store(false)
+							appUI.SaveUIPrefs()
+						}()
+					}
+					appUI.syncTerminalShell()
+					if appUI.Settings != nil && appUI.Settings.AutoSave && time.Since(appUI.lastAutoSaveAt) >= 30*time.Second {
+						appUI.lastAutoSaveAt = time.Now()
+						appUI.Editor.SaveAllDirty()
+					}
+				}()
 			}
 		}
 	}()
@@ -975,6 +1016,7 @@ func (a *AppUI) SetWindow(w *mygo.Window) {
 
 // View builds the entire native GPU frame matching ForgeADE layout.
 func (a *AppUI) View(c *ui.Context) {
+	defer recoverFrame("View")
 	if a.ThemeMgr != nil {
 		c.SetTheme(a.ThemeMgr.ActiveTheme())
 	}
@@ -1211,8 +1253,29 @@ func (a *AppUI) Close() {
 	if a.Engine != nil && a.Engine.ShellMgr != nil {
 		a.Engine.ShellMgr.StopAll()
 	}
+	// Close EVERY per-workspace terminal, not just the active one: switching
+	// workspaces parks previous TerminalStates in this map and their PTY
+	// children used to outlive the app (P1-4). a.Terminal is one of the map
+	// entries; TerminalState.Close is idempotent.
+	if a.WorkspaceTerminals != nil {
+		for key, ts := range a.WorkspaceTerminals {
+			if ts != nil {
+				ts.Close()
+			}
+			delete(a.WorkspaceTerminals, key)
+		}
+	}
 	if a.Terminal != nil {
 		a.Terminal.Close()
+	}
+	// Kill ACP CLI children (spawned with Setpgid:true): Manager.Close
+	// SIGTERM→SIGKILLs each process group so agent harnesses never outlive
+	// the app (P1-4).
+	if a.Engine != nil && a.Engine.ACPMgr != nil {
+		a.Engine.ACPMgr.Close()
+	}
+	if a.ACPMgr != nil {
+		a.ACPMgr.Close()
 	}
 }
 
@@ -1281,8 +1344,7 @@ func (a *AppUI) syncTerminalShell() {
 	shell := strings.TrimSpace(a.Settings.DefaultShell)
 	if shell != "" {
 		if _, err := exec.LookPath(shell); err != nil {
-			if !a.shellWarned {
-				a.shellWarned = true
+			if a.shellWarned.CompareAndSwap(false, true) {
 				a.queueToast(ui.Toast{
 					Title:       "Default Shell Unavailable",
 					Description: shell + " was not found on PATH — using the system default shell",

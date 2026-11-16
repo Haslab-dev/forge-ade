@@ -105,35 +105,39 @@ func (ws *WorkspaceState) IsRemote() bool {
 	return strings.HasPrefix(ws.RootDir, "ssh://")
 }
 
-// Refresh re-scans the workspace directory for editable files.
+// Refresh re-scans the workspace directory for editable files. The walk (and
+// any remote SFTP listing) runs WITHOUT ws.mu held — only the final swap is
+// lock-guarded — so a slow directory scan or network round-trip never blocks
+// render reads or watcher-triggered refreshes (P1-3, GitManager pattern).
 func (ws *WorkspaceState) Refresh() {
 	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	var files []WorkspaceFile
-	maxFiles := 1200
-	ws.loadedDirs = map[string]bool{"": true}
-	count := 0
+	root := ws.RootDir
+	rfs := ws.RemoteFS
+	ws.mu.Unlock()
 
 	// No workspace opened yet — nothing to scan.
-	if ws.RootDir == "" {
-		ws.Files = nil
-		ws.Version++
+	if root == "" {
+		ws.mu.Lock()
+		if ws.RootDir == "" {
+			ws.Files = nil
+			ws.loadedDirs = map[string]bool{"": true}
+			ws.Version++
+		}
+		ws.mu.Unlock()
 		return
 	}
 
-	// Handle remote SSH directory scanning (depth 1 lazy scan — single SFTP request, 0 lag)
-	if strings.HasPrefix(ws.RootDir, "ssh://") && ws.RemoteFS != nil {
-		rootDir := ws.RootDir
-		rfs := ws.RemoteFS
-		ws.mu.Unlock()
+	var files []WorkspaceFile
+	maxFiles := 1200
+	count := 0
 
-		entries, isRemote, err := rfs.ListDirectory(rootDir)
+	// Remote SSH directory scanning (depth 1 lazy scan — single SFTP request,
+	// 0 lag). Lock-free: the listing is a network call.
+	if strings.HasPrefix(root, "ssh://") && rfs != nil {
+		entries, isRemote, err := rfs.ListDirectory(root)
 		if !isRemote || err != nil {
-			ws.mu.Lock()
 			return
 		}
-		var files []WorkspaceFile
 		for _, entry := range entries {
 			if entry == nil {
 				continue
@@ -145,7 +149,7 @@ func (ws *WorkspaceState) Refresh() {
 			if entry.IsDir && (name == "node_modules" || name == ".git" || name == "dist" || name == "build" || name == ".next" || name == "vendor") {
 				continue
 			}
-			rel := strings.TrimPrefix(entry.Path, rootDir)
+			rel := strings.TrimPrefix(entry.Path, root)
 			rel = strings.TrimPrefix(rel, "/")
 			files = append(files, WorkspaceFile{
 				RelativePath: rel,
@@ -163,12 +167,17 @@ func (ws *WorkspaceState) Refresh() {
 		})
 
 		ws.mu.Lock()
-		ws.Files = files
-		ws.loadedDirs = map[string]bool{"": true}
-		ws.Version++
-		if ws.SelectedPath == "" && len(files) > 0 {
-			ws.SelectedPath = files[0].RelativePath
+		// A workspace switch during the scan must not overwrite the new
+		// root's index with the old root's results.
+		if ws.RootDir == root {
+			ws.Files = files
+			ws.loadedDirs = map[string]bool{"": true}
+			ws.Version++
+			if ws.SelectedPath == "" && len(files) > 0 {
+				ws.SelectedPath = files[0].RelativePath
+			}
 		}
+		ws.mu.Unlock()
 		return
 	}
 
@@ -179,7 +188,7 @@ func (ws *WorkspaceState) Refresh() {
 		path  string
 		depth int
 	}
-	queue := []dirEntry{{path: ws.RootDir, depth: 0}}
+	queue := []dirEntry{{path: root, depth: 0}}
 	const (
 		maxDepth  = 6
 		perDirCap = 120
@@ -210,7 +219,7 @@ func (ws *WorkspaceState) Refresh() {
 			if strings.HasPrefix(name, ".") || binarySuffix(name) {
 				continue
 			}
-			rel, err := filepath.Rel(ws.RootDir, filepath.Join(cur.path, name))
+			rel, err := filepath.Rel(root, filepath.Join(cur.path, name))
 			if err != nil {
 				rel = name
 			}
@@ -234,11 +243,16 @@ func (ws *WorkspaceState) Refresh() {
 		return files[i].RelativePath < files[j].RelativePath
 	})
 
-	ws.Files = files
-	ws.Version++
-	if ws.SelectedPath == "" && len(files) > 0 {
-		ws.SelectedPath = files[0].RelativePath
+	ws.mu.Lock()
+	if ws.RootDir == root {
+		ws.Files = files
+		ws.loadedDirs = map[string]bool{"": true}
+		ws.Version++
+		if ws.SelectedPath == "" && len(files) > 0 {
+			ws.SelectedPath = files[0].RelativePath
+		}
 	}
+	ws.mu.Unlock()
 }
 
 // binarySuffix reports whether a filename looks like a binary asset the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,36 @@ import (
 	"github.com/hasdev/forge-ade/core/agentsession"
 	internalgit "github.com/hasdev/forge-ade/core/git"
 )
+
+// goSave runs fn on a new goroutine, converting a panic into a log so a
+// background persistence failure never kills the process (P1-6).
+func goSave(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[agent] %s panicked: %v\n%s", name, r, debugStack())
+			}
+		}()
+		fn()
+	}()
+}
+
+// nextMessageIDLocked returns a per-session monotonically increasing message
+// ID. Deriving IDs from len(Messages)+1 reused IDs after /clear (messages
+// are niled, the transcript restarts at 1) and collided with restored
+// transcripts — snapshot caches keyed by ID went stale. Callers hold as.mu.
+func nextMessageIDLocked(s *AgentSession) int {
+	if s.nextMsgID <= 0 {
+		s.nextMsgID = len(s.Messages) + 1
+	}
+	id := s.nextMsgID
+	if id <= len(s.Messages) {
+		// Defensive: never collide with anything already in the transcript.
+		id = len(s.Messages) + 1
+	}
+	s.nextMsgID = id + 1
+	return id
+}
 
 // ToolExecution represents an individual tool run in an agent turn.
 type ToolExecution struct {
@@ -150,6 +181,16 @@ const (
 	EffortMax    ReasoningEffort = "max"
 )
 
+// MessageBlock is one element of an assistant turn's ordered timeline: a
+// streamed text segment or a tool call, in the order the agent produced
+// them. Blocks reference ToolExecution entries by ID; msg.Text remains the
+// concatenation of all text segments for copy/search/title consumers.
+type MessageBlock struct {
+	Kind   string `json:"kind"` // "text" | "tool"
+	Text   string `json:"text,omitempty"`
+	ToolID string `json:"toolId,omitempty"`
+}
+
 // ChatMessage represents a single interaction turn in the AI Agent conversation.
 type ChatMessage struct {
 	ID              int
@@ -168,6 +209,10 @@ type ChatMessage struct {
 	// PendingQuestions carries a structured agent:ask (ask tool) with option
 	// chips and custom answers — PendingQuestionsCard / AgentQuestionModal.
 	PendingQuestions []AgentQuestion
+	// Blocks is the ordered text/tool timeline for this turn. Nil for
+	// sessions loaded from older disk formats — the UI falls back to the
+	// legacy fixed (tools-then-text) layout when Blocks is empty.
+	Blocks []*MessageBlock `json:"blocks,omitempty"`
 	// SkipHarnessDumps drops further text deltas once the stream starts
 	// emitting a harness protocol-state JSON blob (active_skills /
 	// active_system_prompts / plugin catalogs) that some ACP CLIs print to
@@ -177,6 +222,72 @@ type ChatMessage struct {
 	Feedback         string       // "up" or "down" (user message feedback)
 	TurnStartedAt    time.Time    `json:"-"` // live elapsed while streaming
 	cachedSnapshot   *ChatMessage `json:"-"`
+}
+
+// appendTextBlockDeltaLocked appends a streamed delta to the timeline's
+// last text block, creating one when the previous block is a tool call.
+func appendTextBlockDeltaLocked(msg *ChatMessage, delta string) {
+	if n := len(msg.Blocks); n > 0 && msg.Blocks[n-1] != nil && msg.Blocks[n-1].Kind == "text" {
+		msg.Blocks[n-1].Text += delta
+		return
+	}
+	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "text", Text: delta})
+}
+
+// appendToolBlockLocked records a new tool call in the timeline. Called only
+// when a ToolExecution is created — tool_end updates must not add blocks.
+func appendToolBlockLocked(msg *ChatMessage, toolID string) {
+	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "tool", ToolID: toolID})
+}
+
+// findToolByID returns the ToolExecution with the given ID, or nil.
+func findToolByID(msg *ChatMessage, id string) *ToolExecution {
+	for _, t := range msg.Tools {
+		if t != nil && t.ID == id {
+			return t
+		}
+	}
+	return nil
+}
+
+// setAssistantTextLocked replaces a message's text wholesale (error
+// suffixes, stop markers) and rebuilds its timeline to match.
+func setAssistantTextLocked(msg *ChatMessage, text string) {
+	msg.Text = text
+	if strings.TrimSpace(text) == "" {
+		msg.Blocks = nil
+		return
+	}
+	msg.Blocks = []*MessageBlock{{Kind: "text", Text: text}}
+}
+
+// CompactActiveSession truncates the active session's transcript to the
+// first message plus the last three, under the state lock, and persists the
+// result. Returns the number of removed messages.
+func (as *AgentState) CompactActiveSession() (int, error) {
+	as.mu.Lock()
+	sess := as.ActiveSession()
+	if sess == nil {
+		as.mu.Unlock()
+		return 0, fmt.Errorf("no active session")
+	}
+	if len(sess.Messages) <= 4 {
+		as.mu.Unlock()
+		return 0, fmt.Errorf("conversation is already within compact bounds")
+	}
+	removed := len(sess.Messages) - 4
+	compacted := make([]*ChatMessage, 0, 4)
+	compacted = append(compacted, sess.Messages[0])
+	compacted = append(compacted, sess.Messages[len(sess.Messages)-3:]...)
+	sess.Messages = compacted
+	if as.ActiveSessionID == sess.ID {
+		as.Messages = sess.Messages
+	}
+	sess.UpdatedAt = time.Now()
+	as.mu.Unlock()
+
+	as.SaveSessionToDisk(sess)
+	return removed, nil
 }
 
 // AgentSession represents a single task session in the ForgeADE agent workspace.
@@ -204,6 +315,7 @@ type AgentSession struct {
 	LastUsage            *UsageInfo      `json:"lastUsage,omitempty"`
 	SteerQueue           []string        `json:"-"`
 	turnStartFiles       map[string]bool // git snapshot at turn start
+	nextMsgID            int             // per-session monotonic message ID; /clear does NOT reset it (P2f)
 
 	// PendingApprovals queues unanswered permission requests so a second
 	// agent:ask never hides the first one. The streaming message's
@@ -248,7 +360,6 @@ type AgentState struct {
 	TaskManager        *TaskManager
 	Theme              *theme.ThemeManager
 	ACPMgr             *ACPManager
-	statsPending       map[string]bool
 	Messages           []*ChatMessage // alias for active session messages
 	Invalidate         func()
 	lastInvalidate     time.Time
@@ -260,6 +371,12 @@ type AgentState struct {
 	// stream context is local to the turn goroutine).
 	streamCancels      map[string]*streamCancelHandle
 	internalSessionMap sync.Map // remoteManagerID -> nativeSessionID for lock-free bus routing
+
+	// pendingLLMProvider/pendingLLMModel carry a model binding recorded by
+	// syncActiveSession (under as.mu) so applyPendingLLMModel can push it to
+	// the RK LLMClient after the caller releases as.mu (P0-1 layer 3).
+	pendingLLMProvider string
+	pendingLLMModel    string
 }
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
@@ -378,23 +495,33 @@ func snapshotMessageLocked(m *ChatMessage) *ChatMessage {
 	}
 	cp := *m
 	if len(m.Tools) > 0 {
-		cp.Tools = make([]*ToolExecution, len(m.Tools))
-		for j, t := range m.Tools {
+		cp.Tools = make([]*ToolExecution, 0, len(m.Tools))
+		for _, t := range m.Tools {
 			if t == nil {
 				continue
 			}
 			tcp := *t
-			cp.Tools[j] = &tcp
+			cp.Tools = append(cp.Tools, &tcp)
+		}
+	}
+	if len(m.Blocks) > 0 {
+		cp.Blocks = make([]*MessageBlock, 0, len(m.Blocks))
+		for _, b := range m.Blocks {
+			if b == nil {
+				continue
+			}
+			bcp := *b
+			cp.Blocks = append(cp.Blocks, &bcp)
 		}
 	}
 	if len(m.Changes) > 0 {
-		cp.Changes = make([]*FileChange, len(m.Changes))
-		for j, ch := range m.Changes {
+		cp.Changes = make([]*FileChange, 0, len(m.Changes))
+		for _, ch := range m.Changes {
 			if ch == nil {
 				continue
 			}
 			ccp := *ch
-			cp.Changes[j] = &ccp
+			cp.Changes = append(cp.Changes, &ccp)
 		}
 	}
 	if len(m.PendingQuestions) > 0 {
@@ -511,13 +638,17 @@ type TaskTrackerSnapshotData struct {
 	IsSessionRunning bool
 }
 
-// TaskTrackerSnapshot grabs progress, running subagents, and active turn status
-// under a single lock acquisition to prevent UI frame thrashing during streaming.
+// TaskTrackerSnapshot grabs progress, running subagents, and active turn
+// status for one UI frame. Lock-light by contract (P0-1 layer 3): as.mu is
+// taken once to snapshot local state, released, and only then is the
+// RakitKode AgentMgr consulted — its streaming callback holds the manager
+// lock while publishing bus events whose handlers take as.mu, so calling it
+// under as.mu can deadlock the whole app. Called from render every frame.
 func (as *AgentState) TaskTrackerSnapshot() TaskTrackerSnapshotData {
-	as.mu.Lock()
-	defer as.mu.Unlock()
-
 	var data TaskTrackerSnapshotData
+	var remoteID string
+
+	as.mu.Lock()
 	sessionID := as.ActiveSessionID
 
 	if as.TaskManager != nil {
@@ -534,25 +665,22 @@ func (as *AgentState) TaskTrackerSnapshot() TaskTrackerSnapshotData {
 		data.AllDone = data.CompletedTasks == data.TotalTasks && data.TotalTasks > 0
 	}
 
-	if as.engine != nil && as.engine.AgentMgr != nil && sessionID != "" {
-		for _, s := range as.Sessions {
-			if s.ID == sessionID && s.RemoteSessionID != "" {
-				subs := as.engine.AgentMgr.GetSubagents(s.RemoteSessionID)
-				for _, sub := range subs {
-					st := strings.ToLower(fmt.Sprintf("%v", sub.State))
-					if st == "running" || st == "working" || st == "thinking" || st == "executing" {
-						data.RunningSubs++
-					}
-				}
-				break
-			}
-		}
-	}
-
 	for _, s := range as.Sessions {
 		if s.ID == sessionID {
+			remoteID = s.RemoteSessionID
 			data.IsSessionRunning = as.IsStreaming || s.Status == "running" || s.Status == "streaming"
 			break
+		}
+	}
+	as.mu.Unlock()
+
+	if as.engine != nil && as.engine.AgentMgr != nil && remoteID != "" {
+		subs := as.engine.AgentMgr.GetSubagents(remoteID) // strictly outside as.mu
+		for _, sub := range subs {
+			st := strings.ToLower(fmt.Sprintf("%v", sub.State))
+			if st == "running" || st == "working" || st == "thinking" || st == "executing" {
+				data.RunningSubs++
+			}
 		}
 	}
 
@@ -637,7 +765,7 @@ func (as *AgentState) ToggleMessageFeedback(sessionID string, messageID int, kin
 	}
 	as.mu.Unlock()
 	if sess != nil {
-		go as.SaveSessionToDisk(sess)
+		goSave("SaveSessionToDisk", func() { as.SaveSessionToDisk(sess) })
 	}
 	return active
 }
@@ -666,7 +794,7 @@ func (as *AgentState) ClearConversation() {
 	sess.UpdatedAt = time.Now()
 	as.IsStreaming = false
 	as.mu.Unlock()
-	go as.SaveSessionToDisk(sess)
+	goSave("SaveSessionToDisk", func() { as.SaveSessionToDisk(sess) })
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
@@ -733,7 +861,7 @@ func (as *AgentState) ensureStreamingMessage(sess *AgentSession) *ChatMessage {
 		}
 	}
 	msg := &ChatMessage{
-		ID:            len(sess.Messages) + 1,
+		ID:            nextMessageIDLocked(sess),
 		Role:          "assistant",
 		Done:          false,
 		Timestamp:     time.Now(),
@@ -742,6 +870,25 @@ func (as *AgentState) ensureStreamingMessage(sess *AgentSession) *ChatMessage {
 	}
 	sess.Messages = append(sess.Messages, msg)
 	return msg
+}
+
+// lateAfterTurnEndLocked reports whether s is idle with a finalized last
+// message: events arriving in this state are stragglers of an
+// already-completed (often cancelled) turn and must not reopen a streaming
+// bubble that nothing will ever finalize. Callers hold as.mu (P2c).
+func lateAfterTurnEndLocked(s *AgentSession) bool {
+	if s == nil {
+		return false
+	}
+	switch s.Status {
+	case "running", "streaming", "awaiting-approval":
+		return false
+	}
+	if len(s.Messages) == 0 {
+		return false
+	}
+	last := s.Messages[len(s.Messages)-1]
+	return last.Role == "assistant" && last.Done
 }
 
 // HandleTokenChunk applies an agent:message_delta payload.
@@ -753,6 +900,11 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 	for _, s := range as.Sessions {
 		if s.ID != sessionID {
 			continue
+		}
+		if lateAfterTurnEndLocked(s) {
+			// Post-cancel / post-done straggler: drop it instead of creating
+			// a new never-finalized streaming message (P2c).
+			break
 		}
 		msg := as.ensureStreamingMessage(s)
 		combined := msg.Text + text
@@ -770,6 +922,7 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 			return
 		}
 		msg.Text += text
+		appendTextBlockDeltaLocked(msg, text)
 		msg.IsThinking = false
 		if s.ID == as.ActiveSessionID {
 			as.Messages = s.Messages
@@ -832,6 +985,10 @@ func (as *AgentState) HandleThoughtChunk(sessionID, text string) {
 		if s.ID != sessionID {
 			continue
 		}
+		if lateAfterTurnEndLocked(s) {
+			// Post-cancel / post-done straggler: drop (P2c).
+			break
+		}
 		msg := as.ensureStreamingMessage(s)
 		msg.Thinking += text
 		msg.IsThinking = true
@@ -854,6 +1011,39 @@ func (as *AgentState) HandleToolEvent(ev ToolEvent) {
 	for _, s := range as.Sessions {
 		if s.ID != ev.SessionID {
 			continue
+		}
+		if lateAfterTurnEndLocked(s) {
+			// Post-cancel / post-done straggler (P2c): refresh an existing
+			// tool card of the finalized message when one matches, but never
+			// reopen a streaming bubble that nothing will finalize.
+			if len(s.Messages) > 0 {
+				last := s.Messages[len(s.Messages)-1]
+				if last.Done && last.Role == "assistant" {
+					for _, t := range last.Tools {
+						matched := (ev.ToolCallID != "" && t.ID == ev.ToolCallID) ||
+							(ev.ToolCallID == "" && t.Status == "running" && (ev.Name == "" || t.ToolName == ev.Name))
+						if !matched {
+							continue
+						}
+						if ev.Name != "" {
+							t.ToolName = ev.Name
+						}
+						if ev.Output != "" {
+							t.Output = ev.Output
+						}
+						t.Status = ev.Status
+						if ev.Status != "running" && t.DurationMs == 0 {
+							t.DurationMs = time.Now().UnixMilli() - t.CreatedAtMs
+						}
+						last.cachedSnapshot = nil
+						break
+					}
+				}
+			}
+			if s.ID == as.ActiveSessionID {
+				as.Messages = s.Messages
+			}
+			break
 		}
 		msg := as.ensureStreamingMessage(s)
 
@@ -887,6 +1077,7 @@ func (as *AgentState) HandleToolEvent(ev ToolEvent) {
 				CreatedAtMs: time.Now().UnixMilli(),
 			}
 			msg.Tools = append(msg.Tools, existing)
+			appendToolBlockLocked(msg, id)
 		}
 		// update_tasks-style calls drive the floating tracker, like
 		// forge-ade's runtime task list.
@@ -942,10 +1133,12 @@ func (as *AgentState) HandleTurnStart(sessionID, prompt string) {
 }
 
 // HandleTurnDone applies an agent:turn_end payload: finalizes the assistant
-// message, maps the status vocabulary, records the turn's file changes, and
-// returns the next queued steer prompt, if any.
+// message, maps the status vocabulary, and returns the next queued steer
+// prompt, if any. It runs on the ACPManager event-consumer goroutine, so it
+// must return FAST: the turn's git change list is computed on a detached
+// goroutine (attachTurnChanges) — serial git subprocesses here stalled the
+// queue and, once it saturated, deadlocked the streaming publisher (P0-1).
 func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSteer string) {
-	start := time.Now()
 	var startFiles map[string]bool
 	var sessWs string
 	as.mu.Lock()
@@ -961,20 +1154,9 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 	}
 	as.mu.Unlock()
 
-	// Turn changes: query git status and diffs outside the held lock so Git CLI
-	// subprocesses never stall UI frame rendering or lock acquisition.
-	turnEndFiles := as.gitStatusPathsForWorkspace(sessWs)
-
-	var turnChanges []*FileChange
-	for path := range turnEndFiles {
-		if startFiles == nil || !startFiles[path] {
-			turnChanges = append(turnChanges, &FileChange{Path: path, Additions: -1, Deletions: -1})
-		}
-	}
-	as.computeChangeStatsForWorkspace(sessWs, turnChanges)
-
 	as.mu.Lock()
 	var sessToSave *AgentSession
+	finalizedMsgID := 0
 	for _, s := range as.Sessions {
 		if s.ID != sessionID {
 			continue
@@ -985,6 +1167,11 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		msg.ShowThinking = false
 		msg.ShowTools = false
 		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(msg.Text)))
+		for _, b := range msg.Blocks {
+			if b != nil && b.Kind == "text" {
+				b.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(b.Text)))
+			}
+		}
 		msg.Thinking = cleanRawToolTags(msg.Thinking)
 		if !msg.TurnStartedAt.IsZero() {
 			msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
@@ -1001,25 +1188,24 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		}
 
 		s.turnStartFiles = nil
-		if len(turnChanges) > 0 {
-			msg.Changes = turnChanges
-		}
+		finalizedMsgID = msg.ID
 
 		// Status vocabulary of the original app.
 		switch {
 		case info.Error != "":
 			s.Status = "error"
 			if strings.TrimSpace(msg.Text) == "" {
-				msg.Text = fmt.Sprintf("⚠️ **Error**: %s", info.Error)
+				setAssistantTextLocked(msg, fmt.Sprintf("⚠️ **Error**: %s", info.Error))
 			} else {
 				msg.Text += fmt.Sprintf("\n\n⚠️ **Error**: %s", info.Error)
+				appendTextBlockDeltaLocked(msg, fmt.Sprintf("\n\n⚠️ **Error**: %s", info.Error))
 			}
 		case info.Status == "completed":
 			s.Status = "completed"
 		case info.Status == "stopped":
 			s.Status = "idle"
 			if strings.TrimSpace(msg.Text) == "" {
-				msg.Text = "*(stopped by user)*"
+				setAssistantTextLocked(msg, "*(stopped by user)*")
 			}
 		default:
 			s.Status = "idle"
@@ -1039,7 +1225,9 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 	// the background — but never when the user stopped the turn: draining
 	// would hand the queue to HandleTurnDone's caller, which relaunches the
 	// session and defeats Stop. Queued prompts stay in the tray (and on the
-	// session) so the next real turn consumes them.
+	// session) so the next real turn consumes them. The global queue is only
+	// drained when the completing session still exists: a gone session must
+	// not swallow prompts that belong to the replacement session (P2e).
 	turnStopped := info.Status == "stopped"
 	var steerSnapshot []string
 	saveSteer := false
@@ -1052,7 +1240,7 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 			as.SteerQueue = append([]string(nil), sessToSave.SteerQueue...)
 		}
 		sessToSave.Messages = append(sessToSave.Messages, &ChatMessage{
-			ID:        len(sessToSave.Messages) + 1,
+			ID:        nextMessageIDLocked(sessToSave),
 			Role:      "user",
 			Text:      nextSteer,
 			Done:      true,
@@ -1061,23 +1249,21 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		if sessToSave.ID == as.ActiveSessionID {
 			as.Messages = sessToSave.Messages
 		}
-	} else if !turnStopped && (as.ActiveSessionID == sessionID || sessionID == "") && len(as.SteerQueue) > 0 {
+	} else if !turnStopped && sessToSave != nil && (as.ActiveSessionID == sessionID || sessionID == "") && len(as.SteerQueue) > 0 {
 		nextSteer = as.SteerQueue[0]
 		as.SteerQueue = as.SteerQueue[1:]
 		steerSnapshot = append([]string(nil), as.SteerQueue...)
 		saveSteer = true
-		if sessToSave != nil {
-			sessToSave.SteerQueue = append([]string(nil), as.SteerQueue...)
-			sessToSave.Messages = append(sessToSave.Messages, &ChatMessage{
-				ID:        len(sessToSave.Messages) + 1,
-				Role:      "user",
-				Text:      nextSteer,
-				Done:      true,
-				Timestamp: time.Now(),
-			})
-			if sessToSave.ID == as.ActiveSessionID {
-				as.Messages = sessToSave.Messages
-			}
+		sessToSave.SteerQueue = append([]string(nil), as.SteerQueue...)
+		sessToSave.Messages = append(sessToSave.Messages, &ChatMessage{
+			ID:        nextMessageIDLocked(sessToSave),
+			Role:      "user",
+			Text:      nextSteer,
+			Done:      true,
+			Timestamp: time.Now(),
+		})
+		if sessToSave.ID == as.ActiveSessionID {
+			as.Messages = sessToSave.Messages
 		}
 	}
 	as.mu.Unlock()
@@ -1088,11 +1274,66 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 	if saveSteer {
 		as.saveSteerQueuesSlice(steerSnapshot)
 	}
-	_ = start
 	if as.Invalidate != nil {
 		as.Invalidate()
 	}
+
+	// Turn changes: git status + per-file diffs run OFF the event consumer
+	// and are attached to the finalized message under as.mu afterwards.
+	if sessToSave != nil && finalizedMsgID > 0 {
+		goSave("attachTurnChanges", func() {
+			as.attachTurnChanges(sessionID, finalizedMsgID, sessWs, startFiles)
+		})
+	}
 	return nextSteer
+}
+
+// attachTurnChanges computes the turn's file-change list (git status snapshot
+// + bounded per-file diffs) and attaches it to the finalized assistant
+// message under as.mu, then re-persists the session. Runs detached from
+// HandleTurnDone so the event consumer never waits on git subprocesses
+// (P0-1 layer 2).
+func (as *AgentState) attachTurnChanges(sessionID string, msgID int, sessWs string, startFiles map[string]bool) {
+	turnEndFiles := as.gitStatusPathsForWorkspace(sessWs)
+	var turnChanges []*FileChange
+	for path := range turnEndFiles {
+		if startFiles == nil || !startFiles[path] {
+			turnChanges = append(turnChanges, &FileChange{Path: path, Additions: -1, Deletions: -1})
+		}
+	}
+	as.computeChangeStatsForWorkspace(sessWs, turnChanges)
+	if len(turnChanges) == 0 {
+		return
+	}
+
+	as.mu.Lock()
+	var sess *AgentSession
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			sess = s
+			break
+		}
+	}
+	// The session may have been deleted while the git subprocesses ran:
+	// never resurrect it in memory or on disk (P2b).
+	if sess != nil {
+		for _, m := range sess.Messages {
+			if m.ID == msgID {
+				m.cachedSnapshot = nil
+				m.Changes = turnChanges
+				break
+			}
+		}
+	}
+	exists := sess != nil
+	as.mu.Unlock()
+
+	if exists {
+		as.SaveSessionToDisk(sess)
+	}
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
 }
 
 // pendingApprovalFromRequest derives the render-facing approval card from a
@@ -1500,7 +1741,7 @@ func (as *AgentState) StashPrompt() {
 	}
 	as.mu.Unlock()
 	if stashed {
-		go as.SavePromptStash()
+		goSave("SavePromptStash", func() { as.SavePromptStash() })
 	}
 }
 
@@ -1537,9 +1778,8 @@ func readStringMap(path string) map[string]string {
 }
 
 func writeStringMap(path string, m map[string]string) {
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	if data, err := json.MarshalIndent(m, "", "  "); err == nil {
-		_ = os.WriteFile(path, data, 0o644)
+		_ = agentsession.WriteFileAtomic(path, data, 0o644)
 	}
 }
 
@@ -1571,9 +1811,8 @@ func (as *AgentState) saveSteerQueuesSlice(q []string) {
 	if path == "" {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	if data, err := json.MarshalIndent(q, "", "  "); err == nil {
-		_ = os.WriteFile(path, data, 0o644)
+		_ = agentsession.WriteFileAtomic(path, data, 0o644)
 	}
 }
 
@@ -1637,9 +1876,8 @@ func (as *AgentState) SavePromptStash() {
 	if path == "" {
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
 	if data, err := json.Marshal(stash); err == nil {
-		_ = os.WriteFile(path, data, 0644)
+		_ = agentsession.WriteFileAtomic(path, data, 0644)
 	}
 }
 
@@ -1654,7 +1892,7 @@ func (as *AgentState) RestoreStash(idx int) {
 	}
 	as.mu.Unlock()
 	if restored {
-		go as.SavePromptStash()
+		goSave("SavePromptStash", func() { as.SavePromptStash() })
 	}
 }
 
@@ -1699,6 +1937,7 @@ type diskMessageRaw struct {
 	Feedback        string            `json:"feedback"`
 	Changes         []FileChange      `json:"changes"`
 	ToolExecutions  []ToolExecution   `json:"toolExecutions"`
+	Blocks          []MessageBlock    `json:"blocks"`
 	TextBlocks      []struct {
 		Text string `json:"text"`
 	} `json:"textBlocks"`
@@ -1851,6 +2090,17 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 				toolsList = append(toolsList, &tCopy)
 			}
 
+			var blocks []*MessageBlock
+			if len(m.Blocks) > 0 {
+				for _, b := range m.Blocks {
+					bCopy := b
+					if bCopy.Kind == "text" {
+						bCopy.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(bCopy.Text)))
+					}
+					blocks = append(blocks, &bCopy)
+				}
+			}
+
 			var thinkingStr string
 			if len(m.Thoughts) > 0 {
 				thinkingStr = strings.Join(m.Thoughts, "\n\n")
@@ -1883,6 +2133,7 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 				TotalSteps:      m.TotalSteps,
 				Feedback:        m.Feedback,
 				Tools:           toolsList,
+				Blocks:          blocks,
 				Changes:         changes,
 			})
 			msgID++
@@ -1932,6 +2183,7 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 			LastUsage:            diskSess.LastUsage,
 			Messages:             msgs,
 			Tasks:                tm,
+			nextMsgID:            msgID, // msgs consumed IDs 1..msgID-1; continue above them
 		})
 	}
 
@@ -1945,7 +2197,10 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 		})
 		as.Sessions = loaded
 		as.ActiveSessionID = ""
+		as.mu.Lock()
 		as.syncActiveSession()
+		as.mu.Unlock()
+		as.applyPendingLLMModel()
 	}
 }
 
@@ -1960,6 +2215,21 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 	// unlocked iteration raced them. Per-message struct copies keep the
 	// encoded payload off the live backing arrays; disk I/O stays outside.
 	as.mu.Lock()
+	// In-flight turn goroutines hold session pointers across DeleteSession:
+	// a session that no longer exists in memory must NOT be resurrected on
+	// disk (P2b). All callers snapshot from as.Sessions, so presence here is
+	// a reliable liveness signal.
+	live := false
+	for _, s := range as.Sessions {
+		if s == sess {
+			live = true
+			break
+		}
+	}
+	if !live {
+		as.mu.Unlock()
+		return
+	}
 	var diskMsgs []map[string]interface{}
 	for _, m := range sess.Messages {
 		if m == nil {
@@ -1994,6 +2264,9 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 		}
 		if len(cp.Tools) > 0 {
 			msgMap["toolExecutions"] = cp.Tools
+		}
+		if len(cp.Blocks) > 0 {
+			msgMap["blocks"] = cp.Blocks
 		}
 		diskMsgs = append(diskMsgs, msgMap)
 	}
@@ -2187,6 +2460,9 @@ func (as *AgentState) SelectACPAgent(agentID string) string {
 }
 
 // syncActiveSession updates the ActiveSessionID and points Messages/IsStreaming to the active session.
+// Callers hold as.mu. Any RK LLMClient call is deferred to applyPendingLLMModel
+// which the caller invokes AFTER releasing as.mu (P0-1 layer 3: never call
+// into the RakitKode engine while holding as.mu).
 func (as *AgentState) syncActiveSession() {
 	as.PromptHistoryIdx = -1
 	as.PromptHistoryDraft = ""
@@ -2224,7 +2500,8 @@ func (as *AgentState) syncActiveSession() {
 		}
 		if (active.AgentType == "internal" || active.AgentType == "") && as.engine != nil && as.engine.LLMClient != nil {
 			if as.ActiveProvider != "" && as.ActiveModel != "" {
-				as.engine.LLMClient.SetActiveModel(as.ActiveProvider, as.ActiveModel)
+				as.pendingLLMProvider = as.ActiveProvider
+				as.pendingLLMModel = as.ActiveModel
 			}
 		}
 		if active.AgentID != "" {
@@ -2237,6 +2514,26 @@ func (as *AgentState) syncActiveSession() {
 		as.Messages = nil
 		as.IsStreaming = false
 		as.SteerQueue = nil
+	}
+}
+
+// applyPendingLLMModel flushes a model/provider binding recorded by
+// syncActiveSession. Must be called by syncActiveSession's callers AFTER
+// they release as.mu: SetActiveModel takes RakitKode's LLM client lock,
+// which the streaming path also holds (P0-1 layer 3).
+func (as *AgentState) applyPendingLLMModel() {
+	as.mu.Lock()
+	prov := as.pendingLLMProvider
+	model := as.pendingLLMModel
+	as.pendingLLMProvider = ""
+	as.pendingLLMModel = ""
+	client := (*llm.LLMClient)(nil)
+	if as.engine != nil {
+		client = as.engine.LLMClient
+	}
+	as.mu.Unlock()
+	if client != nil && prov != "" && model != "" {
+		client.SetActiveModel(prov, model)
 	}
 }
 
@@ -2340,6 +2637,7 @@ func (as *AgentState) ForkSession(sess *AgentSession) *AgentSession {
 		Pinned:        sess.Pinned,
 		Messages:      msgsCopy,
 		Tasks:         tasksCopy,
+		nextMsgID:     sess.nextMsgID, // copied IDs stay unique across the fork
 	}
 
 	as.Sessions = append([]*AgentSession{forked}, as.Sessions...)
@@ -2514,6 +2812,7 @@ func (as *AgentState) SelectSession(id string) {
 	as.ActiveSessionID = id
 	as.syncActiveSession()
 	as.mu.Unlock()
+	as.applyPendingLLMModel()
 
 	if as.Invalidate != nil {
 		as.Invalidate()
@@ -2679,6 +2978,7 @@ func (as *AgentState) DeleteSession(id string) {
 	curWs := as.workspacePath
 	as.syncActiveSession()
 	as.mu.Unlock()
+	as.applyPendingLLMModel()
 
 	diskWs := deletedWs
 	if diskWs == "" && agentsession.IsTempTestPath(curWs) {
@@ -2738,6 +3038,7 @@ func (as *AgentState) DeleteSessionsByProject(projectName, folderPath string) {
 	}
 	as.syncActiveSession()
 	as.mu.Unlock()
+	as.applyPendingLLMModel()
 
 	for _, d := range deleted {
 		diskWs := d.ws
@@ -2770,6 +3071,7 @@ func (as *AgentState) RenameSession(id, title string) {
 	}
 	as.syncActiveSession()
 	as.mu.Unlock()
+	as.applyPendingLLMModel()
 
 	if renamed != nil {
 		as.SaveSessionToDisk(renamed)
@@ -2925,40 +3227,15 @@ func (as *AgentState) SubmitMessage() {
 		}
 	}
 	isActiveStreaming := activeSess != nil && (activeSess.Status == "running" || activeSess.Status == "streaming" || as.IsStreaming)
-	canSteer := isActiveStreaming && activeSess.AgentType == "internal" && activeSess.RemoteSessionID != ""
-	steerID := ""
-	if activeSess != nil {
-		steerID = activeSess.ID
-	}
 	as.mu.Unlock()
 
-	// Mid-turn steering: internal sessions steer the running RakitKode loop
-	// directly (SteerAgentMessage parity); other harnesses queue the prompt
-	// onto that session's own steer queue for the next turn.
+	// Mid-turn submissions ALWAYS queue onto the session's steer queue: the
+	// prompt shows up in the steer tray (queued text + Steer button + edit /
+	// delete) for review, and pressing Steer injects it into the running
+	// RakitKode loop via SteerInternal (RemoveSteerItem pops the entry).
+	// Injecting directly here bypassed the queue and silently removed the
+	// whole tray UX (user-reported regression).
 	if isActiveStreaming {
-		if canSteer {
-			if err := as.SteerInternal(steerID, text); err == nil {
-				as.mu.Lock()
-				userMsg := &ChatMessage{
-					ID:        len(activeSess.Messages) + 1,
-					Role:      "user",
-					Text:      text,
-					Done:      true,
-					Timestamp: time.Now(),
-				}
-				activeSess.Messages = append(activeSess.Messages, userMsg)
-				if activeSess.ID == as.ActiveSessionID {
-					as.Messages = activeSess.Messages
-				}
-				as.InputText = ""
-				as.mu.Unlock()
-				if as.Invalidate != nil {
-					as.Invalidate()
-				}
-				return
-			}
-		}
-
 		as.mu.Lock()
 		activeSess.SteerQueue = append(activeSess.SteerQueue, text)
 		if activeSess.ID == as.ActiveSessionID {
@@ -3038,7 +3315,7 @@ func (as *AgentState) SubmitMessage() {
 
 	targetSessID := activeSess.ID
 	userMsg := &ChatMessage{
-		ID:        len(activeSess.Messages) + 1,
+		ID:        nextMessageIDLocked(activeSess),
 		Role:      "user",
 		Text:      text,
 		Done:      true,
@@ -3086,7 +3363,7 @@ func (as *AgentState) SubmitMessage() {
 						help += " arrive as they are advertised (`/goal`, `/plan`, `/compact`, ...)."
 					}
 					s.Messages = append(s.Messages, &ChatMessage{
-						ID:        len(s.Messages) + 1,
+						ID:        nextMessageIDLocked(s),
 						Role:      "assistant",
 						Text:      help,
 						Done:      true,
@@ -3161,7 +3438,7 @@ func (as *AgentState) CancelStreaming() {
 					msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
 				}
 				if strings.TrimSpace(msg.Text) == "" {
-					msg.Text = "*(stopped by user)*"
+					setAssistantTextLocked(msg, "*(stopped by user)*")
 				}
 			}
 			// A stopped turn can no longer answer its approvals: mark them
@@ -3266,14 +3543,24 @@ func (as *AgentState) computeChangeStats(changes []*FileChange) {
 	as.ComputeChangeStats(changes)
 }
 
+// maxChangeStatsFiles caps the per-file git diffs computed for one turn: a
+// 500-file refactor would otherwise serially spawn 500 git subprocesses
+// (10s timeout each) in the turn-completion path (P0-1 layer 2).
+const maxChangeStatsFiles = 50
+
 func (as *AgentState) computeChangeStatsForWorkspace(wsPath string, changes []*FileChange) {
 	if as.engine == nil || wsPath == "" {
 		return
 	}
+	computed := 0
 	for _, ch := range changes {
 		if ch.Additions >= 0 {
 			continue
 		}
+		if computed >= maxChangeStatsFiles {
+			break // remaining entries stay at -1 (rendered as changed, no counts)
+		}
+		computed++
 		patch := as.engine.GetGitDiff(wsPath, ch.Path)
 		ch.Additions, ch.Deletions = countPatchLines(patch)
 	}
@@ -3335,7 +3622,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 
 	startTime := time.Now()
 	assistantMsg := &ChatMessage{
-		ID:              len(targetSess.Messages) + 1,
+		ID:              nextMessageIDLocked(targetSess),
 		Role:            "assistant",
 		Text:            "",
 		Done:            false,
@@ -3381,6 +3668,13 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 
 	if isACPAgent {
 		go func() {
+			// A panicking turn goroutine must not kill the app (P1-6): log
+			// and leave the session to the user's Stop button.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[agent] ACP turn goroutine panicked (session %s): %v\n%s", targetSessID, r, debugStack())
+				}
+			}()
 			turnID := fmt.Sprintf("turn-%d", time.Now().UnixMilli())
 			as.mu.Lock()
 			targetSess.LastCheckpointTurnID = turnID
@@ -3463,6 +3757,11 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 	// finalizes. Falls back to the raw LLM stream when the engine is absent.
 	if as.engine != nil && as.engine.AgentMgr != nil {
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[agent] internal turn goroutine panicked (session %s): %v\n%s", targetSessID, r, debugStack())
+				}
+			}()
 			if err := as.TriggerInternalTurn(targetSess, prompt, attached...); err != nil {
 				as.mu.Lock()
 				assistantMsg.Done = true
@@ -3488,6 +3787,14 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 	// 3. Fallback: raw LLMClient stream (no agent engine wired).
 	go func() {
 		turnCancelled := false
+		// Declared first so it runs LAST: the finalization defer completes
+		// the message, then a panic is logged instead of killing the app
+		// (P1-6).
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[agent] raw-LLM turn goroutine panicked (session %s): %v\n%s", targetSessID, r, debugStack())
+			}
+		}()
 		defer func() {
 			// Compute git diff stats outside as.mu so subprocess calls never block UI renders.
 			turnEndFiles := as.gitStatusPathsForWorkspace(sessWs)
@@ -3528,7 +3835,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 					as.SteerQueue = append([]string(nil), targetSess.SteerQueue...)
 				}
 				targetSess.Messages = append(targetSess.Messages, &ChatMessage{
-					ID:        len(targetSess.Messages) + 1,
+					ID:        nextMessageIDLocked(targetSess),
 					Role:      "user",
 					Text:      nextSteer,
 					Done:      true,
@@ -3544,7 +3851,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				steerSnapshot = append([]string(nil), as.SteerQueue...)
 				saveSteer = true
 				targetSess.Messages = append(targetSess.Messages, &ChatMessage{
-					ID:        len(targetSess.Messages) + 1,
+					ID:        nextMessageIDLocked(targetSess),
 					Role:      "user",
 					Text:      nextSteer,
 					Done:      true,
@@ -3604,6 +3911,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				}
 				if deltaContent != "" {
 					assistantMsg.Text += deltaContent
+					appendTextBlockDeltaLocked(assistantMsg, deltaContent)
 					assistantMsg.IsThinking = false
 				}
 				as.mu.Unlock()

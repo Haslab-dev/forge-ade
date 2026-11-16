@@ -40,12 +40,13 @@ func TestInternalAgentNoDeadlock(t *testing.T) {
 		t.Fatalf("expected non-empty manager ID")
 	}
 
-	// 2. syncInternalSessionState must not deadlock (previously deadlocked on as.mu.Lock)
+	// 2. syncInternalSessionState must not deadlock (previously it called
+	// into the RK manager while as.mu was held; now it takes no locks at all
+	// and the snapshot is captured separately).
+	snap := as.internalTurnSnapshotForTest(sess)
 	done := make(chan bool, 1)
 	go func() {
-		as.mu.Lock()
-		as.syncInternalSessionState(mgrID, sess)
-		as.mu.Unlock()
+		as.syncInternalSessionState(mgrID, snap)
 		done <- true
 	}()
 
@@ -152,9 +153,7 @@ func TestInternalAgentOrchestratorAndPersona(t *testing.T) {
 	as.ExecutionMode = ModeBypass
 	as.mu.Unlock()
 	as.SetSessionPersona(sess.ID, "reviewer")
-	as.mu.Lock()
-	as.syncInternalSessionState(mgrID, sess)
-	as.mu.Unlock()
+	as.syncInternalSessionState(mgrID, as.internalTurnSnapshotForTest(sess))
 
 	mgrSess, _ = eng.AgentMgr.GetSession(mgrID)
 	if mgrSess.RoleFilter != rakitagent.RoleReviewer {
@@ -162,5 +161,24 @@ func TestInternalAgentOrchestratorAndPersona(t *testing.T) {
 	}
 	if !mgrSess.ReadOnly {
 		t.Fatalf("expected reviewer persona to set ReadOnly=true on manager session")
+	}
+}
+
+// internalTurnSnapshotForTest captures the turn inputs exactly like
+// TriggerInternalTurn does under as.mu.
+func (as *AgentState) internalTurnSnapshotForTest(sess *AgentSession) *internalTurnSnapshot {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	return &internalTurnSnapshot{
+		appliedPersonaKey: sess.appliedPersonaKey,
+		personaID:         sess.PersonaID,
+		planMode:          as.ExecutionMode == ModePlan,
+		sessModel:         sess.Model,
+		sessProvider:      sess.Provider,
+		activeModel:       as.ActiveModel,
+		activeProvider:    as.ActiveProvider,
+		permissionMode:    as.ExecutionMode.InternalPermissionMode(),
+		autoApprove:       as.ExecutionMode == ModeBypass,
+		wsPath:            sess.WorkspacePath,
 	}
 }

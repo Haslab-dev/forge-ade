@@ -54,23 +54,19 @@ func (q *AgentQuestion) AnswersMap() map[string]any {
 	return map[string]any{q.ID: answer}
 }
 
-// ensureInternalManagerSession returns the RakitKode agent session backing a
-// native internal session, creating it on the first turn (and re-linking
-// restored sessions whose manager session no longer exists).
-func (as *AgentState) resolveTargetPersonaKeyLocked(sess *AgentSession) (string, agent.RoleFilter) {
+// resolvePersonaKey resolves the persona key + role from plain inputs the
+// caller captured under as.mu. It takes NO locks and consults the RakitKode
+// AgentMgr freely — callers must invoke it with as.mu RELEASED (P0-1 layer 3:
+// the RK streaming callback holds the manager lock while publishing bus
+// events whose handlers take as.mu, so AgentMgr under as.mu can deadlock).
+func (as *AgentState) resolvePersonaKey(personaID string, planMode bool) (string, agent.RoleFilter) {
 	role := agent.RoleCoding
 	var orchCfg agent.OrchestrationConfig
 	if as.engine != nil && as.engine.AgentMgr != nil {
 		orchCfg = as.engine.AgentMgr.GetOrchestrationConfig()
 	}
-	if as.ExecutionMode == ModePlan {
+	if planMode {
 		return string(agent.RolePlanning), agent.RolePlanning
-	}
-	personaID := ""
-	if sess != nil && sess.PersonaID != "" {
-		personaID = sess.PersonaID
-	} else if as.ActivePersonaID != "" {
-		personaID = as.ActivePersonaID
 	}
 	if personaID != "" {
 		if as.engine != nil && as.engine.AgentMgr != nil {
@@ -115,13 +111,23 @@ func (as *AgentState) SetSessionPersona(sessionID, personaID string) {
 
 // EffectivePersona returns the resolved persona ID and display title for sess
 // (falling back to the global orchestration config default role when enabled).
+// Called from render — lock-light: persona inputs are snapshotted under
+// as.mu, then AgentMgr is consulted with the lock released (P0-1 layer 3).
 func (as *AgentState) EffectivePersona(sess *AgentSession) (string, string) {
 	if as == nil {
 		return "coding", "Coding Agent"
 	}
 	as.mu.Lock()
-	key, _ := as.resolveTargetPersonaKeyLocked(sess)
+	personaID := ""
+	if sess != nil && sess.PersonaID != "" {
+		personaID = sess.PersonaID
+	} else if as.ActivePersonaID != "" {
+		personaID = as.ActivePersonaID
+	}
+	planMode := as.ExecutionMode == ModePlan
 	as.mu.Unlock()
+
+	key, _ := as.resolvePersonaKey(personaID, planMode)
 	if as.engine != nil && as.engine.AgentMgr != nil && key != "" {
 		if def, ok := as.engine.AgentMgr.FindDefinition(key); ok {
 			name := def.Name
@@ -141,6 +147,9 @@ func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, 
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return "", fmt.Errorf("agent engine unavailable")
 	}
+	// Snapshot persona/workspace inputs under as.mu; every AgentMgr call
+	// below happens with the lock released and only the final apply re-takes
+	// it briefly (P0-1 layer 3).
 	as.mu.Lock()
 	remoteID := sess.RemoteSessionID
 	title := sess.Title
@@ -148,8 +157,16 @@ func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, 
 	if ws == "" {
 		ws = as.workspacePath
 	}
-	targetKey, role := as.resolveTargetPersonaKeyLocked(sess)
+	personaID := ""
+	if sess.PersonaID != "" {
+		personaID = sess.PersonaID
+	} else if as.ActivePersonaID != "" {
+		personaID = as.ActivePersonaID
+	}
+	planMode := as.ExecutionMode == ModePlan
 	as.mu.Unlock()
+
+	targetKey, role := as.resolvePersonaKey(personaID, planMode)
 
 	if remoteID != "" {
 		if _, ok := as.engine.AgentMgr.GetSession(remoteID); ok {
@@ -181,39 +198,59 @@ func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, 
 	return mgrSess.ID, nil
 }
 
+// internalTurnSnapshot carries everything a turn needs from AgentState,
+// captured under as.mu in one pass so no AgentMgr/LLMClient call ever runs
+// while the state lock is held (P0-1 layer 3).
+type internalTurnSnapshot struct {
+	appliedPersonaKey string
+	personaID         string
+	planMode          bool
+	sessModel         string
+	sessProvider      string
+	activeModel       string
+	activeProvider    string
+	permissionMode    string
+	autoApprove       bool
+	mentions          []string
+	wsPath            string
+}
+
 // syncInternalSessionState pushes the current model / execution mode onto the
-// backing manager session before each turn. Must be called while as.mu is held.
-func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession) {
+// backing manager session before each turn. It takes NO locks: all AgentState
+// inputs arrive via snap, and every AgentMgr/LLMClient call happens with
+// as.mu released (P0-1 layer 3). Returns the values the caller must apply
+// back to the session under as.mu.
+func (as *AgentState) syncInternalSessionState(mgrID string, snap *internalTurnSnapshot) (appliedKey, activeModel string) {
 	if as.engine == nil || as.engine.AgentMgr == nil {
-		return
+		return "", ""
 	}
-	targetKey, targetRole := as.resolveTargetPersonaKeyLocked(sess)
+	targetKey, targetRole := as.resolvePersonaKey(snap.personaID, snap.planMode)
 	personaModel := ""
-	if targetKey != "" && targetKey != sess.appliedPersonaKey {
+	if targetKey != "" && targetKey != snap.appliedPersonaKey {
 		if def, ok := as.engine.AgentMgr.FindDefinition(targetKey); ok {
 			_ = as.engine.AgentMgr.ApplyDefinitionToSession(mgrID, def.ID)
 			personaModel = def.Model
 		} else {
 			_, _ = as.engine.AgentMgr.UpdateSession(mgrID, "", targetRole, "", "")
 		}
-		sess.appliedPersonaKey = targetKey
+		appliedKey = targetKey
 	}
 
-	activeModel := sess.Model
+	activeModel = snap.sessModel
 	if activeModel == "" && personaModel != "" {
 		activeModel = personaModel
 	}
-	if activeModel == "" && as.ActiveModel != "" {
-		activeModel = as.ActiveModel
+	if activeModel == "" && snap.activeModel != "" {
+		activeModel = snap.activeModel
 	}
 	if as.engine.LLMClient != nil {
 		cfg := as.engine.LLMClient.GetConfig()
 		if activeModel == "" {
 			activeModel = cfg.Model
 		} else {
-			prov := sess.Provider
+			prov := snap.sessProvider
 			if prov == "" {
-				prov = as.ActiveProvider
+				prov = snap.activeProvider
 			}
 			if prov == "" {
 				prov = as.engine.LLMClient.FindProviderForModel(activeModel)
@@ -227,15 +264,14 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 	}
 	if activeModel != "" {
 		_ = as.engine.AgentMgr.SetSessionModel(mgrID, activeModel)
-		sess.Model = activeModel
 	}
 	// Always use native function calling by default for standard OpenAI/Claude/DeepSeek compatibility.
 	_ = as.engine.AgentMgr.SetDialect(mgrID, "")
-	mode := as.ExecutionMode.InternalPermissionMode()
-	if mode != "" {
-		_ = as.engine.AgentMgr.SetPermissionMode(mgrID, mode)
+	if snap.permissionMode != "" {
+		_ = as.engine.AgentMgr.SetPermissionMode(mgrID, snap.permissionMode)
 	}
-	_ = as.engine.AgentMgr.SetAutoApprove(mgrID, as.ExecutionMode == ModeBypass)
+	_ = as.engine.AgentMgr.SetAutoApprove(mgrID, snap.autoApprove)
+	return appliedKey, activeModel
 }
 
 // TriggerInternalTurn sends a user prompt through the RakitKode agent engine.
@@ -246,21 +282,48 @@ func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string, att
 	if err != nil {
 		return err
 	}
+
+	// One lock pass to snapshot everything, then AgentMgr/LLMClient run
+	// strictly outside as.mu; only the short apply-back re-takes it (P0-1
+	// layer 3: TriggerInternalTurn runs on a turn goroutine while the
+	// streaming callback publishes events whose handlers need as.mu).
 	as.mu.Lock()
-	as.syncInternalSessionState(mgrID, sess)
+	snap := &internalTurnSnapshot{
+		appliedPersonaKey: sess.appliedPersonaKey,
+		personaID:         sess.PersonaID,
+		planMode:          as.ExecutionMode == ModePlan,
+		sessModel:         sess.Model,
+		sessProvider:      sess.Provider,
+		activeModel:       as.ActiveModel,
+		activeProvider:    as.ActiveProvider,
+		permissionMode:    as.ExecutionMode.InternalPermissionMode(),
+		autoApprove:       as.ExecutionMode == ModeBypass,
+		wsPath:            sess.WorkspacePath,
+	}
 	mentions := append([]string(nil), attached...)
 	if len(mentions) == 0 && len(as.AttachedFiles) > 0 {
 		mentions = append([]string(nil), as.AttachedFiles...)
 	}
+	snap.mentions = mentions
 	turnID := fmt.Sprintf("turn-%d", time.Now().UnixMilli())
 	sess.LastCheckpointTurnID = turnID
-	wsPath := sess.WorkspacePath
 	as.mu.Unlock()
 
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return fmt.Errorf("agent engine unavailable")
 	}
 
+	appliedKey, activeModel := as.syncInternalSessionState(mgrID, snap)
+	as.mu.Lock()
+	if appliedKey != "" {
+		sess.appliedPersonaKey = appliedKey
+	}
+	if activeModel != "" {
+		sess.Model = activeModel
+	}
+	as.mu.Unlock()
+
+	wsPath := snap.wsPath
 	if as.engine.GitEngine != nil && wsPath != "" && !strings.Contains(wsPath, ".forge") {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		_, _ = internalgit.CreateCheckpoint(ctx, wsPath, sess.ID, turnID, prompt)
@@ -269,7 +332,7 @@ func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string, att
 
 	// The manager owns turn lifetime (interrupt via StopTurn); the app
 	// context stays alive like the webview's app-level ctx.
-	return as.engine.AgentMgr.SendMessage(context.Background(), mgrID, prompt, mentions)
+	return as.engine.AgentMgr.SendMessage(context.Background(), mgrID, prompt, snap.mentions)
 }
 
 // IsInternalSession reports whether the session runs on the RakitKode agent
