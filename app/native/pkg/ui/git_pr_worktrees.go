@@ -87,6 +87,17 @@ func (a *AppUI) loadPRs(state string) {
 	if gm == nil {
 		return
 	}
+	if eng := gm.Engine(); eng == nil || eng.GitEngine == nil {
+		// SSH and empty workspaces construct GitManager without an engine;
+		// dereferencing it here would panic the frame (no recover in View).
+		pp.Loading = false
+		pp.Error = "Pull requests are unavailable in this workspace"
+		pp.Loaded = true
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
+		return
+	}
 	pp.Loading = true
 	pp.Error = ""
 	if a.Window != nil {
@@ -122,6 +133,14 @@ func (a *AppUI) selectPR(index int) {
 	pp := a.prPane()
 	gm := a.Git
 	if gm == nil || index < 0 || index >= len(pp.Items) {
+		return
+	}
+	if eng := gm.Engine(); eng == nil || eng.GitEngine == nil {
+		pp.LoadingDiff = false
+		pp.DetailError = "Pull request details are unavailable in this workspace"
+		if a.Window != nil {
+			a.Window.Invalidate()
+		}
 		return
 	}
 	pp.Selected = index
@@ -166,6 +185,10 @@ func (a *AppUI) prAction(label string, run func(ctx context.Context) error) {
 	pp := a.prPane()
 	gm := a.Git
 	if gm == nil || pp.Selected < 0 || pp.Selected >= len(pp.Items) {
+		return
+	}
+	if eng := gm.Engine(); eng == nil || eng.GitEngine == nil {
+		a.queueToast(ui.Toast{Title: label + " failed", Description: "Git operations are unavailable in this workspace", Type: "error"})
 		return
 	}
 	state := pp.State
@@ -293,24 +316,33 @@ func (a *AppUI) renderGitPRsSurface(c *ui.Context, tc theme.ThemeColors, gm *git
 					}
 				})
 				if submit.Clicked() && !pp.Creating && strings.TrimSpace(pp.CreateTitle) != "" {
-					pp.Creating = true
-					title, body, base, head, draft := pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead, pp.CreateDraft
-					state := pp.State
-					go func() {
-						ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-						defer cancel()
-						_, err := gm.Engine().GitEngine.CreatePullRequest(ctx, gm.RootDir, title, body, base, head, draft)
-						a.runOnUI(func() {
-							pp.Creating = false
-							if err != nil {
-								pp.Error = err.Error()
-							} else {
-								pp.CreateOpen = false
-								pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead = "", "", "", ""
-							}
-							a.loadPRs(state)
-						})
-					}()
+					engineUnavailable := false
+					if gm != nil {
+						if eng := gm.Engine(); eng == nil || eng.GitEngine == nil {
+							pp.Error = "Pull request creation is unavailable in this workspace"
+							engineUnavailable = true
+						}
+					}
+					if !engineUnavailable {
+						pp.Creating = true
+						title, body, base, head, draft := pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead, pp.CreateDraft
+						state := pp.State
+						go func() {
+							ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+							defer cancel()
+							_, err := gm.Engine().GitEngine.CreatePullRequest(ctx, gm.RootDir, title, body, base, head, draft)
+							a.runOnUI(func() {
+								pp.Creating = false
+								if err != nil {
+									pp.Error = err.Error()
+								} else {
+									pp.CreateOpen = false
+									pp.CreateTitle, pp.CreateBody, pp.CreateBase, pp.CreateHead = "", "", "", ""
+								}
+								a.loadPRs(state)
+							})
+						}()
+					}
 				}
 			})
 		})

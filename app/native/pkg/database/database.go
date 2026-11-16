@@ -25,6 +25,83 @@ type DatabaseManager struct {
 	OnNeedRedraw func()
 }
 
+// DatabaseSnapshot is a consistent point-in-time copy of DatabaseManager
+// state for render paths. Background goroutines (ScanDatabases, Inspect,
+// SelectTable, ExecuteQuery) write the exported fields under mu, so reading
+// fields directly from the render thread races — ScanDatabases can nil out
+// Info or QueryResult between a nil-check and its use, which crashes the
+// frame. Always render from a Snapshot.
+type DatabaseSnapshot struct {
+	ActiveDBPath string
+	Databases    []string
+	Info         *dbviewer.DatabaseInfo
+	ActiveTable  string
+	SQLQuery     string
+	StatusMsg    string
+	IsExecuting  bool
+	QueryResult  *dbviewer.QueryResult
+}
+
+// Snapshot returns the render-relevant state under RLock.
+//
+// Info is returned as the live *dbviewer.DatabaseInfo pointer: writers only
+// ever replace it wholesale (InspectDatabase builds a fresh value; nothing
+// mutates the pointee in place), so a pointer read under lock stays stable.
+// Databases is copied. QueryResult is returned as a copy with its Columns
+// slice and Rows (including each row map) shallow-copied: the render iterates
+// every column of every row, so the slice and map headers it reads must not
+// be able to change under it. The cell values themselves are shared — query
+// results are built fresh by dbviewer and never mutated after publication.
+func (dm *DatabaseManager) Snapshot() DatabaseSnapshot {
+	dm.mu.RLock()
+	defer dm.mu.RUnlock()
+
+	snap := DatabaseSnapshot{
+		ActiveDBPath: dm.ActiveDBPath,
+		Info:         dm.Info,
+		ActiveTable:  dm.ActiveTable,
+		SQLQuery:     dm.SQLQuery,
+		StatusMsg:    dm.StatusMsg,
+		IsExecuting:  dm.IsExecuting,
+	}
+	if len(dm.Databases) > 0 {
+		snap.Databases = make([]string, len(dm.Databases))
+		copy(snap.Databases, dm.Databases)
+	}
+	if qr := dm.QueryResult; qr != nil {
+		c := &dbviewer.QueryResult{
+			Columns:     append([]string(nil), qr.Columns...),
+			TotalRows:   qr.TotalRows,
+			ExecutionMs: qr.ExecutionMs,
+			Error:       qr.Error,
+		}
+		if len(qr.Rows) > 0 {
+			c.Rows = make([]map[string]interface{}, len(qr.Rows))
+			for i, row := range qr.Rows {
+				if row == nil {
+					continue
+				}
+				rowCopy := make(map[string]interface{}, len(row))
+				for k, v := range row {
+					rowCopy[k] = v
+				}
+				c.Rows[i] = rowCopy
+			}
+		}
+		snap.QueryResult = c
+	}
+	return snap
+}
+
+// SetSQLQuery stores the query text under lock. The SQL console binds to a
+// frame-local copy and syncs edits back through this setter, keeping its
+// UI-thread writes synchronized with ExecuteQuery's locked read.
+func (dm *DatabaseManager) SetSQLQuery(q string) {
+	dm.mu.Lock()
+	dm.SQLQuery = q
+	dm.mu.Unlock()
+}
+
 // NewDatabaseManager creates and initializes the DatabaseManager.
 func NewDatabaseManager(ws *workspace.WorkspaceState) *DatabaseManager {
 	dm := &DatabaseManager{

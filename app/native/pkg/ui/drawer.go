@@ -42,8 +42,12 @@ func (a *AppUI) rightDrawerTabMeta(dirtyFiles int) (title string, icon *ui.SVG, 
 		return "Side conversation", icons.TablerMessage, 0
 	case RightTabSubagent:
 		subCount := 0
-		if a.Agent != nil && a.Agent.ActiveSessionID != "" {
-			subCount = len(a.Agent.Subagents(a.Agent.ActiveSessionID))
+		if a.Agent != nil {
+			// Locked read: other goroutines move ActiveSessionID.
+			sessionID := a.Agent.SnapshotActiveSessionID()
+			if sessionID != "" {
+				subCount = len(a.Agent.Subagents(sessionID))
+			}
 		}
 		return "Agents", icons.TablerBot, subCount
 	case RightTabDeck:
@@ -379,6 +383,23 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	var conflicts, staged, unstaged []internalgit.FileStatus
 	var snap git.GitSnapshot
 	if gm != nil {
+		// Lazy, render-thread wiring (set-once, plain nil check is enough
+		// because render is single-threaded): GenerateAICommit's goroutine
+		// delivers the AI message through this callback instead of writing
+		// the widget-bound CommitSummary/CommitDesc fields from off-thread.
+		// SetCommitMessage locks, so the write is safe once it lands on the
+		// UI thread via runOnUI.
+		if gm.OnAICommitResult == nil {
+			gm.OnAICommitResult = func(summary, desc string) {
+				a.runOnUI(func() {
+					msg := summary
+					if strings.TrimSpace(desc) != "" {
+						msg += "\n\n" + desc
+					}
+					gm.SetCommitMessage(msg, summary, desc)
+				})
+			}
+		}
 		// Render from a point-in-time snapshot: Refresh/Stage/Commit goroutines
 		// write the exported fields under the manager's lock.
 		snap = gm.Snapshot()
@@ -579,7 +600,9 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 								})
 								if cancelBtn.Clicked() {
 									acted = true
-									gm.DiscardPendingPath = ""
+									// Locked setter: Discard's goroutine also
+									// writes this field (under lock).
+									gm.SetDiscardPending("")
 								}
 							} else {
 								discardBtn := ui.Row(c.Key("discard-"+f.Path)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
@@ -591,7 +614,9 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 								}
 								if discardBtn.Clicked() && gm != nil {
 									acted = true
-									gm.DiscardPendingPath = f.Path
+									// Locked setter: Discard's goroutine also
+									// writes this field (under lock).
+									gm.SetDiscardPending(f.Path)
 								}
 							}
 
@@ -686,7 +711,10 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 										a.queueToast(ui.Toast{Title: "Commit Error", Description: err.Error(), Type: "error"})
 									} else {
 										a.queueToast(ui.Toast{Title: "Committed", Description: summary, Type: "success"})
-										gm.SetCommitMessage("", "", "")
+										// ClearCommitDraft locks; called on the
+										// UI thread where the draft fields are
+										// bound to the text-input widgets.
+										gm.ClearCommitDraft()
 										// Drop the stale selection so the next change
 										// set auto-selects a file that still exists.
 										a.SelectedDiffPath = ""
@@ -1139,12 +1167,17 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 }
 
 // renderDatabasePane renders SQLite / DuckDB inspector and query console.
+// All manager state is read through one per-frame Snapshot: ScanDatabases,
+// Inspect, SelectTable and ExecuteQuery run on goroutines and mutate the
+// fields under the manager's lock (they can nil out Info / QueryResult
+// between a direct check and its use, which crashes the frame).
 func (a *AppUI) renderDatabasePane(c *ui.Context) {
 	dm := a.Database
 	if dm == nil {
 		return
 	}
 	t := c.Theme()
+	snap := dm.Snapshot()
 
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Gap(12).Padding(8, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
@@ -1152,8 +1185,8 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 				TablerIcon(c, icons.TablerDatabase, 15)
 				ui.Text(c, "Database Viewer").Bold().FontSize(14)
 			})
-			if dm.Info != nil {
-				ui.Text(c, fmt.Sprintf("%s (%s)", dm.Info.FileName, dm.Info.Type)).FontSize(12).TextColor(t.Accent)
+			if snap.Info != nil {
+				ui.Text(c, fmt.Sprintf("%s (%s)", snap.Info.FileName, snap.Info.Type)).FontSize(12).TextColor(t.Accent)
 			}
 			ui.Box(c).Grow(1)
 			rescanBtn := ui.Button(c, "")
@@ -1168,7 +1201,7 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 			}
 		})
 
-		if len(dm.Databases) == 0 {
+		if len(snap.Databases) == 0 {
 			ui.Column(c).Grow(1).Center().Children(func() {
 				TablerIcon(c, icons.TablerDatabase, 28)
 				ui.Text(c, "No SQLite / DuckDB databases detected").FontSize(15).Bold().TextColor(t.TextMuted).Padding(6, 0, 0, 0)
@@ -1178,42 +1211,45 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 		}
 
 		// Database file switcher strip when workspace contains database files.
-		if len(dm.Databases) > 0 {
-			ui.Row(c).Height(32).Padding(0, 12).Gap(6).AlignItems(ui.Center).
-				BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-				ui.Text(c, "DB:").FontSize(10).Bold().TextColor(t.TextMuted)
-				ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						for _, dbPath := range dm.Databases {
-							p := dbPath
-							isSel := (p == dm.ActiveDBPath)
-							pill := ui.Row(c.Key("db-switch-"+p)).Height(22).Radius(4).Padding(0, 8).AlignItems(ui.Center)
-							pill.Children(func() {
-								txt := ui.Text(c, filepath.Base(p)).FontSize(11)
-								if isSel {
-									txt.Bold().TextColor(a.ThemeMgr.Colors().AccentForeground)
-								}
-							})
+		ui.Row(c).Height(32).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
+			ui.Text(c, "DB:").FontSize(10).Bold().TextColor(t.TextMuted)
+			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					for _, dbPath := range snap.Databases {
+						p := dbPath
+						isSel := (p == snap.ActiveDBPath)
+						pill := ui.Row(c.Key("db-switch-"+p)).Height(22).Radius(4).Padding(0, 8).AlignItems(ui.Center)
+						pill.Children(func() {
+							txt := ui.Text(c, filepath.Base(p)).FontSize(11)
 							if isSel {
-								pill.Background(t.Accent)
-							} else if pill.Hovered() {
-								pill.Background(t.Border)
+								txt.Bold().TextColor(a.ThemeMgr.Colors().AccentForeground)
 							}
-							pill.Tooltip(p)
-							if pill.Clicked() && !isSel {
-								go dm.Inspect(p)
-							}
+						})
+						if isSel {
+							pill.Background(t.Accent)
+						} else if pill.Hovered() {
+							pill.Background(t.Border)
 						}
-					})
+						pill.Tooltip(p)
+						if pill.Clicked() && !isSel {
+							go dm.Inspect(p)
+						}
+					}
 				})
 			})
-		}
+		})
 
 		renderSQLConsole := func() {
+			// The text input binds to a frame-local copy of the query; edits
+			// sync back through SetSQLQuery (locked) so the ExecuteQuery
+			// goroutine's locked read of dm.SQLQuery stays race-free.
+			sqlQuery := snap.SQLQuery
 			ui.Column(c).Grow(1).FillHeight().Children(func() {
 				ui.Column(c).Padding(8, 12).Gap(6).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-					in := ui.TextInput(c, &dm.SQLQuery).Placeholder("SELECT * FROM table LIMIT 25;").Grow(1)
-					if in.Submitted() && !dm.IsExecuting {
+					in := ui.TextInput(c, &sqlQuery).Placeholder("SELECT * FROM table LIMIT 25;").Grow(1)
+					if in.Submitted() && !snap.IsExecuting {
+						dm.SetSQLQuery(sqlQuery)
 						go dm.ExecuteQuery()
 					}
 
@@ -1226,26 +1262,30 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 							})
 						})
 						if runBtn.Clicked() {
+							dm.SetSQLQuery(sqlQuery)
 							go dm.ExecuteQuery()
 						}
 						ui.Box(c).Grow(1)
-						if dm.StatusMsg != "" {
-							ui.Text(c, dm.StatusMsg).FontSize(11).TextColor(t.TextMuted)
+						if snap.StatusMsg != "" {
+							ui.Text(c, snap.StatusMsg).FontSize(11).TextColor(t.TextMuted)
 						}
 					})
 				})
 
-				if dm.QueryResult != nil && len(dm.QueryResult.Columns) > 0 {
+				if qr := snap.QueryResult; qr != nil && len(qr.Columns) > 0 {
 					ui.ScrollBoth(c).Grow(1).Padding(6, 10).Children(func() {
 						ui.Row(c).Padding(4, 6).Background(t.Surface).Radius(4).Children(func() {
-							for _, col := range dm.QueryResult.Columns {
+							for _, col := range qr.Columns {
 								ui.Text(c, col).Bold().FontSize(11).Width(100)
 							}
 						})
 
-						for i, r := range dm.QueryResult.Rows {
+						for i, r := range qr.Rows {
+							if r == nil {
+								continue
+							}
 							ui.Row(c.Key(fmt.Sprintf("dbrow-%d", i))).Padding(3, 6).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-								for _, col := range dm.QueryResult.Columns {
+								for _, col := range qr.Columns {
 									valStr := fmt.Sprintf("%v", r[col])
 									if len(valStr) > 40 {
 										valStr = valStr[:37] + "…"
@@ -1257,18 +1297,22 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 					})
 				}
 			})
+			// Persist any in-frame edits back to the manager under lock.
+			if sqlQuery != snap.SQLQuery {
+				dm.SetSQLQuery(sqlQuery)
+			}
 		}
 
 		if a.RightDrawerWidth < 460 {
 			// Stacked: table pills at top + SQL console below
-			if dm.Info != nil && len(dm.Info.Tables) > 0 {
+			if snap.Info != nil && len(snap.Info.Tables) > 0 {
 				ui.Row(c).Height(32).Padding(0, 8).AlignItems(ui.Center).Gap(6).
 					BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
 					ui.Text(c, "TABLE:").FontSize(9).Bold().TextColor(t.TextMuted)
 					ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
-						for _, tb := range dm.Info.Tables {
+						for _, tb := range snap.Info.Tables {
 							tName := tb.Name
-							isSel := (tName == dm.ActiveTable)
+							isSel := (tName == snap.ActiveTable)
 							pill := ui.Row(c.Key("db-pill-"+tName)).Height(22).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center)
 							pill.Children(func() {
 								ui.Text(c, tName).FontSize(11)
@@ -1295,9 +1339,9 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 						ui.Text(c, "TABLES").FontSize(10).Bold().TextColor(t.TextMuted)
 					})
 
-					if dm.Info != nil {
+					if snap.Info != nil {
 						ui.Scroll(c).Grow(1).Padding(2, 6).Children(func() {
-							for _, tb := range dm.Info.Tables {
+							for _, tb := range snap.Info.Tables {
 								tName := tb.Name
 								row := ui.Row(c.Key("db-table-"+tName)).Padding(4, 6).Radius(4).Gap(4).AlignItems(ui.Center)
 								row.Children(func() {
@@ -1305,7 +1349,7 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 									ui.Text(c, tName).FontSize(11).Grow(1).SingleLine()
 									ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(10).TextColor(t.TextMuted)
 								})
-								if tName == dm.ActiveTable {
+								if tName == snap.ActiveTable {
 									row.Background(t.Accent)
 								} else if row.Hovered() {
 									row.Background(t.Border)

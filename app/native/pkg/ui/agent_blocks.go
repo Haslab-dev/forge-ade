@@ -883,7 +883,7 @@ func (a *AppUI) renderPlanModal(c *ui.Context) {
 							})
 							for _, sub := range subs {
 								subItem := sub
-								_, statusColor := subagentStatus(subItem.State, tc)
+								_, statusColor := subagentStatus(string(subItem.State), tc)
 								sRow := ui.Row(c.Key("plan-modal-sub-"+subItem.ID)).Padding(8, 10).Radius(6).Gap(8).
 									AlignItems(ui.Center).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
 								sRow.Children(func() {

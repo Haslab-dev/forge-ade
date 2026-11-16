@@ -203,8 +203,8 @@ func (a *AppUI) renderEditorConfirmModal(c *ui.Context) {
 		return
 	}
 
-	open := discard || overwrite || replace
-	a.modal(c, &open, func() {
+	a.EditorConfirmModalOpen = discard || overwrite || replace
+	a.modal(c, &a.EditorConfirmModalOpen, func() {
 		ui.Column(c).Width(440).Radius(12).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(10).
 			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.45)).Clip().Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -637,7 +637,11 @@ func (a *AppUI) renderPermissionModal(c *ui.Context) {
 			if req.Arguments != "" {
 				args := req.Arguments
 				if len(args) > 600 {
-					args = args[:600] + "…"
+					r := []rune(args)
+					if len(r) > 600 {
+						r = r[:600]
+					}
+					args = string(r) + "…"
 				}
 				ui.Box(c).Padding(8).Radius(6).Background(tc.Canvas).Children(func() {
 					ui.Text(c, args).FontSize(11).Selectable()

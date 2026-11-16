@@ -538,6 +538,8 @@ func (a *AppUI) renderGitBranchesSurface(c *ui.Context, tc theme.ThemeColors, gm
 	snap := gm.Snapshot()
 	ui.Column(c).Grow(1).Children(func() {
 		ui.Row(c).Padding(12, 16).Gap(8).AlignItems(ui.Center).Children(func() {
+			// Safe to bind: NewBranchName is only ever written from the
+			// render thread (this binding and the create-branch handler).
 			ui.TextInput(c, &gm.NewBranchName).Placeholder("New branch name…").Width(260)
 			createBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).Gap(5).AlignItems(ui.Center).
 				Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
@@ -600,6 +602,8 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 				ui.Row(c).Height(30).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
 					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Grow(1).Children(func() {
 					ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.IconMuted)
+					// Safe to bind: SearchQuery is only ever written from the
+					// render thread (this binding) — no goroutine touches it.
 					ui.TextInput(c, &gm.SearchQuery).Placeholder("Search commits by message, author, SHA...").Grow(1)
 				})
 			})

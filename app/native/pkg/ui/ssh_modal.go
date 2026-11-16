@@ -1024,7 +1024,10 @@ func (a *AppUI) renderSSHQuickMenuModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
 	connID, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
-	activeConns := a.Engine.ListSSHConnections()
+	var activeConns []remotefs.ConnectionStatus
+	if a.Engine != nil {
+		activeConns = a.Engine.ListSSHConnections()
+	}
 	labelDisplay := displayHost
 	for _, ac := range activeConns {
 		if ac.ID == connID {

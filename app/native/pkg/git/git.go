@@ -55,6 +55,14 @@ type GitManager struct {
 	OnFileSelect func(path string, showDiff bool)
 	OnNeedRedraw func()
 
+	// OnAICommitResult delivers the AI-generated commit message (already
+	// split into summary and description) once generation finishes. Called
+	// from GenerateAICommit's goroutine; the implementation must hop to the
+	// UI thread (CommitSummary/CommitDesc are bound to text-input widgets
+	// there). When nil (headless/tests, no UI attached), GenerateAICommit
+	// falls back to writing the fields under lock.
+	OnAICommitResult func(summary, desc string)
+
 	fileDiffCache       map[string]string
 	fileDiffPending     map[string]bool
 	cachedRemoteSource  *internalgit.GitRemoteSource
@@ -168,6 +176,27 @@ func (gm *GitManager) SetCommitMessage(msg, summary, desc string) {
 	gm.CommitMsg = msg
 	gm.CommitSummary = summary
 	gm.CommitDesc = desc
+	gm.mu.Unlock()
+}
+
+// ClearCommitDraft empties the commit message fields under lock. The UI
+// calls this from its commit-completion path on the UI thread (the fields
+// are bound to text-input widgets there); Commit itself no longer clears
+// them from its goroutine.
+func (gm *GitManager) ClearCommitDraft() {
+	gm.mu.Lock()
+	gm.CommitMsg = ""
+	gm.CommitSummary = ""
+	gm.CommitDesc = ""
+	gm.mu.Unlock()
+}
+
+// SetDiscardPending records or clears the file awaiting discard confirmation
+// under lock. The render thread (discard button handlers) and Discard's
+// goroutine both write this field, so both sides must take the lock.
+func (gm *GitManager) SetDiscardPending(path string) {
+	gm.mu.Lock()
+	gm.DiscardPendingPath = path
 	gm.mu.Unlock()
 }
 
@@ -592,9 +621,9 @@ func (gm *GitManager) Commit(msg string) error {
 	if err != nil {
 		gm.StatusMsg = fmt.Sprintf("Commit error: %v", err)
 	} else {
-		gm.CommitMsg = ""
-		gm.CommitSummary = ""
-		gm.CommitDesc = ""
+		// The commit draft fields are NOT cleared here: they are bound to
+		// text-input widgets on the UI thread, so the UI clears them via
+		// ClearCommitDraft from its commit-completion path on the UI thread.
 		gm.StatusMsg = "Committed successfully"
 	}
 	gm.mu.Unlock()
@@ -644,6 +673,12 @@ func (gm *GitManager) GenerateAICommit(instruction string) {
 		return
 	}
 
+	// Capture the callback on the calling thread: the UI wires it during the
+	// first render of the changes pane (before this method can be invoked),
+	// and the go statement that launched us establishes happens-before, so
+	// the goroutine below reads only this local copy.
+	cb := gm.OnAICommitResult
+
 	gm.mu.Lock()
 	gm.IsGeneratingAI = true
 	gm.StatusMsg = "Generating AI commit message..."
@@ -662,23 +697,44 @@ func (gm *GitManager) GenerateAICommit(instruction string) {
 		defer cancel()
 
 		msg, err := eng.GenerateAICommit(ctx, root, instruction)
+
+		// Split the cleaned message into summary/description up front so the
+		// result is a plain value, not a write into widget-bound fields.
+		var cleanSummary, cleanDesc string
+		clean := strings.TrimSpace(msg)
+		if err == nil && clean != "" {
+			if nl := strings.IndexByte(clean, '\n'); nl >= 0 {
+				cleanSummary = strings.TrimSpace(clean[:nl])
+				cleanDesc = strings.TrimSpace(clean[nl+1:])
+			} else {
+				cleanSummary = clean
+			}
+		}
+
 		gm.mu.Lock()
 		gm.IsGeneratingAI = false
-		clean := strings.TrimSpace(msg)
 		if err != nil {
 			gm.StatusMsg = fmt.Sprintf("AI Commit error: %v", err)
-		} else if clean != "" {
-			gm.CommitMsg = clean
-			if nl := strings.IndexByte(clean, '\n'); nl >= 0 {
-				gm.CommitSummary = strings.TrimSpace(clean[:nl])
-				gm.CommitDesc = strings.TrimSpace(clean[nl+1:])
+		} else if cleanSummary != "" {
+			// Never write CommitMsg/CommitSummary/CommitDesc from this
+			// goroutine: the UI binds text-input widgets to those fields.
+			// Deliver through OnAICommitResult (its implementation hops to
+			// the UI thread); without a UI attached, fall back to the locked
+			// write so headless callers keep the previous behavior.
+			if cb != nil {
+				gm.StatusMsg = "AI commit message generated"
 			} else {
-				gm.CommitSummary = clean
-				gm.CommitDesc = ""
+				gm.CommitMsg = clean
+				gm.CommitSummary = cleanSummary
+				gm.CommitDesc = cleanDesc
+				gm.StatusMsg = "AI commit message generated"
 			}
-			gm.StatusMsg = "AI commit message generated"
 		}
 		gm.mu.Unlock()
+
+		if cb != nil && err == nil && cleanSummary != "" {
+			cb(cleanSummary, cleanDesc)
+		}
 
 		if gm.OnNeedRedraw != nil {
 			gm.OnNeedRedraw()

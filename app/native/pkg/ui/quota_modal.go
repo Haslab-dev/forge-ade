@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
-	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 )
 
@@ -296,15 +295,12 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 								"Compact Conversation Context?",
 								fmt.Sprintf("This permanently deletes %d of %d message(s) from the active conversation — only the first message and the last 3 remain. The compacted thread is saved to disk and cannot be restored.", deleted, msgCount),
 								"Compact & Delete", func() {
-									sess := as.ActiveSession()
-									if sess == nil || len(sess.Messages) <= 4 {
+									removed, err := as.CompactActiveSession()
+									if err != nil {
+										a.queueToast(ui.Toast{Title: "Compact Failed", Description: err.Error(), Type: "error"})
 										return
 									}
-									first := sess.Messages[0]
-									lastThree := sess.Messages[len(sess.Messages)-3:]
-									sess.Messages = append([]*agent.ChatMessage{first}, lastThree...)
-									as.SaveSessionToDisk(sess)
-									a.queueToast(ui.Toast{Title: "Context Compacted", Description: fmt.Sprintf("Removed %d message(s); compacted thread saved", deleted), Type: "success"})
+									a.queueToast(ui.Toast{Title: "Context Compacted", Description: fmt.Sprintf("Removed %d message(s); compacted thread saved", removed), Type: "success"})
 									a.invalidateUI()
 								}, nil)
 						} else {

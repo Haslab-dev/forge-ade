@@ -45,17 +45,24 @@ type cachedImage struct {
 	size     int64
 	format   string
 	err      error
+	// loading marks a placeholder returned while the background decode is
+	// still in flight (see getImage).
+	loading bool
 }
 
 // imageCacheCap bounds the decoded-image cache; decoded bitmaps are the
 // largest objects the app keeps, so an unbounded map grows without limit.
 const imageCacheCap = 32
 
-// imageLRUState tracks insertion/recency order for the image cache. It is
-// UI-thread-only state (render calls getImage), like the rest of AppUI.
+// imageLRUState tracks insertion/recency order for the image cache, plus the
+// set of in-flight background decodes. The cache map itself stays
+// UI-thread-only (getImage reads/writes it on the render thread, and async
+// decodes publish into it via runOnUI), but the pending-decode set is
+// touched from decode completions too, so it shares the LRU's mutex.
 var (
-	imageLRUMu    sync.Mutex
-	imageLRUOrder []string
+	imageLRUMu          sync.Mutex
+	imageLRUOrder       []string
+	pendingImageDecodes = make(map[string]bool)
 )
 
 // imageCacheTouch records a use (move-to-front) and evicts the
@@ -77,21 +84,34 @@ func imageCacheTouch(cache map[string]*cachedImage, fullPath string) {
 	}
 }
 
-// getImage retrieves or decodes the image source, cached by fullPath and file modTime.
-func (a *AppUI) getImage(fullPath string) *cachedImage {
-	if a.imageCache == nil {
-		a.imageCache = make(map[string]*cachedImage)
+// imageDecodeStart marks fullPath as decoding; reports false when a decode
+// for this path is already in flight (bounded: at most one worker per path).
+func imageDecodeStart(fullPath string) bool {
+	imageLRUMu.Lock()
+	defer imageLRUMu.Unlock()
+	if pendingImageDecodes[fullPath] {
+		return false
 	}
+	pendingImageDecodes[fullPath] = true
+	return true
+}
+
+// imageDecodeDone clears the in-flight decode marker for fullPath.
+func imageDecodeDone(fullPath string) {
+	imageLRUMu.Lock()
+	defer imageLRUMu.Unlock()
+	delete(pendingImageDecodes, fullPath)
+}
+
+// decodeImageFile reads and decodes the image at fullPath into a cache
+// entry. Pure function over the file: touches no cache or LRU state, so it
+// is safe on the background decode goroutine (the CPU-only decode work in
+// mygo uploads to the GPU lazily at draw time, not during decode).
+func decodeImageFile(fullPath string) *cachedImage {
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		return &cachedImage{fullPath: fullPath, err: err}
 	}
-	mod := info.ModTime().UnixNano()
-	if cached, ok := a.imageCache[fullPath]; ok && cached.modTime == mod && cached.src != nil {
-		imageCacheTouch(a.imageCache, fullPath)
-		return cached
-	}
-
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return &cachedImage{fullPath: fullPath, err: err}
@@ -99,7 +119,7 @@ func (a *AppUI) getImage(fullPath string) *cachedImage {
 
 	ci := &cachedImage{
 		fullPath: fullPath,
-		modTime:  mod,
+		modTime:  info.ModTime().UnixNano(),
 		size:     info.Size(),
 	}
 
@@ -160,9 +180,50 @@ func (a *AppUI) getImage(fullPath string) *cachedImage {
 		}
 	}
 
-	a.imageCache[fullPath] = ci
-	imageCacheTouch(a.imageCache, fullPath)
 	return ci
+}
+
+// getImage returns the cached decoded image for fullPath, or a loading
+// placeholder after kicking one bounded background decode. The old code ran
+// os.ReadFile plus the full decode inline on a cache miss, stalling the
+// frame for hundreds of milliseconds on large images (and again whenever
+// the file's modTime changed). Decode results (including decode errors, so
+// a broken file never re-kicks a decode every frame) publish back into the
+// cache through runOnUI, which also triggers a fresh frame. The cache map is
+// only ever touched on the UI thread — render reads here, publish in the
+// runOnUI callback — so no locking beyond the shared LRU/pending guards is
+// needed.
+func (a *AppUI) getImage(fullPath string) *cachedImage {
+	if a.imageCache == nil {
+		a.imageCache = make(map[string]*cachedImage)
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return &cachedImage{fullPath: fullPath, err: err}
+	}
+	mod := info.ModTime().UnixNano()
+	if cached, ok := a.imageCache[fullPath]; ok && cached.modTime == mod && (cached.src != nil || cached.err != nil) {
+		imageCacheTouch(a.imageCache, fullPath)
+		return cached
+	}
+
+	// Cache miss (or stale modTime): decode off-thread. Until the result is
+	// published, hand back a loading placeholder so the frame stays cheap.
+	if imageDecodeStart(fullPath) {
+		go func() {
+			ci := decodeImageFile(fullPath)
+			a.runOnUI(func() {
+				imageDecodeDone(fullPath)
+				if a.imageCache == nil {
+					a.imageCache = make(map[string]*cachedImage)
+				}
+				a.imageCache[fullPath] = ci
+				imageCacheTouch(a.imageCache, fullPath)
+				a.invalidateUI()
+			})
+		}()
+	}
+	return &cachedImage{fullPath: fullPath, modTime: mod, loading: true}
 }
 
 // formatByteSize formats byte counts into human-readable strings.
@@ -420,6 +481,14 @@ func (a *AppUI) renderImageViewer(c *ui.Context, tc theme.ThemeColors, fullPath,
 			canvasBg = tc.SurfaceOverlay
 		case "grid":
 			canvasBg = tc.Canvas
+		}
+
+		if ci.loading {
+			// Background decode still in flight (see getImage).
+			ui.Column(c).Grow(1).Center().Gap(10).Padding(24).Children(func() {
+				ui.Spinner(c).Size(18, 18).Label("Loading image…")
+			})
+			return
 		}
 
 		if ci.err != nil || ci.src == nil {

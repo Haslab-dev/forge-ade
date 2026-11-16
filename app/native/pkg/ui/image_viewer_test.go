@@ -57,10 +57,36 @@ func TestFormatByteSize(t *testing.T) {
 	}
 }
 
-func TestGetImageSVGDecoding(t *testing.T) {
+func TestDecodeImageFileSVG(t *testing.T) {
 	tmpDir := t.TempDir()
 	svgPath := filepath.Join(tmpDir, "test.svg")
 	svgContent := `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="red"/></svg>`
+	if err := os.WriteFile(svgPath, []byte(svgContent), 0o644); err != nil {
+		t.Fatalf("failed to write test svg: %v", err)
+	}
+
+	ci := decodeImageFile(svgPath)
+	if ci == nil {
+		t.Fatalf("decodeImageFile returned nil")
+	}
+	if ci.err != nil {
+		t.Fatalf("decodeImageFile error: %v", ci.err)
+	}
+	if ci.format != "SVG" {
+		t.Errorf("ci.format = %q; want SVG", ci.format)
+	}
+	if ci.width != 100 || ci.height != 100 {
+		t.Errorf("ci.width, ci.height = (%d, %d); want (100, 100)", ci.width, ci.height)
+	}
+}
+
+// getImage must not decode synchronously on the render path: a cache miss
+// returns a loading placeholder and kicks exactly one bounded background
+// decode.
+func TestGetImageAsyncPlaceholder(t *testing.T) {
+	tmpDir := t.TempDir()
+	svgPath := filepath.Join(tmpDir, "test.svg")
+	svgContent := `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" fill="blue"/></svg>`
 	if err := os.WriteFile(svgPath, []byte(svgContent), 0o644); err != nil {
 		t.Fatalf("failed to write test svg: %v", err)
 	}
@@ -72,13 +98,17 @@ func TestGetImageSVGDecoding(t *testing.T) {
 	if ci == nil {
 		t.Fatalf("getImage returned nil")
 	}
-	if ci.err != nil {
-		t.Fatalf("getImage error: %v", ci.err)
+	if !ci.loading {
+		t.Fatalf("getImage on cache miss should return a loading placeholder, got loading=false")
 	}
-	if ci.format != "SVG" {
-		t.Errorf("ci.format = %q; want SVG", ci.format)
+	if ci.src != nil || ci.err != nil {
+		t.Fatalf("placeholder should carry no image/error, got src=%v err=%v", ci.src, ci.err)
 	}
-	if ci.width != 100 || ci.height != 100 {
-		t.Errorf("ci.width, ci.height = (%d, %d); want (100, 100)", ci.width, ci.height)
+
+	// The decode failure path is cached too: a missing file reports its stat
+	// error without kicking a decode or blocking.
+	ci = app.getImage(filepath.Join(tmpDir, "does-not-exist.svg"))
+	if ci == nil || ci.err == nil || ci.loading {
+		t.Fatalf("missing file should return a stat-error entry, got %+v", ci)
 	}
 }
