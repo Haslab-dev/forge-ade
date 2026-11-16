@@ -233,36 +233,92 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						// Agent message: ZCode lane with work traces -> markdown ->
 						// changes card -> bottom-left action icons + timestamp.
 						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, leftInset).Gap(8).Children(func() {
-							// 1. "Working / Worked for Ns" pill & trace block
-							hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
-							if hasWork {
-								a.renderWorkPill(c, tc, sessionID, m)
+							// 1+2. Ordered text/tool timeline (new sessions): text
+							// segments and tool calls render in execution order.
+							// Legacy sessions without Blocks keep the fixed
+							// thinking -> tools -> text layout.
+							if len(m.Blocks) > 0 {
 								open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
-								if open {
-									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
-										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
-									work.Children(func() {
-										if m.Thinking != "" || m.IsThinking {
-											a.renderThinkingBlock(c, tc, sessionID, m)
-										}
-										if len(m.Tools) > 0 {
-											a.renderFoldedToolTraces(c, tc, sessionID, m)
-										}
-									})
+								hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+								if hasWork {
+									a.renderWorkPill(c, tc, sessionID, m)
 								}
-							}
+								if m.Thinking != "" || m.IsThinking {
+									a.renderThinkingBlock(c, tc, sessionID, m)
+								}
+								if open && len(m.Tools) > 1 {
+									a.renderToolGroupBar(c, tc, sessionID, m)
+								}
+								for bi, blk := range m.Blocks {
+									if blk == nil {
+										continue
+									}
+									if blk.Kind == "tool" {
+										if !open {
+											continue
+										}
+										var tool *agent.ToolExecution
+										for _, t := range m.Tools {
+											if t != nil && t.ID == blk.ToolID {
+												tool = t
+												break
+											}
+										}
+										if tool != nil {
+											a.renderToolTraceRow(c, tc, sessionID, m, tool)
+										}
+										continue
+									}
+									// Text segment
+									if strings.TrimSpace(blk.Text) == "" {
+										continue
+									}
+									trimmed := strings.TrimSpace(blk.Text)
+									isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+										(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+									if isPureJSON && json.Valid([]byte(trimmed)) {
+										a.renderJSONResponseCard(c, tc, m, trimmed)
+										continue
+									}
+									isLastBlock := bi == len(m.Blocks)-1
+									if !m.Done && isLastBlock {
+										markdown.Stream(c, blk.Text, &as.MdOpts)
+									} else {
+										markdown.View(c, blk.Text, &as.MdOpts)
+									}
+								}
+							} else {
+								// 1. "Working / Worked for Ns" pill & trace block
+								hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+								if hasWork {
+									a.renderWorkPill(c, tc, sessionID, m)
+									open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
+									if open {
+										work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+											BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+										work.Children(func() {
+											if m.Thinking != "" || m.IsThinking {
+												a.renderThinkingBlock(c, tc, sessionID, m)
+											}
+											if len(m.Tools) > 0 {
+												a.renderFoldedToolTraces(c, tc, sessionID, m)
+											}
+										})
+									}
+								}
 
-							// 2. Response Markdown body & JSON block rendering
-							if m.Text != "" {
-								trimmed := strings.TrimSpace(m.Text)
-								isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
-									(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
-								if isPureJSON && json.Valid([]byte(trimmed)) {
-									a.renderJSONResponseCard(c, tc, m, trimmed)
-								} else if m.Done {
-									markdown.View(c, m.Text, &as.MdOpts)
-								} else {
-									markdown.Stream(c, m.Text, &as.MdOpts)
+								// 2. Response Markdown body & JSON block rendering
+								if m.Text != "" {
+									trimmed := strings.TrimSpace(m.Text)
+									isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+										(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+									if isPureJSON && json.Valid([]byte(trimmed)) {
+										a.renderJSONResponseCard(c, tc, m, trimmed)
+									} else if m.Done {
+										markdown.View(c, m.Text, &as.MdOpts)
+									} else {
+										markdown.Stream(c, m.Text, &as.MdOpts)
+									}
 								}
 							}
 
@@ -574,327 +630,349 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, sess
 		return
 	}
 
-	summary, hasRunning, hasFailed := summarizeTools(m.Tools)
-
 	// All tools including skills, MCP calls, design tools, and subagents are rendered in traces
 	ordinary := m.Tools
 
 	ui.Column(c).FillWidth().Gap(3).Children(func() {
 		// Group summary row for multi-tool execution
 		if len(m.Tools) > 1 {
-			groupBar := ui.Row(c).Height(30).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-				Background(tc.SurfaceRaised.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-			groupBar.Children(func() {
-				if hasRunning {
-					ui.Spinner(c).Size(13, 13).Label("Running tools")
-				} else if hasFailed {
-					ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Error)
-				} else {
-					ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
-						Background(tc.Success.Alpha(0.15)).Children(func() {
-						ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
-					})
-				}
-
-				summaryColor := tc.Text
-				if hasRunning {
-					summaryColor = tc.Accent
-				}
-				ui.Text(c, summary).FontSize(11).FontWeight(500).TextColor(summaryColor).Grow(1).SingleLine()
-
-				// Step toggle pill — fixed content, never wraps.
-				stepLabel := fmt.Sprintf("Show %d steps", len(m.Tools))
-				if m.ShowTools {
-					stepLabel = fmt.Sprintf("Hide %d steps", len(m.Tools))
-				}
-				stepToggle := ui.Row(c.Key("steps-toggle")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
-				stepToggle.Children(func() {
-					ui.Text(c, stepLabel).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
-					chev := icons.TablerChevronRight
-					if m.ShowTools {
-						chev = icons.TablerChevronDown
-					}
-					ui.Icon(c, chev).Width(11).Height(11).TextColor(tc.IconMuted)
-				})
-			})
-			if groupBar.Hovered() {
-				groupBar.Background(tc.SurfaceRaised)
-			}
-			if groupBar.Clicked() {
-				a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
-					lm.ShowTools = !lm.ShowTools
-				})
-			}
+			a.renderToolGroupBar(c, tc, sessionID, m)
 		}
 
 		// Individual tool rows
 		if m.ShowTools || (!m.Done && len(ordinary) > 0) {
 			for _, tool := range ordinary {
-				thisTool := tool
-				args := parseToolArgsCached(thisTool)
-				nl := strings.ToLower(thisTool.ToolName)
-				isSkill := strings.Contains(nl, "skill")
-				isMCPLoad := strings.Contains(nl, "mcp_load") || strings.Contains(nl, "load_mcp") || strings.Contains(nl, "mcp_connect") || strings.Contains(nl, "connect_mcp") || strings.Contains(nl, "mcp_server") || strings.Contains(nl, "list_mcp")
-				isMCPTool := strings.HasPrefix(nl, "mcp__") || strings.HasPrefix(nl, "mcp_") || strings.Contains(nl, "mcp_tool") || strings.Contains(nl, "mcptool")
-				isDesignTool := strings.Contains(nl, "deck") || strings.Contains(nl, "motion") || strings.Contains(nl, "opendesign") || strings.Contains(nl, "open-design") || strings.Contains(nl, "forge-design") || strings.Contains(nl, "hyperframe") || isDeckOrMotionFile(args.Path)
-				isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
-				isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
-				isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
-				isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find")
-				isSubagent := strings.Contains(nl, "invoke_subagent") || strings.Contains(nl, "subagent") || nl == "task" || strings.Contains(nl, "spawn_subagent")
-				failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
+				a.renderToolTraceRow(c, tc, sessionID, m, tool)
+			}
+		}
+	})
+}
 
-				toolIcon := icons.TablerTerminal
-				if isSkill {
-					toolIcon = icons.TablerSparkles
-				} else if isMCPLoad {
-					toolIcon = icons.TablerPlug
-				} else if isMCPTool {
-					toolIcon = icons.TablerCpu
-				} else if isDesignTool {
-					toolIcon = icons.TablerPalette
-				} else if isRead {
-					toolIcon = icons.TablerFileText
-				} else if isEdit {
-					toolIcon = icons.TablerFilePen
-				} else if isSearch {
-					toolIcon = icons.TablerSearch
-				} else if isSubagent {
-					toolIcon = icons.TablerBot
-				}
+// renderToolGroupBar draws the collapsible multi-tool summary row ("Running
+// tools … Show N steps") shared by the folded traces list and the block
+// timeline.
+func (a *AppUI) renderToolGroupBar(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
+	summary, hasRunning, hasFailed := summarizeTools(m.Tools)
 
-				// Row label + kind badge
-				badge := ""
-				displayLabel := thisTool.ToolName
-				if isSkill {
-					badge = "Skill"
-					displayLabel = extractSkillLabel(thisTool.Command, thisTool.ToolName)
-				} else if isMCPLoad {
-					badge = "MCP Server"
-					displayLabel = extractMCPServerLabel(thisTool.Command, thisTool.ToolName)
-				} else if isMCPTool {
-					server, tool := extractMCPToolParts(thisTool.ToolName)
-					if server != "" {
-						badge = "MCP: " + server
-					} else {
-						badge = "MCP"
-					}
-					displayLabel = tool
-				} else if isDesignTool {
-					badge = "Forge Design"
-					if args.Path != "" {
-						displayLabel = filepath.Base(args.Path)
-					} else {
-						displayLabel = "Presentation / Motion"
-					}
-				} else if isSubagent {
-					badge = "Subagent"
-					role := "Subagent"
-					taskPrompt := ""
-					var rawArgs map[string]interface{}
-					if json.Unmarshal([]byte(thisTool.Command), &rawArgs) == nil {
-						if r, ok := rawArgs["Role"].(string); ok && r != "" {
-							role = r
-						} else if r, ok := rawArgs["role"].(string); ok && r != "" {
-							role = r
-						} else if r, ok := rawArgs["TypeName"].(string); ok && r != "" {
-							role = r
-						}
-						if p, ok := rawArgs["Prompt"].(string); ok {
-							taskPrompt = p
-						} else if p, ok := rawArgs["prompt"].(string); ok {
-							taskPrompt = p
-						}
-					}
-					if taskPrompt != "" {
-						displayLabel = fmt.Sprintf("%s: %s", role, taskPrompt)
-					} else {
-						displayLabel = role
-					}
-				} else if isEdit {
-					badge = "Write"
-					if nl != "write" && (strings.Contains(nl, "edit") || strings.Contains(nl, "patch")) {
-						badge = "Edit"
-					}
-					displayLabel = args.Path
-				} else if isRead {
-					badge = "Read"
-					displayLabel = args.Path
-				} else if isSearch {
-					badge = "Search"
-					if args.Query != "" {
-						displayLabel = args.Query
-					} else if args.Path != "" {
-						displayLabel = args.Path
-					}
-				} else if isBash {
-					badge = "$"
-					if cmd := extractShellCommand(thisTool.Command, args.Cmd); cmd != "" {
-						displayLabel = cmd
-					}
-				} else if args.Path != "" {
-					displayLabel = args.Path
-				}
-				if displayLabel == "" {
-					displayLabel = thisTool.ToolName
-				}
-				if runes := []rune(displayLabel); len(runes) > 72 {
-					displayLabel = string(runes[:69]) + "…"
-				}
+	groupBar := ui.Row(c).Height(30).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
+		Background(tc.SurfaceRaised.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+	groupBar.Children(func() {
+		if hasRunning {
+			ui.Spinner(c).Size(13, 13).Label("Running tools")
+		} else if hasFailed {
+			ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Error)
+		} else {
+			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Success.Alpha(0.15)).Children(func() {
+				ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
+			})
+		}
 
-				// Output line count on the right, like the original's read rows.
-				outLines := 0
-				if thisTool.Output != "" && (isRead || isSearch) {
-					outLines = strings.Count(thisTool.Output, "\n") + 1
-				}
+		summaryColor := tc.Text
+		if hasRunning {
+			summaryColor = tc.Accent
+		}
+		ui.Text(c, summary).FontSize(11).FontWeight(500).TextColor(summaryColor).Grow(1).SingleLine()
 
-				toolCard := ui.Column(c.Key("tool-" + thisTool.ID)).Radius(8).
-					Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
-				if failed {
-					toolCard.BorderColor(tc.Error.Alpha(0.4))
-				}
+		// Step toggle pill — fixed content, never wraps.
+		stepLabel := fmt.Sprintf("Show %d steps", len(m.Tools))
+		if m.ShowTools {
+			stepLabel = fmt.Sprintf("Hide %d steps", len(m.Tools))
+		}
+		stepToggle := ui.Row(c.Key("steps-toggle")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+		stepToggle.Children(func() {
+			ui.Text(c, stepLabel).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+			chev := icons.TablerChevronRight
+			if m.ShowTools {
+				chev = icons.TablerChevronDown
+			}
+			ui.Icon(c, chev).Width(11).Height(11).TextColor(tc.IconMuted)
+		})
+	})
+	if groupBar.Hovered() {
+		groupBar.Background(tc.SurfaceRaised)
+	}
+	if groupBar.Clicked() {
+		a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
+			lm.ShowTools = !lm.ShowTools
+		})
+	}
+}
 
-				toolCard.Children(func() {
-					// Row header: chevron left, icon, badge, mono label, extras right.
-					row := ui.Row(c).Height(30).Padding(0, 8).Gap(7).AlignItems(ui.Center)
-					row.Children(func() {
-						chev := icons.TablerChevronRight
-						if thisTool.Expanded {
-							chev = icons.TablerChevronDown
-						}
-						ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
-						ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
-						if badge != "" {
-							ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).
-								BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
-								ui.Text(c, badge).FontSize(10).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
-							})
-						}
-						ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
-						if outLines > 0 {
-							ui.Text(c, fmt.Sprintf("%d lines", outLines)).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
-						}
-						if thisTool.Status == "running" {
-							ui.Spinner(c).Size(12, 12).Label("Running")
-						} else if failed {
-							ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Error.Alpha(0.12)).Children(func() {
-								ui.Text(c, "Failed").FontSize(10).FontWeight(600).TextColor(tc.Error)
-							})
-						}
-					})
-					if row.Hovered() {
-						row.Background(tc.Text.Alpha(0.04))
-					}
-					if row.Clicked() {
-						thisTool.Expanded = !thisTool.Expanded
-					}
+// renderToolTraceRow renders one tool call’s trace row (label, badge and
+// expanded output) in the agent transcript. Shared by the folded traces
+// list and the ordered text/tool block timeline.
+func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, thisTool *agent.ToolExecution) {
+	args := parseToolArgsCached(thisTool)
+	nl := strings.ToLower(thisTool.ToolName)
+	isSkill := strings.Contains(nl, "skill")
+	isMCPLoad := strings.Contains(nl, "mcp_load") || strings.Contains(nl, "load_mcp") || strings.Contains(nl, "mcp_connect") || strings.Contains(nl, "connect_mcp") || strings.Contains(nl, "mcp_server") || strings.Contains(nl, "list_mcp")
+	isMCPTool := strings.HasPrefix(nl, "mcp__") || strings.HasPrefix(nl, "mcp_") || strings.Contains(nl, "mcp_tool") || strings.Contains(nl, "mcptool")
+	isDesignTool := strings.Contains(nl, "deck") || strings.Contains(nl, "motion") || strings.Contains(nl, "opendesign") || strings.Contains(nl, "open-design") || strings.Contains(nl, "forge-design") || strings.Contains(nl, "hyperframe") || isDeckOrMotionFile(args.Path)
+	isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
+	isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
+	isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
+	isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find")
+	isSubagent := strings.Contains(nl, "invoke_subagent") || strings.Contains(nl, "subagent") || nl == "task" || strings.Contains(nl, "spawn_subagent")
+	failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
 
-					// Expanded detail views, mirroring forge-ade's tool blocks.
-					if thisTool.Expanded {
-						ui.Column(c).Padding(8, 10).Gap(6).
-							BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
-							Background(tc.Canvas.Alpha(0.6)).Children(func() {
-							cleanOut := thisTool.Output
-							if failed {
-								cleanOut = strings.ReplaceAll(cleanOut, "<tool_use_error>", "")
-								cleanOut = strings.ReplaceAll(cleanOut, "</tool_use_error>", "")
-								cleanOut = strings.TrimSpace(cleanOut)
-							}
+	toolIcon := icons.TablerTerminal
+	if isSkill {
+		toolIcon = icons.TablerSparkles
+	} else if isMCPLoad {
+		toolIcon = icons.TablerPlug
+	} else if isMCPTool {
+		toolIcon = icons.TablerCpu
+	} else if isDesignTool {
+		toolIcon = icons.TablerPalette
+	} else if isRead {
+		toolIcon = icons.TablerFileText
+	} else if isEdit {
+		toolIcon = icons.TablerFilePen
+	} else if isSearch {
+		toolIcon = icons.TablerSearch
+	} else if isSubagent {
+		toolIcon = icons.TablerBot
+	}
 
-							switch {
-							case isSkill:
-								a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
-							case isMCPLoad:
-								a.renderToolMCPLoadBlock(c, tc, thisTool, cleanOut, failed)
-							case isMCPTool:
-								a.renderToolMCPCallBlock(c, tc, thisTool, cleanOut, failed)
-							case isDesignTool:
-								a.renderToolDesignBlock(c, tc, thisTool, cleanOut, failed)
-							case isSubagent:
-								ui.Column(c).Gap(6).Children(func() {
-									ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-										ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.Accent)
-										ui.Text(c, displayLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
-										openSubBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-											Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-										openSubBtn.Children(func() {
-											ui.Text(c, "View in Drawer").FontSize(10).FontWeight(600).TextColor(tc.Accent)
-										})
-										if openSubBtn.Clicked() {
-											a.RightDrawerTab = RightTabSubagent
-											a.ShowRightDrawer = true
-										}
-									})
-									if cleanOut != "" {
-										renderToolOutputBox(c, tc, cleanOut, failed)
-									}
-								})
-							case isRead && args.Path != "":
-								a.renderToolReadBlock(c, tc, args.Path, cleanOut)
-							case isEdit && (args.OldString != "" || args.NewString != ""):
-								a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
-							case isEdit && args.Content != "" && args.Path != "":
-								a.renderToolReadBlock(c, tc, args.Path, args.Content)
-							case isSearch && cleanOut != "":
-								ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-									ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.Accent)
-									searchLbl := args.Query
-									if searchLbl == "" {
-										searchLbl = thisTool.Command
-									}
-									if args.Path != "" && args.Query != "" {
-										searchLbl = fmt.Sprintf("%s  (%s)", args.Query, args.Path)
-									}
-									ui.Text(c, searchLbl).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
-								})
-								renderToolOutputBox(c, tc, cleanOut, failed)
-							case strings.Contains(cleanOut, "@@ -") && (strings.Contains(cleanOut, "+++") || strings.Contains(cleanOut, "---")):
-								// Unified patch output: parse into MyGo DiffView
-								d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, cleanOut, a.ThemeMgr)
-								if d != nil {
-									d.FitContent = true
-									box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
-									box.Children(func() {
-										mygoeditor.DiffView(c, d).FillWidth()
-									})
-								} else if cleanOut != "" {
-									renderToolOutputBox(c, tc, cleanOut, failed)
-								}
-							case isBash:
-								cmdStr := args.Cmd
-								if cmdStr == "" {
-									cmdStr = thisTool.Command
-								}
-								ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-									ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
-									ui.Text(c, cmdStr).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
-									if cleanOut != "" {
-										copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-										copyBtn.Children(func() {
-											ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
-										})
-										if copyBtn.Hovered() {
-											copyBtn.Background(tc.Text.Alpha(0.06))
-										}
-										if copyBtn.Clicked() {
-											mygo.Clipboard.WriteText(cleanOut)
-											c.AddToast(ui.Toast{Title: "Copied Output", Type: "success"})
-										}
-									}
-								})
-								if cleanOut != "" {
-									renderToolOutputBox(c, tc, cleanOut, failed)
-								}
-							default:
-								if cleanOut != "" {
-									renderToolOutputBox(c, tc, cleanOut, failed)
-								}
-							}
-						})
-					}
+	// Row label + kind badge
+	badge := ""
+	displayLabel := thisTool.ToolName
+	if isSkill {
+		badge = "Skill"
+		displayLabel = extractSkillLabel(thisTool.Command, thisTool.ToolName)
+	} else if isMCPLoad {
+		badge = "MCP Server"
+		displayLabel = extractMCPServerLabel(thisTool.Command, thisTool.ToolName)
+	} else if isMCPTool {
+		server, tool := extractMCPToolParts(thisTool.ToolName)
+		if server != "" {
+			badge = "MCP: " + server
+		} else {
+			badge = "MCP"
+		}
+		displayLabel = tool
+	} else if isDesignTool {
+		badge = "Forge Design"
+		if args.Path != "" {
+			displayLabel = filepath.Base(args.Path)
+		} else {
+			displayLabel = "Presentation / Motion"
+		}
+	} else if isSubagent {
+		badge = "Subagent"
+		role := "Subagent"
+		taskPrompt := ""
+		var rawArgs map[string]interface{}
+		if json.Unmarshal([]byte(thisTool.Command), &rawArgs) == nil {
+			if r, ok := rawArgs["Role"].(string); ok && r != "" {
+				role = r
+			} else if r, ok := rawArgs["role"].(string); ok && r != "" {
+				role = r
+			} else if r, ok := rawArgs["TypeName"].(string); ok && r != "" {
+				role = r
+			}
+			if p, ok := rawArgs["Prompt"].(string); ok {
+				taskPrompt = p
+			} else if p, ok := rawArgs["prompt"].(string); ok {
+				taskPrompt = p
+			}
+		}
+		if taskPrompt != "" {
+			displayLabel = fmt.Sprintf("%s: %s", role, taskPrompt)
+		} else {
+			displayLabel = role
+		}
+	} else if isEdit {
+		badge = "Write"
+		if nl != "write" && (strings.Contains(nl, "edit") || strings.Contains(nl, "patch")) {
+			badge = "Edit"
+		}
+		displayLabel = args.Path
+	} else if isRead {
+		badge = "Read"
+		displayLabel = args.Path
+	} else if isSearch {
+		badge = "Search"
+		if args.Query != "" {
+			displayLabel = args.Query
+		} else if args.Path != "" {
+			displayLabel = args.Path
+		}
+	} else if isBash {
+		badge = "$"
+		if cmd := extractShellCommand(thisTool.Command, args.Cmd); cmd != "" {
+			displayLabel = cmd
+		}
+	} else if args.Path != "" {
+		displayLabel = args.Path
+	}
+	if displayLabel == "" {
+		displayLabel = thisTool.ToolName
+	}
+	if runes := []rune(displayLabel); len(runes) > 72 {
+		displayLabel = string(runes[:69]) + "…"
+	}
+
+	// Output line count on the right, like the original's read rows.
+	outLines := 0
+	if thisTool.Output != "" && (isRead || isSearch) {
+		outLines = strings.Count(thisTool.Output, "\n") + 1
+	}
+
+	toolCard := ui.Column(c.Key("tool-" + thisTool.ID)).Radius(8).
+		Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+	if failed {
+		toolCard.BorderColor(tc.Error.Alpha(0.4))
+	}
+
+	toolCard.Children(func() {
+		// Row header: chevron left, icon, badge, mono label, extras right.
+		row := ui.Row(c).Height(30).Padding(0, 8).Gap(7).AlignItems(ui.Center)
+		row.Children(func() {
+			chev := icons.TablerChevronRight
+			if thisTool.Expanded {
+				chev = icons.TablerChevronDown
+			}
+			ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+			ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
+			if badge != "" {
+				ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).
+					BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+					ui.Text(c, badge).FontSize(10).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
 				})
 			}
+			ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+			if outLines > 0 {
+				ui.Text(c, fmt.Sprintf("%d lines", outLines)).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
+			}
+			if thisTool.Status == "running" {
+				ui.Spinner(c).Size(12, 12).Label("Running")
+			} else if failed {
+				ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Error.Alpha(0.12)).Children(func() {
+					ui.Text(c, "Failed").FontSize(10).FontWeight(600).TextColor(tc.Error)
+				})
+			}
+		})
+		if row.Hovered() {
+			row.Background(tc.Text.Alpha(0.04))
+		}
+		if row.Clicked() {
+			// thisTool is a per-frame snapshot copy — persist the toggle on
+			// the live message so it survives the next frame.
+			a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
+				for _, t := range lm.Tools {
+					if t != nil && t.ID == thisTool.ID {
+						t.Expanded = !t.Expanded
+						break
+					}
+				}
+			})
+		}
+
+		// Expanded detail views, mirroring forge-ade's tool blocks.
+		if thisTool.Expanded {
+			ui.Column(c).Padding(8, 10).Gap(6).
+				BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
+				Background(tc.Canvas.Alpha(0.6)).Children(func() {
+				cleanOut := thisTool.Output
+				if failed {
+					cleanOut = strings.ReplaceAll(cleanOut, "<tool_use_error>", "")
+					cleanOut = strings.ReplaceAll(cleanOut, "</tool_use_error>", "")
+					cleanOut = strings.TrimSpace(cleanOut)
+				}
+
+				switch {
+				case isSkill:
+					a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
+				case isMCPLoad:
+					a.renderToolMCPLoadBlock(c, tc, thisTool, cleanOut, failed)
+				case isMCPTool:
+					a.renderToolMCPCallBlock(c, tc, thisTool, cleanOut, failed)
+				case isDesignTool:
+					a.renderToolDesignBlock(c, tc, thisTool, cleanOut, failed)
+				case isSubagent:
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.Accent)
+							ui.Text(c, displayLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
+							openSubBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+								Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+							openSubBtn.Children(func() {
+								ui.Text(c, "View in Drawer").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+							})
+							if openSubBtn.Clicked() {
+								a.RightDrawerTab = RightTabSubagent
+								a.ShowRightDrawer = true
+							}
+						})
+						if cleanOut != "" {
+							renderToolOutputBox(c, tc, cleanOut, failed)
+						}
+					})
+				case isRead && args.Path != "":
+					a.renderToolReadBlock(c, tc, args.Path, cleanOut)
+				case isEdit && (args.OldString != "" || args.NewString != ""):
+					a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
+				case isEdit && args.Content != "" && args.Path != "":
+					a.renderToolReadBlock(c, tc, args.Path, args.Content)
+				case isSearch && cleanOut != "":
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.Accent)
+						searchLbl := args.Query
+						if searchLbl == "" {
+							searchLbl = thisTool.Command
+						}
+						if args.Path != "" && args.Query != "" {
+							searchLbl = fmt.Sprintf("%s  (%s)", args.Query, args.Path)
+						}
+						ui.Text(c, searchLbl).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+					})
+					renderToolOutputBox(c, tc, cleanOut, failed)
+				case strings.Contains(cleanOut, "@@ -") && (strings.Contains(cleanOut, "+++") || strings.Contains(cleanOut, "---")):
+					// Unified patch output: parse into MyGo DiffView
+					d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, cleanOut, a.ThemeMgr)
+					if d != nil {
+						d.FitContent = true
+						box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+						box.Children(func() {
+							mygoeditor.DiffView(c, d).FillWidth()
+						})
+					} else if cleanOut != "" {
+						renderToolOutputBox(c, tc, cleanOut, failed)
+					}
+				case isBash:
+					cmdStr := args.Cmd
+					if cmdStr == "" {
+						cmdStr = thisTool.Command
+					}
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
+						ui.Text(c, cmdStr).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
+						if cleanOut != "" {
+							copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+							copyBtn.Children(func() {
+								ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
+							})
+							if copyBtn.Hovered() {
+								copyBtn.Background(tc.Text.Alpha(0.06))
+							}
+							if copyBtn.Clicked() {
+								mygo.Clipboard.WriteText(cleanOut)
+								c.AddToast(ui.Toast{Title: "Copied Output", Type: "success"})
+							}
+						}
+					})
+					if cleanOut != "" {
+						renderToolOutputBox(c, tc, cleanOut, failed)
+					}
+				default:
+					if cleanOut != "" {
+						renderToolOutputBox(c, tc, cleanOut, failed)
+					}
+				}
+			})
 		}
 	})
 }
@@ -1371,6 +1449,16 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 	}
 
 	card.Children(func() {
+		// ZCode-style floating turn-status card: Changes diffstat, branch,
+		// commit jump, task progress checklist, and active agents with Stop
+		// buttons. The slim strip above the input toggles it.
+		statusSessionID := ""
+		if a.Agent != nil {
+			statusSessionID = a.Agent.ActiveSessionID
+		}
+		a.renderTurnStatusCard(c, tc, statusSessionID)
+		a.renderTurnStatusToggle(c, tc, statusSessionID)
+
 		// Autocomplete panels float above the input: "/" opens the slash
 		// catalog, a trailing "@token" opens the file mention menu —
 		// AgentTaskInputBar.tsx parity.
@@ -2380,7 +2468,7 @@ func (a *AppUI) renderInspectorBody(c *ui.Context, tc theme.ThemeColors, isFloat
 			}
 			for i := 0; i < limit; i++ {
 				sub := subs[i]
-				_, statusColor := subagentStatus(sub.State, tc)
+				_, statusColor := subagentStatus(string(sub.State), tc)
 				subRow := ui.Row(c.Key("insp-sub-"+sub.ID)).Padding(3, 6).Radius(6).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				subRow.Children(func() {
 					ui.Box(c).Size(6, 6).Radius(3).Background(statusColor)

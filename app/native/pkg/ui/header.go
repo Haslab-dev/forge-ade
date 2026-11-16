@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
 func (a *AppUI) resolveExternalTargetDir(targetPath string) string {
@@ -176,6 +178,11 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		leftPad = 78
 	}
 
+	// Badge counts for the Agent Surface Quick-Switcher (Board task total,
+	// git working-tree dirty files).
+	dirtyFiles, _, _ := a.gitDirtySummary()
+	boardTasks := a.boardTaskCount()
+
 	rightPad := float32(10)
 	if !(a.Mode == ModeAgent && a.ShowRightDrawer) {
 		if bar.Right > 0 {
@@ -322,6 +329,34 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						a.ActiveTaskKind = "agent"
 					}
 				}
+
+				// Agent Surface Quick-Switcher in ModeAgent: [Chat | Board | Git]
+				// One-click action icons for the workflow board and git client,
+				// with live badges (board task count, dirty working-tree files).
+				if a.Mode == ModeAgent {
+					ui.Row(c.Key("hdr-agent-surfaces")).Height(26).Gap(2).Padding(2).Radius(7).Shrink(0).
+						Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
+						AlignItems(ui.Center).Children(func() {
+						chatActive := !a.IsGitClientOpen && a.AgentViewMode == AgentViewChat && a.ActiveTaskKind != "cli"
+						headerSurfaceButton(c, tc, icons.TablerMessage, "Chat", 0, tc.Accent, chatActive, func() {
+							a.IsGitClientOpen = false
+							a.AgentViewMode = AgentViewChat
+							a.ActiveTaskKind = "agent"
+						})
+						boardActive := !a.IsGitClientOpen && a.AgentViewMode == AgentViewBoard
+						headerSurfaceButton(c, tc, icons.TablerLayoutKanban, "Board", boardTasks, tc.Accent, boardActive, func() {
+							a.IsGitClientOpen = false
+							a.ActiveTaskKind = "agent"
+							a.openBoardSurface()
+						})
+						gitActive := a.IsGitClientOpen || a.AgentViewMode == AgentViewGit
+						headerSurfaceButton(c, tc, icons.TablerGitBranch, "Git", dirtyFiles, tc.Warning, gitActive, func() {
+							a.IsGitClientOpen = false
+							a.ActiveTaskKind = "agent"
+							a.openGitClientSurface()
+						})
+					})
+				}
 			})
 
 			// Live Agent Activity Pill when outside Chat (Editor, Board, Git, or CLI)
@@ -448,4 +483,38 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				}
 			}
 		})
+}
+
+// headerSurfaceButton is one segment of the Agent Surface Quick-Switcher:
+// icon + label with an optional count badge; the active segment is raised
+// with a card surface.
+func headerSurfaceButton(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, label string, count int, badgeColor ui.Color, active bool, onPick func()) {
+	btn := ui.Row(c.Key("hsurf-"+label)).Height(24).Radius(6).Padding(0, 7).Gap(4).
+		AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+	btn.Children(func() {
+		ic := ui.Icon(c, icon).Width(13).Height(13)
+		txt := ui.Text(c, label).FontSize(11).FontWeight(500).SingleLine()
+		if active {
+			ic.TextColor(tc.Accent)
+			txt.TextColor(tc.Text).FontWeight(600)
+		} else {
+			ic.TextColor(tc.ToolbarControlForeground)
+			txt.TextColor(tc.ToolbarControlForeground)
+		}
+		if count > 0 {
+			ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
+				Background(badgeColor.Alpha(0.15)).Children(func() {
+				ui.Text(c, fmt.Sprintf("%d", count)).FontSize(9).FontWeight(600).TextColor(badgeColor)
+			})
+		}
+	})
+	if active {
+		btn.Background(tc.SurfaceOverlay).
+			Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.16))
+	} else if btn.Hovered() {
+		btn.Background(tc.ToolbarControlHover)
+	}
+	if btn.Clicked() {
+		onPick()
+	}
 }
