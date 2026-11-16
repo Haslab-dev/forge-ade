@@ -1474,13 +1474,24 @@ func (as *AgentState) StashPrompt() {
 	}
 }
 
+func agentDataDir(e *engine.Engine) (string, error) {
+	if e != nil && e.DataDir != "" {
+		return e.DataDir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".forge-ade"), nil
+}
+
 // draftStore paths for per-session composer drafts and steer queues.
 func (as *AgentState) draftStorePath(name string) string {
-	path, err := promptHistoryPath(as.engine)
+	dir, err := agentDataDir(as.engine)
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(path), name)
+	return filepath.Join(dir, name)
 }
 
 func readStringMap(path string) map[string]string {
@@ -1570,11 +1581,11 @@ func (as *AgentState) LoadSteerQueues() {
 
 // LoadPromptStash reads persisted stashed prompts (max 20).
 func (as *AgentState) LoadPromptStash() {
-	path, err := promptHistoryPath(as.engine)
-	if err != nil {
+	path := as.draftStorePath("prompt-stash.json")
+	if path == "" {
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(path), "prompt-stash.json"))
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
@@ -1592,13 +1603,13 @@ func (as *AgentState) SavePromptStash() {
 	as.mu.Lock()
 	stash := append([]string(nil), as.StashedPrompts...)
 	as.mu.Unlock()
-	path, err := promptHistoryPath(as.engine)
-	if err != nil {
+	path := as.draftStorePath("prompt-stash.json")
+	if path == "" {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
 	if data, err := json.Marshal(stash); err == nil {
-		_ = os.WriteFile(filepath.Join(filepath.Dir(path), "prompt-stash.json"), data, 0644)
+		_ = os.WriteFile(path, data, 0644)
 	}
 }
 
@@ -2147,6 +2158,8 @@ func (as *AgentState) SelectACPAgent(agentID string) string {
 
 // syncActiveSession updates the ActiveSessionID and points Messages/IsStreaming to the active session.
 func (as *AgentState) syncActiveSession() {
+	as.PromptHistoryIdx = -1
+	as.PromptHistoryDraft = ""
 	if as.ActiveSessionID == "" {
 		as.Messages = nil
 		as.IsStreaming = false
