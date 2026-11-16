@@ -136,6 +136,9 @@ func (w *Watcher) watchRecursive(root string, gi *gitignore.Matcher) error {
 			if rel != "." && strings.Count(rel, string(filepath.Separator)) >= maxWatchDepth {
 				return filepath.SkipDir
 			}
+			if isSnapshotPath(path) {
+				return filepath.SkipDir
+			}
 			forge := isForgePath(path)
 			if !forge && isPathSkipped(path) {
 				return filepath.SkipDir
@@ -223,8 +226,8 @@ func (w *Watcher) handleEvent(event fsnotify.Event) {
 	switch {
 	case event.Op&fsnotify.Create != 0:
 		evt.Type = events.FileCreated
-		// Watch newly created directories
-		if isDir && (forge || (!isPathSkipped(event.Name) && !w.isGitIgnored(event.Name, true))) {
+		// Watch newly created directories (skipping snapshot trees to prevent FD leaks)
+		if isDir && !isSnapshotPath(event.Name) && (forge || (!isPathSkipped(event.Name) && !w.isGitIgnored(event.Name, true))) {
 			w.mu.Lock()
 			if len(w.dirs) < maxWatchedDirs {
 				if err := w.watcher.Add(event.Name); err == nil {
@@ -271,6 +274,14 @@ const maxWatchedDirs = 500
 
 func isSkipped(name string) bool {
 	return ignore.Name(name)
+}
+
+func isSnapshotPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	clean := filepath.ToSlash(path)
+	return strings.Contains(clean, "/.forge/snapshots") || strings.HasSuffix(clean, "/.forge/snapshots")
 }
 
 func isPathSkipped(path string) bool {

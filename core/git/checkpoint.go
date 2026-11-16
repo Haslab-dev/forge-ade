@@ -193,6 +193,12 @@ func CreateCheckpoint(ctx context.Context, repoPath string, sessionID string, tu
 	records, _ := readCheckpointsMeta(repoPath)
 	records = append(records, rec)
 	if len(records) > maxCheckpoints {
+		toDelete := records[:len(records)-maxCheckpoints]
+		for _, r := range toDelete {
+			if r.CommitHash == "local_snapshot" && r.SessionID != "" && r.TurnID != "" {
+				_ = os.RemoveAll(filepath.Join(repoPath, ".forge", "snapshots", r.SessionID, r.TurnID))
+			}
+		}
 		records = records[len(records)-maxCheckpoints:]
 	}
 	if err := writeCheckpointsMeta(repoPath, records); err != nil {

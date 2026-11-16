@@ -204,7 +204,6 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 	if activeModel == "" && as.ActiveModel != "" {
 		activeModel = as.ActiveModel
 	}
-	customProvider := false
 	if as.engine.LLMClient != nil {
 		cfg := as.engine.LLMClient.GetConfig()
 		if activeModel == "" {
@@ -223,22 +222,13 @@ func (as *AgentState) syncInternalSessionState(mgrID string, sess *AgentSession)
 				as.engine.LLMClient.SetActiveModelByID(activeModel)
 			}
 		}
-		// Custom OpenAI-compatible gateways (kenari, etc.) often serve models
-		// whose chat templates emit in-band XML tool calls instead of native
-		// tool_calls — the manager's xml dialect parses those.
-		customProvider = cfg.BaseURL != "" && !strings.Contains(cfg.BaseURL, "api.openai.com") &&
-			!strings.Contains(cfg.BaseURL, "anthropic.com") &&
-			!strings.Contains(cfg.BaseURL, "generativelanguage.googleapis.com") &&
-			!strings.Contains(cfg.BaseURL, "api.deepseek.com") &&
-			!strings.Contains(cfg.BaseURL, "localhost") && !strings.Contains(cfg.BaseURL, "127.0.0.1")
 	}
 	if activeModel != "" {
 		_ = as.engine.AgentMgr.SetSessionModel(mgrID, activeModel)
 		sess.Model = activeModel
 	}
-	if customProvider {
-		_ = as.engine.AgentMgr.SetDialect(mgrID, "xml")
-	}
+	// Always use native function calling by default for standard OpenAI/Claude/DeepSeek compatibility.
+	_ = as.engine.AgentMgr.SetDialect(mgrID, "")
 	mode := as.ExecutionMode.InternalPermissionMode()
 	if mode != "" {
 		_ = as.engine.AgentMgr.SetPermissionMode(mgrID, mode)
@@ -273,7 +263,7 @@ func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string, att
 	sess.LastCheckpointTurnID = turnID
 	wsPath := sess.WorkspacePath
 	as.mu.Unlock()
-	if as.engine.GitEngine != nil && wsPath != "" {
+	if as.engine.GitEngine != nil && wsPath != "" && !strings.Contains(wsPath, ".forge") {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		_, _ = internalgit.CreateCheckpoint(ctx, wsPath, sess.ID, turnID, prompt)
 		cancel()

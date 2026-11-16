@@ -74,6 +74,9 @@ func wireManagers(dataDir string, bus *events.Bus, llmClient *llm.LLMClient) *ma
 		DataDir:      dataDir,
 	})
 	agentMgr.SetMemoryManager(memoryMgr)
+	// Disable aggressive Jev router tool filtering so the full suite of registered tools
+	// (MCP servers, filesystem, terminal, git, search) is always offered to the model.
+	agentMgr.SetJevRouter(nil)
 
 	return &managers{
 		Search: si,
