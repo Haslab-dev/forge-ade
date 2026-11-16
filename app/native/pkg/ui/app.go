@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Haslab-dev/RakitKode/brain"
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -2208,6 +2209,20 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 	a.ShowThreadFind = false
 	a.ThreadFindQuery = ""
 	a.ThreadFindMatches = nil
+
+	// Re-point the living-memory brain at the new workspace (per-project
+	// facts/digests/notes). SSH and empty workspaces have no local brain.
+	if a.Engine != nil && a.Engine.AgentMgr != nil {
+		if rawDir != "" && !strings.HasPrefix(rawDir, "ssh://") {
+			if br, err := brain.Open(rawDir); err == nil {
+				a.Engine.AgentMgr.SetBrain(br)
+			} else {
+				log.Printf("[app] brain open %s: %v", rawDir, err)
+			}
+		} else {
+			a.Engine.AgentMgr.SetBrain(nil)
+		}
+	}
 
 	if strings.HasPrefix(rawDir, "ssh://") {
 		// Stop any active local filesystem watcher to prevent background CPU/RAM churn and descriptor leaks
