@@ -2163,40 +2163,17 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 	if a.Agent == nil {
 		return
 	}
-	tm := a.Agent.ActiveTaskManager()
-	var tasks []agent.TaskItem
-	var completed, total int
-	if tm != nil {
-		tasks = tm.GetTasks()
-		completed, total = tm.Progress()
-	}
-
-	var current *agent.TaskItem
-	for i := range tasks {
-		if tasks[i].Status == agent.TaskInProgress {
-			current = &tasks[i]
-			break
-		}
-	}
-	allDone := completed == total && total > 0
-
-	subs := a.Agent.Subagents(a.Agent.SnapshotActiveSessionID())
-	runningSubs := 0
-	for _, s := range subs {
-		st := strings.ToLower(fmt.Sprintf("%v", s.State))
-		if st == "running" || st == "working" || st == "thinking" || st == "executing" {
-			runningSubs++
-		}
-	}
-
-	activeSess := a.Agent.ActiveSession()
-	isSessionRunning := a.Agent.StreamingSnapshot() || (activeSess != nil && (activeSess.Status == "running" || activeSess.Status == "streaming"))
-
-	// If there is no work to do, hide it completely!
-	hasWork := (current != nil) || (runningSubs > 0) || isSessionRunning
-	if !hasWork {
+	snap := a.Agent.TaskTrackerSnapshot()
+	if !snap.HasWork {
 		return
 	}
+
+	current := snap.CurrentTask
+	completed := snap.CompletedTasks
+	total := snap.TotalTasks
+	allDone := snap.AllDone
+	runningSubs := snap.RunningSubs
+	isSessionRunning := snap.IsSessionRunning
 
 	// Compact floating top-right pill
 	pill := ui.Row(c.Key("inspector-pill")).Absolute().Top(12).Right(16).Height(30).Radius(999).

@@ -136,7 +136,78 @@ func NewEngine(dataDir string) *Engine {
 	e.autoCancel = cancel
 	autoMgr.StartScheduler(ctx, e.dispatchAutomationFire)
 
+	// Connect MCP servers and register aliases in background so engine startup is non-blocking.
+	if e.MCPMgr != nil && len(e.MCPMgr.ListServers()) > 0 {
+		go func() {
+			_ = e.SyncMCP(nil)
+		}()
+	}
+
 	return e
+}
+
+// SyncMCP connects to all enabled MCP servers, discovers their tools, registers canonical
+// aliases (such as Figma tools), and publishes an mcp:servers_updated event on the engine bus.
+func (e *Engine) SyncMCP(ctx context.Context) error {
+	if e.MCPMgr == nil || e.ToolReg == nil {
+		return nil
+	}
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+	}
+	if err := e.MCPMgr.ConnectAll(ctx); err != nil {
+		log.Printf("engine: MCP ConnectAll: %v", err)
+	}
+	connected := e.MCPMgr.ListConnectedTools()
+	for _, t := range connected {
+		e.ToolReg.RegisterMCPToolWithCaller(llm.MCPTool{
+			ServerName:  t.ServerName,
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+			Title:       t.Title,
+			ReadOnly:    t.ReadOnly,
+			Destructive: t.Destructive,
+		}, e.MCPMgr)
+
+		// Enrich Figma tools with canonical standard aliases so models looking
+		// for "figma_*" or "mcp__figma__*" find them immediately.
+		if strings.Contains(strings.ToLower(t.ServerName), "figma") {
+			base := t.Name
+			if strings.Contains(base, "/") {
+				base = strings.SplitN(base, "/", 2)[1]
+			}
+			aliases := []string{
+				"figma_" + strings.TrimPrefix(base, "figma_"),
+				"mcp__figma__" + strings.TrimPrefix(base, "figma_"),
+			}
+			if base == "get_figma_data" {
+				aliases = append(aliases, "figma_get_data", "figma_get_file_data", "mcp__figma__get_data")
+			} else if base == "download_figma_images" {
+				aliases = append(aliases, "figma_download_images", "mcp__figma__download_images")
+			}
+			for _, alias := range aliases {
+				e.ToolReg.RegisterMCPToolWithCaller(llm.MCPTool{
+					ServerName:  t.ServerName,
+					Name:        alias,
+					Description: t.Description,
+					InputSchema: t.InputSchema,
+					Title:       t.Title,
+					ReadOnly:    t.ReadOnly,
+					Destructive: t.Destructive,
+				}, e.MCPMgr)
+			}
+		}
+	}
+	if e.Bus != nil {
+		e.Bus.Publish(events.Event{
+			Type: "mcp:servers_updated",
+			Data: map[string]interface{}{"count": len(connected)},
+		})
+	}
+	return nil
 }
 
 // dispatchAutomationFire delivers a due automation to the UI layer: a bus

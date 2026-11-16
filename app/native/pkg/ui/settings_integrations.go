@@ -32,10 +32,10 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 	}
 	servers := mgr.ListServers()
 
-	// Add-server form (collapsible).
+	// Add-server form (collapsible) and Refresh All.
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		addBtn := ui.Row(c).Height(28).Radius(8).Padding(0, 12).Gap(5).AlignItems(ui.Center).
-			Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+			Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35)).Cursor(ui.CursorPointer)
 		addBtn.Children(func() {
 			ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.Accent)
 			ui.Text(c, "Add Server").FontSize(12).FontWeight(600).TextColor(tc.Accent)
@@ -43,6 +43,23 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 		if addBtn.Clicked() {
 			sm.MCPFormOpen = !sm.MCPFormOpen
 		}
+
+		syncBtn := ui.Row(c.Key("mcp-sync-all")).Height(28).Radius(8).Padding(0, 10).Gap(5).AlignItems(ui.Center).
+			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+		syncBtn.Children(func() {
+			ui.Icon(c, icons.TablerRotate).Width(13).Height(13).TextColor(tc.IconMuted)
+			ui.Text(c, "Refresh All").FontSize(12).FontWeight(500)
+		})
+		if syncBtn.Clicked() {
+			c.AddToast(ui.Toast{Title: "Connecting MCP", Description: "Refreshing all enabled servers...", Type: "info"})
+			go func() {
+				if a.Engine != nil {
+					_ = a.Engine.SyncMCP(nil)
+					a.queueToast(ui.Toast{Title: "MCP Synced", Description: "All MCP tools updated", Type: "success"})
+				}
+			}()
+		}
+
 		ui.Box(c).Grow(1)
 		ui.Text(c, fmt.Sprintf("%d servers · %d tools", len(servers), len(mgr.ListTools()))).FontSize(11).TextColor(tc.TextMuted)
 	})
@@ -71,7 +88,10 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 						} else {
 							sm.MCPName, sm.MCPCommand = "", ""
 							sm.MCPFormOpen = false
-							c.AddToast(ui.Toast{Title: "Server Saved", Description: cfg.Name, Type: "success"})
+							c.AddToast(ui.Toast{Title: "Server Saved", Description: cfg.Name + " (connecting...)", Type: "success"})
+							if a.Engine != nil {
+								go a.Engine.SyncMCP(nil)
+							}
 						}
 					}
 				})
@@ -82,14 +102,26 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 	ui.Column(c).Gap(8).Children(func() {
 		for _, s := range servers {
 			thisS := s
+			serverTools := 0
+			for _, t := range mgr.ListConnectedTools() {
+				if t.ServerName == thisS.Name {
+					serverTools++
+				}
+			}
+			connErr := mgr.ServerConnectionError(thisS.Name)
+
 			settingsCard(c, tc, func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerPlug).Width(18).Height(18).TextColor(tc.Accent)
 					ui.Column(c).Grow(1).Gap(2).Children(func() {
 						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 							ui.Text(c, thisS.Name).FontSize(13).FontWeight(600)
-							if thisS.Enabled {
-								Badge(c, tc, "ENABLED", tc.Success)
+							if serverTools > 0 {
+								Badge(c, tc, fmt.Sprintf("CONNECTED (%d tools)", serverTools), tc.Success)
+							} else if connErr != nil {
+								Badge(c, tc, "ERROR", tc.Error)
+							} else if thisS.Enabled {
+								Badge(c, tc, "ENABLED", tc.Info)
 							} else {
 								Badge(c, tc, "DISABLED", tc.TextMuted)
 							}
@@ -102,7 +134,23 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 							spec = thisS.URL
 						}
 						ui.Text(c, spec).FontSize(11).Font("monospace").TextColor(tc.TextMuted).SingleLine()
+						if connErr != nil {
+							ui.Text(c, connErr.Error()).FontSize(11).TextColor(tc.Error).SingleLine()
+						}
 					})
+
+					// Reconnect button
+					recBtn := IconButton(c, tc, icons.TablerRotate, 13)
+					if recBtn.Clicked() {
+						c.AddToast(ui.Toast{Title: "Connecting MCP", Description: fmt.Sprintf("Reconnecting %s...", thisS.Name), Type: "info"})
+						go func(name string) {
+							if a.Engine != nil {
+								_ = a.Engine.SyncMCP(nil)
+								a.queueToast(ui.Toast{Title: "MCP Synced", Description: fmt.Sprintf("Refreshed tools for %s", name), Type: "success"})
+							}
+						}(thisS.Name)
+					}
+
 					del := IconButton(c, tc, icons.TablerTrash, 13)
 					confirmDeleteServer := func() {
 						// queueToast, not c.AddToast: the staged action runs in a
@@ -111,6 +159,9 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 							if err := mgr.DeleteServer(thisS.Name); err != nil {
 								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
 							} else {
+								if a.Engine != nil && a.Engine.ToolReg != nil {
+									a.Engine.ToolReg.UnregisterMCPTools(thisS.Name)
+								}
 								a.queueToast(ui.Toast{Title: "Server Deleted", Description: thisS.Name, Type: "info"})
 							}
 						}, nil)

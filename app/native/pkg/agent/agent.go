@@ -249,6 +249,8 @@ type AgentState struct {
 	statsPending       map[string]bool
 	Messages           []*ChatMessage // alias for active session messages
 	Invalidate         func()
+	lastInvalidate     time.Time
+	invalidateMu       sync.Mutex
 
 	// streamCancels holds the context cancel funcs of in-flight raw-LLM
 	// fallback streams per session, so CancelStreaming can abort them (the
@@ -452,6 +454,82 @@ func (as *AgentState) TranscriptVersion() int {
 		}
 	}
 	return v
+}
+
+func (as *AgentState) throttledInvalidate() {
+	if as.Invalidate == nil {
+		return
+	}
+	as.invalidateMu.Lock()
+	now := time.Now()
+	if now.Sub(as.lastInvalidate) < 33*time.Millisecond {
+		as.invalidateMu.Unlock()
+		return
+	}
+	as.lastInvalidate = now
+	as.invalidateMu.Unlock()
+	as.Invalidate()
+}
+
+// TaskTrackerSnapshotData holds a consolidated frame snapshot of all data
+// required by the top-right task tracker pill, obtained in one lock.
+type TaskTrackerSnapshotData struct {
+	HasWork          bool
+	CurrentTask      *TaskItem
+	TotalTasks       int
+	CompletedTasks   int
+	AllDone          bool
+	RunningSubs      int
+	IsSessionRunning bool
+}
+
+// TaskTrackerSnapshot grabs progress, running subagents, and active turn status
+// under a single lock acquisition to prevent UI frame thrashing during streaming.
+func (as *AgentState) TaskTrackerSnapshot() TaskTrackerSnapshotData {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	var data TaskTrackerSnapshotData
+	sessionID := as.ActiveSessionID
+
+	if as.TaskManager != nil {
+		tasks := as.TaskManager.GetTasks()
+		data.TotalTasks = len(tasks)
+		for i := range tasks {
+			if tasks[i].Status == TaskCompleted {
+				data.CompletedTasks++
+			} else if data.CurrentTask == nil && tasks[i].Status == TaskInProgress {
+				taskCopy := tasks[i]
+				data.CurrentTask = &taskCopy
+			}
+		}
+		data.AllDone = data.CompletedTasks == data.TotalTasks && data.TotalTasks > 0
+	}
+
+	if as.engine != nil && as.engine.AgentMgr != nil && sessionID != "" {
+		for _, s := range as.Sessions {
+			if s.ID == sessionID && s.RemoteSessionID != "" {
+				subs := as.engine.AgentMgr.GetSubagents(s.RemoteSessionID)
+				for _, sub := range subs {
+					st := strings.ToLower(fmt.Sprintf("%v", sub.State))
+					if st == "running" || st == "working" || st == "thinking" || st == "executing" {
+						data.RunningSubs++
+					}
+				}
+				break
+			}
+		}
+	}
+
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			data.IsSessionRunning = as.IsStreaming || s.Status == "running" || s.Status == "streaming"
+			break
+		}
+	}
+
+	data.HasWork = (data.CurrentTask != nil) || (data.RunningSubs > 0) || data.IsSessionRunning
+	return data
 }
 
 // SteerQueueSnapshot returns a copy of the active session's steer queue.
@@ -669,9 +747,7 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 		break
 	}
 	as.mu.Unlock()
-	if as.Invalidate != nil {
-		as.Invalidate()
-	}
+	as.throttledInvalidate()
 }
 
 // harnessDumpSignature reports whether a text span is (the start of) a
@@ -739,9 +815,7 @@ func (as *AgentState) HandleThoughtChunk(sessionID, text string) {
 		break
 	}
 	as.mu.Unlock()
-	if as.Invalidate != nil {
-		as.Invalidate()
-	}
+	as.throttledInvalidate()
 }
 
 // HandleToolEvent applies an agent:tool_start / agent:tool_end payload.
