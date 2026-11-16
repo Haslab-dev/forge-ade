@@ -258,7 +258,8 @@ type AgentState struct {
 	// streamCancels holds the context cancel funcs of in-flight raw-LLM
 	// fallback streams per session, so CancelStreaming can abort them (the
 	// stream context is local to the turn goroutine).
-	streamCancels map[string]*streamCancelHandle
+	streamCancels      map[string]*streamCancelHandle
+	internalSessionMap sync.Map // remoteManagerID -> nativeSessionID for lock-free bus routing
 }
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.

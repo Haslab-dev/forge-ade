@@ -99,6 +99,7 @@ type ACPManager struct {
 	OnUsage        func(sessionID string, usage UsageInfo)
 	OnCommands     func(sessionID string, commands []string)
 	OnNeedRedraw   func()
+	eventQueue     chan func()
 }
 
 // NewACPManager creates and initializes the native ACP integration.
@@ -109,12 +110,28 @@ func NewACPManager(engine *engine.Engine, onRedraw func()) *ACPManager {
 		activeReqs:   make(map[string]*PermissionRequest),
 		OnNeedRedraw: onRedraw,
 		Agents:       defaultACPAgentDefinitions(),
+		eventQueue:   make(chan func(), 4096),
 	}
+	go mgr.processEventQueue()
 
 	mgr.RefreshAvailability()
 	mgr.subscribeToBusEvents()
 
 	return mgr
+}
+
+func (mgr *ACPManager) processEventQueue() {
+	for fn := range mgr.eventQueue {
+		fn()
+	}
+}
+
+func (mgr *ACPManager) postEvent(fn func()) {
+	if mgr.eventQueue != nil {
+		mgr.eventQueue <- fn
+	} else {
+		fn()
+	}
 }
 
 // defaultACPAgentDefinitions registers the official ForgeADE ACP agent ecosystem.
@@ -708,8 +725,12 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			return // thinking and other kinds stream via their own events
 		}
 		text := str(e.Data, "delta", "text", "content")
-		if sessionID != "" && text != "" && mgr.OnTokenChunk != nil {
-			mgr.OnTokenChunk(sessionID, text)
+		if sessionID != "" && text != "" {
+			mgr.postEvent(func() {
+				if mgr.OnTokenChunk != nil {
+					mgr.OnTokenChunk(sessionID, text)
+				}
+			})
 		}
 	})
 
@@ -720,8 +741,12 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		}
 		sessionID := sessionKey(e.Data)
 		text := str(e.Data, "delta", "text", "content", "thinking")
-		if sessionID != "" && text != "" && mgr.OnThoughtChunk != nil {
-			mgr.OnThoughtChunk(sessionID, text)
+		if sessionID != "" && text != "" {
+			mgr.postEvent(func() {
+				if mgr.OnThoughtChunk != nil {
+					mgr.OnThoughtChunk(sessionID, text)
+				}
+			})
 		}
 	})
 
@@ -743,8 +768,12 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		if ev.Status == "completed" && ev.Output == "" {
 			ev.Output = stringify(e.Data["result"])
 		}
-		if mgr.OnToolEvent != nil && ev.SessionID != "" {
-			mgr.OnToolEvent(ev)
+		if ev.SessionID != "" {
+			mgr.postEvent(func() {
+				if mgr.OnToolEvent != nil {
+					mgr.OnToolEvent(ev)
+				}
+			})
 		}
 	}
 	mgr.bus.Subscribe("agent:tool_start", func(e events.Event) { handleTool(e, "running") })
@@ -765,8 +794,13 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			return
 		}
 		sessionID := sessionKey(e.Data)
-		if sessionID != "" && mgr.OnTurnStart != nil {
-			mgr.OnTurnStart(sessionID, str(e.Data, "prompt"))
+		prompt := str(e.Data, "prompt")
+		if sessionID != "" {
+			mgr.postEvent(func() {
+				if mgr.OnTurnStart != nil {
+					mgr.OnTurnStart(sessionID, prompt)
+				}
+			})
 		}
 	})
 	mgr.bus.Subscribe("agent:turn_end", func(e events.Event) {
@@ -774,7 +808,7 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			return
 		}
 		sessionID := sessionKey(e.Data)
-		if sessionID == "" || mgr.OnTurnDone == nil {
+		if sessionID == "" {
 			return
 		}
 		remID := str(e.Data, "remoteSessionId", "remote_session_id", "conversation_id")
@@ -790,10 +824,15 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 			StepCount:       num(e.Data, "step_count", "stepCount"),
 			RemoteSessionID: remID,
 		}
-		if u, ok := e.Data["usage"].(map[string]interface{}); ok {
-			mgr.deliverUsage(sessionID, u, num, stringify)
-		}
-		mgr.OnTurnDone(sessionID, info)
+		u, hasUsage := e.Data["usage"].(map[string]interface{})
+		mgr.postEvent(func() {
+			if hasUsage {
+				mgr.deliverUsage(sessionID, u, num, stringify)
+			}
+			if mgr.OnTurnDone != nil {
+				mgr.OnTurnDone(sessionID, info)
+			}
+		})
 	})
 
 	// Permission prompts: forge-ade emits "agent:ask" in supervised mode with
@@ -833,11 +872,15 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 					questions = append(questions, q)
 				}
 			}
-			if len(questions) > 0 && sessionID != "" && mgr.OnQuestions != nil {
-				mgr.OnQuestions(sessionID, questions)
-				if mgr.OnNeedRedraw != nil {
-					mgr.OnNeedRedraw()
-				}
+			if len(questions) > 0 && sessionID != "" {
+				mgr.postEvent(func() {
+					if mgr.OnQuestions != nil {
+						mgr.OnQuestions(sessionID, questions)
+					}
+					if mgr.OnNeedRedraw != nil {
+						mgr.OnNeedRedraw()
+					}
+				})
 				return
 			}
 		}
@@ -869,19 +912,21 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 				})
 			}
 		}
-		mgr.mu.Lock()
-		mgr.ActiveReq = req
-		if mgr.activeReqs == nil {
-			mgr.activeReqs = make(map[string]*PermissionRequest)
-		}
-		mgr.activeReqs[req.RequestID] = req
-		mgr.mu.Unlock()
-		if mgr.OnAsk != nil {
-			mgr.OnAsk(req)
-		}
-		if mgr.OnNeedRedraw != nil {
-			mgr.OnNeedRedraw()
-		}
+		mgr.postEvent(func() {
+			mgr.mu.Lock()
+			mgr.ActiveReq = req
+			if mgr.activeReqs == nil {
+				mgr.activeReqs = make(map[string]*PermissionRequest)
+			}
+			mgr.activeReqs[req.RequestID] = req
+			mgr.mu.Unlock()
+			if mgr.OnAsk != nil {
+				mgr.OnAsk(req)
+			}
+			if mgr.OnNeedRedraw != nil {
+				mgr.OnNeedRedraw()
+			}
+		})
 	}
 	mgr.bus.Subscribe("agent:ask", askHandler)
 	// Kept for forward-compatibility with a plain permission event.
@@ -904,8 +949,12 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 				names = append(names, name)
 			}
 		}
-		if sessionID != "" && len(names) > 0 && mgr.OnCommands != nil {
-			mgr.OnCommands(sessionID, names)
+		if sessionID != "" && len(names) > 0 {
+			mgr.postEvent(func() {
+				if mgr.OnCommands != nil {
+					mgr.OnCommands(sessionID, names)
+				}
+			})
 		}
 	})
 
@@ -916,7 +965,9 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 		}
 		sessionID := sessionKey(e.Data)
 		if u, ok := e.Data["usage"].(map[string]interface{}); ok && sessionID != "" {
-			mgr.deliverUsage(sessionID, u, num, stringify)
+			mgr.postEvent(func() {
+				mgr.deliverUsage(sessionID, u, num, stringify)
+			})
 		}
 	})
 }

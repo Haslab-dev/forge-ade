@@ -175,6 +175,8 @@ func (as *AgentState) ensureInternalManagerSession(sess *AgentSession) (string, 
 	if appliedKey != "" {
 		sess.appliedPersonaKey = appliedKey
 	}
+	as.internalSessionMap.Store(mgrSess.ID, sess.ID)
+	as.internalSessionMap.Store(sess.ID, sess.ID)
 	as.mu.Unlock()
 	return mgrSess.ID, nil
 }
@@ -250,19 +252,15 @@ func (as *AgentState) TriggerInternalTurn(sess *AgentSession, prompt string, att
 	if len(mentions) == 0 && len(as.AttachedFiles) > 0 {
 		mentions = append([]string(nil), as.AttachedFiles...)
 	}
+	turnID := fmt.Sprintf("turn-%d", time.Now().UnixMilli())
+	sess.LastCheckpointTurnID = turnID
+	wsPath := sess.WorkspacePath
 	as.mu.Unlock()
 
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return fmt.Errorf("agent engine unavailable")
 	}
 
-	// Snapshot the workspace before the turn runs (CreateSessionCheckpoint
-	// parity) so the review bar can revert all files of the turn.
-	turnID := fmt.Sprintf("turn-%d", time.Now().UnixMilli())
-	as.mu.Lock()
-	sess.LastCheckpointTurnID = turnID
-	wsPath := sess.WorkspacePath
-	as.mu.Unlock()
 	if as.engine.GitEngine != nil && wsPath != "" && !strings.Contains(wsPath, ".forge") {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		_, _ = internalgit.CreateCheckpoint(ctx, wsPath, sess.ID, turnID, prompt)
@@ -293,15 +291,20 @@ func (as *AgentState) MapInternalSession(sessionID string) string {
 	if sessionID == "" {
 		return sessionID
 	}
+	if v, ok := as.internalSessionMap.Load(sessionID); ok {
+		return v.(string)
+	}
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	for _, s := range as.Sessions {
 		if s.ID == sessionID {
+			as.internalSessionMap.Store(sessionID, sessionID)
 			return sessionID
 		}
 	}
 	for _, s := range as.Sessions {
 		if s.RemoteSessionID == sessionID {
+			as.internalSessionMap.Store(sessionID, s.ID)
 			return s.ID
 		}
 	}
