@@ -20,6 +20,39 @@ type ProjectSessionInfo struct {
 	SessionCount  int    `json:"sessionCount"`
 }
 
+// WriteFileAtomic replaces path with data via temp-file + rename so a crash
+// mid-write never truncates an existing store (sessions, stash, steer queues
+// were plain os.WriteFile — a kill during the write produced a corrupt or
+// empty JSON file). The existing file's mode is preserved; perm is used for
+// new files. Same package-external callers (pkg/agent) use it too.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after a successful rename
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 // IsTempTestPath reports whether p points inside an OS temporary directory
 // (such as go test's t.TempDir() or os.MkdirTemp), so test runs stay
 // isolated from the user's global ~/.forge/sessions store.
@@ -145,7 +178,7 @@ func updateProjectSessionInfo(projectDir, projectName, projectPath string) error
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(infoPath, data, 0644)
+	return WriteFileAtomic(infoPath, data, 0644)
 }
 
 type diskSessionRef struct {
@@ -194,7 +227,7 @@ func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 		if targetDir != "" {
 			dir := filepath.Join(targetDir, ".forge", "sessions")
 			_ = os.MkdirAll(dir, 0755)
-			_ = os.WriteFile(filepath.Join(dir, id+".json"), []byte(sessionJSON), 0644)
+			_ = WriteFileAtomic(filepath.Join(dir, id+".json"), []byte(sessionJSON), 0644)
 		}
 		return nil
 	}
@@ -203,7 +236,7 @@ func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 	if projectDir != "" {
 		_ = os.MkdirAll(projectDir, 0755)
 		sessionFile := filepath.Join(projectDir, id+".json")
-		_ = os.WriteFile(sessionFile, []byte(sessionJSON), 0644)
+		_ = WriteFileAtomic(sessionFile, []byte(sessionJSON), 0644)
 		_ = updateProjectSessionInfo(projectDir, projectName, targetWs)
 	}
 
@@ -211,7 +244,7 @@ func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 	if homeDir != "" {
 		legacyDir := filepath.Join(homeDir, ".forge-ade", "sessions")
 		if info, err := os.Stat(legacyDir); err == nil && info.IsDir() {
-			_ = os.WriteFile(filepath.Join(legacyDir, id+".json"), []byte(sessionJSON), 0644)
+			_ = WriteFileAtomic(filepath.Join(legacyDir, id+".json"), []byte(sessionJSON), 0644)
 		}
 	}
 

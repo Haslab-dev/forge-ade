@@ -100,13 +100,21 @@ func (m *Manager) saveSessionsLocked() {
 	_ = os.WriteFile(filePath, data, 0o644)
 }
 
-func (m *Manager) recordUsageLocked(sessionID string, u *ContextUsage) {
+// CONTRACT: emitEvent must NEVER be called while m.mu is held. Bus
+// subscribers run inline on the publisher goroutine and may take other locks
+// or post to bounded queues; dispatching events under m.mu turns any
+// subscriber stall into a manager-wide deadlock (verified: a full UI event
+// queue froze the main thread because recordUsageLocked published
+// "agent:usage" under m.mu from the claude-stream callback). Mutate state
+// under the lock, build the payload, then emit AFTER unlocking — every
+// recordUsageLocked call site follows this pattern.
+func (m *Manager) recordUsageLocked(sessionID string, u *ContextUsage) map[string]interface{} {
 	if u == nil {
-		return
+		return nil
 	}
 	sess, ok := m.sessions[sessionID]
 	if !ok || sess == nil {
-		return
+		return nil
 	}
 	if sess.Usage == nil {
 		sess.Usage = &ContextUsage{}
@@ -123,12 +131,12 @@ func (m *Manager) recordUsageLocked(sessionID string, u *ContextUsage) {
 	sess.UpdatedAt = time.Now().UnixMilli()
 	m.saveSessionsLocked()
 
-	m.emitEvent("agent:usage", map[string]interface{}{
+	return map[string]interface{}{
 		"sessionId":   sessionID,
 		"session_id":  sessionID,
 		"usage":       sess.Usage,
 		"promptCount": sess.PromptCount,
-	})
+	}
 }
 
 func (m *Manager) recordToolStepLocked(sessionID string, toolID string) {
@@ -1041,7 +1049,10 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 			"input":    inputs,
 		}
 		go func() {
-			ctx := context.Background()
+			// Generous bound so a wedged CLI cannot hold this goroutine (and
+			// the pending request slot) forever; long turns still finish.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
 			var res json.RawMessage
 			if err := client.SendRequest(ctx, "turn/start", params, &res); err != nil {
 				log.Printf("codex turn/start error for %s: %v", sessionID, err)
@@ -1105,7 +1116,10 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 	}
 
 	go func() {
-		ctx := context.Background()
+		// Generous bound so a wedged CLI cannot hold this goroutine (and the
+		// pending request slot) forever; long turns still finish.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
 		var res SessionPromptResult
 		if err := client.SendRequest(ctx, MethodSessionPrompt, params, &res); err != nil {
 			log.Printf("acp prompt error for %s: %v", sessionID, err)
@@ -1125,14 +1139,15 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		m.mu.Lock()
 		session.Status = "idle"
 		session.UpdatedAt = time.Now().UnixMilli()
+		var usageEvent map[string]interface{}
 		if res.Usage != nil {
-			m.recordUsageLocked(sessionID, res.Usage)
+			usageEvent = m.recordUsageLocked(sessionID, res.Usage)
 		} else if session.Usage == nil || session.Usage.TotalTokens == 0 {
 			inEst := len(effectivePrompt) / 4
 			if inEst < 10 {
 				inEst = 10
 			}
-			m.recordUsageLocked(sessionID, &ContextUsage{
+			usageEvent = m.recordUsageLocked(sessionID, &ContextUsage{
 				InputTokens:  inEst,
 				OutputTokens: 25,
 				TotalTokens:  inEst + 25,
@@ -1143,6 +1158,12 @@ func (m *Manager) Prompt(sessionID string, prompt string) error {
 		hasStreamed := m.sessionHasStreamed[sessionID]
 		m.sessionHasStreamed[sessionID] = false
 		m.mu.Unlock()
+
+		// Emitted after unlocking: bus subscribers run inline and must never
+		// find m.mu held by the publisher (see recordUsageLocked contract).
+		if usageEvent != nil {
+			m.emitEvent("agent:usage", usageEvent)
+		}
 
 		// If no streaming message deltas were emitted during the turn, extract text from prompt response
 		if !hasStreamed {
@@ -1338,6 +1359,25 @@ func (m *Manager) GetSession(sessionID string) (*Session, bool) {
 	defer m.mu.RUnlock()
 	sess, ok := m.sessions[sessionID]
 	return sess, ok
+}
+
+// Close terminates every live ACP CLI child process at app shutdown: each
+// Client was spawned with Setpgid:true, so Client.Close's process-group
+// SIGTERM→SIGKILL also reaps the harness's own children (P1-4). Called from
+// the app layer; safe to call more than once.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	clients := make([]*Client, 0, len(m.clients))
+	for _, c := range m.clients {
+		if c != nil {
+			clients = append(clients, c)
+		}
+	}
+	m.clients = make(map[string]*Client)
+	m.mu.Unlock()
+	for _, c := range clients {
+		_ = c.Close()
+	}
 }
 
 func (m *Manager) ListSessions() []*Session {
@@ -1664,16 +1704,21 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			} `json:"message"`
 		}
 		if err := json.Unmarshal(raw, &msgStart); err == nil {
+			var usageEvent map[string]interface{}
 			m.mu.Lock()
 			if sess, ok := m.sessions[sessionID]; ok {
 				if sess.Model == "" && msgStart.Message.Model != "" {
 					sess.Model = msgStart.Message.Model
 				}
 				if msgStart.Message.Usage != nil {
-					m.recordUsageLocked(sessionID, msgStart.Message.Usage)
+					usageEvent = m.recordUsageLocked(sessionID, msgStart.Message.Usage)
 				}
 			}
 			m.mu.Unlock()
+			// Emit after unlocking (see recordUsageLocked contract).
+			if usageEvent != nil {
+				m.emitEvent("agent:usage", usageEvent)
+			}
 		}
 
 	case "message_delta":
@@ -1682,9 +1727,14 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			Usage *ContextUsage `json:"usage"`
 		}
 		if err := json.Unmarshal(raw, &deltaPayload); err == nil && deltaPayload.Usage != nil {
+			var usageEvent map[string]interface{}
 			m.mu.Lock()
-			m.recordUsageLocked(sessionID, deltaPayload.Usage)
+			usageEvent = m.recordUsageLocked(sessionID, deltaPayload.Usage)
 			m.mu.Unlock()
+			// Emit after unlocking (see recordUsageLocked contract).
+			if usageEvent != nil {
+				m.emitEvent("agent:usage", usageEvent)
+			}
 		}
 
 	case "content_block_delta":
@@ -1764,6 +1814,7 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			usage = resPayload.Result.Usage
 		}
 
+		var usageEvent map[string]interface{}
 		m.mu.Lock()
 		var remoteSessID string
 		if sess, ok := m.sessions[sessionID]; ok {
@@ -1774,7 +1825,7 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 			}
 			remoteSessID = sess.RemoteSessionID
 			if usage != nil {
-				m.recordUsageLocked(sessionID, usage)
+				usageEvent = m.recordUsageLocked(sessionID, usage)
 			}
 			m.saveSessionsLocked()
 		}
@@ -1790,6 +1841,10 @@ func (m *Manager) handleStreamEvent(sessionID string, event string, raw []byte, 
 		}
 		m.mu.Unlock()
 
+		// Emit after unlocking (see recordUsageLocked contract).
+		if usageEvent != nil {
+			m.emitEvent("agent:usage", usageEvent)
+		}
 		m.emitEvent("agent:turn_end", map[string]interface{}{
 			"sessionId":         sessionID,
 			"session_id":        sessionID,
@@ -1852,8 +1907,9 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		if u == nil {
 			u = turnPayload.TokenUsage
 		}
+		var usageEvent map[string]interface{}
 		if u != nil {
-			m.recordUsageLocked(sessionID, u)
+			usageEvent = m.recordUsageLocked(sessionID, u)
 		}
 		m.saveSessionsLocked()
 		turnUsage := (func() *ContextUsage {
@@ -1868,6 +1924,10 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		}
 		m.mu.Unlock()
 
+		// Emit after unlocking (see recordUsageLocked contract).
+		if usageEvent != nil {
+			m.emitEvent("agent:usage", usageEvent)
+		}
 		m.emitEvent("agent:turn_end", map[string]interface{}{
 			"sessionId":   sessionID,
 			"session_id":  sessionID,
@@ -1967,9 +2027,14 @@ func (m *Manager) handleNotification(sessionID string, method string, params jso
 		usageBytes, _ := json.Marshal(usageCandidate)
 		var u ContextUsage
 		if err := json.Unmarshal(usageBytes, &u); err == nil && (u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0) {
+			var usageEvent map[string]interface{}
 			m.mu.Lock()
-			m.recordUsageLocked(sessionID, &u)
+			usageEvent = m.recordUsageLocked(sessionID, &u)
 			m.mu.Unlock()
+			// Emit after unlocking (see recordUsageLocked contract).
+			if usageEvent != nil {
+				m.emitEvent("agent:usage", usageEvent)
+			}
 		}
 	}
 

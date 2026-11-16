@@ -78,21 +78,32 @@ func (w *Watcher) Start() {
 }
 
 func (w *Watcher) loop() {
+	// Capture the fsnotify watcher and stop channel in locals under the lock:
+	// Start() replaces w.watcher/w.stopCh when re-created, and reading the
+	// fields directly in this loop raced the replacement (P2a). The old
+	// watcher's Channels close via Close(), ending this loop cleanly.
+	w.mu.RLock()
+	fw := w.watcher
+	stop := w.stopCh
+	w.mu.RUnlock()
+	if fw == nil {
+		return
+	}
 	for {
 		select {
-		case event, ok := <-w.watcher.Events:
+		case event, ok := <-fw.Events:
 			if !ok {
 				return
 			}
 			w.handleEvent(event)
 
-		case err, ok := <-w.watcher.Errors:
+		case err, ok := <-fw.Errors:
 			if !ok {
 				return
 			}
 			log.Printf("file watcher error: %v", err)
 
-		case <-w.stopCh:
+		case <-stop:
 			return
 		}
 	}
