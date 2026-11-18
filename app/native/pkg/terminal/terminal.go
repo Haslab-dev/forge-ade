@@ -245,7 +245,7 @@ func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) (*termplugin.Terminal,
 	tab.gen++
 	gen := tab.gen
 	if tab.Title == "" {
-		tab.Title = "Terminal"
+		tab.Title = defaultTabTitle(tab.Cwd)
 	}
 	opts := termplugin.Options{
 		Dir: sanitizeCwd(tab.Cwd),

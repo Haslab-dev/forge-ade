@@ -174,10 +174,17 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 						a.renderTerminalTabsStrip(c, tc, a.Terminal, "drawer-term")
 						if IconButton(c, tc, icons.TablerPlus, 11).Clicked() {
-							_ = a.Terminal.NewTab("")
+							// New shells start in the workspace root, so tab
+							// titles name the project instead of a generic
+							// "Terminal" at $HOME.
+							root := ""
+							if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+								root = a.Workspace.RootDir
+							}
+							_ = a.Terminal.NewTab(root)
 						}
-						ui.Box(c).Grow(1)
-						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+						ui.Box(c).Grow(1).Shrink(0)
+						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
 							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
 						askBtn.Children(func() {
 							ui.Icon(c, icons.TablerSparkles).Width(10).Height(10).TextColor(tc.Accent)
@@ -187,7 +194,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 							a.askAgentFromTerminal()
 						}
 
-						snipBtn := ui.Row(c.Key("drawer-term-snip")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+						snipBtn := ui.Row(c.Key("drawer-term-snip")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
 							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
 						snipBtn.Children(func() {
 							ui.Icon(c, icons.TablerBook).Width(10).Height(10).TextColor(tc.IconMuted)

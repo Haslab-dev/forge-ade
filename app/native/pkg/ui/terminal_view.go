@@ -179,7 +179,12 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			}
 			m.Separator()
 			if m.Item("New Tab").Chosen() && a.Terminal != nil {
-				_ = a.Terminal.NewTab("")
+				_ = func() string {
+					if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+						return a.Workspace.RootDir
+					}
+					return ""
+				}()
 			}
 			if m.Item("Clear Terminal").Chosen() && a.Terminal != nil {
 				a.Terminal.SendInput("\x0c")
@@ -251,7 +256,12 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			})
 
 			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && a.Terminal != nil {
-				_ = a.Terminal.NewTab("")
+				_ = func() string {
+					if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+						return a.Workspace.RootDir
+					}
+					return ""
+				}()
 			}
 			if IconButton(c, tc, icons.TablerX, 13).Clicked() {
 				a.ShowBottomTerminal = false
