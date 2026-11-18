@@ -520,7 +520,10 @@ func (a *AppUI) openTerminalSessionAndReplace() {
 
 // openNewLauncherTab appends a fresh "New tab" launcher instance.
 func (a *AppUI) openNewLauncherTab() {
-	a.replaceActiveDrawerTab(RightTabLauncher, "New tab", -1)
+	// APPEND — never replace: "+" adds a fresh launcher tab alongside the
+	// existing panes (ZCode parity). The old replace-version silently ate
+	// the active pane on every "+", which is why tabs kept "disappearing".
+	a.OpenDrawerPaneNew(RightTabLauncher, "New tab", -1)
 }
 
 // newTerminalSession spawns a NEW terminal session at the workspace root

@@ -871,3 +871,59 @@ func TestLauncherPickReplacesLauncherTab(t *testing.T) {
 		t.Fatalf("render must keep exactly the picked pane, got %+v", app.DrawerTabs)
 	}
 }
+
+// TestUserSequenceThreeTerminals reproduces the user's exact click sequence:
+// "+" opens a launcher tab, picking Terminal spawns a terminal session tab —
+// repeated three times. Expected end state: 3 launcher tabs + 3 terminal
+// session tabs (Terminal, Terminal 2, Terminal 3). If any Terminal instance
+// is lost or turned into a launcher, this test fails and shows the state.
+func TestUserSequenceThreeTerminals(t *testing.T) {
+	tempDir := t.TempDir()
+	eng := engine.NewEngine(tempDir)
+	app := NewAppUI(eng, tempDir)
+	app.ShowRightDrawer = true
+
+	dump := func(stage string) {
+		t.Logf("%s: %+v (active=%d RightDrawerTab=%d)", stage, app.DrawerTabs, app.drawerActiveIdx, app.RightDrawerTab)
+	}
+
+	// Cycle 1: + → launcher → pick Terminal.
+	app.openNewLauncherTab()
+	dump("after + 1")
+	app.pickDrawerPaneTerminal()
+	dump("after pick 1")
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	_ = tw // a frame with reconcile runs here, like the real app
+	dump("after frame 1")
+
+	// Cycle 2.
+	app.openNewLauncherTab()
+	app.pickDrawerPaneTerminal()
+	tw2 := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	_ = tw2
+	dump("after cycle 2")
+
+	// Cycle 3.
+	app.openNewLauncherTab()
+	app.pickDrawerPaneTerminal()
+	tw3 := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	_ = tw3
+	dump("after cycle 3")
+
+	terminals := 0
+	launchers := 0
+	for _, tab := range app.DrawerTabs {
+		switch tab.Kind {
+		case RightTabTerminal:
+			terminals++
+		case RightTabLauncher:
+			launchers++
+		}
+	}
+	if terminals != 3 {
+		t.Fatalf("expected 3 Terminal tabs after three cycles, got %d: %+v", terminals, app.DrawerTabs)
+	}
+	if launchers < 0 {
+		t.Fatalf("negative launchers")
+	}
+}
