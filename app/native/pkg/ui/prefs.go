@@ -16,21 +16,22 @@ import (
 
 // uiPrefs is the persisted shape.
 type uiPrefs struct {
-	Appearance           string  `json:"appearance"`
-	PaletteID            string  `json:"palette_id"`
-	ChatWidth            string  `json:"chat_width"`
-	DiffScheme           string  `json:"diff_scheme"`
-	ShowLeftSidebar      bool    `json:"show_left_sidebar"`
-	ShowRightDrawer      bool    `json:"show_right_drawer"`
-	ShowBottomTerminal   bool    `json:"show_bottom_terminal"`
-	LeftSidebarWidth     float32 `json:"left_sidebar_width"`
-	RightDrawerWidth     float32 `json:"right_drawer_width"`
-	BottomTerminalHeight float32 `json:"bottom_terminal_height"`
-	FollowAgent          bool    `json:"follow_agent"`
-	LeftSidebarView      string  `json:"left_sidebar_view"`
-	SidebarListView      string  `json:"sidebar_list_view"`
-	ProjectFilter        string  `json:"project_filter"`
-	TaskSortBy           string  `json:"task_sort_by"`
+	Appearance           string   `json:"appearance"`
+	PaletteID            string   `json:"palette_id"`
+	ChatWidth            string   `json:"chat_width"`
+	DiffScheme           string   `json:"diff_scheme"`
+	ShowLeftSidebar      bool     `json:"show_left_sidebar"`
+	ShowRightDrawer      bool     `json:"show_right_drawer"`
+	ShowBottomTerminal   bool     `json:"show_bottom_terminal"`
+	LeftSidebarWidth     float32  `json:"left_sidebar_width"`
+	RightDrawerWidth     float32  `json:"right_drawer_width"`
+	BottomTerminalHeight float32  `json:"bottom_terminal_height"`
+	FollowAgent          bool     `json:"follow_agent"`
+	LeftSidebarView      string   `json:"left_sidebar_view"`
+	SidebarListView      string   `json:"sidebar_list_view"`
+	ProjectFilter        string   `json:"project_filter"`
+	TaskSortBy           string   `json:"task_sort_by"`
+	ProjectOrder         []string `json:"project_order"` // custom sidebar project-group order
 }
 
 func (a *AppUI) prefsPath() string {
@@ -113,6 +114,11 @@ func (a *AppUI) loadUIPrefs() {
 	case "updated", "created":
 		a.TaskSortBy = p.TaskSortBy
 	}
+	// Custom project-group order survives restarts; "General" is pinned by
+	// the renderer regardless of what the stored list contains.
+	if len(p.ProjectOrder) > 0 {
+		a.ProjectOrder = p.ProjectOrder
+	}
 }
 
 // SaveUIPrefs snapshots the current preferences to disk (best effort).
@@ -137,6 +143,7 @@ func (a *AppUI) SaveUIPrefs() {
 		SidebarListView:      a.SidebarListView,
 		ProjectFilter:        a.ProjectFilter,
 		TaskSortBy:           a.TaskSortBy,
+		ProjectOrder:         a.ProjectOrder,
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
@@ -163,10 +170,11 @@ func (a *AppUI) prefsSnapshot() string {
 		f(a.ShowLeftSidebar), f(a.ShowRightDrawer), f(a.ShowBottomTerminal),
 		f32(a.LeftSidebarWidth), f32(a.RightDrawerWidth), f32(a.BottomTerminalHeight),
 		f(a.FollowAgent), a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
+		strings.Join(a.ProjectOrder, ","),
 	}.String()
 }
 
-type prefsSnap [15]string
+type prefsSnap [16]string
 
 func (p prefsSnap) String() string {
 	return strings.Join(p[:], "|")

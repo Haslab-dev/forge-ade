@@ -240,48 +240,54 @@ type AppUI struct {
 	ThinkingBlockExpanded map[string]bool
 	InspectorCollapsed    bool
 
-	ShowNewFileModal         bool
-	NewFileName              string
-	ShowNewFolderModal       bool
-	NewFolderName            string
-	ShowNewTaskModal         bool
-	NewTaskTitle             string
-	NewTaskWorkspacePath     string // preselected folder for group-level "+ New task"
-	NewTaskAgentType         string // "acp" or "cli"
-	NewTaskSearchQuery       string
-	NewTaskFilterTab         string // "all", "acp", "cli"
-	NewTaskSelectedKind      string // "acp", "cli"
-	NewTaskSelectedAgentID   string
-	NewTaskSelectedName      string
-	NewTaskSelectedExec      string
-	NewTaskSelectedArgs      []string
-	NewTaskUninstalledOpen   bool
-	NewTaskStep              string // "agent" or "workspace"
-	SelectedAgentID          string
-	SelectedAgentModel       string
-	ShowTaskMenuModal        bool
-	ShowRenameModal          bool
-	RenameSessionTitle       string
-	RenameSessionID          string
-	RenameSessionIsCLI       bool
-	ShowRenameFileModal      bool
-	RenameFileOldPath        string
-	RenameFilePath           string
-	ShowBranchModal          bool
-	BranchSearchQuery        string
-	ShowModelPalette         bool
-	ModelSearchQuery         string
-	SelectedHarnessID        string
-	SelectedProviderTab      string
-	CollapsedProjectGroups   map[string]bool
-	ExpandedProjectGroups    map[string]bool
-	ExpandedFileTreeFolders  map[string]bool
-	explorerTreeRoot         string
-	explorerTreeVersion      uint64
-	explorerTreeQuery        string
-	explorerTreeCached       []*FileTreeNode
-	ProjectFilter            string   // "all" or a project name (sidebar "All projects" menu)
-	TaskSortBy               string   // "updated" (default) or "created" (sidebar sort menu)
+	ShowNewFileModal        bool
+	NewFileName             string
+	ShowNewFolderModal      bool
+	NewFolderName           string
+	ShowNewTaskModal        bool
+	NewTaskTitle            string
+	NewTaskWorkspacePath    string // preselected folder for group-level "+ New task"
+	NewTaskAgentType        string // "acp" or "cli"
+	NewTaskSearchQuery      string
+	NewTaskFilterTab        string // "all", "acp", "cli"
+	NewTaskSelectedKind     string // "acp", "cli"
+	NewTaskSelectedAgentID  string
+	NewTaskSelectedName     string
+	NewTaskSelectedExec     string
+	NewTaskSelectedArgs     []string
+	NewTaskUninstalledOpen  bool
+	NewTaskStep             string // "agent" or "workspace"
+	SelectedAgentID         string
+	SelectedAgentModel      string
+	ShowTaskMenuModal       bool
+	ShowRenameModal         bool
+	RenameSessionTitle      string
+	RenameSessionID         string
+	RenameSessionIsCLI      bool
+	ShowRenameFileModal     bool
+	RenameFileOldPath       string
+	RenameFilePath          string
+	ShowBranchModal         bool
+	BranchSearchQuery       string
+	ShowModelPalette        bool
+	ModelSearchQuery        string
+	SelectedHarnessID       string
+	SelectedProviderTab     string
+	CollapsedProjectGroups  map[string]bool
+	ExpandedProjectGroups   map[string]bool
+	ExpandedFileTreeFolders map[string]bool
+	explorerTreeRoot        string
+	explorerTreeVersion     uint64
+	explorerTreeQuery       string
+	explorerTreeCached      []*FileTreeNode
+	ProjectFilter           string // "all" or a project name (sidebar "All projects" menu)
+	TaskSortBy              string // "updated" (default) or "created" (sidebar sort menu)
+	// ProjectOrder holds the sidebar's custom project-group display order
+	// (project names, earliest first, most-recently-moved last). Names not
+	// listed keep the implicit alphabetical order after the ordered ones;
+	// "General" is always pinned first and never stored here. Persisted via
+	// ui prefs ("project_order").
+	ProjectOrder             []string
 	RecentWorkspaces         []string // most-recent-first history of opened folders
 	OpenWorkspaces           []string // active workspaces open in this window ("This Window" group)
 	ShowProjectSwitcherModal bool
@@ -868,7 +874,7 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		{ID: "settings", Label: "Open Settings", Shortcut: "⌘,", Run: func() { a.openSettings() }},
 		{ID: "appearance", Label: "Toggle Appearance", Detail: "Dark / light", Shortcut: "⌘/", Run: a.toggleAppearance},
 		{ID: "theme", Label: "Pick Theme Palette", Run: func() { a.ThemeMgr.Toggle() }},
-		{ID: "open-folder", Label: "Open Workspace Folder", Shortcut: "⌘O", Run: a.openWorkspaceFolder},
+		{ID: "open-folder", Label: "Open Workspace Folder", Run: a.openWorkspaceFolder},
 		{ID: "switch-project", Label: "Switch Workspace / Project (Zed style)...", Detail: "Switch active window workspace or open recent project", Shortcut: "⌥⌘O", Run: func() {
 			a.OpenProjectSwitcherModal()
 		}},
@@ -1169,9 +1175,9 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowModelPalette = !a.ShowModelPalette
 		a.ModelSearchQuery = ""
 	}
-	if cmdOrCtrl(ui.KeyO) {
-		a.openWorkspaceFolder()
-	}
+	// ⌘O stays unbound (user request): it used to open the folder picker and
+	// fired accidentally while typing. Open-folder remains available through
+	// the command palette ("Open Workspace Folder") and the sidebar header.
 	if cmdOrCtrl(ui.Key1) {
 		a.setMode(ModeAgent)
 	}

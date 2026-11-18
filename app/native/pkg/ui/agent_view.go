@@ -784,8 +784,11 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 		toolIcon = icons.TablerBot
 	}
 
-	// Row label + kind badge
+	// Row label + kind badge. filePathLabel is set whenever the label itself
+	// is a workspace file path, making it a clickable chip that opens the
+	// file in the right drawer's side file pane.
 	badge := ""
+	filePathLabel := ""
 	displayLabel := thisTool.ToolName
 	if isSkill {
 		badge = "Skill"
@@ -805,6 +808,7 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 		badge = "Forge Design"
 		if args.Path != "" {
 			displayLabel = filepath.Base(args.Path)
+			filePathLabel = args.Path
 		} else {
 			displayLabel = "Presentation / Motion"
 		}
@@ -838,15 +842,18 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 			badge = "Edit"
 		}
 		displayLabel = args.Path
+		filePathLabel = args.Path
 	} else if isRead {
 		badge = "Read"
 		displayLabel = args.Path
+		filePathLabel = args.Path
 	} else if isSearch {
 		badge = "Search"
 		if args.Query != "" {
 			displayLabel = args.Query
 		} else if args.Path != "" {
 			displayLabel = args.Path
+			filePathLabel = args.Path
 		}
 	} else if isBash {
 		badge = "$"
@@ -855,6 +862,7 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 		}
 	} else if args.Path != "" {
 		displayLabel = args.Path
+		filePathLabel = args.Path
 	}
 	if displayLabel == "" {
 		displayLabel = thisTool.ToolName
@@ -878,6 +886,7 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 	toolCard.Children(func() {
 		// Row header: chevron left, icon, badge, mono label, extras right.
 		row := ui.Row(c).Height(30).Padding(0, 8).Gap(7).AlignItems(ui.Center)
+		labelClicked := false
 		row.Children(func() {
 			chev := icons.TablerChevronRight
 			if thisTool.Expanded {
@@ -891,7 +900,26 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 					ui.Text(c, badge).FontSize(10).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
 				})
 			}
-			ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+			if filePathLabel != "" {
+				// Highlighted file chip: opens the file in the right drawer's
+				// side file pane (clicking the row itself still toggles the
+				// expanded detail below).
+				fileChip := ui.Row(c.Key("tfile-"+thisTool.ID)).Gap(4).AlignItems(ui.Center).
+					Radius(4).Padding(1, 4).MinWidth(0).Cursor(ui.CursorPointer)
+				fileChip.Children(func() {
+					ui.Icon(c, icons.FileIconSVG(displayLabel)).Width(12).Height(12).TextColor(tc.IconMuted)
+					ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+				})
+				if fileChip.Hovered() {
+					fileChip.Background(tc.Text.Alpha(0.07))
+				}
+				if fileChip.Clicked() {
+					labelClicked = true
+					a.openTranscriptFileInSidePane(filePathLabel)
+				}
+			} else {
+				ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+			}
 			if outLines > 0 {
 				ui.Text(c, fmt.Sprintf("%d lines", outLines)).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
 			}
@@ -906,7 +934,7 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 		if row.Hovered() {
 			row.Background(tc.Text.Alpha(0.04))
 		}
-		if row.Clicked() {
+		if row.Clicked() && !labelClicked {
 			// thisTool is a per-frame snapshot copy — persist the toggle on
 			// the live message so it survives the next frame.
 			a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
@@ -1063,6 +1091,22 @@ func fileExtBadgeColor(path string, tc theme.ThemeColors) ui.Color {
 	default:
 		return tc.Accent
 	}
+}
+
+// openTranscriptFileInSidePane opens a file referenced by an agent transcript
+// row (tool file chips, change rows) in the right drawer's side file pane,
+// resolving absolute paths to workspace-relative ones the pane stores.
+func (a *AppUI) openTranscriptFileInSidePane(path string) {
+	if path == "" || a.Workspace == nil {
+		return
+	}
+	rel := path
+	if filepath.IsAbs(path) && a.Workspace.RootDir != "" {
+		if r, err := filepath.Rel(a.Workspace.RootDir, path); err == nil && !strings.HasPrefix(r, "..") {
+			rel = r
+		}
+	}
+	a.openSidePreviewFile(nil, rel)
 }
 
 func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, output string) {

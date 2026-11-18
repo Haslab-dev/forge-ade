@@ -33,6 +33,17 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 		Fade: -1,
 	}
 
+	// Markdown links to workspace files open in the right drawer's side file
+	// pane; http/https/mailto keep the standard external-open behavior.
+	as.MdOpts.OnLink = func(url string) {
+		if a.openMarkdownFileMention(url) {
+			return
+		}
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "mailto:") {
+			mygo.Shell.OpenExternal(url)
+		}
+	}
+
 	// Custom CodeBlock renderer for standard programming languages
 	as.MdOpts.CodeBlock = func(c *ui.Context, b *markdown.CodeBlockView) {
 		a.renderMarkdownCodeBlock(c, tc, b)
@@ -290,6 +301,37 @@ func (a *AppUI) renderMarkdownForgeDesignBlock(c *ui.Context, tc theme.ThemeColo
 			})
 		})
 	})
+}
+
+// openMarkdownFileMention opens a markdown link that points at an existing
+// workspace file in the right drawer's side file pane. Returns false when the
+// link is not a workspace file (web URL, anchor, mailto, …) so the caller can
+// apply the default link behavior.
+func (a *AppUI) openMarkdownFileMention(url string) bool {
+	if url == "" || strings.Contains(url, "://") ||
+		strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "#") {
+		return false
+	}
+	if a.Workspace == nil || a.Workspace.RootDir == "" {
+		return false
+	}
+	rel := strings.TrimPrefix(url, "file://")
+	if filepath.IsAbs(rel) {
+		r, err := filepath.Rel(a.Workspace.RootDir, rel)
+		if err != nil || strings.HasPrefix(r, "..") {
+			return false
+		}
+		rel = r
+	}
+	// Existence check only applies to local workspaces; ssh workspaces skip
+	// it and let the side pane render whatever it resolves.
+	if !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		if info, err := os.Stat(filepath.Join(a.Workspace.RootDir, rel)); err != nil || info.IsDir() {
+			return false
+		}
+	}
+	a.openSidePreviewFile(nil, rel)
+	return true
 }
 
 // writeTempDeckHTML writes generated deck/motion HTML to a temp file so

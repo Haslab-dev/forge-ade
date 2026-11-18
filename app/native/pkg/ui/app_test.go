@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -600,5 +601,213 @@ func TestSeparateAgentAndEditorWorkspaces(t *testing.T) {
 	app.setMode(ModeEditor)
 	if normalizeWorkspaceKey(app.Workspace.RootDir) != normalizeWorkspaceKey(dirEditor) {
 		t.Fatalf("expected editor mode to restore %q, got %q", dirEditor, app.Workspace.RootDir)
+	}
+}
+
+func TestProjectOrderSwapAndMoveHelpers(t *testing.T) {
+	names := []string{"General", "alpha", "Beta", "sub", "zeta"}
+
+	// Swap down the chain: Beta up over alpha.
+	if got := swapProjectOrder(names, "Beta", -1); !slices.Equal(got, []string{"General", "Beta", "alpha", "sub", "zeta"}) {
+		t.Fatalf("swapProjectOrder Beta up = %v", got)
+	}
+	// Swap down: alpha down below Beta.
+	if got := swapProjectOrder(names, "alpha", 1); !slices.Equal(got, []string{"General", "Beta", "alpha", "sub", "zeta"}) {
+		t.Fatalf("swapProjectOrder alpha down = %v", got)
+	}
+	// Edge: the first project cannot cross the pinned "General".
+	if got := swapProjectOrder(names, "alpha", -1); got != nil {
+		t.Fatalf("swapProjectOrder first project up should be nil, got %v", got)
+	}
+	// Edge: the last project cannot move down.
+	if got := swapProjectOrder(names, "zeta", 1); got != nil {
+		t.Fatalf("swapProjectOrder last project down should be nil, got %v", got)
+	}
+	// "General" itself never moves.
+	if got := swapProjectOrder(names, "General", 1); got != nil {
+		t.Fatalf("swapProjectOrder General should be nil, got %v", got)
+	}
+	// Unknown name and invalid direction are no-ops.
+	if got := swapProjectOrder(names, "nope", -1); got != nil {
+		t.Fatalf("swapProjectOrder unknown name should be nil, got %v", got)
+	}
+	if got := swapProjectOrder(names, "alpha", 7); got != nil {
+		t.Fatalf("swapProjectOrder invalid dir should be nil, got %v", got)
+	}
+	// Helpers never mutate the input.
+	if !slices.Equal(names, []string{"General", "alpha", "Beta", "sub", "zeta"}) {
+		t.Fatalf("input slice mutated: %v", names)
+	}
+
+	// Drag: zeta onto alpha puts zeta at alpha's position.
+	if got := moveProjectTo(names, "zeta", "alpha"); !slices.Equal(got, []string{"General", "zeta", "alpha", "Beta", "sub"}) {
+		t.Fatalf("moveProjectTo zeta->alpha = %v", got)
+	}
+	// Drag: alpha onto zeta moves it to the tail slot.
+	if got := moveProjectTo(names, "alpha", "zeta"); !slices.Equal(got, []string{"General", "Beta", "sub", "zeta", "alpha"}) {
+		t.Fatalf("moveProjectTo alpha->zeta = %v", got)
+	}
+	// Pinned General cannot drag or be a drop target.
+	if got := moveProjectTo(names, "alpha", "General"); got != nil {
+		t.Fatalf("moveProjectTo onto General should be nil, got %v", got)
+	}
+	if got := moveProjectTo(names, "General", "alpha"); got != nil {
+		t.Fatalf("moveProjectTo dragging General should be nil, got %v", got)
+	}
+	// Same-name drop is a no-op.
+	if got := moveProjectTo(names, "alpha", "alpha"); got != nil {
+		t.Fatalf("moveProjectTo same name should be nil, got %v", got)
+	}
+}
+
+func TestSidebarGroupsRespectProjectOrder(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	root := t.TempDir()
+	dirs := map[string]string{
+		"alpha": filepath.Join(root, "alpha"),
+		"Beta":  filepath.Join(root, "Beta"),
+		"sub":   filepath.Join(root, "alpha", "sub"),
+		"zeta":  filepath.Join(root, "zeta"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+
+	eng := engine.NewEngine(dirs["zeta"])
+	app := NewAppUI(eng, dirs["zeta"])
+	defer app.Close()
+
+	now := time.Now()
+	i := 0
+	sessions := make([]*agent.AgentSession, 0, len(dirs))
+	for name, dir := range dirs {
+		i++
+		sessions = append(sessions, &agent.AgentSession{
+			ID:            "s-" + name,
+			Title:         name,
+			WorkspacePath: dir,
+			CreatedAt:     now.Add(time.Duration(i) * time.Minute),
+			UpdatedAt:     now.Add(time.Duration(i) * time.Minute),
+		})
+	}
+	app.Agent.ReplaceSessions(sessions)
+
+	groupOrder := func() []string {
+		groups := app.sidebarProjectGroups()
+		out := make([]string, len(groups))
+		for gi, g := range groups {
+			out[gi] = g.ProjectName
+		}
+		return out
+	}
+
+	// Implicit order (empty ProjectOrder) is unchanged: General first, then
+	// alphabetical.
+	if got := groupOrder(); !slices.Equal(got, []string{"General", "alpha", "Beta", "sub", "zeta"}) {
+		t.Fatalf("implicit group order = %v", got)
+	}
+
+	// Custom order: stored sequence first, names never moved keep the
+	// implicit alphabetical order appended after them.
+	app.ProjectOrder = []string{"sub", "zeta", "alpha"}
+	if got := groupOrder(); !slices.Equal(got, []string{"General", "sub", "zeta", "alpha", "Beta"}) {
+		t.Fatalf("custom group order = %v", got)
+	}
+}
+
+func TestProjectOrderReorderPersistsAcrossRestart(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	dataDir := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, dataDir)
+
+	now := time.Now()
+	sA := &agent.AgentSession{ID: "p-a", Title: "A", WorkspacePath: filepath.Join(dataDir, "alpha"), CreatedAt: now, UpdatedAt: now}
+	sB := &agent.AgentSession{ID: "p-b", Title: "B", WorkspacePath: filepath.Join(dataDir, "Beta"), CreatedAt: now, UpdatedAt: now}
+	sC := &agent.AgentSession{ID: "p-c", Title: "C", WorkspacePath: filepath.Join(dataDir, "gamma"), CreatedAt: now, UpdatedAt: now}
+	app.Agent.ReplaceSessions([]*agent.AgentSession{sA, sB, sC})
+
+	// Chevron move: Beta up swaps with alpha (visible non-General order).
+	app.moveProjectGroup("Beta", -1, []string{"alpha", "Beta", "gamma"})
+	if !slices.Equal(app.ProjectOrder, []string{"Beta", "alpha", "gamma"}) {
+		t.Fatalf("ProjectOrder after move up = %v", app.ProjectOrder)
+	}
+
+	// Drag-and-drop move: gamma dropped onto Beta takes its slot.
+	app.dropProjectOn("gamma", "Beta", []string{"Beta", "alpha", "gamma"})
+	if !slices.Equal(app.ProjectOrder, []string{"gamma", "Beta", "alpha"}) {
+		t.Fatalf("ProjectOrder after drop = %v", app.ProjectOrder)
+	}
+
+	// Hidden previously-ordered names are preserved, not erased.
+	app.ProjectOrder = []string{"gamma", "Beta", "alpha", "hidden-ws"}
+	app.dropProjectOn("alpha", "gamma", []string{"gamma", "Beta", "alpha"})
+	if !slices.Equal(app.ProjectOrder, []string{"alpha", "gamma", "Beta", "hidden-ws"}) {
+		t.Fatalf("ProjectOrder after drop with hidden name = %v", app.ProjectOrder)
+	}
+
+	// persistProjectOrder already saved to disk; Close is a no-op for prefs.
+	app.Close()
+
+	// A fresh AppUI over the same data dir restores the custom order.
+	eng2 := engine.NewEngine(dataDir)
+	app2 := NewAppUI(eng2, dataDir)
+	defer app2.Close()
+	if !slices.Equal(app2.ProjectOrder, []string{"alpha", "gamma", "Beta", "hidden-ws"}) {
+		t.Fatalf("ProjectOrder after restart = %v", app2.ProjectOrder)
+	}
+
+	// And the sidebar renders the restored order (General pinned first,
+	// ordered names in stored sequence, unordered after them). Sessions are
+	// replayed because they are not persisted in this store.
+	app2.Agent.ReplaceSessions([]*agent.AgentSession{sA, sB, sC})
+	groups := app2.sidebarProjectGroups()
+	got := make([]string, len(groups))
+	for gi, g := range groups {
+		got[gi] = g.ProjectName
+	}
+	want := []string{"General", "alpha", "gamma", "Beta", resolveProjectName(dataDir)}
+	if !slices.Equal(got, want) {
+		t.Fatalf("group order after restart = %v, want %v", got, want)
+	}
+}
+
+func TestOpenMarkdownFileMention(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+	dataDir := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, dataDir)
+	defer app.Close()
+
+	readmeRel := "README.md"
+	if err := os.WriteFile(filepath.Join(dataDir, readmeRel), []byte("# hi"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	if app.openMarkdownFileMention("https://example.com/x") {
+		t.Fatalf("web URL must not be treated as a file mention")
+	}
+	if app.openMarkdownFileMention("#heading") {
+		t.Fatalf("anchor must not be treated as a file mention")
+	}
+	if app.openMarkdownFileMention("missing.go") {
+		t.Fatalf("non-existing workspace path must not be treated as a file mention")
+	}
+	if !app.openMarkdownFileMention(readmeRel) {
+		t.Fatalf("existing workspace file mention should open the side pane")
+	}
+	if !app.ShowRightDrawer || app.RightDrawerTab != RightTabSideFile {
+		t.Fatalf("expected right drawer open on the side file tab")
+	}
+	if app.SelectedFile != readmeRel || len(app.SideFileTabs) == 0 || app.SideFileTabs[0] != readmeRel {
+		t.Fatalf("expected README.md selected in side pane, got %q tabs %v", app.SelectedFile, app.SideFileTabs)
 	}
 }

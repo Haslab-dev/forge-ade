@@ -232,6 +232,26 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			}
 			searching := a.Agent != nil && strings.TrimSpace(a.Agent.SearchQuery) != ""
 
+			// Visible non-General project names (after the project filter and
+			// the empty-group hiding rules) drive the drag-and-drop and
+			// chevron reorder actions. Only meaningful in the grouped
+			// "Group by project" list view; the timeline mode has no headers.
+			reorderNames := make([]string, 0, len(groups))
+			if a.SidebarListView != "timeline" {
+				for _, g := range groups {
+					if g.ProjectName == "General" {
+						continue
+					}
+					if a.ProjectFilter != "all" && a.ProjectFilter != "" && g.ProjectName != a.ProjectFilter {
+						continue
+					}
+					if len(g.Sessions)+len(g.CLISessions) == 0 && (tab != "active" || searching) {
+						continue
+					}
+					reorderNames = append(reorderNames, g.ProjectName)
+				}
+			}
+
 			ui.Scroll(c).Grow(1).Children(func() {
 				ui.Column(c).Padding(2, 6).Gap(4).Children(func() {
 					// Flat Chronological Timeline mode (1:1 with webview AgentSidebar timeline mode)
@@ -395,6 +415,20 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						headerActionClicked := false
 						pHeader := ui.Row(c.Key("pheader-"+group.ProjectName)).Height(28).Radius(6).
 							Padding(0, 6).Gap(5).AlignItems(ui.Center)
+
+						// Drag-and-drop reorder (MyGo same-window value
+						// drag-drop): non-pinned project headers drag their
+						// name; dropping one on another moves it there.
+						dropOver := false
+						if group.ProjectName != "General" {
+							pHeader.Drag(projectDragValue{Name: group.ProjectName})
+							if dropped, ok := ui.Drop[projectDragValue](pHeader); ok {
+								a.dropProjectOn(dropped.Name, group.ProjectName, reorderNames)
+							}
+							if _, over := ui.DragOver[projectDragValue](pHeader); over {
+								dropOver = true
+							}
+						}
 						pHeader.Children(func() {
 							if isCollapsed {
 								ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -451,10 +485,52 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										a.deleteWorkspaceGroup(c, group.ProjectName, group.FolderPath)
 									})
 								}
+
+								// Reorder chevrons: swap with the previous/next
+								// visible project, faded at the edges ("General"
+								// is pinned first and shows none).
+								if group.ProjectName != "General" && len(reorderNames) > 1 {
+									projIdx := -1
+									for i, n := range reorderNames {
+										if n == group.ProjectName {
+											projIdx = i
+											break
+										}
+									}
+									reorderBtn := func(key string, icon *ui.SVG, enabled bool, onPick func()) {
+										btn := ui.Row(c.Key("pmove-"+key)).Size(18, 18).Radius(4).
+											AlignItems(ui.Center).Justify(ui.Center)
+										btn.Children(func() {
+											ic := ui.Icon(c, icon).Width(12).Height(12)
+											if enabled {
+												ic.TextColor(tc.SidebarMutedForeground)
+											} else {
+												ic.TextColor(tc.SidebarMutedForeground.Alpha(0.35))
+											}
+										})
+										if enabled && btn.Hovered() {
+											btn.Background(tc.Text.Alpha(0.05))
+										}
+										if enabled && btn.Clicked() {
+											headerActionClicked = true
+											onPick()
+										}
+									}
+									if projIdx >= 0 {
+										reorderBtn("up-"+group.ProjectName, icons.TablerChevronUp, projIdx > 0, func() {
+											a.moveProjectGroup(group.ProjectName, -1, reorderNames)
+										})
+										reorderBtn("down-"+group.ProjectName, icons.TablerChevronDown, projIdx < len(reorderNames)-1, func() {
+											a.moveProjectGroup(group.ProjectName, 1, reorderNames)
+										})
+									}
+								}
 							}
 						})
 
-						if pHeader.Hovered() {
+						if dropOver {
+							pHeader.Background(tc.Accent.Alpha(0.14))
+						} else if pHeader.Hovered() {
 							pHeader.Background(tc.SidebarRowHover)
 						}
 						if pHeader.Clicked() && !headerActionClicked {
@@ -831,12 +907,31 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 	for name := range groupMap {
 		names = append(names, name)
 	}
-	sort.Slice(names, func(i, j int) bool {
+	// Custom order (a.ProjectOrder, persisted via ui prefs) takes precedence:
+	// "General" stays pinned first (existing invariant), ordered names follow
+	// in their stored sequence, and names never moved keep the implicit
+	// alphabetical order after them. TaskSortBy sorts sessions WITHIN each
+	// group and is unaffected.
+	orderIdx := make(map[string]int, len(a.ProjectOrder))
+	for i, name := range a.ProjectOrder {
+		if _, dup := orderIdx[name]; !dup {
+			orderIdx[name] = i
+		}
+	}
+	sort.SliceStable(names, func(i, j int) bool {
 		if names[i] == "General" {
 			return true
 		}
 		if names[j] == "General" {
 			return false
+		}
+		oi, oki := orderIdx[names[i]]
+		oj, okj := orderIdx[names[j]]
+		if oki != okj {
+			return oki
+		}
+		if oki && oi != oj {
+			return oi < oj
 		}
 		li, lj := strings.ToLower(names[i]), strings.ToLower(names[j])
 		if li != lj {
@@ -867,6 +962,122 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 		groups = append(groups, g)
 	}
 	return groups
+}
+
+// projectDragValue is the value a sidebar project header drags during
+// drag-and-drop reorder. A dedicated type makes project rows accept only
+// other project rows (never files, tabs, or other future drag values).
+type projectDragValue struct{ Name string }
+
+// swapProjectOrder returns a copy of names with name moved one slot toward
+// dir (-1 up, +1 down). "General" is pinned: it never moves and no other
+// project may swap across it. Returns nil when the move is impossible
+// (unknown name, at an edge, or the only neighbour is General).
+func swapProjectOrder(names []string, name string, dir int) []string {
+	if name == "" || name == "General" || (dir != -1 && dir != 1) {
+		return nil
+	}
+	idx := -1
+	for i, n := range names {
+		if n == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil
+	}
+	j := idx + dir
+	if j < 0 || j >= len(names) || names[j] == "General" {
+		return nil
+	}
+	out := make([]string, len(names))
+	copy(out, names)
+	out[idx], out[j] = out[j], out[idx]
+	return out
+}
+
+// moveProjectTo returns a copy of names with the dragged project moved to
+// the drop-target project's position. "General" is pinned, so dragging it
+// or dropping onto it is a no-op. Returns nil when the move is impossible.
+func moveProjectTo(names []string, dragged, target string) []string {
+	if dragged == "" || target == "" || dragged == target ||
+		dragged == "General" || target == "General" {
+		return nil
+	}
+	from, to := -1, -1
+	for i, n := range names {
+		if n == dragged && from < 0 {
+			from = i
+		}
+		if n == target && to < 0 {
+			to = i
+		}
+	}
+	if from < 0 || to < 0 {
+		return nil
+	}
+	out := make([]string, 0, len(names))
+	out = append(out, names[:from]...)
+	out = append(out, names[from+1:]...)
+	if to > len(out) {
+		to = len(out)
+	}
+	out = append(out[:to], append([]string{dragged}, out[to:]...)...)
+	return out
+}
+
+// persistProjectOrder stores the full intended display order (General first,
+// never stored itself) as the custom ProjectOrder. Previously-ordered names
+// that are not currently visible (hidden by the filter, another tab, or an
+// empty group) keep their relative order appended after the visible ones so
+// a filtered reorder never erases hidden custom order. Saves prefs.
+func (a *AppUI) persistProjectOrder(ordered []string) {
+	seen := make(map[string]bool, len(ordered)+len(a.ProjectOrder))
+	out := make([]string, 0, len(a.ProjectOrder)+len(ordered))
+	for _, n := range ordered {
+		if n == "" || n == "General" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	for _, n := range a.ProjectOrder {
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	a.ProjectOrder = out
+	a.SaveUIPrefs()
+}
+
+// moveProjectGroup swaps the named project one slot up (-1) or down (+1)
+// within the given visible non-General project names and persists the
+// custom order. "General" is pinned first.
+func (a *AppUI) moveProjectGroup(name string, dir int, visible []string) {
+	names := make([]string, 0, len(visible)+1)
+	names = append(names, "General")
+	names = append(names, visible...)
+	swapped := swapProjectOrder(names, name, dir)
+	if swapped == nil {
+		return
+	}
+	a.persistProjectOrder(swapped[1:])
+}
+
+// dropProjectOn moves the dragged project to the dropped-on project's
+// position within the visible non-General project names and persists it.
+func (a *AppUI) dropProjectOn(dragged, target string, visible []string) {
+	names := make([]string, 0, len(visible)+1)
+	names = append(names, "General")
+	names = append(names, visible...)
+	moved := moveProjectTo(names, dragged, target)
+	if moved == nil {
+		return
+	}
+	a.persistProjectOrder(moved[1:])
 }
 
 // resolveProjectName extracts a clean human-readable workspace project name.
