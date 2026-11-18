@@ -140,3 +140,38 @@ func TestSSHModalControlsAndForm(t *testing.T) {
 		t.Fatalf("expected local workspace after DisconnectSSH, got %s", app.Workspace.RootDir)
 	}
 }
+
+func TestSSHRemoteTerminalAndWorkspacePaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "forge-ssh-term-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	eng := engine.NewEngine(tmpDir)
+	app := NewAppUI(eng, tmpDir)
+
+	// Switch to SSH workspace
+	app.switchWorkspace("ssh://prod-server/var/www/my-app")
+	if !app.Workspace.IsRemote() {
+		t.Fatalf("expected remote workspace")
+	}
+
+	// 1. ResolveFullPath test
+	resolved := app.Workspace.ResolveFullPath("src/index.js")
+	if resolved != "ssh://prod-server/var/www/my-app/src/index.js" {
+		t.Fatalf("expected clean ssh URI without corruption, got %s", resolved)
+	}
+
+	// 2. Terminal session name resolution in drawer
+	title, _ := app.newTerminalSession()
+	if title != "my-app" {
+		t.Fatalf("expected terminal title 'my-app' for remote workspace, got %s", title)
+	}
+
+	// 3. Open remote terminal path
+	app.openRemoteTerminalPath("ssh://prod-server/var/www/my-app/backend")
+	if app.Terminal == nil {
+		t.Fatalf("expected terminal to be created")
+	}
+}

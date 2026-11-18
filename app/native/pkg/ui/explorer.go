@@ -359,7 +359,7 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 				}
 			}
 			if m.Item("Open Remote Terminal Here").Chosen() {
-				a.openRemoteTerminal()
+				a.openRemoteTerminalPath(node.FullPath)
 			}
 			m.Separator()
 		}

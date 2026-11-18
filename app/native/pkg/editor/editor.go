@@ -404,12 +404,16 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 
 	var contentBytes []byte
 	var err error
-	if strings.HasPrefix(fullPath, "ssh://") && em.RemoteFS != nil {
-		data, isRemote, rErr := em.RemoteFS.ReadFile(fullPath)
-		if isRemote {
-			contentBytes, err = data, rErr
+	if strings.HasPrefix(fullPath, "ssh://") {
+		if em.RemoteFS == nil {
+			err = fmt.Errorf("remote filesystem not available")
 		} else {
-			contentBytes, err = os.ReadFile(fullPath)
+			data, isRemote, rErr := em.RemoteFS.ReadFile(fullPath)
+			if isRemote {
+				contentBytes, err = data, rErr
+			} else {
+				err = fmt.Errorf("remote host connection not found for %s", fullPath)
+			}
 		}
 	} else {
 		contentBytes, err = os.ReadFile(fullPath)
@@ -1136,6 +1140,10 @@ func pathUnderDir(path, dir string) bool {
 	if dir == "" {
 		return false
 	}
+	if strings.HasPrefix(dir, "ssh://") && strings.HasPrefix(path, "ssh://") {
+		cleanDir := strings.TrimRight(dir, "/") + "/"
+		return path == dir || strings.HasPrefix(path, cleanDir)
+	}
 	rel, err := filepath.Rel(dir, path)
 	if err != nil {
 		return false
@@ -1400,9 +1408,19 @@ func (em *EditorManager) saveDocLocked(doc *OpenDocument, newText string) error 
 		out = strings.ReplaceAll(out, "\n", "\r\n")
 	}
 
-	if strings.HasPrefix(doc.FullPath, "ssh://") && em.RemoteFS != nil {
+	if strings.HasPrefix(doc.FullPath, "ssh://") {
+		if em.RemoteFS == nil {
+			err := fmt.Errorf("remote filesystem not available")
+			em.StatusMsg = fmt.Sprintf("Error saving remote %s: %v", doc.RelativePath, err)
+			return err
+		}
 		isRemote, err := em.RemoteFS.WriteFile(doc.FullPath, []byte(out))
 		if isRemote && err != nil {
+			em.StatusMsg = fmt.Sprintf("Error saving remote %s: %v", doc.RelativePath, err)
+			return err
+		}
+		if !isRemote {
+			err := fmt.Errorf("remote connection not found for %s", doc.FullPath)
 			em.StatusMsg = fmt.Sprintf("Error saving remote %s: %v", doc.RelativePath, err)
 			return err
 		}

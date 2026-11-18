@@ -436,7 +436,15 @@ func (ws *WorkspaceState) ResolveFullPath(rel string) string {
 	if rel == "" {
 		return root
 	}
-	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "ssh://") {
+	if strings.HasPrefix(rel, "ssh://") {
+		return rel
+	}
+	if strings.HasPrefix(root, "ssh://") {
+		trimmedRel := strings.TrimPrefix(rel, "/")
+		trimmedRel = strings.TrimPrefix(trimmedRel, "\\")
+		return strings.TrimRight(root, "/") + "/" + trimmedRel
+	}
+	if filepath.IsAbs(rel) {
 		return filepath.Clean(rel)
 	}
 	return filepath.Join(root, rel)

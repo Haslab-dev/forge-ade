@@ -63,7 +63,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, rightPad, 0, 8).Gap(6).AlignItems(ui.Center).
 			Background(tc.Chrome).BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).DragWindow().Children(func() {
 			if IconButton(c, tc, icons.TablerChevronsDownUp, 13).Shrink(0).Clicked() {
-				a.RightDrawerTab = RightTabLauncher
+				a.openNewLauncherTab()
 			}
 
 			// Open pane tabs (ZCode-style: several panes co-exist) + the
@@ -302,12 +302,13 @@ func (a *AppUI) renderDrawerPlansPane(c *ui.Context, tc theme.ThemeColors) {
 }
 
 // DrawerTabInstance is one open pane tab in the drawer header. Duplicate
-// kinds are allowed (two "New tab" launchers, two Terminal sessions) —
-// ZCode parity.
+// kinds are allowed for Terminal and Side Chat (multi-tab enabled);
+// singleton panes (Review, Files, Browser, etc.) only have at most one tab.
 type DrawerTabInstance struct {
 	Kind    int    // RightTab* constant
 	Title   string // pill label ("forge-ade", "Review", "New tab", …)
 	TermIdx int    // RightTabTerminal: session index inside TerminalState
+	ChatID  string // RightTabChat: unique session ID inside SideChatSessions
 }
 
 // drawerTabReconcile ensures RightDrawerTab is registered as an open tab:
@@ -332,17 +333,21 @@ func (a *AppUI) drawerTabActivateKind(kind int) {
 		a.DrawerTabs[a.drawerActiveIdx].Kind == kind {
 		return
 	}
+	for i := range a.DrawerTabs {
+		if a.DrawerTabs[i].Kind == kind {
+			a.activateDrawerTab(i)
+			return
+		}
+	}
 	if kind == RightTabTerminal {
 		// 1 pane = 1 session: a directly-triggered Terminal pane gets its
 		// own fresh session on first render.
 		a.openTerminalSessionAndReplace()
 		return
 	}
-	for i := range a.DrawerTabs {
-		if a.DrawerTabs[i].Kind == kind {
-			a.drawerActiveIdx = i
-			return
-		}
+	if kind == RightTabChat {
+		a.pickDrawerPaneSideChat()
+		return
 	}
 	a.openDrawerTabInstance(kind, a.drawerTabTitle(kind), -1)
 }
@@ -357,6 +362,9 @@ func (a *AppUI) closeDrawerTabsExcept(keep int) {
 	for i, t := range a.DrawerTabs {
 		if i != keep && t.Kind == RightTabTerminal && t.TermIdx >= 0 && a.Terminal != nil {
 			removed = append(removed, t.TermIdx)
+		}
+		if i != keep && t.Kind == RightTabChat && t.ChatID != "" {
+			delete(a.SideChatSessions, t.ChatID)
 		}
 	}
 	sort.Ints(removed)
@@ -416,6 +424,9 @@ func (a *AppUI) closeDrawerTabsRange(lo, hi int) {
 		if t.Kind == RightTabTerminal && t.TermIdx >= 0 && a.Terminal != nil {
 			removed = append(removed, t.TermIdx)
 		}
+		if t.Kind == RightTabChat && t.ChatID != "" {
+			delete(a.SideChatSessions, t.ChatID)
+		}
 	}
 	sort.Ints(removed)
 	rest := append(a.DrawerTabs[:lo:lo], a.DrawerTabs[hi:]...)
@@ -449,13 +460,17 @@ func (a *AppUI) closeDrawerTabsRange(lo, hi int) {
 
 // openDrawerTabInstance appends a pane instance and activates it.
 func (a *AppUI) openDrawerTabInstance(kind int, title string, termIdx int) {
-	a.DrawerTabs = append(a.DrawerTabs, DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx})
+	a.openDrawerTabInstanceWithChat(kind, title, termIdx, "")
+}
+
+func (a *AppUI) openDrawerTabInstanceWithChat(kind int, title string, termIdx int, chatID string) {
+	a.DrawerTabs = append(a.DrawerTabs, DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx, ChatID: chatID})
 	a.drawerActiveIdx = len(a.DrawerTabs) - 1
 	a.RightDrawerTab = kind
 }
 
 // OpenDrawerPaneNew opens a fresh pane instance — always appends, so two
-// "New tab" launchers or two Terminal sessions co-exist as separate tabs.
+// Terminal sessions or two Side Chat sessions co-exist as separate tabs.
 func (a *AppUI) OpenDrawerPaneNew(kind int, title string, termIdx int) {
 	a.openDrawerTabInstance(kind, title, termIdx)
 }
@@ -465,81 +480,103 @@ func (a *AppUI) OpenDrawerPaneNew(kind int, title string, termIdx int) {
 // from the New-tab grid turns that launcher tab into a Terminal tab, it
 // does not spawn an extra tab).
 func (a *AppUI) replaceActiveDrawerTab(kind int, title string, termIdx int) {
+	a.replaceActiveDrawerTabWithChat(kind, title, termIdx, "")
+}
+
+func (a *AppUI) replaceActiveDrawerTabWithChat(kind int, title string, termIdx int, chatID string) {
 	if a.drawerActiveIdx < 0 || a.drawerActiveIdx >= len(a.DrawerTabs) {
-		a.openDrawerTabInstance(kind, title, termIdx)
+		a.openDrawerTabInstanceWithChat(kind, title, termIdx, chatID)
 		return
 	}
-	a.DrawerTabs[a.drawerActiveIdx] = DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx}
+	a.DrawerTabs[a.drawerActiveIdx] = DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx, ChatID: chatID}
 	a.RightDrawerTab = kind
+	a.cleanLauncherTabs()
+}
+
+// cleanLauncherTabs removes any lingering RightTabLauncher tabs if other tabs exist.
+func (a *AppUI) cleanLauncherTabs() {
+	if len(a.DrawerTabs) <= 1 {
+		return
+	}
+	var activeTab DrawerTabInstance
+	hasActive := false
+	if a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) {
+		activeTab = a.DrawerTabs[a.drawerActiveIdx]
+		hasActive = true
+	}
+	cleaned := make([]DrawerTabInstance, 0, len(a.DrawerTabs))
+	for _, t := range a.DrawerTabs {
+		if t.Kind != RightTabLauncher {
+			cleaned = append(cleaned, t)
+		}
+	}
+	if len(cleaned) == 0 {
+		return
+	}
+	a.DrawerTabs = cleaned
+	if hasActive && activeTab.Kind != RightTabLauncher {
+		for i, t := range a.DrawerTabs {
+			if t.Kind == activeTab.Kind && t.TermIdx == activeTab.TermIdx && t.ChatID == activeTab.ChatID && t.Title == activeTab.Title {
+				a.drawerActiveIdx = i
+				a.RightDrawerTab = t.Kind
+				return
+			}
+		}
+	}
+	if a.drawerActiveIdx >= len(a.DrawerTabs) {
+		a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	}
+	if a.drawerActiveIdx >= 0 {
+		a.RightDrawerTab = a.DrawerTabs[a.drawerActiveIdx].Kind
+	}
 }
 
 // openTerminalSessionAndReplace spawns a NEW terminal session (titled
 // after the project, deduped) and REPLACES the active tab with it — the
 // launcher-pick path for Terminal.
 func (a *AppUI) openTerminalSessionAndReplace() {
-	if a.Terminal == nil {
+	title, idx := a.newTerminalSession()
+	if idx < 0 {
 		return
-	}
-	root := ""
-	if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-		root = a.Workspace.RootDir
-	}
-	base := "Terminal"
-	if root != "" {
-		base = resolveProjectName(root)
-	}
-	title := base
-	snaps, _ := a.Terminal.SnapshotTabs()
-	for n := 2; ; n++ {
-		taken := false
-		for _, t := range snaps {
-			if t.Title == title {
-				taken = true
-				break
-			}
-		}
-		if !taken {
-			break
-		}
-		title = fmt.Sprintf("%s %d", base, n)
-	}
-	tab, err := a.Terminal.NewTabCustom(title, root, nil, nil)
-	if err != nil {
-		return
-	}
-	idx := -1
-	snaps2, _ := a.Terminal.SnapshotTabs()
-	for _, t := range snaps2 {
-		if t.ID == tab.ID {
-			idx = t.Index
-			break
-		}
 	}
 	a.replaceActiveDrawerTab(RightTabTerminal, title, idx)
 }
 
-// openNewLauncherTab appends a fresh "New tab" launcher instance.
+// openNewLauncherTab appends a fresh "New tab" launcher instance, or focuses an existing one.
 func (a *AppUI) openNewLauncherTab() {
-	// APPEND — never replace: "+" adds a fresh launcher tab alongside the
-	// existing panes (ZCode parity). The old replace-version silently ate
-	// the active pane on every "+", which is why tabs kept "disappearing".
+	for i, t := range a.DrawerTabs {
+		if t.Kind == RightTabLauncher {
+			a.activateDrawerTab(i)
+			return
+		}
+	}
 	a.OpenDrawerPaneNew(RightTabLauncher, "New tab", -1)
 }
 
 // newTerminalSession spawns a NEW terminal session at the workspace root
-// (or remote default), titled after the project with a duplicate counter
+// (or remote host default for ssh://), titled after the project with a duplicate counter
 // ("forge-ade", "forge-ade 2", …). Returns the title and session index.
 func (a *AppUI) newTerminalSession() (string, int) {
 	if a.Terminal == nil {
 		return "Terminal", -1
 	}
 	root := ""
-	if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+	var cmd, env []string
+	if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		root = a.Workspace.RootDir
+		if a.Engine != nil && a.Engine.RemoteFS != nil {
+			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
+				prog, args, rEnv := client.SSHCommand(remotePath)
+				cmd = append([]string{prog}, args...)
+				env = rEnv
+			}
+		}
+	} else if a.Workspace != nil && a.Workspace.RootDir != "" {
 		root = a.Workspace.RootDir
 	}
 	base := "Terminal"
-	if root != "" {
-		base = resolveProjectName(root)
+	if a.Workspace != nil && a.Workspace.RootDir != "" {
+		base = resolveProjectName(a.Workspace.RootDir)
 	}
 	title := base
 	snaps, _ := a.Terminal.SnapshotTabs()
@@ -556,7 +593,7 @@ func (a *AppUI) newTerminalSession() (string, int) {
 		}
 		title = fmt.Sprintf("%s %d", base, n)
 	}
-	tab, err := a.Terminal.NewTabCustom(title, root, nil, nil)
+	tab, err := a.Terminal.NewTabCustom(title, root, cmd, env)
 	if err != nil {
 		return title, -1
 	}
@@ -584,6 +621,7 @@ func (a *AppUI) OpenDrawerPaneNewTerminal() {
 // pickDrawerPaneTerminal spawns a fresh terminal session and opens it as a
 // new co-existing pane tab, closing the launcher instance it came from.
 func (a *AppUI) pickDrawerPaneTerminal() {
+	a.ShowBottomTerminal = false
 	title, idx := a.newTerminalSession()
 	if idx < 0 {
 		return
@@ -591,34 +629,86 @@ func (a *AppUI) pickDrawerPaneTerminal() {
 	a.pickDrawerPane(RightTabTerminal, title, idx)
 }
 
-// pickDrawerPane appends the chosen pane as a NEW co-existing tab and closes
-// the launcher instance it was launched from ("tambah baru + tutup
-// launcher").
-func (a *AppUI) pickDrawerPane(kind int, title string, termIdx int) {
-	a.openDrawerTabInstance(kind, title, termIdx)
-	li := -1
-	for i, t := range a.DrawerTabs {
-		if t.Kind == RightTabLauncher {
-			li = i
-			break
+// nextSideChatTitle generates a deduped title ("Side chat", "Side chat 2", …) for side chat tabs.
+func (a *AppUI) nextSideChatTitle() string {
+	base := "Side chat"
+	taken := make(map[string]bool)
+	for _, t := range a.DrawerTabs {
+		if t.Kind == RightTabChat {
+			taken[t.Title] = true
 		}
 	}
-	if li == -1 {
-		return
+	if !taken[base] {
+		return base
 	}
-	a.DrawerTabs = append(a.DrawerTabs[:li], a.DrawerTabs[li+1:]...)
-	if a.drawerActiveIdx > li {
-		a.drawerActiveIdx--
-	}
-	a.RightDrawerTab = kind
-	if a.drawerActiveIdx >= len(a.DrawerTabs) {
-		a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	for n := 2; ; n++ {
+		t := fmt.Sprintf("%s %d", base, n)
+		if !taken[t] {
+			return t
+		}
 	}
 }
 
+// pickDrawerPaneSideChat spawns a fresh side chat session and opens it as a
+// new co-existing pane tab, closing the launcher instance it came from.
+func (a *AppUI) pickDrawerPaneSideChat() {
+	if a.SideChatSessions == nil {
+		a.SideChatSessions = make(map[string]*SideChatSession)
+	}
+	id := fmt.Sprintf("sidechat-%d", time.Now().UnixNano())
+	title := a.nextSideChatTitle()
+	sess := &SideChatSession{
+		ID:       id,
+		Title:    title,
+		Messages: make([]*agent.ChatMessage, 0),
+	}
+	a.SideChatSessions[id] = sess
+	a.ActiveSideChatID = id
+	a.SideChatMessages = sess.Messages
+	a.SideChatInput = ""
+	a.pickDrawerPaneWithChat(RightTabChat, title, -1, id)
+}
+
+// pickDrawerPaneSingleton opens a singleton pane (Review, Files, Browser, etc.)
+// from the launcher. If an instance already exists, it closes the launcher and
+// activates the existing tab — only Terminal and Side Chat allow multiple tabs.
+func (a *AppUI) pickDrawerPaneSingleton(kind int, title string) {
+	for _, t := range a.DrawerTabs {
+		if t.Kind == kind {
+			a.cleanLauncherTabs()
+			for j, t2 := range a.DrawerTabs {
+				if t2.Kind == kind {
+					a.activateDrawerTab(j)
+					return
+				}
+			}
+			return
+		}
+	}
+	a.pickDrawerPane(kind, title, -1)
+}
+
+// pickDrawerPane appends or transforms the active launcher tab into the chosen pane,
+// closing the launcher instance it came from ("tambah baru + tutup launcher").
+func (a *AppUI) pickDrawerPane(kind int, title string, termIdx int) {
+	a.pickDrawerPaneWithChat(kind, title, termIdx, "")
+}
+
+// pickDrawerPaneWithChat replaces the launcher tab if active, or appends and cleans any launcher tabs.
+func (a *AppUI) pickDrawerPaneWithChat(kind int, title string, termIdx int, chatID string) {
+	if a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) && a.DrawerTabs[a.drawerActiveIdx].Kind == RightTabLauncher {
+		a.DrawerTabs[a.drawerActiveIdx] = DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx, ChatID: chatID}
+		a.RightDrawerTab = kind
+		a.cleanLauncherTabs()
+		return
+	}
+	a.openDrawerTabInstanceWithChat(kind, title, termIdx, chatID)
+	a.cleanLauncherTabs()
+}
+
 // closeDrawerTab removes tab i (closing its terminal session when it is a
-// Terminal tab) and activates a sensible neighbor; an empty set renders the
-// launcher by default.
+// Terminal tab, or removing its side chat session) and activates a sensible neighbor;
+// an empty set renders the launcher by default.
 func (a *AppUI) closeDrawerTab(i int) {
 	if i < 0 || i >= len(a.DrawerTabs) {
 		return
@@ -636,6 +726,9 @@ func (a *AppUI) closeDrawerTab(i int) {
 			}
 		}
 	}
+	if closed.Kind == RightTabChat && closed.ChatID != "" {
+		delete(a.SideChatSessions, closed.ChatID)
+	}
 	if len(a.DrawerTabs) == 0 {
 		a.RightDrawerTab = RightTabLauncher
 		a.drawerActiveIdx = 0
@@ -644,7 +737,7 @@ func (a *AppUI) closeDrawerTab(i int) {
 	if a.drawerActiveIdx >= len(a.DrawerTabs) {
 		a.drawerActiveIdx = len(a.DrawerTabs) - 1
 	}
-	a.RightDrawerTab = a.DrawerTabs[a.drawerActiveIdx].Kind
+	a.activateDrawerTab(a.drawerActiveIdx)
 }
 
 func (a *AppUI) activateDrawerTab(i int) {
@@ -655,6 +748,13 @@ func (a *AppUI) activateDrawerTab(i int) {
 	a.RightDrawerTab = a.DrawerTabs[i].Kind
 	if a.DrawerTabs[i].Kind == RightTabTerminal && a.Terminal != nil {
 		a.Terminal.SelectTab(a.DrawerTabs[i].TermIdx)
+	}
+	if a.DrawerTabs[i].Kind == RightTabChat && a.DrawerTabs[i].ChatID != "" {
+		a.ActiveSideChatID = a.DrawerTabs[i].ChatID
+		if sess, ok := a.SideChatSessions[a.DrawerTabs[i].ChatID]; ok {
+			a.SideChatMessages = sess.Messages
+			a.SideChatInput = sess.Input
+		}
 	}
 }
 
@@ -765,27 +865,26 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("files", "Files", "Select a file from the navigation", icons.TablerFolder, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.replaceActiveDrawerTab(RightTabFiles, "Files", -1)
+					a.pickDrawerPaneSingleton(RightTabFiles, "Files")
 				})
 				launcherCard("browser", "Browser", "Browse websites and preview apps.", icons.TablerWorld, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.replaceActiveDrawerTab(RightTabBrowser, "Browser", -1)
+					a.pickDrawerPaneSingleton(RightTabBrowser, "Browser")
 					a.openBrowserTab("")
 				})
 				launcherCard("terminal", "Terminal", "Run commands and view output.", icons.TablerTerminal, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.ShowBottomTerminal = false
-					a.OpenDrawerPaneNewTerminal()
+					a.pickDrawerPaneTerminal()
 				})
 				launcherCard("review", "Review", "Review code changes and diffs.", icons.TablerFileDiff, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.replaceActiveDrawerTab(RightTabChanges, "Review", -1)
+					a.pickDrawerPaneSingleton(RightTabChanges, "Review")
 				})
 				launcherCard("plans", "Plans & Progress", "View active plans, tasks, and sub-agents.", icons.TablerChecklist, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.replaceActiveDrawerTab(RightTabTasks, "Plans", -1)
+					a.pickDrawerPaneSingleton(RightTabTasks, "Plans")
 				})
 				launcherCard("sidechat", "Side conversation", "Continue a conversation in the side pane.", icons.TablerMessage, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.replaceActiveDrawerTab(RightTabChat, "Side chat", -1)
+					a.pickDrawerPaneSideChat()
 				})
 				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.replaceActiveDrawerTab(RightTabSubagent, "Child Agents", -1)
+					a.pickDrawerPaneSingleton(RightTabSubagent, "Child Agents")
 				})
 				launcherCard("ssh", "Remote SSH / SFTP", "Connect to remote server, manage remote files, and open remote terminal.", icons.TablerServer, tc.Accent.Alpha(0.12), tc.Accent, false, func() {
 					a.OpenSSHModal()
@@ -811,13 +910,13 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("pdf", "PDF", "PDF", icons.TablerFileText, tc.Error.Alpha(0.14), tc.Error, false, func() {
-					a.replaceActiveDrawerTab(RightTabFiles, "PDF", -1)
+					a.pickDrawerPaneSingleton(RightTabFiles, "PDF")
 				})
 				launcherCard("presentations", "Presentations", "Presentations", icons.TablerPresentation, tc.Warning.Alpha(0.14), tc.Warning, false, func() {
-					a.replaceActiveDrawerTab(RightTabDeck, "Deck", -1)
+					a.pickDrawerPaneSingleton(RightTabDeck, "Deck")
 				})
 				launcherCard("database", "Database", "SQLite & DuckDB inspector", icons.TablerDatabase, tc.Info.Alpha(0.14), tc.Info, false, func() {
-					a.replaceActiveDrawerTab(RightTabDatabase, "Database", -1)
+					a.pickDrawerPaneSingleton(RightTabDatabase, "Database")
 				})
 			})
 		})
@@ -1248,20 +1347,54 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 	})
 }
 
+func (a *AppUI) getActiveSideChat() *SideChatSession {
+	if a.SideChatSessions == nil {
+		a.SideChatSessions = make(map[string]*SideChatSession)
+	}
+	if a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) {
+		t := a.DrawerTabs[a.drawerActiveIdx]
+		if t.Kind == RightTabChat && t.ChatID != "" {
+			if sess, ok := a.SideChatSessions[t.ChatID]; ok {
+				return sess
+			}
+		}
+	}
+	if a.ActiveSideChatID != "" {
+		if sess, ok := a.SideChatSessions[a.ActiveSideChatID]; ok {
+			return sess
+		}
+	}
+	defaultID := "default"
+	if sess, ok := a.SideChatSessions[defaultID]; ok {
+		return sess
+	}
+	sess := &SideChatSession{
+		ID:       defaultID,
+		Title:    "Side chat",
+		Messages: a.SideChatMessages,
+		Input:    a.SideChatInput,
+	}
+	a.SideChatSessions[defaultID] = sess
+	a.ActiveSideChatID = defaultID
+	return sess
+}
+
 // renderSideChatPane renders a secondary chat thread for quick questions.
 func (a *AppUI) renderSideChatPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	a.SideChatMd.Theme = a.ThemeMgr.MarkdownTheme()
 	a.SideChatMd.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
 
+	sess := a.getActiveSideChat()
+
 	ui.Row(c).Height(40).Padding(0, 12).AlignItems(ui.Center).
 		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-		ui.Text(c, "Side Chat").FontSize(13).FontWeight(600)
+		ui.Text(c, sess.Title).FontSize(13).FontWeight(600)
 		ui.Box(c).Grow(1)
 		ui.Text(c, a.SideChatModel).FontSize(10).TextColor(tc.TextMuted)
 	})
 
-	if len(a.SideChatMessages) == 0 {
+	if len(sess.Messages) == 0 {
 		ui.Column(c).Grow(1).Center().Gap(8).Padding(20).Children(func() {
 			ui.Icon(c, icons.TablerMessage).Width(28).Height(28).TextColor(tc.IconMuted)
 			ui.Text(c, "Side Conversation").FontSize(13).FontWeight(600).TextColor(tc.TextMuted)
@@ -1283,6 +1416,7 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 						chip.Background(tc.Text.Alpha(0.05))
 					}
 					if chip.Clicked() {
+						sess.Input = qp
 						a.SideChatInput = qp
 						a.sendSideChat(qp)
 					}
@@ -1290,11 +1424,11 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 			})
 		})
 	} else {
-		ui.List(c, &ui.ListState{FollowEnd: true}, len(a.SideChatMessages), func(i int) {
-			if i >= len(a.SideChatMessages) {
+		ui.List(c, &ui.ListState{FollowEnd: true}, len(sess.Messages), func(i int) {
+			if i >= len(sess.Messages) {
 				return
 			}
-			m := a.SideChatMessages[i]
+			m := sess.Messages[i]
 			if m.Role == "user" {
 				ui.Row(c.Key("side-user-"+fmt.Sprint(i))).Padding(3, 8).Justify(ui.End).Children(func() {
 					bubble := ui.Column(c).Padding(8, 12).Radius(14).
@@ -1318,11 +1452,12 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 
 	ui.Row(c).Padding(8, 10).Gap(6).AlignItems(ui.Center).
 		BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
-		side := ui.TextAreaBase(c, &a.SideChatInput).Lines(1, 5).Placeholder("Ask side chat...").Grow(1)
+		side := ui.TextAreaBase(c, &sess.Input).Lines(1, 5).Placeholder("Ask side chat...").Grow(1)
 		side.OnTextKey(func(k ui.TextKey) bool {
 			if k.Key == ui.KeyEnter && k.Mods == 0 {
-				if strings.TrimSpace(a.SideChatInput) != "" {
-					text := strings.TrimSpace(a.SideChatInput)
+				if strings.TrimSpace(sess.Input) != "" {
+					text := strings.TrimSpace(sess.Input)
+					sess.Input = ""
 					a.SideChatInput = ""
 					a.sendSideChat(text)
 				}
@@ -1335,8 +1470,9 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 		sendBtn.Children(func() {
 			ui.Icon(c, icons.TablerSend).Width(13).Height(13).TextColor(tc.MessageActionForeground)
 		})
-		if sendBtn.Clicked() && strings.TrimSpace(a.SideChatInput) != "" {
-			text := strings.TrimSpace(a.SideChatInput)
+		if sendBtn.Clicked() && strings.TrimSpace(sess.Input) != "" {
+			text := strings.TrimSpace(sess.Input)
+			sess.Input = ""
 			a.SideChatInput = ""
 			a.sendSideChat(text)
 		}
@@ -1344,12 +1480,15 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 }
 
 func (a *AppUI) sendSideChat(text string) {
-	if a.SideChatStreaming {
+	sess := a.getActiveSideChat()
+	if sess.Streaming {
 		return
 	}
-	a.SideChatMessages = append(a.SideChatMessages, &agent.ChatMessage{Role: "user", Text: text})
+	sess.Messages = append(sess.Messages, &agent.ChatMessage{Role: "user", Text: text})
 	reply := &agent.ChatMessage{Role: "assistant", Text: "", Done: false}
-	a.SideChatMessages = append(a.SideChatMessages, reply)
+	sess.Messages = append(sess.Messages, reply)
+	sess.Streaming = true
+	a.SideChatMessages = sess.Messages
 	a.SideChatStreaming = true
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -1366,7 +1505,9 @@ func (a *AppUI) sendSideChat(text string) {
 			a.runOnUI(func() {
 				reply.Text = final
 				reply.Done = true
+				sess.Streaming = false
 				a.SideChatStreaming = false
+				a.SideChatMessages = sess.Messages
 			})
 		}()
 		if engine == nil || engine.LLMClient == nil {
@@ -1385,6 +1526,7 @@ func (a *AppUI) sendSideChat(text string) {
 				partial := streamed
 				a.runOnUI(func() {
 					reply.Text = partial
+					a.SideChatMessages = sess.Messages
 				})
 			}
 		})

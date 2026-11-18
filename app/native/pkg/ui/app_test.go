@@ -923,7 +923,97 @@ func TestUserSequenceThreeTerminals(t *testing.T) {
 	if terminals != 3 {
 		t.Fatalf("expected 3 Terminal tabs after three cycles, got %d: %+v", terminals, app.DrawerTabs)
 	}
-	if launchers < 0 {
-		t.Fatalf("negative launchers")
+	if launchers != 0 {
+		t.Fatalf("expected 0 launcher tabs after picking terminal, got %d: %+v", launchers, app.DrawerTabs)
+	}
+}
+
+// TestUserSequenceMultiTabSideChat verifies that Side Chat supports multiple tabs
+// and that picking Side Chat from the launcher closes the launcher tab.
+func TestUserSequenceMultiTabSideChat(t *testing.T) {
+	tempDir := t.TempDir()
+	eng := engine.NewEngine(tempDir)
+	app := NewAppUI(eng, tempDir)
+	app.ShowRightDrawer = true
+
+	// Cycle 1: + → pick Side Chat
+	app.openNewLauncherTab()
+	app.pickDrawerPaneSideChat()
+	if len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabChat {
+		t.Fatalf("expected 1 Side Chat tab, got %+v", app.DrawerTabs)
+	}
+	if app.DrawerTabs[0].Title != "Side chat" {
+		t.Fatalf("expected title 'Side chat', got %q", app.DrawerTabs[0].Title)
+	}
+
+	// Cycle 2: + → pick Side Chat again (multi-tab enabled)
+	app.openNewLauncherTab()
+	app.pickDrawerPaneSideChat()
+	if len(app.DrawerTabs) != 2 {
+		t.Fatalf("expected 2 tabs after cycle 2, got %+v", app.DrawerTabs)
+	}
+	if app.DrawerTabs[0].Kind != RightTabChat || app.DrawerTabs[1].Kind != RightTabChat {
+		t.Fatalf("expected both tabs to be RightTabChat, got %+v", app.DrawerTabs)
+	}
+	if app.DrawerTabs[1].Title != "Side chat 2" {
+		t.Fatalf("expected title 'Side chat 2', got %q", app.DrawerTabs[1].Title)
+	}
+
+	// No launchers should remain
+	for _, tab := range app.DrawerTabs {
+		if tab.Kind == RightTabLauncher {
+			t.Fatalf("no launcher tab should remain, got %+v", app.DrawerTabs)
+		}
+	}
+}
+
+// TestSingletonsDoNotDuplicate verifies that only Terminal and Side Chat can be multi-tab;
+// singleton panes (like Review, Files, Plans, Browser) never duplicate. Picking an already-open
+// singleton closes the launcher and focuses the existing tab.
+func TestSingletonsDoNotDuplicate(t *testing.T) {
+	tempDir := t.TempDir()
+	eng := engine.NewEngine(tempDir)
+	app := NewAppUI(eng, tempDir)
+	app.ShowRightDrawer = true
+
+	// 1. Open Review
+	app.openNewLauncherTab()
+	app.pickDrawerPaneSingleton(RightTabChanges, "Review")
+	if len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabChanges {
+		t.Fatalf("expected 1 Review tab, got %+v", app.DrawerTabs)
+	}
+
+	// 2. Open Terminal alongside Review (multi-tab tool)
+	app.openNewLauncherTab()
+	app.pickDrawerPaneTerminal()
+	if len(app.DrawerTabs) != 2 {
+		t.Fatalf("expected 2 tabs (Review + Terminal), got %+v", app.DrawerTabs)
+	}
+
+	// 3. User opens "+" launcher and clicks Review again
+	app.openNewLauncherTab()
+	if len(app.DrawerTabs) != 3 || app.DrawerTabs[app.drawerActiveIdx].Kind != RightTabLauncher {
+		t.Fatalf("expected launcher to open, got %+v", app.DrawerTabs)
+	}
+	app.pickDrawerPaneSingleton(RightTabChanges, "Review")
+
+	// Must NOT create a second Review tab! Launcher must close and existing Review must be focused.
+	if len(app.DrawerTabs) != 2 {
+		t.Fatalf("expected exactly 2 tabs (no duplicate Review, launcher closed), got %+v", app.DrawerTabs)
+	}
+	reviewCount := 0
+	for _, tab := range app.DrawerTabs {
+		if tab.Kind == RightTabChanges {
+			reviewCount++
+		}
+		if tab.Kind == RightTabLauncher {
+			t.Fatalf("launcher tab must be closed, got %+v", app.DrawerTabs)
+		}
+	}
+	if reviewCount != 1 {
+		t.Fatalf("expected exactly 1 Review tab, got %d", reviewCount)
+	}
+	if app.RightDrawerTab != RightTabChanges || app.DrawerTabs[app.drawerActiveIdx].Kind != RightTabChanges {
+		t.Fatalf("expected Review tab to be active, got idx=%d kind=%d", app.drawerActiveIdx, app.RightDrawerTab)
 	}
 }

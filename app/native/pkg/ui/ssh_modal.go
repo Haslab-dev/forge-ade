@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,28 +22,39 @@ const sshSavedHostsFile = "ssh_saved_hosts.json"
 // openRemoteTerminal spawns the ssh client under the PTY for the active
 // remote workspace, as forge-ade's CreateShell(ssh://…) does.
 func (a *AppUI) openRemoteTerminal() {
+	a.openRemoteTerminalPath("")
+}
+
+func (a *AppUI) openRemoteTerminalPath(targetURI string) {
 	if a.Engine == nil || a.Engine.RemoteFS == nil {
 		return
 	}
+	uri := targetURI
+	if uri == "" && a.Workspace != nil {
+		uri = a.Workspace.RootDir
+	}
 	if a.Mode == ModeEditor {
-		a.openEditorTerminalTab("")
+		a.openEditorTerminalTabForURI("", uri)
 		return
 	}
-	client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir)
+	client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(uri)
 	if isRemote && client != nil {
 		prog, args, env := client.SSHCommand(remotePath)
 		a.ShowBottomTerminal = true
 		a.Terminal.Command = append([]string{prog}, args...)
 		a.Terminal.Env = env
-		_, _, _, folder := parseSSHWorkspaceURI(a.Workspace.RootDir)
+		_, _, _, folder := parseSSHWorkspaceURI(uri)
 		if folder == "" || folder == "remote-root" {
+			folder = filepath.Base(remotePath)
+		}
+		if folder == "" || folder == "." || folder == "/" {
 			folder = "remote"
 		}
 		a.Terminal.Title = folder
 		_ = a.Terminal.Restart()
 	} else {
 		a.ShowBottomTerminal = true
-		_ = a.Terminal.ResetShell(a.Workspace.RootDir)
+		_ = a.Terminal.ResetShell(uri)
 	}
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -1528,7 +1540,7 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 							for _, item := range pending {
 								a.setRemoteUploadStatus(item.ID, "uploading", "")
 								a.invalidateUI()
-								dest := filepath.Join(targetDir, item.Name)
+								dest := path.Join(targetDir, item.Name)
 								err := a.Engine.RemoteFS.UploadFileToRemote(item.LocalPath, dest)
 								if err != nil {
 									a.setRemoteUploadStatus(item.ID, "error", err.Error())

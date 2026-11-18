@@ -1181,13 +1181,21 @@ func editorPosAtLine(doc *editor.OpenDocument, line int) mygoeditor.Pos {
 // terminal manager spawns a new session first and the editor tab binds to it;
 // if the session cannot be created no tab is added.
 func (a *AppUI) openEditorTerminalTab(title string) {
+	a.openEditorTerminalTabForURI(title, "")
+}
+
+func (a *AppUI) openEditorTerminalTabForURI(title string, targetURI string) {
 	if a.Editor == nil {
 		return
 	}
-	isRemote := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
+	wsRoot := a.Workspace.RootDir
+	if targetURI != "" {
+		wsRoot = targetURI
+	}
+	isRemote := strings.HasPrefix(wsRoot, "ssh://")
 	if title == "" {
 		if isRemote {
-			_, remotePath, _, folder := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			_, remotePath, _, folder := parseSSHWorkspaceURI(wsRoot)
 			if folder == "" || folder == "remote-root" || folder == "." || folder == "/" {
 				folder = filepath.Base(remotePath)
 			}
@@ -1196,7 +1204,7 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 			}
 			title = folder
 		} else {
-			folder := filepath.Base(a.Workspace.RootDir)
+			folder := filepath.Base(wsRoot)
 			if folder == "" || folder == "." || folder == "/" {
 				folder = "terminal"
 			}
@@ -1215,12 +1223,12 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 		var prog string
 		var args, env []string
 		if a.Engine != nil && a.Engine.RemoteFS != nil {
-			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
+			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(wsRoot); ok && client != nil {
 				prog, args, env = client.SSHCommand(remotePath)
 			}
 		}
 		if prog == "" {
-			connID, remotePath, _, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			connID, remotePath, _, _ := parseSSHWorkspaceURI(wsRoot)
 			foundHost := connID
 			for _, cfg := range a.SSHSavedConfigs {
 				if cfg.ID == connID {
@@ -1251,7 +1259,7 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 				}
 			}
 		} else {
-			if newTab, err := a.Terminal.NewTabCustom(title, a.Workspace.RootDir, append([]string{prog}, args...), env); err == nil && newTab != nil {
+			if newTab, err := a.Terminal.NewTabCustom(title, wsRoot, append([]string{prog}, args...), env); err == nil && newTab != nil {
 				sessionID = newTab.ID
 			} else if err != nil {
 				a.queueToast(ui.Toast{Title: "Could not open terminal", Description: err.Error(), Type: "error"})
@@ -1268,7 +1276,7 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 				}
 			}
 		} else {
-			cwd := a.Workspace.RootDir
+			cwd := wsRoot
 			if err := a.Terminal.NewTab(cwd); err == nil {
 				if tabs, active := a.Terminal.SnapshotTabs(); len(tabs) > 0 && active >= 0 && active < len(tabs) {
 					sessionID = tabs[active].ID

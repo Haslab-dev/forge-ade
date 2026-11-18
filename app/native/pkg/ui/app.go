@@ -79,6 +79,15 @@ const (
 	EditorTabBarHeight    = float32(35)
 )
 
+// SideChatSession stores conversation history and state for a side chat tab.
+type SideChatSession struct {
+	ID        string
+	Title     string
+	Messages  []*agent.ChatMessage
+	Input     string
+	Streaming bool
+}
+
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
 type AppUI struct {
 	Engine                   *engine.Engine
@@ -115,8 +124,8 @@ type AppUI struct {
 	// DrawerTabs holds the OPEN drawer panes as tab instances (launcher
 	// tabs, terminal sessions, review, files… — duplicates allowed, ZCode
 	// style). RightDrawerTab mirrors the active entry.
-	DrawerTabs      []DrawerTabInstance
-	drawerActiveIdx int
+	DrawerTabs            []DrawerTabInstance
+	drawerActiveIdx       int
 	EditorActivity        int // ActivityExplorer, ActivityGit, ActivityDatabase
 	SelectedFile          string
 	FileSearchQuery       string
@@ -139,6 +148,8 @@ type AppUI struct {
 	SideChatMode          string // "full", "ask", "plan"
 	SideChatStreaming     bool
 	SideChatMd            markdown.Options
+	SideChatSessions      map[string]*SideChatSession
+	ActiveSideChatID      string
 
 	// Composer autocomplete state (slash commands / @-mentions): visibility
 	// derives from the composer text each frame; the dismissal latches hold
@@ -547,6 +558,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		SideChatModel:            "Claude 3.7 Sonnet",
 		SideChatMode:             "full",
 		SideChatMessages:         make([]*agent.ChatMessage, 0),
+		SideChatSessions:         make(map[string]*SideChatSession),
 		QuestionDrafts:           make(map[string]*string),
 		InlineAI:                 editor.NewInlineAI(),
 		FileSearchMode:           "files",

@@ -444,9 +444,11 @@ func (m *Manager) UploadFileToRemote(localPath, remoteTargetURI string) error {
 	}
 
 	cleanRemote := path.Clean(remotePath)
-	// If remote target is an existing directory or ends with a slash, place inside it
+	// If remote target is an existing directory or ends with a slash, place inside it (unless target already matches local base)
 	if rStat, err := c.sftpClient.Stat(cleanRemote); err == nil && rStat.IsDir() {
-		cleanRemote = path.Join(cleanRemote, filepath.Base(localPath))
+		if path.Base(cleanRemote) != filepath.Base(localPath) {
+			cleanRemote = path.Join(cleanRemote, filepath.Base(localPath))
+		}
 	} else if strings.HasSuffix(remoteTargetURI, "/") {
 		cleanRemote = path.Join(cleanRemote, filepath.Base(localPath))
 	}
