@@ -112,13 +112,11 @@ type AppUI struct {
 	RightDrawerWidth         float32 // Resizable right pane width
 	LeftSidebarWidth         float32 // Resizable left sidebar width
 	RightDrawerTab           int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
-	// DrawerTabs is the set of co-existing drawer panes shown as tabs in the
-	// drawer header (ZCode-style: several panes stay open side-by-side).
-	// RightDrawerTab always mirrors the ACTIVE entry; direct RightDrawerTab
-	// setters are reconciled into this slice at render time.
-	DrawerTabsOpen        bool
-	DrawerTabs            []int
-	drawerActiveIdx       int
+	// DrawerTabs holds the OPEN drawer panes as tab instances (launcher
+	// tabs, terminal sessions, review, files… — duplicates allowed, ZCode
+	// style). RightDrawerTab mirrors the active entry.
+	DrawerTabs      []DrawerTabInstance
+	drawerActiveIdx int
 	EditorActivity        int // ActivityExplorer, ActivityGit, ActivityDatabase
 	SelectedFile          string
 	FileSearchQuery       string

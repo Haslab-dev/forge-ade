@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -119,6 +120,27 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 						if pill.Clicked() {
 							a.activateDrawerTab(tabI)
 						}
+						// Right-click: close-scope actions (ZCode tab parity).
+						pill.ContextMenu(func(m *ui.Menu) {
+							if active && m.Item("Close Tab").Chosen() {
+								switch inst.Kind {
+								case RightTabSideFile:
+									a.closeSideFile(a.ActiveSideFile)
+								case RightTabBrowser:
+									a.closeBrowserTab()
+								}
+								a.closeDrawerTab(tabI)
+							}
+							if tabI > 0 && m.Item("Close Tabs to the Left").Chosen() {
+								a.closeDrawerTabsLeft(tabI)
+							}
+							if tabI < len(a.DrawerTabs)-1 && m.Item("Close Tabs to the Right").Chosen() {
+								a.closeDrawerTabsRight(tabI)
+							}
+							if m.Item("Close All Tabs").Chosen() {
+								a.closeDrawerTabsAll()
+							}
+						})
 					}
 
 					plusBtn := ui.Row(c.Key("rtab-plus")).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
@@ -270,15 +292,16 @@ func (a *AppUI) drawerTabActivateKind(kind int) {
 	if kind == RightTabLauncher {
 		return // launcher instances are created explicitly
 	}
+	// The active tab already satisfies the kind: keep the user exactly where
+	// they are (reconcile must never yank focus to an older instance — that
+	// made a freshly-opened tab look "replaced").
+	if a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) &&
+		a.DrawerTabs[a.drawerActiveIdx].Kind == kind {
+		return
+	}
 	if kind == RightTabTerminal {
 		// 1 pane = 1 session: a directly-triggered Terminal pane gets its
-		// own fresh session on first render; an already session-backed one
-		// is left alone.
-		if a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) &&
-			a.DrawerTabs[a.drawerActiveIdx].Kind == RightTabTerminal &&
-			a.DrawerTabs[a.drawerActiveIdx].TermIdx >= 0 {
-			return
-		}
+		// own fresh session on first render.
 		a.OpenDrawerPaneNewTerminal()
 		return
 	}
@@ -289,6 +312,106 @@ func (a *AppUI) drawerTabActivateKind(kind int) {
 		}
 	}
 	a.openDrawerTabInstance(kind, a.drawerTabTitle(kind), -1)
+}
+
+// closeDrawerTabsExcept removes every tab except index keep, closing the
+// terminal sessions of the removed Terminal tabs (session indices remapped).
+func (a *AppUI) closeDrawerTabsExcept(keep int) {
+	if keep < 0 || keep >= len(a.DrawerTabs) {
+		return
+	}
+	removed := make([]int, 0, len(a.DrawerTabs))
+	for i, t := range a.DrawerTabs {
+		if i != keep && t.Kind == RightTabTerminal && t.TermIdx >= 0 && a.Terminal != nil {
+			removed = append(removed, t.TermIdx)
+		}
+	}
+	sort.Ints(removed)
+	for k := len(removed) - 1; k >= 0; k-- { // close highest session index first
+		a.Terminal.CloseTab(removed[k])
+	}
+	kept := a.DrawerTabs[keep]
+	rest := make([]DrawerTabInstance, 0, len(a.DrawerTabs))
+	rest = append(rest, a.DrawerTabs[:keep]...)
+	rest = append(rest, a.DrawerTabs[keep+1:]...)
+	a.DrawerTabs = rest
+	// Remap surviving terminal session indices: each closed session with a
+	// smaller index shifted the survivors down.
+	for j := range a.DrawerTabs {
+		if a.DrawerTabs[j].Kind != RightTabTerminal || a.DrawerTabs[j].TermIdx < 0 {
+			continue
+		}
+		shift := 0
+		for _, r := range removed {
+			if r < a.DrawerTabs[j].TermIdx {
+				shift++
+			}
+		}
+		a.DrawerTabs[j].TermIdx -= shift
+	}
+	a.DrawerTabs = []DrawerTabInstance{kept}
+	a.drawerActiveIdx = 0
+	a.RightDrawerTab = kept.Kind
+}
+
+// closeDrawerTabsLeft removes every tab BEFORE index i.
+func (a *AppUI) closeDrawerTabsLeft(i int) {
+	if i <= 0 || i > len(a.DrawerTabs) {
+		return
+	}
+	a.closeDrawerTabsRange(0, i)
+}
+
+// closeDrawerTabsRight removes every tab AFTER index i.
+func (a *AppUI) closeDrawerTabsRight(i int) {
+	if i < 0 || i >= len(a.DrawerTabs)-1 {
+		return
+	}
+	a.closeDrawerTabsRange(i+1, len(a.DrawerTabs))
+}
+
+// closeDrawerTabsAll closes every drawer tab (terminal sessions included).
+func (a *AppUI) closeDrawerTabsAll() {
+	a.closeDrawerTabsRange(0, len(a.DrawerTabs))
+}
+
+// closeDrawerTabsRange removes tabs in [lo, hi), closing orphaned terminal
+// sessions and remapping surviving session indices.
+func (a *AppUI) closeDrawerTabsRange(lo, hi int) {
+	removed := make([]int, 0, hi-lo)
+	for _, t := range a.DrawerTabs[lo:hi] {
+		if t.Kind == RightTabTerminal && t.TermIdx >= 0 && a.Terminal != nil {
+			removed = append(removed, t.TermIdx)
+		}
+	}
+	sort.Ints(removed)
+	rest := append(a.DrawerTabs[:lo:lo], a.DrawerTabs[hi:]...)
+	a.DrawerTabs = rest
+	for k := len(removed) - 1; k >= 0; k-- {
+		if a.Terminal != nil {
+			a.Terminal.CloseTab(removed[k])
+		}
+	}
+	for j := range a.DrawerTabs {
+		if a.DrawerTabs[j].Kind == RightTabTerminal && a.DrawerTabs[j].TermIdx >= 0 {
+			shift := 0
+			for _, r := range removed {
+				if r < a.DrawerTabs[j].TermIdx {
+					shift++
+				}
+			}
+			a.DrawerTabs[j].TermIdx -= shift
+		}
+	}
+	if len(a.DrawerTabs) == 0 {
+		a.RightDrawerTab = RightTabLauncher
+		a.drawerActiveIdx = 0
+		return
+	}
+	if a.drawerActiveIdx >= len(a.DrawerTabs) {
+		a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	}
+	a.RightDrawerTab = a.DrawerTabs[a.drawerActiveIdx].Kind
 }
 
 // openDrawerTabInstance appends a pane instance and activates it.
