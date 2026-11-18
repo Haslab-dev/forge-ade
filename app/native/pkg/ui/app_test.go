@@ -829,15 +829,45 @@ func TestDrawerTabReconcileRegistersActivePane(t *testing.T) {
 		t.Fatal("View must register the active pane into DrawerTabs")
 	}
 	found := false
-	for _, k := range app.DrawerTabs {
-		if k == RightTabTerminal {
+	for _, tab := range app.DrawerTabs {
+		if tab.Kind == RightTabTerminal {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("Terminal pane not registered in DrawerTabs: %v", app.DrawerTabs)
+		t.Fatalf("Terminal pane not registered in DrawerTabs: %+v", app.DrawerTabs)
 	}
-	if app.RightDrawerTab != app.DrawerTabs[app.drawerActiveIdx] {
-		t.Fatalf("active tab index out of sync: tab=%d idx=%d", app.RightDrawerTab, app.drawerActiveIdx)
+	if app.RightDrawerTab != app.DrawerTabs[app.drawerActiveIdx].Kind {
+		t.Fatalf("active tab out of sync: tab=%d active kind=%d", app.RightDrawerTab, app.DrawerTabs[app.drawerActiveIdx].Kind)
+	}
+}
+
+// TestLauncherPickReplacesLauncherTab guards the REPLACE semantics: picking
+// a pane from the New-tab grid transforms the launcher tab in place — the
+// "New tab" entry must NOT survive alongside the picked pane.
+func TestLauncherPickReplacesLauncherTab(t *testing.T) {
+	tempDir := t.TempDir()
+	eng := engine.NewEngine(tempDir)
+	app := NewAppUI(eng, tempDir)
+	app.ShowRightDrawer = true
+
+	// "+" opens a launcher instance.
+	app.openNewLauncherTab()
+	if len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabLauncher {
+		t.Fatalf("expected one launcher tab, got %+v", app.DrawerTabs)
+	}
+
+	// Picking Terminal replaces it in place.
+	app.replaceActiveDrawerTab(RightTabTerminal, "Terminal", -1)
+	if len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabTerminal {
+		t.Fatalf("launcher tab must be replaced by the choice, got %+v", app.DrawerTabs)
+	}
+
+	// Rendering must not resurrect the launcher as an extra tab.
+	app.prefsDirty.Store(false)
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	_ = tw
+	if len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabTerminal {
+		t.Fatalf("render must keep exactly the picked pane, got %+v", app.DrawerTabs)
 	}
 }

@@ -520,7 +520,7 @@ func (a *AppUI) openTerminalSessionAndReplace() {
 
 // openNewLauncherTab appends a fresh "New tab" launcher instance.
 func (a *AppUI) openNewLauncherTab() {
-	a.OpenDrawerPaneNew(RightTabLauncher, "New tab", -1)
+	a.replaceActiveDrawerTab(RightTabLauncher, "New tab", -1)
 }
 
 // OpenDrawerPaneNewTerminal spawns a NEW terminal session at the workspace
@@ -565,7 +565,9 @@ func (a *AppUI) OpenDrawerPaneNewTerminal() {
 			break
 		}
 	}
-	a.openDrawerTabInstance(RightTabTerminal, title, idx)
+	// REPLACE the active launcher tab with the Terminal pane (the launcher
+	// grid tab transforms into its choice — never appends).
+	a.replaceActiveDrawerTab(RightTabTerminal, title, idx)
 }
 
 // closeDrawerTab removes tab i (closing its terminal session when it is a
