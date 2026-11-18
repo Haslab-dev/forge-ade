@@ -192,12 +192,11 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					break
 				}
 				if a.Terminal != nil {
+					// Actions-only strip: the tab + "+" live in the drawer
+					// header above — duplicating them here read as two stacked
+					// tab bars (user-reported redundancy).
 					ui.Row(c).Height(32).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-						a.renderTerminalTabsStrip(c, tc, a.Terminal, "drawer-term")
-						if IconButton(c, tc, icons.TablerPlus, 11).Clicked() {
-							_ = a.Terminal.NewTab("")
-						}
 						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
 							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
 						askBtn.Children(func() {
