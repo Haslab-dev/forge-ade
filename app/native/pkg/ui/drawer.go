@@ -69,17 +69,19 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 			// "+" launcher shortcut inside a horizontal strip.
 			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					for ti, kind := range a.DrawerTabs {
-						tabI, tabKind := ti, kind
+					for ti := range a.DrawerTabs {
+						tabI := ti
+						inst := a.DrawerTabs[tabI]
 						active := tabI == a.drawerActiveIdx
-						pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d-%d", tabI, tabKind))).Height(26).Radius(6).
+						pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d", tabI))).Height(26).Radius(6).
 							Padding(0, 8).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 						if active {
 							pill.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
 						}
 						pill.Children(func() {
-							ic, title := drawerTabIcon(tabKind), a.drawerTabTitle(tabKind)
-							if tabKind == RightTabSubagent {
+							ic := drawerTabIcon(inst.Kind)
+							title := inst.Title
+							if inst.Kind == RightTabSubagent {
 								if n := a.subagentSessionCount(); n > 0 {
 									title = fmt.Sprintf("%s (%d)", title, n)
 								}
@@ -89,22 +91,26 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 							if !active {
 								txt.TextColor(tc.TextMuted)
 							}
-							tabX := ui.Row(c.Key(fmt.Sprintf("rtab-x-%d", tabI))).Size(16, 16).Radius(4).
-								AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-							tabX.Children(func() {
-								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
-							})
-							if tabX.Hovered() {
-								tabX.Background(tc.Text.Alpha(0.1))
-							}
-							if tabX.Clicked() {
-								switch tabKind {
-								case RightTabSideFile:
-									a.closeSideFile(a.ActiveSideFile)
-								case RightTabBrowser:
-									a.closeBrowserTab()
+							// ZCode parity: the close ✕ renders on the ACTIVE tab
+							// only.
+							if active {
+								tabX := ui.Row(c.Key(fmt.Sprintf("rtab-x-%d", tabI))).Size(16, 16).Radius(4).
+									AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+								tabX.Children(func() {
+									ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+								})
+								if tabX.Hovered() {
+									tabX.Background(tc.Text.Alpha(0.1))
 								}
-								a.closeDrawerTab(tabI)
+								if tabX.Clicked() {
+									switch inst.Kind {
+									case RightTabSideFile:
+										a.closeSideFile(a.ActiveSideFile)
+									case RightTabBrowser:
+										a.closeBrowserTab()
+									}
+									a.closeDrawerTab(tabI)
+								}
 							}
 						})
 						if pill.Hovered() && !active {
@@ -123,7 +129,9 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 						plusBtn.Background(tc.Text.Alpha(0.06))
 					}
 					if plusBtn.Clicked() {
-						a.RightDrawerTab = RightTabLauncher
+						// ZCode: "+" opens a NEW LAUNCHER TAB — multiple "New tab"
+						// tabs co-exist in the bar.
+						a.OpenDrawerPaneNew(RightTabLauncher, "New tab", -1)
 					}
 				})
 			})
@@ -167,23 +175,11 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					break
 				}
 				if a.Terminal != nil {
-					// Terminal SESSION tabs (multiple shells per pane) on the
-					// left; pane actions on the right. The pane-level tabs
-					// live in the drawer header above — different level.
+					// Pane actions row. Terminal SESSIONS are the header
+					// tabs themselves (1 pane = 1 session = 1 tab); use the
+					// launcher or "+" to add another session.
 					ui.Row(c).Height(32).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-						a.renderTerminalTabsStrip(c, tc, a.Terminal, "drawer-term")
-						if IconButton(c, tc, icons.TablerPlus, 11).Clicked() {
-							// New shells start in the workspace root, so tab
-							// titles name the project instead of a generic
-							// "Terminal" at $HOME.
-							root := ""
-							if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-								root = a.Workspace.RootDir
-							}
-							_ = a.Terminal.NewTab(root)
-						}
-						ui.Box(c).Grow(1).Shrink(0)
 						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
 							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
 						askBtn.Children(func() {
@@ -250,31 +246,126 @@ func (a *AppUI) renderDrawerPlansPane(c *ui.Context, tc theme.ThemeColors) {
 	})
 }
 
-// drawerTabReconcile ensures RightDrawerTab is registered as an open
-// DrawerTabs entry and is the active one. Direct RightDrawerTab setters
-// (34 call sites) flow through here at render time — they gain co-existing
-// tabs without any call-site change.
+// DrawerTabInstance is one open pane tab in the drawer header. Duplicate
+// kinds are allowed (two "New tab" launchers, two Terminal sessions) —
+// ZCode parity.
+type DrawerTabInstance struct {
+	Kind    int    // RightTab* constant
+	Title   string // pill label ("forge-ade", "Review", "New tab", …)
+	TermIdx int    // RightTabTerminal: session index inside TerminalState
+}
+
+// drawerTabReconcile ensures RightDrawerTab is registered as an open tab:
+// an already-open kind is FOCUSED, a new kind is appended. Direct
+// RightDrawerTab setters — the 34 "open this pane" call sites — flow
+// through here at render time. Launcher tabs are managed explicitly via
+// OpenDrawerPaneNew.
 func (a *AppUI) drawerTabReconcile() {
-	if a.RightDrawerTab == RightTabLauncher {
-		return // the launcher is an overlay state, not an open pane tab
+	a.drawerTabActivateKind(a.RightDrawerTab)
+}
+
+// drawerTabActivateKind focuses the first tab of kind, appending a new
+// instance when none is open.
+func (a *AppUI) drawerTabActivateKind(kind int) {
+	if kind == RightTabLauncher {
+		return // launcher instances are created explicitly
 	}
-	for i, k := range a.DrawerTabs {
-		if k == a.RightDrawerTab {
+	if kind == RightTabTerminal {
+		// 1 pane = 1 session: a directly-triggered Terminal pane gets its
+		// own fresh session on first render; an already session-backed one
+		// is left alone.
+		if a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) &&
+			a.DrawerTabs[a.drawerActiveIdx].Kind == RightTabTerminal &&
+			a.DrawerTabs[a.drawerActiveIdx].TermIdx >= 0 {
+			return
+		}
+		a.OpenDrawerPaneNewTerminal()
+		return
+	}
+	for i := range a.DrawerTabs {
+		if a.DrawerTabs[i].Kind == kind {
 			a.drawerActiveIdx = i
 			return
 		}
 	}
-	a.DrawerTabs = append(a.DrawerTabs, a.RightDrawerTab)
-	a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	a.openDrawerTabInstance(kind, a.drawerTabTitle(kind), -1)
 }
 
-// closeDrawerTab removes tab i and activates a sensible neighbor; the last
-// remaining tab simply deactivates (empty set renders the launcher).
+// openDrawerTabInstance appends a pane instance and activates it.
+func (a *AppUI) openDrawerTabInstance(kind int, title string, termIdx int) {
+	a.DrawerTabs = append(a.DrawerTabs, DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx})
+	a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	a.RightDrawerTab = kind
+}
+
+// OpenDrawerPaneNew opens a fresh pane instance — always appends, so two
+// "New tab" launchers or two Terminal sessions co-exist as separate tabs.
+func (a *AppUI) OpenDrawerPaneNew(kind int, title string, termIdx int) {
+	a.openDrawerTabInstance(kind, title, termIdx)
+}
+
+// OpenDrawerPaneNewTerminal spawns a NEW terminal session at the workspace
+// root (or remote default) titled after the project ("forge-ade",
+// "forge-ade 2", …) and opens it as a fresh pane tab.
+func (a *AppUI) OpenDrawerPaneNewTerminal() {
+	if a.Terminal == nil {
+		return
+	}
+	root := ""
+	if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		root = a.Workspace.RootDir
+	}
+	base := "Terminal"
+	if root != "" {
+		base = resolveProjectName(root)
+	}
+	title := base
+	snaps, _ := a.Terminal.SnapshotTabs()
+	for n := 2; ; n++ {
+		taken := false
+		for _, t := range snaps {
+			if t.Title == title {
+				taken = true
+				break
+			}
+		}
+		if !taken {
+			break
+		}
+		title = fmt.Sprintf("%s %d", base, n)
+	}
+	tab, err := a.Terminal.NewTabCustom(title, root, nil, nil)
+	if err != nil {
+		return
+	}
+	idx := -1
+	snaps2, _ := a.Terminal.SnapshotTabs()
+	for _, t := range snaps2 {
+		if t.ID == tab.ID {
+			idx = t.Index
+			break
+		}
+	}
+	a.openDrawerTabInstance(RightTabTerminal, title, idx)
+}
+
+// closeDrawerTab removes tab i (closing its terminal session when it is a
+// Terminal tab) and activates a sensible neighbor; an empty set renders the
+// launcher by default.
 func (a *AppUI) closeDrawerTab(i int) {
 	if i < 0 || i >= len(a.DrawerTabs) {
 		return
 	}
+	closed := a.DrawerTabs[i]
 	a.DrawerTabs = append(a.DrawerTabs[:i], a.DrawerTabs[i+1:]...)
+	if closed.Kind == RightTabTerminal && a.Terminal != nil && closed.TermIdx >= 0 {
+		a.Terminal.CloseTab(closed.TermIdx)
+		for j := range a.DrawerTabs {
+			if a.DrawerTabs[j].Kind == RightTabTerminal && a.DrawerTabs[j].TermIdx > closed.TermIdx {
+				a.DrawerTabs[j].TermIdx--
+			}
+		}
+	}
 	if len(a.DrawerTabs) == 0 {
 		a.RightDrawerTab = RightTabLauncher
 		a.drawerActiveIdx = 0
@@ -283,7 +374,7 @@ func (a *AppUI) closeDrawerTab(i int) {
 	if a.drawerActiveIdx >= len(a.DrawerTabs) {
 		a.drawerActiveIdx = len(a.DrawerTabs) - 1
 	}
-	a.RightDrawerTab = a.DrawerTabs[a.drawerActiveIdx]
+	a.RightDrawerTab = a.DrawerTabs[a.drawerActiveIdx].Kind
 }
 
 func (a *AppUI) activateDrawerTab(i int) {
@@ -291,7 +382,10 @@ func (a *AppUI) activateDrawerTab(i int) {
 		return
 	}
 	a.drawerActiveIdx = i
-	a.RightDrawerTab = a.DrawerTabs[i]
+	a.RightDrawerTab = a.DrawerTabs[i].Kind
+	if a.DrawerTabs[i].Kind == RightTabTerminal && a.Terminal != nil {
+		a.Terminal.SelectTab(a.DrawerTabs[i].TermIdx)
+	}
 }
 
 // drawerTabIcon maps a drawer tab kind to its pill icon.
@@ -401,26 +495,26 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("files", "Files", "Select a file from the navigation", icons.TablerFolder, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.RightDrawerTab = RightTabFiles
+					a.OpenDrawerPaneNew(RightTabFiles, "Files", -1)
 				})
 				launcherCard("browser", "Browser", "Browse websites and preview apps.", icons.TablerWorld, tc.SurfaceRaised, tc.IconMuted, true, func() {
 					a.openBrowserTab("")
 				})
 				launcherCard("terminal", "Terminal", "Run commands and view output.", icons.TablerTerminal, tc.SurfaceRaised, tc.IconMuted, true, func() {
 					a.ShowBottomTerminal = false
-					a.RightDrawerTab = RightTabTerminal
+					a.OpenDrawerPaneNewTerminal()
 				})
 				launcherCard("review", "Review", "Review code changes and diffs.", icons.TablerFileDiff, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.RightDrawerTab = RightTabChanges
+					a.OpenDrawerPaneNew(RightTabChanges, "Review", -1)
 				})
 				launcherCard("plans", "Plans & Progress", "View active plans, tasks, and sub-agents.", icons.TablerChecklist, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.RightDrawerTab = RightTabTasks
+					a.OpenDrawerPaneNew(RightTabTasks, "Plans", -1)
 				})
 				launcherCard("sidechat", "Side conversation", "Continue a conversation in the side pane.", icons.TablerMessage, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.RightDrawerTab = RightTabChat
+					a.OpenDrawerPaneNew(RightTabChat, "Side chat", -1)
 				})
 				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.RightDrawerTab = RightTabSubagent
+					a.OpenDrawerPaneNew(RightTabSubagent, "Child Agents", -1)
 				})
 				launcherCard("ssh", "Remote SSH / SFTP", "Connect to remote server, manage remote files, and open remote terminal.", icons.TablerServer, tc.Accent.Alpha(0.12), tc.Accent, false, func() {
 					a.OpenSSHModal()
@@ -446,13 +540,13 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("pdf", "PDF", "PDF", icons.TablerFileText, tc.Error.Alpha(0.14), tc.Error, false, func() {
-					a.RightDrawerTab = RightTabFiles
+					a.OpenDrawerPaneNew(RightTabFiles, "PDF", -1)
 				})
 				launcherCard("presentations", "Presentations", "Presentations", icons.TablerPresentation, tc.Warning.Alpha(0.14), tc.Warning, false, func() {
-					a.RightDrawerTab = RightTabDeck
+					a.OpenDrawerPaneNew(RightTabDeck, "Deck", -1)
 				})
 				launcherCard("database", "Database", "SQLite & DuckDB inspector", icons.TablerDatabase, tc.Info.Alpha(0.14), tc.Info, false, func() {
-					a.RightDrawerTab = RightTabDatabase
+					a.OpenDrawerPaneNew(RightTabDatabase, "Database", -1)
 				})
 			})
 		})
