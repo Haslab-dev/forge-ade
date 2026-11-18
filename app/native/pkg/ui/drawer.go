@@ -523,12 +523,12 @@ func (a *AppUI) openNewLauncherTab() {
 	a.replaceActiveDrawerTab(RightTabLauncher, "New tab", -1)
 }
 
-// OpenDrawerPaneNewTerminal spawns a NEW terminal session at the workspace
-// root (or remote default) titled after the project ("forge-ade",
-// "forge-ade 2", …) and opens it as a fresh pane tab.
-func (a *AppUI) OpenDrawerPaneNewTerminal() {
+// newTerminalSession spawns a NEW terminal session at the workspace root
+// (or remote default), titled after the project with a duplicate counter
+// ("forge-ade", "forge-ade 2", …). Returns the title and session index.
+func (a *AppUI) newTerminalSession() (string, int) {
 	if a.Terminal == nil {
-		return
+		return "Terminal", -1
 	}
 	root := ""
 	if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
@@ -555,7 +555,7 @@ func (a *AppUI) OpenDrawerPaneNewTerminal() {
 	}
 	tab, err := a.Terminal.NewTabCustom(title, root, nil, nil)
 	if err != nil {
-		return
+		return title, -1
 	}
 	idx := -1
 	snaps2, _ := a.Terminal.SnapshotTabs()
@@ -565,9 +565,52 @@ func (a *AppUI) OpenDrawerPaneNewTerminal() {
 			break
 		}
 	}
-	// REPLACE the active launcher tab with the Terminal pane (the launcher
-	// grid tab transforms into its choice — never appends).
-	a.replaceActiveDrawerTab(RightTabTerminal, title, idx)
+	return title, idx
+}
+
+// OpenDrawerPaneNewTerminal spawns a NEW terminal session and opens it as a
+// fresh pane tab (append).
+func (a *AppUI) OpenDrawerPaneNewTerminal() {
+	title, idx := a.newTerminalSession()
+	if idx < 0 {
+		return
+	}
+	a.openDrawerTabInstance(RightTabTerminal, title, idx)
+}
+
+// pickDrawerPaneTerminal spawns a fresh terminal session and opens it as a
+// new co-existing pane tab, closing the launcher instance it came from.
+func (a *AppUI) pickDrawerPaneTerminal() {
+	title, idx := a.newTerminalSession()
+	if idx < 0 {
+		return
+	}
+	a.pickDrawerPane(RightTabTerminal, title, idx)
+}
+
+// pickDrawerPane appends the chosen pane as a NEW co-existing tab and closes
+// the launcher instance it was launched from ("tambah baru + tutup
+// launcher").
+func (a *AppUI) pickDrawerPane(kind int, title string, termIdx int) {
+	a.openDrawerTabInstance(kind, title, termIdx)
+	li := -1
+	for i, t := range a.DrawerTabs {
+		if t.Kind == RightTabLauncher {
+			li = i
+			break
+		}
+	}
+	if li == -1 {
+		return
+	}
+	a.DrawerTabs = append(a.DrawerTabs[:li], a.DrawerTabs[li+1:]...)
+	if a.drawerActiveIdx > li {
+		a.drawerActiveIdx--
+	}
+	a.RightDrawerTab = kind
+	if a.drawerActiveIdx >= len(a.DrawerTabs) {
+		a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	}
 }
 
 // closeDrawerTab removes tab i (closing its terminal session when it is a
@@ -579,6 +622,9 @@ func (a *AppUI) closeDrawerTab(i int) {
 	}
 	closed := a.DrawerTabs[i]
 	a.DrawerTabs = append(a.DrawerTabs[:i], a.DrawerTabs[i+1:]...)
+	if a.drawerActiveIdx > i {
+		a.drawerActiveIdx--
+	}
 	if closed.Kind == RightTabTerminal && a.Terminal != nil && closed.TermIdx >= 0 {
 		a.Terminal.CloseTab(closed.TermIdx)
 		for j := range a.DrawerTabs {
