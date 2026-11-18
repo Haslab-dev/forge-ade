@@ -811,3 +811,33 @@ func TestOpenMarkdownFileMention(t *testing.T) {
 		t.Fatalf("expected README.md selected in side pane, got %q tabs %v", app.SelectedFile, app.SideFileTabs)
 	}
 }
+
+// TestDrawerTabReconcileRegistersActivePane guards the multi-tab drawer:
+// the reconcile MUST run in the render path (View), or the header pills
+// never appear and panes "disappear" (regression: the reconcile call was
+// once placed inside a dead helper).
+func TestDrawerTabReconcileRegistersActivePane(t *testing.T) {
+	tempDir := t.TempDir()
+	eng := engine.NewEngine(tempDir)
+	app := NewAppUI(eng, tempDir)
+	app.ShowRightDrawer = true
+	app.RightDrawerTab = RightTabTerminal
+
+	ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+
+	if len(app.DrawerTabs) == 0 {
+		t.Fatal("View must register the active pane into DrawerTabs")
+	}
+	found := false
+	for _, k := range app.DrawerTabs {
+		if k == RightTabTerminal {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Terminal pane not registered in DrawerTabs: %v", app.DrawerTabs)
+	}
+	if app.RightDrawerTab != app.DrawerTabs[app.drawerActiveIdx] {
+		t.Fatalf("active tab index out of sync: tab=%d idx=%d", app.RightDrawerTab, app.drawerActiveIdx)
+	}
+}

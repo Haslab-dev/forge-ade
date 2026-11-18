@@ -26,53 +26,13 @@ import (
 // until the background goroutine publishes completion via runOnUI.
 var gitOpsBusy atomic.Bool
 
-func (a *AppUI) rightDrawerTabMeta(dirtyFiles int) (title string, icon *ui.SVG, count int) {
-	a.drawerTabReconcile()
-
-	switch a.RightDrawerTab {
-	case RightTabFiles:
-		return "Files", icons.TablerFolder, 0
-	case RightTabBrowser:
-		return "Browser", icons.TablerWorld, 0
-	case RightTabTerminal:
-		return "Terminal", icons.TablerTerminal, 0
-	case RightTabChanges:
-		return "Review", icons.TablerFileDiff, dirtyFiles
-	case RightTabTasks:
-		return "Plans", icons.TablerChecklist, 0
-	case RightTabChat:
-		return "Side conversation", icons.TablerMessage, 0
-	case RightTabSubagent:
-		subCount := 0
-		if a.Agent != nil {
-			// Locked read: other goroutines move ActiveSessionID.
-			sessionID := a.Agent.SnapshotActiveSessionID()
-			if sessionID != "" {
-				subCount = len(a.Agent.Subagents(sessionID))
-			}
-		}
-		return "Agents", icons.TablerBot, subCount
-	case RightTabDeck:
-		return "Presentations", icons.TablerPresentation, 0
-	case RightTabDatabase:
-		return "Database", icons.TablerDatabase, 0
-	case RightTabGit:
-		return "Git", icons.TablerGitBranch, dirtyFiles
-	case RightTabSideFile:
-		name := filepath.Base(a.ActiveSideFile)
-		if name == "" || name == "." {
-			name = "File"
-		}
-		return name, icons.FileIconSVG(a.ActiveSideFile), 0
-	default:
-		return "New tab", icons.TablerFileText, 0
-	}
-}
-
 // renderRightDrawer renders ZCode's full-height collapsible Right Sidebar with
 // the 42px multi-tool tab strip and the New tab launcher / active tool view.
 func (a *AppUI) renderRightDrawer(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
+
+	// Register the active pane as a tab BEFORE the header renders its pills.
+	a.drawerTabReconcile()
 
 	// Responsive clamping for small displays. The max matches the resize
 	// handle's clamp (min(750, winW*0.6)) so dragging feels 1:1; the 280
@@ -87,9 +47,6 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 			drawerWidth = 280
 		}
 	}
-
-	dirtyFiles, _, _ := a.gitDirtySummary()
-	_ = dirtyFiles
 
 	bar := c.TitleBar()
 	rightPad := float32(10)
