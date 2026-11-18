@@ -115,3 +115,46 @@ func TestBlockTimelinePersistenceRoundTrip(t *testing.T) {
 		t.Fatalf("tool block copy broken: %+v", tool)
 	}
 }
+
+// TestThinkingAndToolBlockOrdering verifies that thinking deltas and tool
+// calls interleave in chronological order and IsThinking stops when a tool starts.
+func TestThinkingAndToolBlockOrdering(t *testing.T) {
+	as := &AgentState{}
+	sess := &AgentSession{ID: "s1", Title: "t"}
+	as.Sessions = []*AgentSession{sess}
+	as.ActiveSessionID = "s1"
+
+	as.HandleTurnStart("s1", "hello")
+	as.HandleThoughtChunk("s1", "First thought")
+	as.HandleToolEvent(ToolEvent{SessionID: "s1", ToolCallID: "tool-1", Name: "read", Status: "running"})
+
+	as.mu.Lock()
+	msg := sess.Messages[len(sess.Messages)-1]
+	if msg.IsThinking {
+		as.mu.Unlock()
+		t.Fatalf("expected IsThinking=false while tool is running")
+	}
+	as.mu.Unlock()
+
+	as.HandleToolEvent(ToolEvent{SessionID: "s1", ToolCallID: "tool-1", Name: "read", Status: "done", Output: "ok"})
+	as.HandleThoughtChunk("s1", "Second thought")
+	as.HandleTokenChunk("s1", "Final answer")
+
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	if msg.IsThinking {
+		t.Fatalf("expected IsThinking=false after text delta")
+	}
+	if len(msg.Blocks) != 4 {
+		t.Fatalf("expected 4 blocks [thinking, tool, thinking, text], got %d: %+v", len(msg.Blocks), msg.Blocks)
+	}
+	wantKinds := []string{"thinking", "tool", "thinking", "text"}
+	for i, want := range wantKinds {
+		if msg.Blocks[i].Kind != want {
+			t.Fatalf("block[%d].Kind = %q, want %q", i, msg.Blocks[i].Kind, want)
+		}
+	}
+	if msg.Blocks[0].Text != "First thought" || msg.Blocks[2].Text != "Second thought" {
+		t.Fatalf("unexpected thinking block texts: %q, %q", msg.Blocks[0].Text, msg.Blocks[2].Text)
+	}
+}

@@ -243,7 +243,14 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								if hasWork {
 									a.renderWorkPill(c, tc, sessionID, m)
 								}
-								if m.Thinking != "" || m.IsThinking {
+								hasThinkingBlocks := false
+								for _, b := range m.Blocks {
+									if b != nil && b.Kind == "thinking" {
+										hasThinkingBlocks = true
+										break
+									}
+								}
+								if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
 									a.renderThinkingBlock(c, tc, sessionID, m)
 								}
 								if open && len(m.Tools) > 1 {
@@ -251,6 +258,11 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								}
 								for bi, blk := range m.Blocks {
 									if blk == nil {
+										continue
+									}
+									if blk.Kind == "thinking" {
+										isLast := bi == len(m.Blocks)-1
+										a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
 										continue
 									}
 									if blk.Kind == "tool" {
@@ -285,6 +297,12 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										markdown.Stream(c, blk.Text, &as.MdOpts)
 									} else {
 										markdown.View(c, blk.Text, &as.MdOpts)
+									}
+								}
+								if hasThinkingBlocks && m.IsThinking && !m.Done {
+									last := m.Blocks[len(m.Blocks)-1]
+									if last == nil || last.Kind != "thinking" {
+										a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
 									}
 								}
 							} else {
@@ -455,7 +473,15 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 		}
 
 		// Floating Task Tracker overlay (pill <-> card), top-right
-		a.renderTaskTracker(c, tc)
+		if a.ShowTurnStatusCard {
+			statusSessionID := ""
+			if a.Agent != nil {
+				statusSessionID = a.Agent.ActiveSessionID
+			}
+			a.renderTurnStatusCard(c, tc, statusSessionID)
+		} else {
+			a.renderTaskTracker(c, tc)
+		}
 	})
 }
 
@@ -531,9 +557,12 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID st
 }
 
 func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
-	isThinking := m.IsThinking && !m.Done
-	tokens := len(m.Thinking) / 4
-	if tokens < 1 && m.Thinking != "" {
+	a.renderThinkingBlockSegment(c, tc, sessionID, m, -1, m.Thinking, m.IsThinking && !m.Done)
+}
+
+func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, blockIdx int, text string, isThinking bool) {
+	tokens := len(text) / 4
+	if tokens < 1 && text != "" {
 		tokens = 1
 	}
 
@@ -549,17 +578,27 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, session
 		}
 	} else {
 		durationText := "a few seconds"
-		if m.ThinkingTimeSec > 0 {
+		if m.ThinkingTimeSec > 0 && blockIdx < 0 {
 			durationText = fmt.Sprintf("%.1fs", m.ThinkingTimeSec)
 		}
-		if tokens > 0 {
+		if tokens > 0 && blockIdx >= 0 {
+			label = fmt.Sprintf("Thought · %d tokens", tokens)
+		} else if tokens > 0 {
 			label = fmt.Sprintf("Thought · %s · %d tokens", durationText, tokens)
-		} else {
+		} else if blockIdx < 0 {
 			label = fmt.Sprintf("Thought · %s", durationText)
 		}
 	}
 
-	ui.Column(c).FillWidth().Gap(3).Children(func() {
+	expandKey := fmt.Sprintf("%s-%d-%d", sessionID, m.ID, blockIdx)
+	expanded := m.ShowThinking
+	if blockIdx >= 0 && a.ThinkingBlockExpanded != nil {
+		if v, ok := a.ThinkingBlockExpanded[expandKey]; ok {
+			expanded = v
+		}
+	}
+
+	ui.Column(c.Key("think-" + expandKey)).FillWidth().Gap(3).Children(func() {
 		header := ui.Row(c).Radius(6).Padding(3, 6).Gap(6).AlignItems(ui.Center).MinHeight(26)
 		header.Children(func() {
 			if isThinking {
@@ -574,7 +613,7 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, session
 			ui.Text(c, label).FontSize(11).TextColor(labelColor).FontWeight(500)
 			ui.Box(c).Grow(1)
 
-			if m.Thinking != "" {
+			if text != "" {
 				copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 				copyBtn.Children(func() {
 					ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
@@ -583,13 +622,13 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, session
 					copyBtn.Background(tc.Text.Alpha(0.06))
 				}
 				if copyBtn.Clicked() {
-					mygo.Clipboard.WriteText(m.Thinking)
+					mygo.Clipboard.WriteText(text)
 					c.AddToast(ui.Toast{Title: "Copied Reasoning", Description: "Chain of thought copied to clipboard", Type: "success"})
 				}
 			}
 
 			chev := icons.TablerChevronRight
-			if m.ShowThinking {
+			if expanded {
 				chev = icons.TablerChevronDown
 			}
 			ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
@@ -598,17 +637,26 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, session
 			header.Background(tc.Text.Alpha(0.04))
 		}
 		if header.Clicked() {
-			a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
-				lm.ShowThinking = !lm.ShowThinking
-			})
+			if blockIdx >= 0 {
+				if a.ThinkingBlockExpanded == nil {
+					a.ThinkingBlockExpanded = make(map[string]bool)
+				}
+				a.ThinkingBlockExpanded[expandKey] = !expanded
+			} else {
+				a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
+					lm.ShowThinking = !lm.ShowThinking
+				})
+			}
 		}
 
-		showCoT := m.ShowThinking || (!m.Done && isThinking)
-		if showCoT && m.Thinking != "" {
+		showCoT := expanded || (!m.Done && isThinking)
+		if showCoT && text != "" {
 			card := ui.Column(c).Padding(10, 12).Radius(8).
 				Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Gap(8)
 			card.Children(func() {
-				ui.Text(c, m.Thinking).FontSize(11).TextColor(tc.TextMuted).Selectable()
+				ui.Scroll(c).MaxHeight(260).Children(func() {
+					ui.Text(c, text).FontSize(11).TextColor(tc.TextMuted).Selectable()
+				})
 				ui.Row(c).Padding(6, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.3)).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "Chain of Thought (CoT)").FontSize(10).TextColor(tc.TextMuted)
 					ui.Box(c).Grow(1)
@@ -873,105 +921,113 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 
 		// Expanded detail views, mirroring forge-ade's tool blocks.
 		if thisTool.Expanded {
-			ui.Column(c).Padding(8, 10).Gap(6).
-				BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
-				Background(tc.Canvas.Alpha(0.6)).Children(func() {
-				cleanOut := thisTool.Output
-				if failed {
-					cleanOut = strings.ReplaceAll(cleanOut, "<tool_use_error>", "")
-					cleanOut = strings.ReplaceAll(cleanOut, "</tool_use_error>", "")
-					cleanOut = strings.TrimSpace(cleanOut)
-				}
+			ui.Scroll(c).MaxHeight(340).Children(func() {
+				ui.Column(c).Padding(8, 10).Gap(6).
+					BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
+					Background(tc.Canvas.Alpha(0.6)).Children(func() {
+					cleanOut := thisTool.Output
+					if failed {
+						cleanOut = strings.ReplaceAll(cleanOut, "<tool_use_error>", "")
+						cleanOut = strings.ReplaceAll(cleanOut, "</tool_use_error>", "")
+						cleanOut = strings.TrimSpace(cleanOut)
+					}
 
-				switch {
-				case isSkill:
-					a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
-				case isMCPLoad:
-					a.renderToolMCPLoadBlock(c, tc, thisTool, cleanOut, failed)
-				case isMCPTool:
-					a.renderToolMCPCallBlock(c, tc, thisTool, cleanOut, failed)
-				case isDesignTool:
-					a.renderToolDesignBlock(c, tc, thisTool, cleanOut, failed)
-				case isSubagent:
-					ui.Column(c).Gap(6).Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-							ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.Accent)
-							ui.Text(c, displayLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
-							openSubBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-								Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-							openSubBtn.Children(func() {
-								ui.Text(c, "View in Drawer").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+					switch {
+					case isSkill:
+						a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
+					case isMCPLoad:
+						a.renderToolMCPLoadBlock(c, tc, thisTool, cleanOut, failed)
+					case isMCPTool:
+						a.renderToolMCPCallBlock(c, tc, thisTool, cleanOut, failed)
+					case isDesignTool:
+						a.renderToolDesignBlock(c, tc, thisTool, cleanOut, failed)
+					case isSubagent:
+						ui.Column(c).Gap(6).Children(func() {
+							ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+								ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.Accent)
+								ui.Text(c, displayLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
+								openSubBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+									Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+								openSubBtn.Children(func() {
+									ui.Text(c, "View in Drawer").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+								})
+								if openSubBtn.Clicked() {
+									a.RightDrawerTab = RightTabSubagent
+									a.ShowRightDrawer = true
+								}
 							})
-							if openSubBtn.Clicked() {
-								a.RightDrawerTab = RightTabSubagent
-								a.ShowRightDrawer = true
+							if cleanOut != "" {
+								renderToolOutputBox(c, tc, cleanOut, failed)
+							}
+						})
+					case isRead && args.Path != "":
+						a.renderToolReadBlock(c, tc, args.Path, cleanOut)
+					case isEdit && (args.OldString != "" || args.NewString != ""):
+						a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
+					case isEdit && args.Content != "" && args.Path != "":
+						a.renderToolReadBlock(c, tc, args.Path, args.Content)
+					case isEdit && len(args.Edits) > 0 && extractDiffFromToolOutput(cleanOut, args.Path) == "":
+						for ei, ep := range args.Edits {
+							a.renderToolEditDiff(c, tc, fmt.Sprintf("%s-%d", thisTool.ID, ei), ep.OldString, ep.NewString)
+						}
+					case isSearch && cleanOut != "":
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.Accent)
+							searchLbl := args.Query
+							if searchLbl == "" {
+								searchLbl = thisTool.Command
+							}
+							if args.Path != "" && args.Query != "" {
+								searchLbl = fmt.Sprintf("%s  (%s)", args.Query, args.Path)
+							}
+							ui.Text(c, searchLbl).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+						})
+						renderToolOutputBox(c, tc, cleanOut, failed)
+					case extractDiffFromToolOutput(cleanOut, args.Path) != "":
+						// Unified patch output (raw or inside JSON diff payload): parse into MyGo DiffView
+						patchStr := extractDiffFromToolOutput(cleanOut, args.Path)
+						d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, patchStr, a.ThemeMgr)
+						if d != nil {
+							d.FitContent = true
+							d.Layout = mygoeditor.DiffUnified
+							box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
+							box.Children(func() {
+								mygoeditor.DiffView(c, d).FillWidth()
+							})
+						} else if cleanOut != "" {
+							renderToolOutputBox(c, tc, cleanOut, failed)
+						}
+					case isBash:
+						cmdStr := args.Cmd
+						if cmdStr == "" {
+							cmdStr = thisTool.Command
+						}
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
+							ui.Text(c, cmdStr).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
+							if cleanOut != "" {
+								copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+								copyBtn.Children(func() {
+									ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
+								})
+								if copyBtn.Hovered() {
+									copyBtn.Background(tc.Text.Alpha(0.06))
+								}
+								if copyBtn.Clicked() {
+									mygo.Clipboard.WriteText(cleanOut)
+									c.AddToast(ui.Toast{Title: "Copied Output", Type: "success"})
+								}
 							}
 						})
 						if cleanOut != "" {
 							renderToolOutputBox(c, tc, cleanOut, failed)
 						}
-					})
-				case isRead && args.Path != "":
-					a.renderToolReadBlock(c, tc, args.Path, cleanOut)
-				case isEdit && (args.OldString != "" || args.NewString != ""):
-					a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
-				case isEdit && args.Content != "" && args.Path != "":
-					a.renderToolReadBlock(c, tc, args.Path, args.Content)
-				case isSearch && cleanOut != "":
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.Accent)
-						searchLbl := args.Query
-						if searchLbl == "" {
-							searchLbl = thisTool.Command
-						}
-						if args.Path != "" && args.Query != "" {
-							searchLbl = fmt.Sprintf("%s  (%s)", args.Query, args.Path)
-						}
-						ui.Text(c, searchLbl).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
-					})
-					renderToolOutputBox(c, tc, cleanOut, failed)
-				case strings.Contains(cleanOut, "@@ -") && (strings.Contains(cleanOut, "+++") || strings.Contains(cleanOut, "---")):
-					// Unified patch output: parse into MyGo DiffView
-					d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, cleanOut, a.ThemeMgr)
-					if d != nil {
-						d.FitContent = true
-						box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
-						box.Children(func() {
-							mygoeditor.DiffView(c, d).FillWidth()
-						})
-					} else if cleanOut != "" {
-						renderToolOutputBox(c, tc, cleanOut, failed)
-					}
-				case isBash:
-					cmdStr := args.Cmd
-					if cmdStr == "" {
-						cmdStr = thisTool.Command
-					}
-					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
-						ui.Text(c, cmdStr).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
+					default:
 						if cleanOut != "" {
-							copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
-							copyBtn.Children(func() {
-								ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
-							})
-							if copyBtn.Hovered() {
-								copyBtn.Background(tc.Text.Alpha(0.06))
-							}
-							if copyBtn.Clicked() {
-								mygo.Clipboard.WriteText(cleanOut)
-								c.AddToast(ui.Toast{Title: "Copied Output", Type: "success"})
-							}
+							renderToolOutputBox(c, tc, cleanOut, failed)
 						}
-					})
-					if cleanOut != "" {
-						renderToolOutputBox(c, tc, cleanOut, failed)
 					}
-				default:
-					if cleanOut != "" {
-						renderToolOutputBox(c, tc, cleanOut, failed)
-					}
-				}
+				})
 			})
 		}
 	})
@@ -1449,15 +1505,6 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 	}
 
 	card.Children(func() {
-		// ZCode-style floating turn-status card: Changes diffstat, branch,
-		// commit jump, task progress checklist, and active agents with Stop
-		// buttons. The slim strip above the input toggles it.
-		statusSessionID := ""
-		if a.Agent != nil {
-			statusSessionID = a.Agent.ActiveSessionID
-		}
-		a.renderTurnStatusCard(c, tc, statusSessionID)
-		a.renderTurnStatusToggle(c, tc, statusSessionID)
 
 		// Autocomplete panels float above the input: "/" opens the slash
 		// catalog, a trailing "@token" opens the file mention menu —
@@ -1777,6 +1824,13 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					}
 				}
 			}
+
+			// Active agent-spawned background shell indicator pill + popover trigger
+			bgSessionID := ""
+			if as != nil {
+				bgSessionID = as.ActiveSessionID
+			}
+			a.renderBgShellPill(c, tc, bgSessionID)
 
 			// Lead Persona / Orchestrator chip (only when using the internal RakitKode harness)
 			isInternalHarness := as.ActiveAgentID == "" || as.ActiveAgentID == "agent-internal" || as.ActiveAgentType == "internal"
@@ -2299,7 +2353,8 @@ func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
 		ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
 	})
 	if pill.Clicked() {
-		a.ShowPlanModal = true
+		a.ShowTurnStatusCard = !a.ShowTurnStatusCard
+		a.invalidateUI()
 	}
 }
 
@@ -2763,6 +2818,11 @@ func (a *AppUI) tryHandleSlashCommand(trimmed string) bool {
 	return false
 }
 
+type EditPair struct {
+	OldString string
+	NewString string
+}
+
 type ParsedToolArgs struct {
 	Path      string
 	Cmd       string
@@ -2770,6 +2830,7 @@ type ParsedToolArgs struct {
 	OldString string
 	NewString string
 	Query     string
+	Edits     []EditPair
 }
 
 func parseToolArgsCached(t *agent.ToolExecution) ParsedToolArgs {
@@ -2830,6 +2891,42 @@ func parseToolArgs(raw string, toolName string) ParsedToolArgs {
 						res.NewString = strVal
 					}
 				}
+			}
+			for _, arrKey := range []string{"edits", "changes", "chunks"} {
+				arr, ok := m[arrKey].([]interface{})
+				if !ok {
+					continue
+				}
+				for _, item := range arr {
+					obj, ok := item.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					var ep EditPair
+					for ek, ev := range obj {
+						sv, ok := ev.(string)
+						if !ok {
+							continue
+						}
+						switch strings.ToLower(ek) {
+						case "old_string", "oldstring", "old", "old_text", "target", "search":
+							if ep.OldString == "" {
+								ep.OldString = sv
+							}
+						case "new_string", "newstring", "new", "new_text", "replacement", "replace":
+							if ep.NewString == "" {
+								ep.NewString = sv
+							}
+						}
+					}
+					if ep.OldString != "" || ep.NewString != "" {
+						res.Edits = append(res.Edits, ep)
+					}
+				}
+			}
+			if len(res.Edits) == 1 && res.OldString == "" && res.NewString == "" {
+				res.OldString = res.Edits[0].OldString
+				res.NewString = res.Edits[0].NewString
 			}
 		}
 	}
@@ -3151,6 +3248,89 @@ func userMessageAttachments(text string) []string {
 		}
 	}
 	return atts
+}
+
+// extractDiffFromToolOutput extracts a unified diff from either raw unified
+// diff text or a JSON tool output payload like {"additions":45,"diff":"@@ ..."}
+// (including truncated JSON payloads ending in "... [truncated]").
+func extractDiffFromToolOutput(out, filePath string) string {
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return ""
+	}
+	diffStr := ""
+	if strings.HasPrefix(trimmed, "{") {
+		var payload struct {
+			Diff  string `json:"diff"`
+			Patch string `json:"patch"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
+			if payload.Diff != "" {
+				diffStr = payload.Diff
+			} else if payload.Patch != "" {
+				diffStr = payload.Patch
+			}
+		} else {
+			// Handle truncated JSON where the closing quote/brace was cut off.
+			for _, key := range []string{`"diff":"`, `"diff": "`, `"patch":"`, `"patch": "`} {
+				if idx := strings.Index(trimmed, key); idx >= 0 {
+					rest := trimmed[idx+len(key):]
+					rest = strings.TrimSuffix(rest, "... [truncated]")
+					rest = strings.TrimSuffix(rest, "… [truncated]")
+					// Walk up to an unescaped closing quote if present, or end of prefix.
+					var rawLit strings.Builder
+					rawLit.WriteByte('"')
+					escaped := false
+					for i := 0; i < len(rest); i++ {
+						ch := rest[i]
+						if escaped {
+							rawLit.WriteByte(ch)
+							escaped = false
+							continue
+						}
+						if ch == '\\' {
+							// Avoid dangling backslash at the very end of a truncated string.
+							if i == len(rest)-1 {
+								break
+							}
+							rawLit.WriteByte(ch)
+							escaped = true
+							continue
+						}
+						if ch == '"' {
+							break
+						}
+						rawLit.WriteByte(ch)
+					}
+					rawLit.WriteByte('"')
+					var decoded string
+					if err := json.Unmarshal([]byte(rawLit.String()), &decoded); err == nil {
+						// Drop any incomplete trailing line after truncation.
+						if lastNL := strings.LastIndex(decoded, "\n"); lastNL > 0 {
+							decoded = decoded[:lastNL]
+						}
+						diffStr = decoded
+					}
+					break
+				}
+			}
+		}
+	} else if strings.Contains(trimmed, "@@ -") {
+		diffStr = trimmed
+	}
+
+	diffStr = strings.TrimSpace(diffStr)
+	if !strings.Contains(diffStr, "@@ -") {
+		return ""
+	}
+	if !strings.Contains(diffStr, "--- ") || !strings.Contains(diffStr, "+++ ") {
+		name := filePath
+		if name == "" {
+			name = "file"
+		}
+		diffStr = fmt.Sprintf("--- a/%s\n+++ b/%s\n%s\n", name, name, diffStr)
+	}
+	return diffStr
 }
 
 // renderToolEditDiff draws the old/new strings of an edit tool call as a

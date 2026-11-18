@@ -569,3 +569,36 @@ func TestWorkspaceTerminalSessionPersistence(t *testing.T) {
 		t.Fatalf("expected remote SSH terminal to remain in WorkspaceTerminals")
 	}
 }
+
+func TestSeparateAgentAndEditorWorkspaces(t *testing.T) {
+	dirAgent := t.TempDir()
+	dirEditor := t.TempDir()
+	eng := engine.NewEngine(dirAgent)
+	app := NewAppUI(eng, dirAgent)
+
+	// Start in Agent Mode on dirAgent
+	app.setMode(ModeAgent)
+	app.switchWorkspace(dirAgent)
+	if normalizeWorkspaceKey(app.Workspace.RootDir) != normalizeWorkspaceKey(dirAgent) {
+		t.Fatalf("expected agent workspace %q, got %q", dirAgent, app.Workspace.RootDir)
+	}
+
+	// Switch to Editor Mode and change workspace to dirEditor
+	app.setMode(ModeEditor)
+	app.switchWorkspace(dirEditor)
+	if normalizeWorkspaceKey(app.Workspace.RootDir) != normalizeWorkspaceKey(dirEditor) {
+		t.Fatalf("expected editor workspace %q, got %q", dirEditor, app.Workspace.RootDir)
+	}
+
+	// Switching back to Agent Mode must restore dirAgent, not stay on dirEditor
+	app.setMode(ModeAgent)
+	if normalizeWorkspaceKey(app.Workspace.RootDir) != normalizeWorkspaceKey(dirAgent) {
+		t.Fatalf("expected agent mode to restore %q, got %q", dirAgent, app.Workspace.RootDir)
+	}
+
+	// Switching back to Editor Mode must restore dirEditor
+	app.setMode(ModeEditor)
+	if normalizeWorkspaceKey(app.Workspace.RootDir) != normalizeWorkspaceKey(dirEditor) {
+		t.Fatalf("expected editor mode to restore %q, got %q", dirEditor, app.Workspace.RootDir)
+	}
+}

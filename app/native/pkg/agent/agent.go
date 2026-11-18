@@ -182,11 +182,11 @@ const (
 )
 
 // MessageBlock is one element of an assistant turn's ordered timeline: a
-// streamed text segment or a tool call, in the order the agent produced
-// them. Blocks reference ToolExecution entries by ID; msg.Text remains the
-// concatenation of all text segments for copy/search/title consumers.
+// streamed text segment, thinking segment, or tool call, in the order the
+// agent produced them. Blocks reference ToolExecution entries by ID; msg.Text
+// remains the concatenation of all text segments for copy/search/title consumers.
 type MessageBlock struct {
-	Kind   string `json:"kind"` // "text" | "tool"
+	Kind   string `json:"kind"` // "text" | "tool" | "thinking"
 	Text   string `json:"text,omitempty"`
 	ToolID string `json:"toolId,omitempty"`
 }
@@ -225,13 +225,24 @@ type ChatMessage struct {
 }
 
 // appendTextBlockDeltaLocked appends a streamed delta to the timeline's
-// last text block, creating one when the previous block is a tool call.
+// last text block, creating one when the previous block is not a text block.
 func appendTextBlockDeltaLocked(msg *ChatMessage, delta string) {
 	if n := len(msg.Blocks); n > 0 && msg.Blocks[n-1] != nil && msg.Blocks[n-1].Kind == "text" {
 		msg.Blocks[n-1].Text += delta
 		return
 	}
 	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "text", Text: delta})
+}
+
+// appendThinkingBlockDeltaLocked appends a streamed reasoning delta to the
+// timeline's last thinking block, creating a new block whenever a tool or
+// text block has intervened.
+func appendThinkingBlockDeltaLocked(msg *ChatMessage, delta string) {
+	if n := len(msg.Blocks); n > 0 && msg.Blocks[n-1] != nil && msg.Blocks[n-1].Kind == "thinking" {
+		msg.Blocks[n-1].Text += delta
+		return
+	}
+	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "thinking", Text: delta})
 }
 
 // appendToolBlockLocked records a new tool call in the timeline. Called only
@@ -327,6 +338,7 @@ type AgentSession struct {
 // AgentState tracks sessions, conversation history, streaming responses, and prompt composer.
 type AgentState struct {
 	mu              sync.Mutex
+	deletedIDs      map[string]bool
 	engine          *engine.Engine
 	workspacePath   string
 	Sessions        []*AgentSession
@@ -991,6 +1003,7 @@ func (as *AgentState) HandleThoughtChunk(sessionID, text string) {
 		}
 		msg := as.ensureStreamingMessage(s)
 		msg.Thinking += text
+		appendThinkingBlockDeltaLocked(msg, text)
 		msg.IsThinking = true
 		if !msg.ShowThinking && len(msg.Tools) == 0 {
 			// The thinking row opens by default until tools arrive.
@@ -1078,6 +1091,10 @@ func (as *AgentState) HandleToolEvent(ev ToolEvent) {
 			}
 			msg.Tools = append(msg.Tools, existing)
 			appendToolBlockLocked(msg, id)
+			msg.IsThinking = false
+		}
+		if ev.Status == "running" {
+			msg.IsThinking = false
 		}
 		// update_tasks-style calls drive the floating tracker, like
 		// forge-ade's runtime task list.
@@ -1168,8 +1185,14 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		msg.ShowTools = false
 		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(msg.Text)))
 		for _, b := range msg.Blocks {
-			if b != nil && b.Kind == "text" {
+			if b == nil {
+				continue
+			}
+			switch b.Kind {
+			case "text":
 				b.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(b.Text)))
+			case "thinking":
+				b.Text = cleanRawToolTags(b.Text)
 			}
 		}
 		msg.Thinking = cleanRawToolTags(msg.Thinking)
@@ -2215,6 +2238,10 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 	// unlocked iteration raced them. Per-message struct copies keep the
 	// encoded payload off the live backing arrays; disk I/O stays outside.
 	as.mu.Lock()
+	if as.deletedIDs != nil && as.deletedIDs[sess.ID] {
+		as.mu.Unlock()
+		return
+	}
 	// In-flight turn goroutines hold session pointers across DeleteSession:
 	// a session that no longer exists in memory must NOT be resurrected on
 	// disk (P2b). All callers snapshot from as.Sessions, so presence here is
@@ -2955,6 +2982,10 @@ func (as *AgentState) ToggleSnooze(id string) {
 // DeleteSession permanently removes a session from memory and disk.
 func (as *AgentState) DeleteSession(id string) {
 	as.mu.Lock()
+	if as.deletedIDs == nil {
+		as.deletedIDs = make(map[string]bool)
+	}
+	as.deletedIDs[id] = true
 	var deletedWs string
 	newSessions := make([]*AgentSession, 0, len(as.Sessions))
 	for _, s := range as.Sessions {
@@ -3000,6 +3031,9 @@ func (as *AgentState) DeleteSessionsByProject(projectName, folderPath string) {
 	}
 
 	as.mu.Lock()
+	if as.deletedIDs == nil {
+		as.deletedIDs = make(map[string]bool)
+	}
 	curWs := as.workspacePath
 	newSessions := make([]*AgentSession, 0, len(as.Sessions))
 	var deleted []struct {
@@ -3015,6 +3049,7 @@ func (as *AgentState) DeleteSessionsByProject(projectName, folderPath string) {
 		match := (normFolder != "" && s.WorkspacePath == normFolder) ||
 			(normFolder == "" && projectName != "" && filepath.Base(filepath.Clean(s.WorkspacePath)) == projectName)
 		if match {
+			as.deletedIDs[s.ID] = true
 			deleted = append(deleted, struct {
 				id string
 				ws string
@@ -3908,6 +3943,8 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				as.mu.Lock()
 				if deltaReasoning != "" {
 					assistantMsg.Thinking += deltaReasoning
+					appendThinkingBlockDeltaLocked(assistantMsg, deltaReasoning)
+					assistantMsg.IsThinking = true
 				}
 				if deltaContent != "" {
 					assistantMsg.Text += deltaContent

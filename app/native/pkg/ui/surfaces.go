@@ -25,7 +25,7 @@ const (
 
 // openBoardSurface switches the agent area to the workflow board.
 func (a *AppUI) openBoardSurface() {
-	a.Mode = ModeAgent
+	a.setMode(ModeAgent)
 	a.AgentViewMode = AgentViewBoard
 	a.RefreshBoard()
 }
@@ -35,7 +35,7 @@ func (a *AppUI) openGitClientSurface() {
 	if a.Mode == ModeEditor {
 		a.IsGitClientOpen = true
 	} else {
-		a.Mode = ModeAgent
+		a.setMode(ModeAgent)
 		a.AgentViewMode = AgentViewGit
 	}
 	if a.Git != nil {

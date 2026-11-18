@@ -46,8 +46,9 @@ func (a *AppUI) renderTurnStatusToggle(c *ui.Context, tc theme.ThemeColors, sess
 	}
 	tasks := a.agentProgressTasks()
 	runningSubs := a.activeSubagents(sessionID)
+	goal := a.agentGoalText()
 
-	hasWork := len(tasks) > 0 || len(runningSubs) > 0 || (hasGit && files > 0)
+	hasWork := len(tasks) > 0 || len(runningSubs) > 0 || (hasGit && files > 0) || goal != ""
 	if !hasWork {
 		return
 	}
@@ -84,6 +85,18 @@ func (a *AppUI) renderTurnStatusToggle(c *ui.Context, tc theme.ThemeColors, sess
 		a.ShowTurnStatusCard = true
 		a.invalidateUI()
 	}
+}
+
+// agentGoalText returns the active session's plan/goal summary if set.
+func (a *AppUI) agentGoalText() string {
+	if a.Agent == nil {
+		return ""
+	}
+	tm := a.Agent.ActiveTaskManager()
+	if tm == nil {
+		return ""
+	}
+	return strings.TrimSpace(tm.GoalText())
 }
 
 // agentProgressTasks returns a copy of the active session's checklist.
@@ -127,19 +140,19 @@ func (a *AppUI) activeSubagents(sessionID string) []*rakitagent.Session {
 	return running
 }
 
-// renderTurnStatusCard draws the floating card above the composer's trailing
-// edge: Changes header + diffstat, branch row, commit jump, task Progress
-// checklist, and the active Agents rows with Stop buttons.
+// renderTurnStatusCard draws the floating card in the top-right corner of the
+// chat pane: Changes header + diffstat, branch row, commit jump, Goal, task
+// Progress checklist, and active Agents rows with Stop buttons.
 func (a *AppUI) renderTurnStatusCard(c *ui.Context, tc theme.ThemeColors, sessionID string) {
 	if !a.ShowTurnStatusCard {
 		return
 	}
-	// Right-aligned floating card, hugging the composer's trailing edge.
-	ui.Row(c.Key("turn-status-card-slot")).FillWidth().Justify(ui.End).Children(func() {
-		card := ui.Column(c.Key("turn-status-card")).Width(turnStatusCardWidth).Radius(14).
-			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
-			Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.55)).Clip()
-		card.Children(func() {
+	card := ui.Column(c.Key("turn-status-card")).Absolute().Top(12).Right(16).
+		Width(turnStatusCardWidth).MaxHeight(520).Radius(14).
+		Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
+		Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.55)).Clip()
+	card.Children(func() {
+		ui.Scroll(c).MaxHeight(520).Children(func() {
 			a.renderTurnStatusSections(c, tc, sessionID)
 		})
 	})
@@ -178,9 +191,14 @@ func (a *AppUI) renderTurnStatusSections(c *ui.Context, tc theme.ThemeColors, se
 		}
 	})
 
-	hasAny := (hasGit && files > 0) || branch != "" || len(a.agentProgressTasks()) > 0
+	goal := a.agentGoalText()
+	tasks := a.agentProgressTasks()
+	runningSubs := a.activeSubagents(sessionID)
+	hasAny := (hasGit && files > 0) || branch != "" || len(tasks) > 0 || goal != "" || len(runningSubs) > 0
 	if !hasAny {
-		ui.Text(c, "Nothing to show yet — make a change or run a task.").FontSize(11).TextColor(tc.TextMuted)
+		ui.Column(c).Padding(10, 14).Children(func() {
+			ui.Text(c, "Nothing to show yet — make a change or run a task.").FontSize(11).TextColor(tc.TextMuted)
+		})
 		return
 	}
 
@@ -221,8 +239,20 @@ func (a *AppUI) renderTurnStatusSections(c *ui.Context, tc theme.ThemeColors, se
 
 	a.turnStatusDivider(c, tc)
 
+	// ── Goal / Plan section ───────────────────────────────────────────
+	if goal != "" {
+		head := ui.Row(c).Height(26).Padding(0, 14).Gap(8).AlignItems(ui.Center)
+		head.Children(func() {
+			ui.Text(c, "Goal").FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
+		})
+		ui.Row(c).Padding(4, 14, 6, 14).Gap(8).AlignItems(ui.Start).Children(func() {
+			ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(tc.Accent)
+			ui.Text(c, goal).FontSize(12).TextColor(tc.Text).Grow(1)
+		})
+		a.turnStatusDivider(c, tc)
+	}
+
 	// ── Progress checklist ────────────────────────────────────────────
-	tasks := a.agentProgressTasks()
 	if len(tasks) > 0 {
 		done := 0
 		for _, t := range tasks {
@@ -266,7 +296,6 @@ func (a *AppUI) renderTurnStatusSections(c *ui.Context, tc theme.ThemeColors, se
 	}
 
 	// ── Agents section ────────────────────────────────────────────────
-	runningSubs := a.activeSubagents(sessionID)
 	if len(runningSubs) > 0 {
 		head := ui.Row(c).Height(26).Padding(0, 14).Gap(8).AlignItems(ui.Center)
 		head.Children(func() {
@@ -306,7 +335,7 @@ func (a *AppUI) renderTurnStatusSections(c *ui.Context, tc theme.ThemeColors, se
 }
 
 func (a *AppUI) turnStatusDivider(c *ui.Context, tc theme.ThemeColors) {
-	ui.Box(c.Key("turn-status-div")).Height(1).FillWidth().Margin(4, 0).Background(tc.Border.Alpha(0.45))
+	ui.Box(c).Height(1).FillWidth().Margin(4, 0).Background(tc.Border.Alpha(0.45))
 }
 
 // subDisplayName picks the best display name for a subagent session.

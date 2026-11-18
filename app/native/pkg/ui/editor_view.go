@@ -1029,7 +1029,7 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 			if a.Agent != nil && curPath != "" {
 				a.Agent.AttachFile(curPath)
 			}
-			a.Mode = ModeAgent
+			a.setMode(ModeAgent)
 			a.IsGitClientOpen = false
 			a.AgentViewMode = AgentViewChat
 			a.ActiveTaskKind = "agent"
@@ -1284,7 +1284,7 @@ func (a *AppUI) openEditorTerminalTab(title string) {
 	if sessionID > 0 {
 		a.Editor.BindTerminalSession(tabID, sessionID)
 	}
-	a.Mode = ModeEditor
+	a.setMode(ModeEditor)
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}

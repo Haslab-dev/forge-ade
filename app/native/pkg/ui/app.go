@@ -99,6 +99,8 @@ type AppUI struct {
 	Board                    *board.BoardManager
 	Mode                     int      // ModeAgent, ModeEditor, or ModeSettings
 	PrevMode                 int      // Mode to restore when closing Settings
+	AgentWorkspacePath       string   // Independent active workspace for Agent Mode
+	EditorWorkspacePath      string   // Independent active workspace for Editor Mode
 	ActiveTaskKind           string   // "agent" or "cli"
 	ShowLeftSidebar          bool     // Left sidebar visibility
 	LeftSidebarView          string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
@@ -164,6 +166,7 @@ type AppUI struct {
 	// working pill. subagentFirstSeen timestamps each subagent ID the first
 	// time the card sees it, to render "Running for Xm Ys".
 	ShowTurnStatusCard bool
+	ShowBgShellPopover bool
 	subagentFirstSeen  map[string]time.Time
 
 	// Generic confirm dialog (confirmDialog / renderConfirmDialog): one
@@ -230,11 +233,12 @@ type AppUI struct {
 	ThreadFindIdx       int
 
 	// Navigation history & ZCode inspector/card UI state.
-	SessionHistory       []string
-	SessionHistoryIdx    int
-	navigatingHistory    bool
-	ChangesCardCollapsed map[int]bool
-	InspectorCollapsed   bool
+	SessionHistory        []string
+	SessionHistoryIdx     int
+	navigatingHistory     bool
+	ChangesCardCollapsed  map[int]bool
+	ThinkingBlockExpanded map[string]bool
+	InspectorCollapsed    bool
 
 	ShowNewFileModal         bool
 	NewFileName              string
@@ -496,6 +500,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		WorkspaceEditorSnapshots: make(map[string]*editor.WorkspaceEditorSnapshot),
 		ThemeMgr:                 theme.NewThemeManager(),
 		Mode:                     ModeAgent,
+		AgentWorkspacePath:       rootDir,
+		EditorWorkspacePath:      rootDir,
 		ActiveTaskKind:           "agent",
 		AgentViewMode:            AgentViewChat,
 		RecentWorkspaces:         loadRecentWorkspaces(),
@@ -810,7 +816,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 							log.Printf("[forge-ade] ticker tick panicked: %v\n%s", r, debug.Stack())
 						}
 					}()
-					if appUI.Agent.HasRunningSession() && appUI.Window != nil {
+					if (appUI.Agent.HasRunningSession() || appUI.ShowBgShellPopover) && appUI.Window != nil {
 						appUI.Window.Invalidate()
 					}
 					if appUI.prefsDirty.CompareAndSwap(true, false) && !appUI.prefsSaving.Swap(true) {
@@ -844,8 +850,8 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			a.ShowModelPalette = true
 			a.ModelSearchQuery = ""
 		}},
-		{ID: "agent-mode", Label: "Switch to Agent Mode", Shortcut: "⌘1", Run: func() { a.Mode = ModeAgent }},
-		{ID: "editor-mode", Label: "Switch to Editor Mode", Shortcut: "⌘2", Run: func() { a.Mode = ModeEditor }},
+		{ID: "agent-mode", Label: "Switch to Agent Mode", Shortcut: "⌘1", Run: func() { a.setMode(ModeAgent) }},
+		{ID: "editor-mode", Label: "Switch to Editor Mode", Shortcut: "⌘2", Run: func() { a.setMode(ModeEditor) }},
 		{ID: "toggle-terminal", Label: "Toggle Terminal", Detail: "Bottom terminal drawer", Shortcut: "⌘`", Run: func() {
 			a.ShowBottomTerminal = !a.ShowBottomTerminal
 		}},
@@ -1167,10 +1173,10 @@ func (a *AppUI) View(c *ui.Context) {
 		a.openWorkspaceFolder()
 	}
 	if cmdOrCtrl(ui.Key1) {
-		a.Mode = ModeAgent
+		a.setMode(ModeAgent)
 	}
 	if cmdOrCtrl(ui.Key2) {
-		a.Mode = ModeEditor
+		a.setMode(ModeEditor)
 	}
 	if cmdOrCtrl(ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
@@ -2045,6 +2051,36 @@ func (a *AppUI) selectCLISession(cs *agent.AgentCLISession) {
 	}
 }
 
+// setMode switches between ModeAgent, ModeEditor, and ModeSettings while
+// preserving independent active workspaces for Agent Mode and Editor Mode.
+func (a *AppUI) setMode(mode int) {
+	if a.Mode == mode {
+		return
+	}
+	curWs := ""
+	if a.Workspace != nil {
+		curWs = a.Workspace.RootDir
+	}
+	if a.Mode == ModeAgent {
+		a.AgentWorkspacePath = curWs
+	} else if a.Mode == ModeEditor {
+		a.EditorWorkspacePath = curWs
+	}
+	a.Mode = mode
+	if mode == ModeAgent {
+		if normalizeWorkspaceKey(a.AgentWorkspacePath) != normalizeWorkspaceKey(curWs) {
+			a.switchWorkspaceInternal(a.AgentWorkspacePath, true)
+		}
+	} else if mode == ModeEditor {
+		if normalizeWorkspaceKey(a.EditorWorkspacePath) != normalizeWorkspaceKey(curWs) {
+			a.switchWorkspaceInternal(a.EditorWorkspacePath, true)
+		}
+	}
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
 func (a *AppUI) switchWorkspace(dir string) {
 	a.switchWorkspaceInternal(dir, false)
 }
@@ -2135,14 +2171,19 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 		}
 	}
 
-	// 4. Update agent workspace
-	if a.Agent != nil {
-		if !keepActiveSession {
-			if sess := a.Agent.ActiveSession(); sess != nil && agentsession.NormalizeWorkspacePath(sess.WorkspacePath) != rawDir {
-				a.Agent.ClearActiveSession()
+	// 4. Update mode-specific active workspace & agent workspace
+	if a.Mode == ModeEditor {
+		a.EditorWorkspacePath = rawDir
+	} else {
+		a.AgentWorkspacePath = rawDir
+		if a.Agent != nil {
+			if !keepActiveSession {
+				if sess := a.Agent.ActiveSession(); sess != nil && agentsession.NormalizeWorkspacePath(sess.WorkspacePath) != rawDir {
+					a.Agent.ClearActiveSession()
+				}
 			}
+			a.Agent.SetWorkspacePath(rawDir)
 		}
-		a.Agent.SetWorkspacePath(rawDir)
 	}
 
 	// 5. Restore or initialize terminal state for new workspace
@@ -2313,7 +2354,7 @@ func (a *AppUI) closeSettings() {
 	if target == ModeSettings {
 		target = ModeAgent
 	}
-	a.Mode = target
+	a.setMode(target)
 }
 
 func (a *AppUI) renderMainColumn(c *ui.Context) {

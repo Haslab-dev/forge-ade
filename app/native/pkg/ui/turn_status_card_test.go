@@ -6,6 +6,7 @@ package ui
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,5 +62,30 @@ func TestTurnStatusCardRenders(t *testing.T) {
 	tw2 := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
 	if _, ok := tw2.Find("Progress"); ok {
 		t.Fatalf("closed card must not render Progress")
+	}
+}
+
+func TestExtractDiffFromToolOutput(t *testing.T) {
+	validJSON := `{"additions":2,"deletions":1,"diff":"@@ -1,3 +1,4 @@\n line1\n-old\n+new\n+added\n"}`
+	got := extractDiffFromToolOutput(validJSON, "src/App.tsx")
+	if !strings.Contains(got, "--- a/src/App.tsx") || !strings.Contains(got, "+added") {
+		t.Fatalf("unexpected extracted diff from valid JSON: %q", got)
+	}
+
+	truncatedJSON := `{"additions":45,"deletions":2,"diff":"@@ -22,5 +22,5 @@\n modelUrl?: string | null;\n+ onModelLoaded?: (meshes: Mesh[]) \u003d\u003e void;\n- onModelLoaded?: () \u003d\u003e void;\n ... [truncated]`
+	gotTrunc := extractDiffFromToolOutput(truncatedJSON, "src/components/BabylonViewer.tsx")
+	if !strings.Contains(gotTrunc, "--- a/src/components/BabylonViewer.tsx") || !strings.Contains(gotTrunc, "+ onModelLoaded?: (meshes: Mesh[]) => void;") {
+		t.Fatalf("unexpected extracted diff from truncated JSON: %q", gotTrunc)
+	}
+}
+
+func TestParseToolArgsEdits(t *testing.T) {
+	raw := `{"file_path":"src/App.tsx","edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_string":"d"}]}`
+	parsed := parseToolArgs(raw, "edit")
+	if parsed.Path != "src/App.tsx" {
+		t.Fatalf("Path = %q, want src/App.tsx", parsed.Path)
+	}
+	if len(parsed.Edits) != 2 || parsed.Edits[0].OldString != "a" || parsed.Edits[1].NewString != "d" {
+		t.Fatalf("unexpected edits: %+v", parsed.Edits)
 	}
 }

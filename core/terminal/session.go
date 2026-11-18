@@ -128,6 +128,16 @@ func (s *Session) snapshotOutput() string {
 	return string(s.out)
 }
 
+// RecentOutput returns up to the last maxBytes bytes of captured output.
+func (s *Session) RecentOutput(maxBytes int) string {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	if maxBytes <= 0 || len(s.out) <= maxBytes {
+		return string(s.out)
+	}
+	return string(s.out[len(s.out)-maxBytes:])
+}
+
 // NewShell creates a new shell session.
 func NewShell(name, folder string) *Session {
 	if name == "" {

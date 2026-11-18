@@ -514,9 +514,50 @@ func DeleteProjectSessionsDisk(projectName, workspacePath string) error {
 
 	_ = os.RemoveAll(filepath.Join(homeDir, ".forge", "sessions", projectName))
 
+	normWs := NormalizeWorkspacePath(workspacePath)
+	globalSessionsRoot := filepath.Join(homeDir, ".forge", "sessions")
+	if entries, err := os.ReadDir(globalSessionsRoot); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			projDir := filepath.Join(globalSessionsRoot, e.Name())
+			if info, ok := readProjectSessionInfo(projDir); ok && normWs != "" && NormalizeWorkspacePath(info.ProjectPath) == normWs {
+				_ = os.RemoveAll(projDir)
+				continue
+			}
+			if normWs == "" {
+				continue
+			}
+			for _, sub := range []string{projDir, filepath.Join(projDir, "here")} {
+				subEntries, serr := os.ReadDir(sub)
+				if serr != nil {
+					continue
+				}
+				for _, se := range subEntries {
+					if se.IsDir() || !strings.HasSuffix(se.Name(), ".json") || se.Name() == "info.json" {
+						continue
+					}
+					fp := filepath.Join(sub, se.Name())
+					content, rerr := os.ReadFile(fp)
+					if rerr != nil {
+						continue
+					}
+					if _, sessWs, ok := extractDiskSessionRef(content); ok && NormalizeWorkspacePath(sessWs) == normWs {
+						_ = os.Remove(fp)
+					}
+				}
+			}
+		}
+	}
+
+	if normWs != "" {
+		_ = os.RemoveAll(filepath.Join(normWs, ".forge", "sessions"))
+		_ = os.RemoveAll(filepath.Join(normWs, ".forge-ade", "sessions"))
+	}
+
 	// Also prune matching sessions in legacy ~/.forge-ade/sessions/ so they do
 	// not re-migrate back on next launch.
-	normWs := NormalizeWorkspacePath(workspacePath)
 	legacyDir := filepath.Join(homeDir, ".forge-ade", "sessions")
 	if entries, err := os.ReadDir(legacyDir); err == nil {
 		for _, e := range entries {

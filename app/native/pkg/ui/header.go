@@ -75,7 +75,7 @@ func (a *AppUI) openExternalEditor(targetPath string) {
 			return
 		}
 	}
-	a.Mode = ModeEditor
+	a.setMode(ModeEditor)
 	a.IsGitClientOpen = false
 }
 
@@ -323,7 +323,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						backPill.Background(tc.ToolbarControlHover)
 					}
 					if backPill.Clicked() {
-						a.Mode = ModeAgent
+						a.setMode(ModeAgent)
 						a.IsGitClientOpen = false
 						a.AgentViewMode = AgentViewChat
 						a.ActiveTaskKind = "agent"
@@ -385,7 +385,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						livePill.Background(dotColor.Alpha(0.24))
 					}
 					if livePill.Clicked() {
-						a.Mode = ModeAgent
+						a.setMode(ModeAgent)
 						a.IsGitClientOpen = false
 						a.AgentViewMode = AgentViewChat
 						a.ActiveTaskKind = "agent"
@@ -442,13 +442,13 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				dropHalf.Menu(func(m *ui.Menu) {
 					// Mode Switcher in Header Dropdown
 					if m.Item(menuChecked(a.Mode == ModeAgent, "Agent Chat Mode")).Shortcut(ui.Cmd, ui.Key1).Chosen() {
-						a.Mode = ModeAgent
+						a.setMode(ModeAgent)
 						a.IsGitClientOpen = false
 						a.AgentViewMode = AgentViewChat
 						a.ActiveTaskKind = "agent"
 					}
 					if m.Item(menuChecked(a.Mode == ModeEditor, "Editor Mode")).Shortcut(ui.Cmd, ui.Key2).Chosen() {
-						a.Mode = ModeEditor
+						a.setMode(ModeEditor)
 						a.IsGitClientOpen = false
 					}
 					m.Separator()

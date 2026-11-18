@@ -94,6 +94,13 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowPlanModal {
 		a.renderPlanModal(c)
 	}
+	if a.ShowBgShellPopover {
+		sessionID := ""
+		if a.Agent != nil {
+			sessionID = a.Agent.ActiveSessionID
+		}
+		a.renderBgShellPopover(c, a.ThemeMgr.Colors(), sessionID)
+	}
 	a.renderConfirmDialog(c)
 	a.renderEditorConfirmModal(c)
 	a.renderQuestionModal(c)
