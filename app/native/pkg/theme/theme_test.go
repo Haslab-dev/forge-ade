@@ -12,8 +12,8 @@ func TestThemePalettes(t *testing.T) {
 	}
 
 	palettes := tm.AvailablePalettes()
-	if len(palettes) != 6 {
-		t.Fatalf("expected 6 built-in ForgeADE palettes, got %d", len(palettes))
+	if len(palettes) != 7 {
+		t.Fatalf("expected 7 built-in ForgeADE palettes, got %d", len(palettes))
 	}
 
 	expectedIDs := []string{
@@ -23,6 +23,7 @@ func TestThemePalettes(t *testing.T) {
 		ThemePaletteOcean,
 		ThemePaletteEmber,
 		ThemePaletteIris,
+		ThemePaletteGlass,
 	}
 
 	for _, id := range expectedIDs {
@@ -38,6 +39,13 @@ func TestThemePalettes(t *testing.T) {
 				if !dark.Dark || light.Dark {
 					t.Fatalf("palette %s has incorrect Dark flag", id)
 				}
+				// The pickers render theme.SwatchColor(SwatchHex); ui.Hex
+				// panics on unparseable input, so every palette must carry a
+				// valid hex — an empty one broke the Appearance screen.
+				if p.SwatchHex == "" {
+					t.Fatalf("palette %s has an empty swatch", id)
+				}
+				SwatchColor(p.SwatchHex)
 				break
 			}
 		}

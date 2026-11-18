@@ -1127,7 +1127,7 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 	// 2. Palette Swatches
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(8).Children(func() {
-			ui.Text(c, "COLOR PALETTE (6 BUILT-IN PACKS)").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+			ui.Text(c, fmt.Sprintf("COLOR PALETTE (%d BUILT-IN PACKS)", len(tm.AvailablePalettes()))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
 			ui.Row(c).Gap(8).Wrap().Children(func() {
 				for _, p := range tm.AvailablePalettes() {
 					thisP := p

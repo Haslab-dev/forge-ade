@@ -512,6 +512,13 @@ func PaletteColors(paletteID string, dark bool) ThemeColors {
 				return irisDark()
 			}
 			return irisLight()
+		case ThemePaletteGlass:
+			// Glass reuses the base palette's hues but lets the OS material
+			// (mygo window Vibrancy) show through the chrome.
+			if dark {
+				return glassChrome(forgeDefaultDark(), true)
+			}
+			return glassChrome(forgeDefaultLight(), false)
 		default: // ThemePaletteDefault
 			if dark {
 				return forgeDefaultDark()
@@ -520,6 +527,43 @@ func PaletteColors(paletteID string, dark bool) ThemeColors {
 		}
 	}()
 	addSemanticExtras(&tc, dark)
+	return tc
+}
+
+// glassChrome returns tc with translucent chrome: canvas and window chrome
+// let the OS's blurred material (mygo window Vibrancy) show through, while
+// text, accents and borders stay opaque so content reads over anything.
+// Needs ThemeManager.SupportsVibrancy — the fallback to opaque colors lives
+// in ThemeManager.Colors.
+func glassChrome(tc ThemeColors, dark bool) ThemeColors {
+	a := func(alpha float32) func(ui.Color) ui.Color {
+		return func(c ui.Color) ui.Color { return c.Alpha(alpha) }
+	}
+	if dark {
+		tc.Canvas = a(0.18)(tc.Canvas)   // page wash over the material
+		tc.Chrome = a(0.50)(tc.Chrome)   // top bar
+		tc.Toolbar = a(0.50)(tc.Toolbar) // toolbars
+		tc.Sidebar = a(0.45)(tc.Sidebar) // left rail
+		tc.Surface = a(0.65)(tc.Surface) // cards, pills
+		tc.SurfaceRaised = a(0.75)(tc.SurfaceRaised)
+		tc.SurfaceOverlay = a(0.85)(tc.SurfaceOverlay) // popovers stay readable
+		tc.MessageSurface = a(0.70)(tc.MessageSurface)
+		tc.Input = a(0.55)(tc.Input)
+		tc.Secondary = a(0.60)(tc.Secondary)
+		tc.Muted = a(0.60)(tc.Muted)
+	} else {
+		tc.Canvas = a(0.40)(tc.Canvas)
+		tc.Chrome = a(0.60)(tc.Chrome)
+		tc.Toolbar = a(0.60)(tc.Toolbar)
+		tc.Sidebar = a(0.55)(tc.Sidebar)
+		tc.Surface = a(0.72)(tc.Surface)
+		tc.SurfaceRaised = a(0.80)(tc.SurfaceRaised)
+		tc.SurfaceOverlay = a(0.88)(tc.SurfaceOverlay)
+		tc.MessageSurface = a(0.78)(tc.MessageSurface)
+		tc.Input = a(0.60)(tc.Input)
+		tc.Secondary = a(0.65)(tc.Secondary)
+		tc.Muted = a(0.65)(tc.Muted)
+	}
 	return tc
 }
 

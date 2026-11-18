@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 
 	"github.com/egoist/mygo"
@@ -57,6 +58,16 @@ func main() {
 
 		appUI := nativeui.NewAppUI(eng, targetDir)
 
+		// Glass themes draw translucent chrome over an OS blurred material
+		// (NSVisualEffectView / Liquid Glass on macOS, Mica/Acrylic on
+		// Windows 11 22H2+). Opaque palettes paint every surface solidly, so
+		// the material behind them is simply never visible.
+		vibrancy := mygo.VibrancyNone
+		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+			vibrancy = mygo.VibrancyUnderWindow
+		}
+		appUI.SetVibrancySupport(vibrancy != mygo.VibrancyNone)
+
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:          "ForgeADE",
 			TitleBarStyle:  mygo.TitleBarHiddenInset,
@@ -65,6 +76,8 @@ func main() {
 			Height:         800,
 			MinWidth:       760,
 			MinHeight:      500,
+			Transparent:    vibrancy != mygo.VibrancyNone,
+			Vibrancy:       vibrancy,
 			Content:        ui.View(appUI.View),
 		})
 

@@ -428,6 +428,7 @@ type AppUI struct {
 	closeCh        chan struct{}
 	closeOnce      sync.Once
 	tickerDone     chan struct{}
+	lastGitPollAt  time.Time // ticker goroutine only: streaming git numstat poll
 	lastPrefsAt    time.Time
 	lastPrefsSnap  string
 	prefsDirty     atomic.Bool // render detected a pref change; ticker persists it
@@ -842,6 +843,13 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 					if (appUI.Agent.HasRunningSession() || appUI.ShowBgShellPopover) && appUI.Window != nil {
 						appUI.Window.Invalidate()
 					}
+					// Live changes pill: poll git numstat every 3s while a turn
+					// edits files so the floating "+A -D" count tracks the
+					// agent's edits in (near) real time.
+					if appUI.Agent.HasRunningSession() && appUI.Git != nil && time.Since(appUI.lastGitPollAt) >= 3*time.Second {
+						appUI.lastGitPollAt = time.Now()
+						appUI.Git.RefreshAsync()
+					}
 					if appUI.prefsDirty.CompareAndSwap(true, false) && !appUI.prefsSaving.Swap(true) {
 						go func() {
 							defer appUI.prefsSaving.Store(false)
@@ -1044,11 +1052,28 @@ func (a *AppUI) SetWindow(w *mygo.Window) {
 	}
 }
 
+// SetVibrancySupport records whether the window carries an OS translucent
+// material (mygo window Vibrancy). Only the Glass palette needs it: without
+// the material its translucent chrome falls back to the opaque base palette.
+func (a *AppUI) SetVibrancySupport(v bool) {
+	a.ThemeMgr.SupportsVibrancy = v
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
 // View builds the entire native GPU frame matching ForgeADE layout.
 func (a *AppUI) View(c *ui.Context) {
 	defer recoverFrame("View")
 	if a.ThemeMgr != nil {
 		c.SetTheme(a.ThemeMgr.ActiveTheme())
+	}
+	// SetTheme re-paints the root with the theme's background, which would
+	// hide the OS material behind the window. When the Glass palette is
+	// active the root stays transparent so its translucent chrome shows the
+	// blurred desktop (mygo vibrancy); opaque palettes keep the solid root.
+	if a.ThemeMgr != nil && a.ThemeMgr.PaletteID == theme.ThemePaletteGlass && c.Vibrancy() {
+		c.Root().Background(ui.Transparent)
 	}
 	a.drainToasts(c)
 

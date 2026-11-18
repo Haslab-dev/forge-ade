@@ -109,6 +109,7 @@ const (
 	ThemePaletteOcean   = "ocean"         // Ocean
 	ThemePaletteEmber   = "ember"         // Ember
 	ThemePaletteIris    = "iris"          // Iris
+	ThemePaletteGlass   = "glass"         // Glass — translucent chrome over the OS material
 )
 
 // PaletteDefinition describes one theme family for the pickers.
@@ -124,12 +125,16 @@ type PaletteDefinition struct {
 // ThemeManager tracks theme preferences, appearance, font sizes, and layout options.
 type ThemeManager struct {
 	Appearance string  // "dark", "light"
-	PaletteID  string  // "forge-default", "blossom", "grove", "ocean", "ember", "iris"
+	PaletteID  string  // "forge-default", "blossom", "grove", "ocean", "ember", "iris", "glass"
 	FontSize   float32 // base UI text size in px (text-ui-base = 0.875rem = 14px in the original at a 16px root)
 	FontFamily string  // "Geist" (the original) or "" for the system font
 	ChatWidth  string  // "comfortable" (736px), "wide" (928px), "full" (100%)
 	DiffScheme string  // "classic" (Green/Red), "modern" (Blue/Orange)
 	IsOpen     bool
+
+	// SupportsVibrancy reports that the window carries an OS translucent
+	// material (mygo window Vibrancy). Only the Glass palette needs it.
+	SupportsVibrancy bool
 
 	cacheKey      string
 	cachedEdTheme *editor.Theme
@@ -163,6 +168,12 @@ func (tm *ThemeManager) IsDark() bool { return tm.Appearance != "light" }
 
 // Colors returns the full ForgeADE role set for the active appearance.
 func (tm *ThemeManager) Colors() ThemeColors {
+	if tm.PaletteID == ThemePaletteGlass && !tm.SupportsVibrancy {
+		// No OS material behind the window (e.g. Linux): translucent chrome
+		// would expose the raw desktop unblurred — fall back to the opaque
+		// base palette instead.
+		return PaletteColors(ThemePaletteDefault, tm.IsDark())
+	}
 	return PaletteColors(tm.PaletteID, tm.IsDark())
 }
 
@@ -175,6 +186,7 @@ func (tm *ThemeManager) AvailablePalettes() []PaletteDefinition {
 		ThemePaletteOcean:   "#0ea5e9",
 		ThemePaletteEmber:   "#f59e0b",
 		ThemePaletteIris:    "#8b5cf6",
+		ThemePaletteGlass:   "#94a3b8",
 	}
 	metas := []struct {
 		id, name, desc string
@@ -185,6 +197,7 @@ func (tm *ThemeManager) AvailablePalettes() []PaletteDefinition {
 		{ThemePaletteOcean, "Ocean", "Deep sea navy and electric cyan highlights"},
 		{ThemePaletteEmber, "Ember", "Warm sunset amber and terracotta tones"},
 		{ThemePaletteIris, "Iris", "Deep purple and vibrant lavender violet"},
+		{ThemePaletteGlass, "Glass", "Translucent frosted chrome over the desktop material"},
 	}
 	out := make([]PaletteDefinition, 0, len(metas))
 	for _, m := range metas {
