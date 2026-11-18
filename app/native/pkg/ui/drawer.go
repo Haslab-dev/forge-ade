@@ -152,9 +152,42 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					}
 					if plusBtn.Clicked() {
 						// ZCode: "+" opens a NEW LAUNCHER TAB — multiple "New tab"
-						// tabs co-exist in the bar.
-						a.OpenDrawerPaneNew(RightTabLauncher, "New tab", -1)
+						// tabs co-exist in the bar; picking a pane REPLACES the
+						// launcher tab with that pane.
+						a.openNewLauncherTab()
 					}
+
+					// Close-scope menu for the ACTIVE tab (guaranteed reachable:
+					// left-click menu button, same pattern as the bottom dock).
+					moreBtn := ui.Row(c.Key("rtab-more")).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+					moreBtn.Children(func() {
+						ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
+					})
+					if moreBtn.Hovered() {
+						moreBtn.Background(tc.Text.Alpha(0.06))
+					}
+					moreBtn.Menu(func(m *ui.Menu) {
+						if m.Item("Close Tab").Chosen() && a.drawerActiveIdx >= 0 && a.drawerActiveIdx < len(a.DrawerTabs) {
+							switch a.DrawerTabs[a.drawerActiveIdx].Kind {
+							case RightTabSideFile:
+								a.closeSideFile(a.ActiveSideFile)
+							case RightTabBrowser:
+								a.closeBrowserTab()
+							}
+							a.closeDrawerTab(a.drawerActiveIdx)
+						}
+						m.Separator()
+						if m.Item("Close Tabs to the Left").Chosen() {
+							a.closeDrawerTabsLeft(a.drawerActiveIdx)
+						}
+						if m.Item("Close Tabs to the Right").Chosen() {
+							a.closeDrawerTabsRight(a.drawerActiveIdx)
+						}
+						m.Separator()
+						if m.Item("Close All Tabs").Chosen() {
+							a.closeDrawerTabsAll()
+						}
+					})
 				})
 			})
 
@@ -302,7 +335,7 @@ func (a *AppUI) drawerTabActivateKind(kind int) {
 	if kind == RightTabTerminal {
 		// 1 pane = 1 session: a directly-triggered Terminal pane gets its
 		// own fresh session on first render.
-		a.OpenDrawerPaneNewTerminal()
+		a.openTerminalSessionAndReplace()
 		return
 	}
 	for i := range a.DrawerTabs {
@@ -425,6 +458,69 @@ func (a *AppUI) openDrawerTabInstance(kind int, title string, termIdx int) {
 // "New tab" launchers or two Terminal sessions co-exist as separate tabs.
 func (a *AppUI) OpenDrawerPaneNew(kind int, title string, termIdx int) {
 	a.openDrawerTabInstance(kind, title, termIdx)
+}
+
+// replaceActiveDrawerTab TRANSFORMS the active tab in place — the launcher
+// tab becomes the chosen pane (ZCode "replace" semantics: picking Terminal
+// from the New-tab grid turns that launcher tab into a Terminal tab, it
+// does not spawn an extra tab).
+func (a *AppUI) replaceActiveDrawerTab(kind int, title string, termIdx int) {
+	if a.drawerActiveIdx < 0 || a.drawerActiveIdx >= len(a.DrawerTabs) {
+		a.openDrawerTabInstance(kind, title, termIdx)
+		return
+	}
+	a.DrawerTabs[a.drawerActiveIdx] = DrawerTabInstance{Kind: kind, Title: title, TermIdx: termIdx}
+	a.RightDrawerTab = kind
+}
+
+// openTerminalSessionAndReplace spawns a NEW terminal session (titled
+// after the project, deduped) and REPLACES the active tab with it — the
+// launcher-pick path for Terminal.
+func (a *AppUI) openTerminalSessionAndReplace() {
+	if a.Terminal == nil {
+		return
+	}
+	root := ""
+	if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+		root = a.Workspace.RootDir
+	}
+	base := "Terminal"
+	if root != "" {
+		base = resolveProjectName(root)
+	}
+	title := base
+	snaps, _ := a.Terminal.SnapshotTabs()
+	for n := 2; ; n++ {
+		taken := false
+		for _, t := range snaps {
+			if t.Title == title {
+				taken = true
+				break
+			}
+		}
+		if !taken {
+			break
+		}
+		title = fmt.Sprintf("%s %d", base, n)
+	}
+	tab, err := a.Terminal.NewTabCustom(title, root, nil, nil)
+	if err != nil {
+		return
+	}
+	idx := -1
+	snaps2, _ := a.Terminal.SnapshotTabs()
+	for _, t := range snaps2 {
+		if t.ID == tab.ID {
+			idx = t.Index
+			break
+		}
+	}
+	a.replaceActiveDrawerTab(RightTabTerminal, title, idx)
+}
+
+// openNewLauncherTab appends a fresh "New tab" launcher instance.
+func (a *AppUI) openNewLauncherTab() {
+	a.OpenDrawerPaneNew(RightTabLauncher, "New tab", -1)
 }
 
 // OpenDrawerPaneNewTerminal spawns a NEW terminal session at the workspace
@@ -618,9 +714,10 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("files", "Files", "Select a file from the navigation", icons.TablerFolder, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.OpenDrawerPaneNew(RightTabFiles, "Files", -1)
+					a.replaceActiveDrawerTab(RightTabFiles, "Files", -1)
 				})
 				launcherCard("browser", "Browser", "Browse websites and preview apps.", icons.TablerWorld, tc.SurfaceRaised, tc.IconMuted, true, func() {
+					a.replaceActiveDrawerTab(RightTabBrowser, "Browser", -1)
 					a.openBrowserTab("")
 				})
 				launcherCard("terminal", "Terminal", "Run commands and view output.", icons.TablerTerminal, tc.SurfaceRaised, tc.IconMuted, true, func() {
@@ -628,16 +725,16 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 					a.OpenDrawerPaneNewTerminal()
 				})
 				launcherCard("review", "Review", "Review code changes and diffs.", icons.TablerFileDiff, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.OpenDrawerPaneNew(RightTabChanges, "Review", -1)
+					a.replaceActiveDrawerTab(RightTabChanges, "Review", -1)
 				})
 				launcherCard("plans", "Plans & Progress", "View active plans, tasks, and sub-agents.", icons.TablerChecklist, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.OpenDrawerPaneNew(RightTabTasks, "Plans", -1)
+					a.replaceActiveDrawerTab(RightTabTasks, "Plans", -1)
 				})
 				launcherCard("sidechat", "Side conversation", "Continue a conversation in the side pane.", icons.TablerMessage, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.OpenDrawerPaneNew(RightTabChat, "Side chat", -1)
+					a.replaceActiveDrawerTab(RightTabChat, "Side chat", -1)
 				})
 				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.OpenDrawerPaneNew(RightTabSubagent, "Child Agents", -1)
+					a.replaceActiveDrawerTab(RightTabSubagent, "Child Agents", -1)
 				})
 				launcherCard("ssh", "Remote SSH / SFTP", "Connect to remote server, manage remote files, and open remote terminal.", icons.TablerServer, tc.Accent.Alpha(0.12), tc.Accent, false, func() {
 					a.OpenSSHModal()
@@ -663,13 +760,13 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("pdf", "PDF", "PDF", icons.TablerFileText, tc.Error.Alpha(0.14), tc.Error, false, func() {
-					a.OpenDrawerPaneNew(RightTabFiles, "PDF", -1)
+					a.replaceActiveDrawerTab(RightTabFiles, "PDF", -1)
 				})
 				launcherCard("presentations", "Presentations", "Presentations", icons.TablerPresentation, tc.Warning.Alpha(0.14), tc.Warning, false, func() {
-					a.OpenDrawerPaneNew(RightTabDeck, "Deck", -1)
+					a.replaceActiveDrawerTab(RightTabDeck, "Deck", -1)
 				})
 				launcherCard("database", "Database", "SQLite & DuckDB inspector", icons.TablerDatabase, tc.Info.Alpha(0.14), tc.Info, false, func() {
-					a.OpenDrawerPaneNew(RightTabDatabase, "Database", -1)
+					a.replaceActiveDrawerTab(RightTabDatabase, "Database", -1)
 				})
 			})
 		})
