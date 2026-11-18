@@ -478,6 +478,15 @@ func computeAgentQuota(agentID string, auth AgyAuthStatus, fetch func() (map[str
 		res, err := fetch()
 		if err != nil || res == nil {
 			res = unavailableAgyQuota()
+		} else if known, ok := res["quotaKnown"].(bool); ok && !known {
+			// Every quota source failed (CLI missing, LS unreachable, API
+			// non-200): strip the placeholder windows so the modal renders
+			// Unavailable instead of fabricated green bars.
+			stripped := unavailableAgyQuota()
+			if acc, _ := res["account"].(string); strings.TrimSpace(acc) != "" {
+				stripped["account"] = acc
+			}
+			res = stripped
 		} else {
 			res["quotaKnown"] = true
 		}

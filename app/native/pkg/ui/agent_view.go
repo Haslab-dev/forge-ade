@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"path/filepath"
@@ -1096,17 +1097,37 @@ func fileExtBadgeColor(path string, tc theme.ThemeColors) ui.Color {
 // openTranscriptFileInSidePane opens a file referenced by an agent transcript
 // row (tool file chips, change rows) in the right drawer's side file pane,
 // resolving absolute paths to workspace-relative ones the pane stores.
+// Paths outside the workspace — relative escapes (../..) or absolute files
+// elsewhere on disk — are rejected: agent-controlled strings must not open
+// arbitrary locations.
 func (a *AppUI) openTranscriptFileInSidePane(path string) {
 	if path == "" || a.Workspace == nil {
 		return
 	}
-	rel := path
-	if filepath.IsAbs(path) && a.Workspace.RootDir != "" {
-		if r, err := filepath.Rel(a.Workspace.RootDir, path); err == nil && !strings.HasPrefix(r, "..") {
-			rel = r
-		}
+	root := a.Workspace.RootDir
+	if root == "" {
+		return
 	}
-	a.openSidePreviewFile(nil, rel)
+	clean := filepath.Clean(path)
+	if strings.HasPrefix(clean, "ssh://") {
+		// ssh://… paths resolve inside that remote workspace — keep the
+		// string as-is; there is no local root to escape.
+		a.openSidePreviewFile(nil, clean)
+		return
+	}
+	if filepath.IsAbs(clean) {
+		if root == "" || strings.HasPrefix(root, "ssh://") {
+			return
+		}
+		r, err := filepath.Rel(root, clean)
+		if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return // absolute path outside the workspace
+		}
+		clean = r
+	} else if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return // relative escape
+	}
+	a.openSidePreviewFile(nil, clean)
 }
 
 func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, output string) {
@@ -1469,7 +1490,11 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 							// Keep the queued item on failure so the text is
 							// never silently lost; remove by identity.
 							if err := as.SteerInternal(sid, text); err != nil {
-								a.queueToast(ui.Toast{Title: "Steer Failed", Description: err.Error(), Type: "error"})
+								if errors.Is(err, agent.ErrSteerQueuedNextTurn) {
+									a.queueToast(ui.Toast{Title: "Queued for Next Turn", Description: "This agent cannot accept mid-turn prompts — it will run when the current turn finishes", Type: "info"})
+								} else {
+									a.queueToast(ui.Toast{Title: "Steer Failed", Description: err.Error(), Type: "error"})
+								}
 								if a.Window != nil {
 									a.Window.Invalidate()
 								}

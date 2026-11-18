@@ -315,10 +315,15 @@ func (a *AppUI) openMarkdownFileMention(url string) bool {
 	if a.Workspace == nil || a.Workspace.RootDir == "" {
 		return false
 	}
-	rel := strings.TrimPrefix(url, "file://")
+	rel := filepath.Clean(url) // "://" links (incl. file://) were rejected above
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		// Relative escape attempts (../../…) never open, crafted link or not:
+		// containment applies before any stat or resolution.
+		return false
+	}
 	if filepath.IsAbs(rel) {
 		r, err := filepath.Rel(a.Workspace.RootDir, rel)
-		if err != nil || strings.HasPrefix(r, "..") {
+		if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 			return false
 		}
 		rel = r

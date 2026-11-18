@@ -1217,6 +1217,18 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		s.turnStartFiles = nil
 		finalizedMsgID = msg.ID
 
+		// Safety net: any OTHER assistant message still !Done (e.g. orphaned
+		// by a mid-turn steer bubble inserted above it) must not linger as a
+		// perpetually-"in progress" bubble.
+		for _, m := range s.Messages {
+			if m != nil && m != msg && m.Role == "assistant" && !m.Done {
+				m.Done = true
+				m.IsThinking = false
+				m.ShowThinking = false
+				m.ShowTools = false
+			}
+		}
+
 		// Status vocabulary of the original app.
 		switch {
 		case info.Error != "":
@@ -2452,13 +2464,13 @@ func (as *AgentState) ResolveModelForAgent(agentID, currentModel string) string 
 // requested model and the effective one can differ; writing the effective
 // value back keeps the UI's ActiveModel honest (it shows what the agent runs,
 // never a guessed default).
-func (as *AgentState) syncACPSessionState(sess *AgentSession, acpSess *acp.Session) {
-	if sess == nil || acpSess == nil {
+func (as *AgentState) syncACPSessionState(sess *AgentSession, effModel, remoteSessionID string) {
+	if sess == nil {
 		return
 	}
-	effModel := strings.TrimSpace(acpSess.Model)
+	effModel = strings.TrimSpace(effModel)
 	as.mu.Lock()
-	remote := strings.TrimSpace(acpSess.RemoteSessionID)
+	remote := strings.TrimSpace(remoteSessionID)
 	modelChanged := false
 	if remote != "" && !strings.HasPrefix(remote, "session-") && !strings.HasPrefix(remote, "acp-") && remote != sess.RemoteSessionID {
 		sess.RemoteSessionID = remote
@@ -3788,6 +3800,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 
 			var startErr error
 			var acpSess *acp.Session
+			var effModel, effRemote string
 			if as.ACPMgr != nil {
 				var err error
 				acpSess, err = as.ACPMgr.StartSessionWithID(sessID, agentID, runWs, model, permissionMode, remoteID)
@@ -3812,8 +3825,14 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			} else {
 				startErr = fmt.Errorf("no ACP manager available")
 			}
-			if startErr == nil {
-				as.syncACPSessionState(targetSess, acpSess)
+			if startErr == nil && acpSess != nil {
+				// Snapshot the two fields by value immediately after start:
+				// the manager wrote them under its own lock during creation,
+				// and later protocol events may rewrite them on another
+				// goroutine — the live-pointer read would race.
+				effModel = strings.TrimSpace(acpSess.Model)
+				effRemote = strings.TrimSpace(acpSess.RemoteSessionID)
+				as.syncACPSessionState(targetSess, effModel, effRemote)
 			}
 
 			if startErr != nil {

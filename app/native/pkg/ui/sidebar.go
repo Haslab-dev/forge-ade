@@ -1050,7 +1050,10 @@ func (a *AppUI) persistProjectOrder(ordered []string) {
 		out = append(out, n)
 	}
 	a.ProjectOrder = out
-	a.SaveUIPrefs()
+	// Drop/chevron handlers run inside the MyGo build pass: never write disk
+	// here (concurrent with the ticker's saver, and it blocks the frame).
+	// Mark dirty — the existing ticker goroutine persists it.
+	a.prefsDirty.Store(true)
 }
 
 // moveProjectGroup swaps the named project one slot up (-1) or down (+1)

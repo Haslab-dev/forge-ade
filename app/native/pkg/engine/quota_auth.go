@@ -155,7 +155,12 @@ func agyCredentialsUsable(creds agyStoredCredentials) bool {
 	}
 	expiry, err := time.Parse(time.RFC3339, creds.Expiry)
 	if err != nil {
-		return true
+		// Unparseable expiry with no refresh token: the CLI could be in the
+		// exact state this guard exists for (expired access, nothing to
+		// refresh) — assuming "usable" is what launches the OAuth page
+		// from a quota fetch. Report unusable; a working login rewrites the
+		// store with a parseable expiry on the next successful auth.
+		return false
 	}
 	return time.Now().Before(expiry)
 }

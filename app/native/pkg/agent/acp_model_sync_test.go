@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
-	"github.com/hasdev/forge-ade/core/acp"
 )
 
 // waitForAsyncSaves lets syncACPSessionState's background persistence (goSave)
@@ -36,11 +35,7 @@ func TestSyncACPSessionStateWritesBackEffectiveModel(t *testing.T) {
 	as.ActiveModel = "stale-selection"
 	as.mu.Unlock()
 
-	as.syncACPSessionState(sess, &acp.Session{
-		ID:              sess.ID,
-		Model:           "gemini-3.8-flash-high",
-		RemoteSessionID: "conv-123",
-	})
+	as.syncACPSessionState(sess, "gemini-3.8-flash-high", "conv-123")
 
 	as.mu.Lock()
 	sessModel := sess.Model
@@ -82,7 +77,7 @@ func TestSyncACPSessionStateIgnoresLocalHandleIDs(t *testing.T) {
 	sess.AgentType = "acp"
 	as.mu.Unlock()
 
-	as.syncACPSessionState(sess, &acp.Session{ID: sess.ID, RemoteSessionID: "session-1234"})
+	as.syncACPSessionState(sess, "", "session-1234")
 	as.mu.Lock()
 	remote := sess.RemoteSessionID
 	as.mu.Unlock()
@@ -90,7 +85,7 @@ func TestSyncACPSessionStateIgnoresLocalHandleIDs(t *testing.T) {
 		t.Fatalf("local session- handle must not become RemoteSessionID, got %q", remote)
 	}
 
-	as.syncACPSessionState(sess, &acp.Session{ID: sess.ID, RemoteSessionID: "acp-5678"})
+	as.syncACPSessionState(sess, "", "acp-5678")
 	as.mu.Lock()
 	remote = sess.RemoteSessionID
 	as.mu.Unlock()

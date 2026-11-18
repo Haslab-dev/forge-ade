@@ -150,7 +150,14 @@ func (a *AppUI) SaveUIPrefs() {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	_ = os.WriteFile(path, data, 0o644)
+	// Atomic: temp+rename so a crash or two racing writers can never leave a
+	// truncated ui-prefs.json (loadUIPrefs silently resets on a bad file,
+	// which would wipe every saved pref).
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, path)
 }
 
 var _ = theme.ThemePaletteDefault

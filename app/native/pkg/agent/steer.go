@@ -48,7 +48,18 @@ func (as *AgentState) SteerACP(sessionID, text string) error {
 	protocol, running := as.acpSessionTransport(sessionID)
 
 	if running && acpMidTurnSteerSupported(protocol) {
+		// Pop BEFORE sending: if turn_end lands while the stdin write is in
+		// flight, HandleTurnDone's queue drain would otherwise double-deliver
+		// the same instruction (once from the buffered stdin, once as the
+		// relaunched turn).
+		// Pop first when present so a concurrent turn_end cannot double-
+		// deliver the same instruction; a miss (completion drain already
+		// took it) still injects — the user explicitly asked to steer.
+		popped := as.takeSessionSteerItem(sessionID, text)
 		if err := as.promptACPSession(sessionID, text); err != nil {
+			if popped {
+				as.ensureSessionSteerItem(sessionID, text) // restore for retry
+			}
 			return err
 		}
 		as.appendSteerTranscriptBubble(sessionID, text)
@@ -136,6 +147,17 @@ func (as *AgentState) appendSteerTranscriptBubble(sessionID, text string) {
 	if sess == nil {
 		as.mu.Unlock()
 		return
+	}
+	// Finalize an open streaming assistant message before appending the user
+	// bubble: ensureStreamingMessage only treats a trailing assistant !Done
+	// message as "the streaming one", so leaving it open under a new user
+	// bubble would orphan it as a perpetually-"in progress" bubble while
+	// the original turn's remaining deltas open a fresh bubble below.
+	if n := len(sess.Messages); n > 0 {
+		if last := sess.Messages[n-1]; last != nil && last.Role == "assistant" && !last.Done {
+			last.Done = true
+			last.IsThinking = false
+		}
 	}
 	sess.Messages = append(sess.Messages, &ChatMessage{
 		ID:        nextMessageIDLocked(sess),

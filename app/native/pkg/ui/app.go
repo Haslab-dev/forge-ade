@@ -1869,6 +1869,17 @@ func (a *AppUI) deleteWorkspaceGroup(c *ui.Context, groupName, folderPath string
 		a.RecentWorkspaces = kept
 		saveRecentWorkspaces(a.RecentWorkspaces)
 	}
+	// Drop the deleted project from the persisted sidebar order too — stale
+	// entries otherwise re-claim a slot if the folder is ever recreated.
+	prunedOrder := make([]string, 0, len(a.ProjectOrder))
+	for _, n := range a.ProjectOrder {
+		if n == groupName || (normFolder != "" && n == normFolder) {
+			continue
+		}
+		prunedOrder = append(prunedOrder, n)
+	}
+	a.ProjectOrder = prunedOrder
+	a.prefsDirty.Store(true)
 	if a.ProjectFilter == groupName {
 		a.ProjectFilter = "all"
 	}

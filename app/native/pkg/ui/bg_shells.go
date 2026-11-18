@@ -35,9 +35,11 @@ func (a *AppUI) activeBackgroundShells(sessionID string) []bgShellEntry {
 	var out []bgShellEntry
 
 	if a.Engine.ToolReg != nil {
+		// Read point-in-time snapshots: ListTasks returns live pointers that
+		// the registry's command-completion goroutines mutate (data race).
 		collectToolTasks := func(sid string) {
-			for _, t := range a.Engine.ToolReg.ListTasks(sid) {
-				if t == nil || t.Status != tools.TaskRunning || seen[t.ID] {
+			for _, t := range a.Engine.ToolReg.ListTaskSnapshots(sid) {
+				if t.Status != tools.TaskRunning || seen[t.ID] {
 					continue
 				}
 				seen[t.ID] = true
@@ -67,7 +69,7 @@ func (a *AppUI) activeBackgroundShells(sessionID string) []bgShellEntry {
 
 	if a.Engine.ShellMgr != nil {
 		for _, s := range a.Engine.ShellMgr.List() {
-			if s == nil || s.Type != terminal.SessionShell || s.Status != "running" {
+			if s == nil || s.Type != terminal.SessionShell || s.StatusSnapshot() != "running" {
 				continue
 			}
 			key := "pty:" + s.ID
