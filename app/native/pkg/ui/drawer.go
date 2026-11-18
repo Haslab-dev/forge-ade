@@ -27,6 +27,8 @@ import (
 var gitOpsBusy atomic.Bool
 
 func (a *AppUI) rightDrawerTabMeta(dirtyFiles int) (title string, icon *ui.SVG, count int) {
+	a.drawerTabReconcile()
+
 	switch a.RightDrawerTab {
 	case RightTabFiles:
 		return "Files", icons.TablerFolder, 0
@@ -87,7 +89,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 	}
 
 	dirtyFiles, _, _ := a.gitDirtySummary()
-	tabTitle, tabIcon, tabCount := a.rightDrawerTabMeta(dirtyFiles)
+	_ = dirtyFiles
 
 	bar := c.TitleBar()
 	rightPad := float32(10)
@@ -106,48 +108,64 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.RightDrawerTab = RightTabLauncher
 			}
 
-			// Active tab pill + "+" launcher shortcut inside horizontal strip
+			// Open pane tabs (ZCode-style: several panes co-exist) + the
+			// "+" launcher shortcut inside a horizontal strip.
 			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					pill := ui.Row(c.Key("rtab-active")).Height(26).Radius(6).
-						Padding(0, 8).Gap(6).AlignItems(ui.Center).
-						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
-					pill.Children(func() {
-						ui.Icon(c, tabIcon).Width(13).Height(13).TextColor(tc.IconMuted)
-						ui.Text(c, tabTitle).FontSize(12).FontWeight(500).TextColor(tc.Text).MaxWidth(150).SingleLine()
-						if tabCount > 0 {
-							ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
-								Background(tc.Accent.Alpha(0.15)).Children(func() {
-								ui.Text(c, fmt.Sprintf("%d", tabCount)).FontSize(9).FontWeight(600).TextColor(tc.Accent)
-							})
+					for ti, kind := range a.DrawerTabs {
+						tabI, tabKind := ti, kind
+						active := tabI == a.drawerActiveIdx
+						pill := ui.Row(c.Key(fmt.Sprintf("rtab-%d-%d", tabI, tabKind))).Height(26).Radius(6).
+							Padding(0, 8).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+						if active {
+							pill.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
 						}
-						tabX := ui.Row(c.Key("rtab-x-active")).Size(16, 16).Radius(4).
-							AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-						tabX.Children(func() {
-							ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
-						})
-						if tabX.Hovered() {
-							tabX.Background(tc.Text.Alpha(0.1))
-						}
-						if tabX.Clicked() {
-							switch a.RightDrawerTab {
-							case RightTabSideFile:
-								a.closeSideFile(a.ActiveSideFile)
-								if len(a.SideFileTabs) == 0 {
-									a.RightDrawerTab = RightTabLauncher
+						pill.Children(func() {
+							ic, title := drawerTabIcon(tabKind), a.drawerTabTitle(tabKind)
+							if tabKind == RightTabSubagent {
+								if n := a.subagentSessionCount(); n > 0 {
+									title = fmt.Sprintf("%s (%d)", title, n)
 								}
-							case RightTabBrowser:
-								a.closeBrowserTab()
-								a.RightDrawerTab = RightTabLauncher
-							case RightTabLauncher:
-								a.ShowRightDrawer = false
-							default:
-								a.RightDrawerTab = RightTabLauncher
 							}
+							ui.Icon(c, ic).Width(13).Height(13).TextColor(tc.IconMuted)
+							txt := ui.Text(c, title).FontSize(12).FontWeight(500).TextColor(tc.Text).MaxWidth(150).SingleLine()
+							if !active {
+								txt.TextColor(tc.TextMuted)
+							}
+							tabX := ui.Row(c.Key(fmt.Sprintf("rtab-x-%d", tabI))).Size(16, 16).Radius(4).
+								AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+							tabX.Children(func() {
+								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.TextMuted)
+							})
+							if tabX.Hovered() {
+								tabX.Background(tc.Text.Alpha(0.1))
+							}
+							if tabX.Clicked() {
+								switch tabKind {
+								case RightTabSideFile:
+									a.closeSideFile(a.ActiveSideFile)
+								case RightTabBrowser:
+									a.closeBrowserTab()
+								}
+								a.closeDrawerTab(tabI)
+							}
+						})
+						if pill.Hovered() && !active {
+							pill.Background(tc.Text.Alpha(0.05))
 						}
-					})
+						if pill.Clicked() {
+							a.activateDrawerTab(tabI)
+						}
+					}
 
-					if IconButton(c, tc, icons.TablerPlus, 13).Shrink(0).Clicked() {
+					plusBtn := ui.Row(c.Key("rtab-plus")).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+					plusBtn.Children(func() {
+						ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.IconMuted)
+					})
+					if plusBtn.Hovered() {
+						plusBtn.Background(tc.Text.Alpha(0.06))
+					}
+					if plusBtn.Clicked() {
 						a.RightDrawerTab = RightTabLauncher
 					}
 				})
@@ -261,6 +279,113 @@ func (a *AppUI) renderDrawerPlansPane(c *ui.Context, tc theme.ThemeColors) {
 			a.renderInspectorBody(c, tc, false)
 		})
 	})
+}
+
+// drawerTabReconcile ensures RightDrawerTab is registered as an open
+// DrawerTabs entry and is the active one. Direct RightDrawerTab setters
+// (34 call sites) flow through here at render time — they gain co-existing
+// tabs without any call-site change.
+func (a *AppUI) drawerTabReconcile() {
+	if a.RightDrawerTab == RightTabLauncher {
+		return // the launcher is an overlay state, not an open pane tab
+	}
+	for i, k := range a.DrawerTabs {
+		if k == a.RightDrawerTab {
+			a.drawerActiveIdx = i
+			return
+		}
+	}
+	a.DrawerTabs = append(a.DrawerTabs, a.RightDrawerTab)
+	a.drawerActiveIdx = len(a.DrawerTabs) - 1
+}
+
+// closeDrawerTab removes tab i and activates a sensible neighbor; the last
+// remaining tab simply deactivates (empty set renders the launcher).
+func (a *AppUI) closeDrawerTab(i int) {
+	if i < 0 || i >= len(a.DrawerTabs) {
+		return
+	}
+	a.DrawerTabs = append(a.DrawerTabs[:i], a.DrawerTabs[i+1:]...)
+	if len(a.DrawerTabs) == 0 {
+		a.RightDrawerTab = RightTabLauncher
+		a.drawerActiveIdx = 0
+		return
+	}
+	if a.drawerActiveIdx >= len(a.DrawerTabs) {
+		a.drawerActiveIdx = len(a.DrawerTabs) - 1
+	}
+	a.RightDrawerTab = a.DrawerTabs[a.drawerActiveIdx]
+}
+
+func (a *AppUI) activateDrawerTab(i int) {
+	if i < 0 || i >= len(a.DrawerTabs) {
+		return
+	}
+	a.drawerActiveIdx = i
+	a.RightDrawerTab = a.DrawerTabs[i]
+}
+
+// drawerTabIcon maps a drawer tab kind to its pill icon.
+func drawerTabIcon(kind int) *ui.SVG {
+	switch kind {
+	case RightTabChanges:
+		return icons.TablerFileDiff
+	case RightTabTerminal:
+		return icons.TablerTerminal
+	case RightTabFiles:
+		return icons.TablerFolder
+	case RightTabSubagent:
+		return icons.TablerBot
+	case RightTabTasks:
+		return icons.TablerChecklist
+	case RightTabChat:
+		return icons.TablerMessage
+	case RightTabBrowser:
+		return icons.TablerWorld
+	case RightTabDatabase:
+		return icons.TablerDatabase
+	case RightTabDeck:
+		return icons.TablerPresentation
+	case RightTabSideFile:
+		return icons.TablerFileText
+	}
+	return icons.TablerSquare
+}
+
+// subagentSessionCount counts the active session's subagents for the tab
+// badge.
+func (a *AppUI) subagentSessionCount() int {
+	if a.Agent == nil || a.Agent.ActiveSessionID == "" {
+		return 0
+	}
+	return len(a.Agent.Subagents(a.Agent.ActiveSessionID))
+}
+
+// drawerTabTitle maps a drawer tab kind to its pill title.
+func (a *AppUI) drawerTabTitle(kind int) string {
+	switch kind {
+	case RightTabChanges:
+		return "Review"
+	case RightTabTerminal:
+		return "Terminal"
+	case RightTabFiles:
+		return "Files"
+	case RightTabSubagent:
+		return "Child Agents"
+	case RightTabTasks:
+		return "Plans & Progress"
+	case RightTabChat:
+		return "Side conversation"
+	case RightTabBrowser:
+		return "Browser"
+	case RightTabDatabase:
+		return "Database"
+	case RightTabDeck:
+		return "Deck"
+	case RightTabSideFile:
+		return "File"
+	}
+	return "Pane"
 }
 
 func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {

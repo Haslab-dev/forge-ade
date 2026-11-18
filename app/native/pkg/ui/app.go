@@ -112,28 +112,35 @@ type AppUI struct {
 	RightDrawerWidth         float32 // Resizable right pane width
 	LeftSidebarWidth         float32 // Resizable left sidebar width
 	RightDrawerTab           int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
-	EditorActivity           int     // ActivityExplorer, ActivityGit, ActivityDatabase
-	SelectedFile             string
-	FileSearchQuery          string
-	FileSearchHits           []workspace.FileSearchHit
-	FileSearchMode           string // "files" | "content" (ProjectSearchModal parity)
-	FileSearchCase           bool
-	FileSearchRegex          bool
-	FileSearchWholeWord      bool
-	FileSearchGlob           string
-	FileSearchReplaceOpen    bool
-	FileSearchReplace        string
-	FileSearchBusy           bool
-	SearchStatusMsg          string
-	ContentHits              []search.RankedResult
-	ContentHitsAt            string
-	SelectedDiffPath         string
-	SideChatMessages         []*agent.ChatMessage
-	SideChatInput            string
-	SideChatModel            string
-	SideChatMode             string // "full", "ask", "plan"
-	SideChatStreaming        bool
-	SideChatMd               markdown.Options
+	// DrawerTabs is the set of co-existing drawer panes shown as tabs in the
+	// drawer header (ZCode-style: several panes stay open side-by-side).
+	// RightDrawerTab always mirrors the ACTIVE entry; direct RightDrawerTab
+	// setters are reconciled into this slice at render time.
+	DrawerTabsOpen        bool
+	DrawerTabs            []int
+	drawerActiveIdx       int
+	EditorActivity        int // ActivityExplorer, ActivityGit, ActivityDatabase
+	SelectedFile          string
+	FileSearchQuery       string
+	FileSearchHits        []workspace.FileSearchHit
+	FileSearchMode        string // "files" | "content" (ProjectSearchModal parity)
+	FileSearchCase        bool
+	FileSearchRegex       bool
+	FileSearchWholeWord   bool
+	FileSearchGlob        string
+	FileSearchReplaceOpen bool
+	FileSearchReplace     string
+	FileSearchBusy        bool
+	SearchStatusMsg       string
+	ContentHits           []search.RankedResult
+	ContentHitsAt         string
+	SelectedDiffPath      string
+	SideChatMessages      []*agent.ChatMessage
+	SideChatInput         string
+	SideChatModel         string
+	SideChatMode          string // "full", "ask", "plan"
+	SideChatStreaming     bool
+	SideChatMd            markdown.Options
 
 	// Composer autocomplete state (slash commands / @-mentions): visibility
 	// derives from the composer text each frame; the dismissal latches hold
