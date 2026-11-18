@@ -715,10 +715,15 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 		claude5hReset = "Quota available"
 	}
 
+	// quotaKnown is the honesty contract with the host UI: false means none
+	// of the quota sources (CLI, Local Storage, CloudCode API) answered, and
+	// the remaining* values are placeholders — hosts must render
+	// "Unavailable" instead of fabricated green bars.
 	result := map[string]interface{}{
 		"agentId":    "agent-agy",
 		"agentName":  "Google Antigravity",
 		"account":    accountEmail,
+		"quotaKnown": gotQuota,
 		"modelGroup": "GEMINI MODELS",
 		"models":     []string{"Gemini Flash", "Gemini Pro"},
 		"weekly": map[string]interface{}{
