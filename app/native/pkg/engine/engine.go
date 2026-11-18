@@ -451,12 +451,65 @@ func (e *Engine) GenerateAICommit(ctx context.Context, repoPath, instruction str
 
 // GetAgentQuota returns real account/tier/quota usage for an agent (e.g.
 // agent-agy), falling back to ACP usage totals, as forge-ade's binding does.
+//
+// Antigravity quotas are read-only over the credentials the active Agy ACP
+// session already holds: when no stored Agy login exists the fetch never
+// spawns the agy CLI or hits its APIs (spawning it unauthenticated launches
+// the OAuth login page — user-reported) and the honest "unavailable" payload
+// is returned instead.
 func (e *Engine) GetAgentQuota(agentID string) map[string]interface{} {
 	summary := func() map[string]interface{} { return e.ACPMgr.GetUsageSummary() }
-	if res, err := quota.GetAgentQuota(agentID, summary); err == nil {
+	return computeAgentQuota(agentID, agyAuthLookup(), func() (map[string]interface{}, error) {
+		return quota.GetAgentQuota(agentID, summary)
+	}, summary)
+}
+
+// computeAgentQuota is the testable core of GetAgentQuota: pure routing over
+// an auth snapshot, a live fetch, and the ACP usage-summary fallback.
+func computeAgentQuota(agentID string, auth AgyAuthStatus, fetch func() (map[string]interface{}, error), summary func() map[string]interface{}) map[string]interface{} {
+	norm := strings.ToLower(agentID)
+	if strings.Contains(norm, "agy") || strings.Contains(norm, "antigravity") {
+		if !auth.Authenticated {
+			// No Agy login the fetch could use non-interactively: report the
+			// honest unavailable state — never a fabricated 100% and never a
+			// login trigger.
+			return unavailableAgyQuota()
+		}
+		res, err := fetch()
+		if err != nil || res == nil {
+			res = unavailableAgyQuota()
+		} else {
+			res["quotaKnown"] = true
+		}
+		// Pin the account to the snapshot of the credentials the running Agy
+		// session authenticates with, so the modal always names the account
+		// that actually owns these quota numbers.
+		if acc, _ := res["account"].(string); strings.TrimSpace(acc) == "" {
+			res["account"] = auth.Account
+		}
 		return res
 	}
-	return summary()
+	if res, err := fetch(); err == nil && res != nil {
+		return res
+	}
+	if summary != nil {
+		if s := summary(); s != nil {
+			return s
+		}
+	}
+	return map[string]interface{}{}
+}
+
+// unavailableAgyQuota is the honest "no Antigravity account connected"
+// payload: no window data at all, so the modal renders Unavailable instead
+// of a fake full quota.
+func unavailableAgyQuota() map[string]interface{} {
+	return map[string]interface{}{
+		"agentId":    "agent-agy",
+		"agentName":  "Google Antigravity",
+		"account":    "",
+		"quotaKnown": false,
+	}
 }
 
 // StartWatcher attaches file system monitoring to the root directory and calls onChange when changes occur.

@@ -578,9 +578,21 @@ func (as *AgentState) StopInternalTurn(sessionID string) {
 	}
 }
 
-// SteerInternal delivers a mid-turn instruction into the running loop
-// (SteerAgentMessage binding parity).
+// SteerInternal delivers a mid-turn instruction into the running session,
+// routing by session kind (SteerAgentMessage binding parity): internal
+// sessions inject into the running RakitKode loop (AgentMgr.SteerMessage);
+// ACP sessions go through the ACP steer path (SteerACP), which either
+// injects into the running harness or honestly reports the
+// queued-for-next-turn fallback. The steer tray calls this for every session
+// kind, so routing must live here.
 func (as *AgentState) SteerInternal(sessionID, instruction string) error {
+	agentID, agentType, known := as.sessionAgentKind(sessionID)
+	if !known {
+		return fmt.Errorf("no active agent session")
+	}
+	if agentType != "internal" && isACPAgentID(agentID, agentType) {
+		return as.SteerACP(sessionID, instruction)
+	}
 	if as.engine == nil || as.engine.AgentMgr == nil {
 		return fmt.Errorf("agent engine unavailable")
 	}
@@ -589,6 +601,19 @@ func (as *AgentState) SteerInternal(sessionID, instruction string) error {
 		return fmt.Errorf("no active internal agent session")
 	}
 	return as.engine.AgentMgr.SteerMessage(mgrID, instruction)
+}
+
+// sessionAgentKind reports a session's agent id/type and whether the session
+// exists at all.
+func (as *AgentState) sessionAgentKind(sessionID string) (agentID, agentType string, known bool) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			return s.AgentID, s.AgentType, true
+		}
+	}
+	return "", "", false
 }
 
 // Subagents returns the child agents of an internal session, if any.

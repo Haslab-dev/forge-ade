@@ -30,6 +30,13 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 	if v, ok := quotaData["account"].(string); ok {
 		account = v
 	}
+	// quotaKnown is the quota engine's honesty flag: false means no usable
+	// Antigravity login was found, so every window renders Unavailable
+	// instead of a fabricated 100%.
+	quotaKnown := true
+	if v, ok := quotaData["quotaKnown"].(bool); ok {
+		quotaKnown = v
+	}
 
 	pctColor := func(p float64) ui.Color {
 		if p > 30 {
@@ -179,6 +186,12 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 					Weekly map[string]interface{}
 					Five   map[string]interface{}
 				}
+				// Without a usable login the engine sends no window data at
+				// all: nil maps make every bar render its Unavailable state
+				// (never a fabricated 100%).
+				if !quotaKnown {
+					quotaData = map[string]interface{}{"account": account}
+				}
 				groups := []quotaGroup{{
 					Label:  str_(quotaData["modelGroup"]),
 					Models: str_(quotaData["models"]),
@@ -206,11 +219,15 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 						ui.Row(c).AlignItems(ui.Center).Children(func() {
 							ui.Column(c).Gap(2).Children(func() {
 								ui.Text(c, "MODELS & QUOTA").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-								accountLabel := "Account: Antigravity ACP Local"
+								// Account honesty: empty means the engine found
+								// no Antigravity login — never invent one.
+								accountLabel := "Account: not signed in"
+								accountColor := tc.TextMuted
 								if account != "" {
 									accountLabel = "Account: " + account
+									accountColor = tc.Success
 								}
-								ui.Text(c, accountLabel).FontSize(11).FontWeight(600).TextColor(tc.Success)
+								ui.Text(c, accountLabel).FontSize(11).FontWeight(600).TextColor(accountColor)
 							})
 							ui.Box(c).Grow(1)
 							if g.Label != "" {

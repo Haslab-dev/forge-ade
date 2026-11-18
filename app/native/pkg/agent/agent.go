@@ -389,6 +389,10 @@ type AgentState struct {
 	// the RK LLMClient after the caller releases as.mu (P0-1 layer 3).
 	pendingLLMProvider string
 	pendingLLMModel    string
+
+	// acpTransportProbe lets tests fake the live ACP transport/running-state
+	// lookup used by the steer path; nil uses the real ACP manager sessions.
+	acpTransportProbe func(sessionID string) (protocol string, running bool)
 }
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
@@ -2441,6 +2445,59 @@ func (as *AgentState) ResolveModelForAgent(agentID, currentModel string) string 
 	return EnsureValidModelForACPAgent(agentID, currentModel)
 }
 
+// syncACPSessionState persists the effective ACP session state after a turn
+// started: the remote conversation ID, and — the real current model — the
+// model the agent process was actually configured with. StartSessionWithID
+// normalizes unsupported selections back to the harness default, so the
+// requested model and the effective one can differ; writing the effective
+// value back keeps the UI's ActiveModel honest (it shows what the agent runs,
+// never a guessed default).
+func (as *AgentState) syncACPSessionState(sess *AgentSession, acpSess *acp.Session) {
+	if sess == nil || acpSess == nil {
+		return
+	}
+	effModel := strings.TrimSpace(acpSess.Model)
+	as.mu.Lock()
+	remote := strings.TrimSpace(acpSess.RemoteSessionID)
+	modelChanged := false
+	if remote != "" && !strings.HasPrefix(remote, "session-") && !strings.HasPrefix(remote, "acp-") && remote != sess.RemoteSessionID {
+		sess.RemoteSessionID = remote
+	}
+	if effModel != "" && effModel != sess.Model {
+		sess.Model = effModel
+		modelChanged = true
+	}
+	if modelChanged && sess.ID == as.ActiveSessionID {
+		as.ActiveModel = effModel
+	}
+	as.mu.Unlock()
+
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+	goSave("SaveSessionToDisk", func() { as.SaveSessionToDisk(sess) })
+}
+
+// SessionModel returns the model recorded for a session — for ACP sessions
+// the model actually configured on the agent process (written back on every
+// turn start via syncACPSessionState), for internal sessions the bound
+// provider model. UI consumers that address a specific (possibly background)
+// session should prefer this over AgentState.ActiveModel, which only tracks
+// the foreground session.
+func (as *AgentState) SessionModel(sessionID string) string {
+	if as == nil {
+		return ""
+	}
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			return s.Model
+		}
+	}
+	return ""
+}
+
 // SelectACPAgent switches the active harness to agentID and auto-selects its default model and effort.
 func (as *AgentState) SelectACPAgent(agentID string) string {
 	if as == nil {
@@ -3730,19 +3787,17 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			}
 
 			var startErr error
+			var acpSess *acp.Session
 			if as.ACPMgr != nil {
-				acpSess, err := as.ACPMgr.StartSessionWithID(sessID, agentID, runWs, model, permissionMode, remoteID)
+				var err error
+				acpSess, err = as.ACPMgr.StartSessionWithID(sessID, agentID, runWs, model, permissionMode, remoteID)
 				startErr = err
-				if startErr == nil && acpSess != nil && acpSess.RemoteSessionID != "" {
-					as.mu.Lock()
-					targetSess.RemoteSessionID = acpSess.RemoteSessionID
-					as.mu.Unlock()
-				}
 				if startErr == nil {
 					startErr = as.ACPMgr.Prompt(sessID, prompt)
 				}
 			} else if as.engine != nil && as.engine.ACPMgr != nil {
-				acpSess, err := as.engine.ACPMgr.StartSession(acp.SessionOpts{
+				var err error
+				acpSess, err = as.engine.ACPMgr.StartSession(acp.SessionOpts{
 					SessionID:       sessID,
 					AgentID:         agentID,
 					Cwd:             runWs,
@@ -3751,16 +3806,14 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 					ResumeSessionID: remoteID,
 				})
 				startErr = err
-				if startErr == nil && acpSess != nil && acpSess.RemoteSessionID != "" {
-					as.mu.Lock()
-					targetSess.RemoteSessionID = acpSess.RemoteSessionID
-					as.mu.Unlock()
-				}
 				if startErr == nil {
 					startErr = as.engine.ACPMgr.Prompt(sessID, prompt)
 				}
 			} else {
 				startErr = fmt.Errorf("no ACP manager available")
+			}
+			if startErr == nil {
+				as.syncACPSessionState(targetSess, acpSess)
 			}
 
 			if startErr != nil {
