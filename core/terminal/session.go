@@ -129,6 +129,15 @@ func (s *Session) snapshotOutput() string {
 }
 
 // RecentOutput returns up to the last maxBytes bytes of captured output.
+// StatusSnapshot returns the session's current lifecycle status under the
+// session lock, so render paths don't race the reap/stop goroutines that
+// write Status.
+func (s *Session) StatusSnapshot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Status
+}
+
 func (s *Session) RecentOutput(maxBytes int) string {
 	s.outMu.Lock()
 	defer s.outMu.Unlock()

@@ -551,7 +551,12 @@ func DeleteProjectSessionsDisk(projectName, workspacePath string) error {
 		}
 	}
 
-	if normWs != "" {
+	// Guard: if the workspace IS the home directory (or an ancestor of it),
+	// the paths below ARE the global session stores — removing them would
+	// wipe every project's sessions, not just this workspace's.
+	if normWs != "" && normWs != NormalizeWorkspacePath(homeDir) &&
+		!strings.HasPrefix(NormalizeWorkspacePath(homeDir)+string(filepath.Separator), normWs+string(filepath.Separator)) &&
+		!strings.HasPrefix(NormalizeWorkspacePath(homeDir), normWs) {
 		_ = os.RemoveAll(filepath.Join(normWs, ".forge", "sessions"))
 		_ = os.RemoveAll(filepath.Join(normWs, ".forge-ade", "sessions"))
 	}
