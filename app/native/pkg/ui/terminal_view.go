@@ -288,7 +288,10 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 		term = ts.Term()
 	}
 	if term != nil {
-		termplugin.View(c, term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
+		// Key by active session: without a per-session key MyGo may reuse the
+		// previous GPU surface element, so switching tabs would keep showing
+		// the old shell ("switching doesn't work").
+		termplugin.View(c, term).Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
 			// No "Copy" item: the terminal copies on select (copy-on-select)
 			// and ⌘C is handled by the terminal itself; mygo exposes no API to
 			// read back the terminal selection to copy it manually.
