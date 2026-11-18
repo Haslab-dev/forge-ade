@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,12 +35,13 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 	}
 
 	// Markdown links to workspace files open in the right drawer's side file
-	// pane; http/https/mailto keep the standard external-open behavior.
+	// pane; http/https/mailto/file keep the standard external-open behavior.
 	as.MdOpts.OnLink = func(url string) {
 		if a.openMarkdownFileMention(url) {
 			return
 		}
-		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "mailto:") {
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") ||
+			strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "file://") {
 			mygo.Shell.OpenExternal(url)
 		}
 	}
@@ -304,10 +306,19 @@ func (a *AppUI) renderMarkdownForgeDesignBlock(c *ui.Context, tc theme.ThemeColo
 }
 
 // openMarkdownFileMention opens a markdown link that points at an existing
-// workspace file in the right drawer's side file pane. Returns false when the
-// link is not a workspace file (web URL, anchor, mailto, …) so the caller can
-// apply the default link behavior.
+// workspace file in the right drawer's side file pane. file:// links (how the
+// agent emits absolute paths) collapse to their local path first. Returns
+// false when the link is not a workspace file (web URL, anchor, mailto, …) so
+// the caller can apply the default link behavior.
 func (a *AppUI) openMarkdownFileMention(url string) bool {
+	if strings.HasPrefix(url, "file://") {
+		// u.Path decodes %XX escapes, so paths with spaces still resolve.
+		u, perr := neturl.Parse(url)
+		if perr != nil || u.Path == "" || (u.Host != "" && u.Host != "localhost") {
+			return false
+		}
+		url = u.Path
+	}
 	if url == "" || strings.Contains(url, "://") ||
 		strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "#") {
 		return false

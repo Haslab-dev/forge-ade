@@ -108,8 +108,28 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 		return
 	}
 
+	// Smoke-test debris never loads: records pointing at OS temp workspaces
+	// (unisolated go test runs used to write one "Test Agent Task" record per
+	// run into the real store) are dropped, and the index is rewritten without
+	// them so they stop resurrecting after every restart.
+	purgedDebris := false
+	for _, r := range records {
+		if agentsession.IsTempTestPath(r.WorkingDirectory) {
+			purgedDebris = true
+			break
+		}
+	}
+	if purgedDebris {
+		kept := records[:0]
+		for _, r := range records {
+			if !agentsession.IsTempTestPath(r.WorkingDirectory) {
+				kept = append(kept, r)
+			}
+		}
+		records = kept
+	}
+
 	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
 
 	for _, r := range records {
 		started := time.UnixMilli(r.CreatedAt)
@@ -158,6 +178,13 @@ func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 		if mgr.ActiveID == "" && status == "running" {
 			mgr.ActiveID = r.ID
 		}
+	}
+	mgr.mu.Unlock()
+
+	// Rewrite the store without the purged debris (SaveSessionsToDisk takes
+	// its own lock — it must run after the unlock above).
+	if purgedDebris {
+		mgr.SaveSessionsToDisk()
 	}
 }
 

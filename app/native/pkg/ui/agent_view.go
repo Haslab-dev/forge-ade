@@ -251,60 +251,88 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 										break
 									}
 								}
-								if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
-									a.renderThinkingBlock(c, tc, sessionID, m)
-								}
-								if open && len(m.Tools) > 1 {
-									a.renderToolGroupBar(c, tc, sessionID, m)
-								}
+								// The response is the trailing text block: once work
+								// (tool/thinking) follows a text segment, that segment
+								// is narration and folds into the Worked group,
+								// ZCode-style — only the final answer stays outside.
+								finalTextIdx := -1
 								for bi, blk := range m.Blocks {
-									if blk == nil {
-										continue
+									if blk != nil && blk.Kind == "text" {
+										finalTextIdx = bi
 									}
-									if blk.Kind == "thinking" {
-										isLast := bi == len(m.Blocks)-1
-										a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
-										continue
-									}
-									if blk.Kind == "tool" {
-										if !open {
-											continue
+								}
+								if finalTextIdx >= 0 {
+									for _, blk := range m.Blocks[finalTextIdx+1:] {
+										if blk != nil && (blk.Kind == "tool" || blk.Kind == "thinking") {
+											finalTextIdx = -1
+											break
 										}
-										var tool *agent.ToolExecution
-										for _, t := range m.Tools {
-											if t != nil && t.ID == blk.ToolID {
-												tool = t
-												break
-											}
-										}
-										if tool != nil {
-											a.renderToolTraceRow(c, tc, sessionID, m, tool)
-										}
-										continue
 									}
-									// Text segment
-									if strings.TrimSpace(blk.Text) == "" {
-										continue
-									}
+								}
+								// renderTextBlock draws one text segment: JSON payloads
+								// as a response card, streaming markdown for the live
+								// tail, plain markdown otherwise.
+								renderTextBlock := func(blk *agent.MessageBlock, streaming bool) {
 									trimmed := strings.TrimSpace(blk.Text)
+									if trimmed == "" {
+										return
+									}
 									isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
 										(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
 									if isPureJSON && json.Valid([]byte(trimmed)) {
 										a.renderJSONResponseCard(c, tc, m, trimmed)
-										continue
+										return
 									}
-									isLastBlock := bi == len(m.Blocks)-1
-									if !m.Done && isLastBlock {
+									if streaming {
 										markdown.Stream(c, blk.Text, &as.MdOpts)
 									} else {
 										markdown.View(c, blk.Text, &as.MdOpts)
 									}
 								}
-								if hasThinkingBlocks && m.IsThinking && !m.Done {
-									last := m.Blocks[len(m.Blocks)-1]
-									if last == nil || last.Kind != "thinking" {
-										a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
+								if open {
+									if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
+										a.renderThinkingBlock(c, tc, sessionID, m)
 									}
+									if len(m.Tools) > 1 {
+										a.renderToolGroupBar(c, tc, sessionID, m)
+									}
+									// ZCode's indented lane for everything that worked:
+									// thoughts, tool traces and narration text in
+									// execution order; hidden entirely when collapsed.
+									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+									work.Children(func() {
+										for bi, blk := range m.Blocks {
+											if blk == nil || bi == finalTextIdx {
+												continue
+											}
+											if blk.Kind == "thinking" {
+												isLast := bi == len(m.Blocks)-1
+												a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
+												continue
+											}
+											if blk.Kind == "tool" {
+												for _, t := range m.Tools {
+													if t != nil && t.ID == blk.ToolID {
+														a.renderToolTraceRow(c, tc, sessionID, m, t)
+														break
+													}
+												}
+												continue
+											}
+											// Narration text segment
+											renderTextBlock(blk, false)
+										}
+										if hasThinkingBlocks && m.IsThinking && !m.Done {
+											last := m.Blocks[len(m.Blocks)-1]
+											if last == nil || last.Kind != "thinking" {
+												a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
+											}
+										}
+									})
+								}
+								if finalTextIdx >= 0 {
+									renderTextBlock(m.Blocks[finalTextIdx], !m.Done)
 								}
 							} else {
 								// 1. "Working / Worked for Ns" pill & trace block
@@ -483,7 +511,97 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 		} else {
 			a.renderTaskTracker(c, tc)
 		}
+
+		// ZCode-style floating "Changes +A -D" pill, just below the task
+		// tracker: live working-tree totals while the turn edits files, the
+		// finished turn's totals once done. Hidden while the status card owns
+		// that corner.
+		if !a.ShowTurnStatusCard {
+			a.renderLiveChangesPill(c, tc, msgs)
+		}
 	})
+}
+
+// liveChangesStats returns the floating pill's totals (additions, deletions,
+// changed files, whether anything changed). While a turn is running the git
+// working tree is the live source (numstat polled by the streaming ticker);
+// once the turn finalizes, the last assistant message's turn-scoped Changes win.
+func (a *AppUI) liveChangesStats(msgs []*agent.ChatMessage) (add, del, files int, ok bool) {
+	if a.Agent == nil {
+		return 0, 0, 0, false
+	}
+	if a.Agent.HasRunningSession() && a.Git != nil {
+		snap := a.Git.Snapshot()
+		all := append(append(snap.Staged, snap.Unstaged...), snap.Untracked...)
+		for _, fs := range all {
+			files++
+			if fs.Additions > 0 {
+				add += fs.Additions
+			}
+			if fs.Deletions > 0 {
+				del += fs.Deletions
+			}
+		}
+		if files > 0 {
+			return add, del, files, true
+		}
+		return 0, 0, 0, false
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m == nil || m.Role != "assistant" {
+			continue
+		}
+		for _, ch := range m.Changes {
+			if ch == nil {
+				continue
+			}
+			files++
+			if ch.Additions > 0 {
+				add += ch.Additions
+			}
+			if ch.Deletions > 0 {
+				del += ch.Deletions
+			}
+		}
+		break
+	}
+	return add, del, files, files > 0
+}
+
+// renderLiveChangesPill draws the floating top-right "Changes +A -D" pill
+// (ZCode parity); clicking it opens the right drawer's changes view.
+func (a *AppUI) renderLiveChangesPill(c *ui.Context, tc theme.ThemeColors, msgs []*agent.ChatMessage) {
+	add, del, files, ok := a.liveChangesStats(msgs)
+	if !ok {
+		return
+	}
+	pill := ui.Row(c.Key("changes-pill")).Absolute().Top(50).Right(16).Height(28).Radius(999).
+		Padding(0, 12).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).
+		Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
+		Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.2))
+	pill.Children(func() {
+		ui.Icon(c, icons.TablerFileDiff).Width(13).Height(13).TextColor(tc.TextMuted)
+		ui.Text(c, "Changes").FontSize(12).FontWeight(600)
+		if add+del > 0 {
+			if add > 0 {
+				ui.Text(c, fmt.Sprintf("+%d", add)).FontSize(11).FontWeight(600).TextColor(tc.DiffAdditionForeground)
+			}
+			if del > 0 {
+				ui.Text(c, fmt.Sprintf("-%d", del)).FontSize(11).FontWeight(600).TextColor(tc.DiffDeletionForeground)
+			}
+		} else {
+			ui.Text(c, fmt.Sprintf("%d files", files)).FontSize(11).TextColor(tc.TextMuted)
+		}
+	})
+	if pill.Clicked() {
+		if a.Git != nil {
+			a.Git.RefreshAsync()
+		}
+		a.RightDrawerTab = RightTabChanges
+		a.ShowRightDrawer = true
+		a.invalidateUI()
+	}
 }
 
 func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
@@ -1229,7 +1347,12 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, sessi
 		}
 	}
 
-	collapsed := a.ChangesCardCollapsed != nil && a.ChangesCardCollapsed[m.ID]
+	// ZCode behavior: the card follows the live turn expanded, then folds to
+	// just its header when the turn ends — an explicit user toggle wins.
+	collapsed := m.Done
+	if v, ok := a.ChangesCardCollapsed[m.ID]; ok {
+		collapsed = v
+	}
 
 	card := ui.Column(c).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Clip()
 	card.Children(func() {

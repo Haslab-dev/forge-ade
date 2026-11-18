@@ -810,6 +810,29 @@ func TestOpenMarkdownFileMention(t *testing.T) {
 	if app.SelectedFile != readmeRel || len(app.SideFileTabs) == 0 || app.SideFileTabs[0] != readmeRel {
 		t.Fatalf("expected README.md selected in side pane, got %q tabs %v", app.SelectedFile, app.SideFileTabs)
 	}
+
+	// Agent-emitted absolute links are file:// URLs; they must resolve like a
+	// bare path mention, including %XX-escaped names.
+	spacedRel := "with space.txt"
+	if err := os.WriteFile(filepath.Join(dataDir, spacedRel), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write spaced file: %v", err)
+	}
+	if !app.openMarkdownFileMention("file://" + filepath.Join(dataDir, readmeRel)) {
+		t.Fatalf("file:// URL of an existing workspace file should open the side pane")
+	}
+	if !app.openMarkdownFileMention("file://" + filepath.Join(dataDir, "with%20space.txt")) {
+		t.Fatalf("percent-encoded file:// URL should open the side pane")
+	}
+	if app.SelectedFile != spacedRel {
+		t.Fatalf("expected %q selected in side pane, got %q", spacedRel, app.SelectedFile)
+	}
+	outside := filepath.Join(fakeHome, "outside.txt")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if app.openMarkdownFileMention("file://" + outside) {
+		t.Fatalf("file:// URL outside the workspace must not be treated as a file mention")
+	}
 }
 
 // TestDrawerTabReconcileRegistersActivePane guards the multi-tab drawer:

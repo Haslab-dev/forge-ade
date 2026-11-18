@@ -1140,6 +1140,10 @@ func (as *AgentState) HandleTurnStart(sessionID, prompt string) {
 		msg := as.ensureStreamingMessage(s)
 		msg.TurnStartedAt = time.Now()
 		msg.IsThinking = true
+		// A reused message must not carry a stale expanded trace into the new
+		// turn: the Worked group always starts open-by-streaming, not by flag.
+		msg.ShowThinking = false
+		msg.ShowTools = false
 		s.Status = "running"
 		if s.ID == as.ActiveSessionID {
 			as.Messages = s.Messages
@@ -3580,6 +3584,8 @@ func (as *AgentState) CancelStreaming() {
 			if msg.Role == "assistant" && !msg.Done {
 				msg.Done = true
 				msg.IsThinking = false
+				msg.ShowThinking = false
+				msg.ShowTools = false
 				if !msg.TurnStartedAt.IsZero() {
 					msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
 				}
@@ -3881,6 +3887,8 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				as.mu.Lock()
 				assistantMsg.Done = true
 				assistantMsg.IsThinking = false
+				assistantMsg.ShowThinking = false
+				assistantMsg.ShowTools = false
 				if as.ActiveSessionID == targetSessID {
 					as.IsStreaming = false
 				}
@@ -3915,6 +3923,8 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				as.mu.Lock()
 				assistantMsg.Done = true
 				assistantMsg.IsThinking = false
+				assistantMsg.ShowThinking = false
+				assistantMsg.ShowTools = false
 				if as.ActiveSessionID == targetSessID {
 					as.IsStreaming = false
 				}
@@ -3958,6 +3968,8 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			as.mu.Lock()
 			assistantMsg.Done = true
 			assistantMsg.IsThinking = false
+			assistantMsg.ShowThinking = false
+			assistantMsg.ShowTools = false
 			assistantMsg.ThinkingTimeSec = time.Since(startTime).Seconds()
 			if as.ActiveSessionID == targetSessID {
 				as.IsStreaming = false

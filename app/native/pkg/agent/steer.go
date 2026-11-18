@@ -157,6 +157,8 @@ func (as *AgentState) appendSteerTranscriptBubble(sessionID, text string) {
 		if last := sess.Messages[n-1]; last != nil && last.Role == "assistant" && !last.Done {
 			last.Done = true
 			last.IsThinking = false
+			last.ShowThinking = false
+			last.ShowTools = false
 		}
 	}
 	sess.Messages = append(sess.Messages, &ChatMessage{
