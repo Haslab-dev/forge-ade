@@ -219,13 +219,23 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 						ui.Row(c).AlignItems(ui.Center).Children(func() {
 							ui.Column(c).Gap(2).Children(func() {
 								ui.Text(c, "MODELS & QUOTA").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-								// Account honesty: empty means the engine found
-								// no Antigravity login — never invent one.
+								// Account honesty: three states — real email,
+								// signed-in-but-email-unavailable (quota data
+								// arrived, so credentials exist), and not
+								// signed in. Never invent an email.
 								accountLabel := "Account: not signed in"
 								accountColor := tc.TextMuted
-								if account != "" {
+								quotaKnown := false
+								if qk, ok := quotaData["quotaKnown"].(bool); ok {
+									quotaKnown = qk
+								}
+								switch {
+								case account != "":
 									accountLabel = "Account: " + account
 									accountColor = tc.Success
+								case quotaKnown:
+									accountLabel = "Account: signed in (email unavailable)"
+									accountColor = tc.Text
 								}
 								ui.Text(c, accountLabel).FontSize(11).FontWeight(600).TextColor(accountColor)
 							})
@@ -255,10 +265,13 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 				if as != nil {
 					usedTokens, pctUsed = as.ContextUsage()
 				}
-				// ContextUsage computes its percentage against the agent's
-				// 200k window — label the gauge with that same budget instead
-				// of a mismatched 1M figure.
+				// The gauge labels the SAME window ContextUsage computed its
+				// percentage against — per-harness (Antigravity 1M, default
+				// 200k), not a hardcoded figure.
 				maxTokens := 200000
+				if as != nil {
+					maxTokens = as.ContextWindowTokens()
+				}
 
 				ui.Column(c).Padding(14).Radius(12).Background(tc.SurfaceRaised.Alpha(0.5)).
 					BorderWidth(1).BorderColor(tc.Border.Alpha(0.7)).Gap(10).Children(func() {
@@ -275,7 +288,7 @@ func (a *AppUI) renderUsageQuotaModal(c *ui.Context) {
 						ui.Text(c, fmt.Sprintf("%s of %s tokens", formatTokens(usedTokens), formatTokens(maxTokens))).
 							FontSize(11).TextColor(tc.TextMuted)
 						ui.Box(c).Grow(1)
-						ui.Text(c, "200k budget").FontSize(10).TextColor(tc.TextMuted)
+						ui.Text(c, fmt.Sprintf("%s budget", formatTokens(maxTokens))).FontSize(10).TextColor(tc.TextMuted)
 					})
 
 					// Progress bar

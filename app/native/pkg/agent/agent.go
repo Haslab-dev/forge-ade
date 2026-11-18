@@ -3216,15 +3216,39 @@ func (as *AgentState) TabCounts() (active, pinned, snoozed, archived int) {
 }
 
 // ContextUsage calculates the approximate tokens used and percentage of standard 200k window.
+// ContextWindowTokens returns the context window the ACTIVE session's
+// harness actually offers. Defaults to 200k; Antigravity-class agents run a
+// 1M-token window (the hardcoded 200k made the gauge hit red at ~20% real
+// usage on agy).
+func (as *AgentState) ContextWindowTokens() int {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != as.ActiveSessionID {
+			continue
+		}
+		id := strings.ToLower(s.AgentID + " " + s.AgentType)
+		switch {
+		case strings.Contains(id, "agy") || strings.Contains(id, "antigravity"):
+			return 1_000_000
+		case strings.Contains(id, "codex"):
+			return 272_000
+		}
+		return 200_000
+	}
+	return 200_000
+}
+
 func (as *AgentState) ContextUsage() (tokens int, pct int) {
 	as.mu.Lock()
 	defer as.mu.Unlock()
+
+	maxContext := as.contextWindowLocked()
 
 	// Prefer the usage report the agent streams (agent:usage / turn_end).
 	for _, s := range as.Sessions {
 		if s.ID == as.ActiveSessionID && s.LastUsage != nil && s.LastUsage.TotalTokens > 0 {
 			tokens = s.LastUsage.TotalTokens
-			const maxContext = 200000
 			pct = (tokens * 100) / maxContext
 			if pct == 0 {
 				pct = 1
@@ -3245,12 +3269,30 @@ func (as *AgentState) ContextUsage() (tokens int, pct int) {
 	if tokens < 240 {
 		tokens = 240
 	}
-	const maxContext = 200000
 	pct = (tokens * 100) / maxContext
 	if pct == 0 && tokens > 0 {
 		pct = 1
 	}
 	return
+}
+
+// contextWindowLocked is ContextWindowTokens for callers already holding
+// as.mu. Callers without the lock use ContextWindowTokens.
+func (as *AgentState) contextWindowLocked() int {
+	for _, s := range as.Sessions {
+		if s.ID != as.ActiveSessionID {
+			continue
+		}
+		id := strings.ToLower(s.AgentID + " " + s.AgentType)
+		switch {
+		case strings.Contains(id, "agy") || strings.Contains(id, "antigravity"):
+			return 1_000_000
+		case strings.Contains(id, "codex"):
+			return 272_000
+		}
+		return 200_000
+	}
+	return 200_000
 }
 
 // FilteredSessions returns the list of sessions matching the active tab filter and search query.
