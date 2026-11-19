@@ -160,8 +160,7 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 				})
 			}
 
-			hasActiveEditorTerminal := a.Editor != nil && strings.HasPrefix(a.Editor.ActivePath, "terminal://")
-			if a.ShowBottomTerminal && !hasActiveEditorTerminal {
+			if a.ShowBottomTerminal {
 				TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
 				a.renderBottomTerminal(c)
 			}
@@ -1211,9 +1210,6 @@ func (a *AppUI) openEditorTerminalTabForURI(title string, targetURI string) {
 			title = folder
 		}
 	}
-	// Hide bottom terminal dock so the terminal is not duplicated on screen
-	a.ShowBottomTerminal = false
-
 	if a.Terminal == nil {
 		a.queueToast(ui.Toast{Title: "Terminal unavailable", Description: "The terminal manager is not ready", Type: "error"})
 		return
@@ -1464,7 +1460,9 @@ func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *edito
 
 		if m.Item("Open in Terminal").Chosen() {
 			a.ShowBottomTerminal = true
-			_ = a.Terminal.ResetShell(filepath.Dir(doc.FullPath))
+			if ts := a.activeTerminal(); ts != nil {
+				_ = ts.ResetShell(filepath.Dir(doc.FullPath))
+			}
 		}
 
 		if m.Item("Copy Permalink to Line").Chosen() {

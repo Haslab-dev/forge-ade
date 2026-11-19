@@ -34,10 +34,13 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 		Fade: -1,
 	}
 
-	// Markdown links to workspace files open in the right drawer's side file
-	// pane; http/https/mailto/file keep the standard external-open behavior.
+	// Markdown links to workspace or local files open in the right drawer's side
+	// file pane; http/https/mailto keep the standard external-open behavior.
 	as.MdOpts.OnLink = func(url string) {
 		if a.openMarkdownFileMention(url) {
+			return
+		}
+		if a.openLocalFileURL(url) {
 			return
 		}
 		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") ||
@@ -117,9 +120,11 @@ func (a *AppUI) renderMarkdownCodeBlock(c *ui.Context, tc theme.ThemeColors, b *
 					ui.Text(c, "Run in Shell").FontSize(10).FontWeight(600).TextColor(tc.Accent)
 				})
 				if runBtn.Clicked() {
-					if a.Terminal != nil {
-						a.Terminal.SendInput(code + "\n")
-						a.ShowBottomTerminal = true
+					if ts := a.activeTerminal(); ts != nil {
+						ts.SendInput(code + "\n")
+						if !(a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
+							a.setBottomTerminalVisible(true)
+						}
 						c.AddToast(ui.Toast{Title: "Running in terminal", Type: "success"})
 					}
 				}
@@ -323,6 +328,13 @@ func (a *AppUI) openMarkdownFileMention(url string) bool {
 		strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "#") {
 		return false
 	}
+	// Strip line-anchor fragments on relative file links (e.g. "src/app.ts#L10-L20").
+	if idx := strings.IndexByte(url, '#'); idx >= 0 {
+		url = url[:idx]
+	}
+	if url == "" {
+		return false
+	}
 	if a.Workspace == nil || a.Workspace.RootDir == "" {
 		return false
 	}
@@ -348,6 +360,104 @@ func (a *AppUI) openMarkdownFileMention(url string) bool {
 	}
 	a.openSidePreviewFile(nil, rel)
 	return true
+}
+
+// openLocalFileURL opens a file:// URL that points outside the active workspace
+// (such as generated reports or artifacts under ~/.gemini) inside the right
+// drawer's side file pane instead of launching an external code editor.
+func (a *AppUI) openLocalFileURL(url string) bool {
+	if !strings.HasPrefix(url, "file://") {
+		return false
+	}
+	u, err := neturl.Parse(url)
+	if err != nil || u.Path == "" || (u.Host != "" && u.Host != "localhost") {
+		return false
+	}
+	localPath := filepath.Clean(u.Path)
+	info, err := os.Stat(localPath)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if verr := validatePreviewableFile(localPath); verr != nil {
+		a.queueToast(ui.Toast{
+			Title:       "Cannot preview file",
+			Description: verr.Error(),
+			Type:        "error",
+		})
+		return true
+	}
+	a.openSidePreviewFile(nil, localPath)
+	return true
+}
+
+var blockedBinaryExtensions = map[string]bool{
+	".exe": true, ".dll": true, ".so": true, ".dylib": true,
+	".bin": true, ".o": true, ".a": true, ".lib": true,
+	".obj": true, ".wasm": true, ".class": true, ".pyc": true,
+	".pyo": true, ".zip": true, ".tar": true, ".gz": true,
+	".bz2": true, ".xz": true, ".7z": true, ".rar": true,
+	".dmg": true, ".pkg": true, ".app": true, ".iso": true,
+	".deb": true, ".rpm": true, ".msi": true, ".apk": true,
+	".ipa": true,
+}
+
+// validatePreviewableFile checks that localPath is a regular, non-binary,
+// non-executable file within the 10 MB text limit (or a supported viewer format).
+func validatePreviewableFile(fullPath string) error {
+	if strings.HasPrefix(fullPath, "ssh://") {
+		return nil
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("cannot open directory as a file")
+	}
+	lower := strings.ToLower(fullPath)
+	if isImageOrSVG(lower) || strings.HasSuffix(lower, ".pdf") || isDeckOrMotionFile(lower) {
+		return nil
+	}
+	if info.Size() > maxOpenTextBytes {
+		return fmt.Errorf("%s is larger than 10 MB", filepath.Base(fullPath))
+	}
+	ext := strings.ToLower(filepath.Ext(fullPath))
+	if blockedBinaryExtensions[ext] {
+		return fmt.Errorf("binary or executable file (%s) is not supported", ext)
+	}
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var buf [4096]byte
+	n, _ := f.Read(buf[:])
+	if isBinaryOrExecutableSample(buf[:n]) {
+		return fmt.Errorf("binary or executable file is not supported")
+	}
+	return nil
+}
+
+func isBinaryOrExecutableSample(sample []byte) bool {
+	if len(sample) == 0 {
+		return false
+	}
+	if len(sample) >= 4 {
+		// ELF
+		if sample[0] == 0x7f && sample[1] == 'E' && sample[2] == 'L' && sample[3] == 'F' {
+			return true
+		}
+		// Mach-O (32/64/fat)
+		if (sample[0] == 0xfe && sample[1] == 0xed && sample[2] == 0xfa && (sample[3] == 0xce || sample[3] == 0xcf)) ||
+			((sample[0] == 0xce || sample[0] == 0xcf) && sample[1] == 0xfa && sample[2] == 0xed && sample[3] == 0xfe) ||
+			(sample[0] == 0xca && sample[1] == 0xfe && sample[2] == 0xba && sample[3] == 0xbe) {
+			return true
+		}
+	}
+	if len(sample) >= 2 && sample[0] == 'M' && sample[1] == 'Z' && bytes.IndexByte(sample, 0) >= 0 {
+		return true
+	}
+	return bytes.IndexByte(sample, 0) >= 0
 }
 
 // writeTempDeckHTML writes generated deck/motion HTML to a temp file so

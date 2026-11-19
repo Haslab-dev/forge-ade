@@ -425,15 +425,16 @@ func (a *AppUI) runTerminalCommand(cmd string) {
 	}
 
 	// Send to active terminal PTY
+	ts := a.activeTerminal()
 	targetSessionID := a.TerminalSnippetTargetSession
-	if targetSessionID == "" && a.Terminal != nil {
-		targetSessionID = a.Terminal.ActiveSessionID
+	if targetSessionID == "" && ts != nil {
+		targetSessionID = ts.ActiveSessionID
 	}
 
-	if a.Terminal != nil {
-		if !a.ShowBottomTerminal && !(a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
-			a.ShowBottomTerminal = true
+	if ts != nil {
+		if !a.isBottomTerminalVisible() && !(a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
+			a.setBottomTerminalVisible(true)
 		}
-		_ = a.Terminal.WriteInput(targetSessionID, cmd+"\n")
+		_ = ts.WriteInput(targetSessionID, cmd+"\n")
 	}
 }

@@ -244,7 +244,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						}
 					})
 					if statusCircle.Clicked() {
-						a.Mode = ModeAgent
+						a.setMode(ModeAgent)
 						a.IsGitClientOpen = false
 						a.AgentViewMode = AgentViewChat
 					}
@@ -304,7 +304,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						}
 						m.Separator()
 						if m.Item("Switch to Editor Mode").Shortcut(ui.Cmd, ui.Key2).Chosen() {
-							a.Mode = ModeEditor
+							a.setMode(ModeEditor)
 							a.IsGitClientOpen = false
 						}
 					})
@@ -425,7 +425,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					case "terminal":
 						a.openExternalTerminal("")
 					default:
-						a.Mode = ModeEditor
+						a.setMode(ModeEditor)
 						a.IsGitClientOpen = false
 					}
 				}
@@ -456,7 +456,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					// Quick Target Selectors / Launchers
 					if m.Item(menuChecked(target == "editor", "Editor Mode")).Chosen() {
 						a.ExternalOpenTarget = "editor"
-						a.Mode = ModeEditor
+						a.setMode(ModeEditor)
 						a.IsGitClientOpen = false
 					}
 					if m.Item(menuChecked(target == "finder", "Finder")).Chosen() {
@@ -474,8 +474,8 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			if IconButton(c, tc, icons.TablerHelp, 14).Shrink(0).Clicked() {
 				a.openSettings(settings.SettingsTabShortcuts)
 			}
-			if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.ShowBottomTerminal).Shrink(0).Clicked() {
-				a.ShowBottomTerminal = !a.ShowBottomTerminal
+			if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.isBottomTerminalVisible()).Shrink(0).Clicked() {
+				a.toggleBottomTerminal()
 			}
 			if !(a.Mode == ModeAgent && a.ShowRightDrawer) {
 				if ToggleIconButton(c, tc, icons.TablerPanelRight, 14, a.ShowRightDrawer).Shrink(0).Clicked() {

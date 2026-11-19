@@ -50,7 +50,7 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 			})
 
 			// Collapsible Bottom Terminal with interactive drag resize handle
-			if a.ShowBottomTerminal {
+			if a.ShowAgentBottomTerminal {
 				TopResizeHandle(c, &a.BottomTerminalHeight, 120, 600, 240)
 				a.renderBottomTerminal(c)
 			}
@@ -1799,8 +1799,8 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						c.AddToast(ui.Toast{Title: "Prompt Stashed", Description: "Alt+S restores via the stash chip", Type: "info"})
 					} else {
 						sessID := ""
-						if a.Terminal != nil {
-							sessID = a.Terminal.ActiveSessionID
+						if a.AgentTerminal != nil {
+							sessID = a.AgentTerminal.ActiveSessionID
 						}
 						a.OpenTerminalSnippetsModal(sessID, "", "")
 					}
@@ -1952,8 +1952,8 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				subCount = len(as.Subagents(as.ActiveSession().ID))
 			}
 			spawnedShells := 0
-			if a.Terminal != nil {
-				tabCount := a.Terminal.TabCount()
+			if a.AgentTerminal != nil {
+				tabCount := a.AgentTerminal.TabCount()
 				if tabCount > 1 {
 					spawnedShells = tabCount - 1
 				}
@@ -1985,25 +1985,25 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					}
 					if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 						sessID := ""
-						if a.Terminal != nil {
-							sessID = a.Terminal.ActiveSessionID
+						if a.AgentTerminal != nil {
+							sessID = a.AgentTerminal.ActiveSessionID
 						}
 						a.OpenTerminalSnippetsModal(sessID, "", "")
 					}
 					m.Separator()
-					if m.Item(menuChecked(a.ShowBottomTerminal, "Toggle Terminal Dock")).Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
-						a.ShowBottomTerminal = !a.ShowBottomTerminal
+					if m.Item(menuChecked(a.ShowAgentBottomTerminal, "Toggle Terminal Dock")).Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
+						a.ShowAgentBottomTerminal = !a.ShowAgentBottomTerminal
 					}
-					if a.Terminal != nil {
+					if a.AgentTerminal != nil {
 						if m.Item("New Terminal Tab").Chosen() {
-							_ = a.Terminal.NewTab("")
-							a.ShowBottomTerminal = true
+							_ = a.AgentTerminal.NewTab("")
+							a.ShowAgentBottomTerminal = true
 						}
 						if m.Item("Clear Terminal").Chosen() {
-							a.Terminal.SendInput("\x0c")
+							a.AgentTerminal.SendInput("\x0c")
 						}
 						if m.Item("Restart Shell").Chosen() {
-							_ = a.Terminal.Restart()
+							_ = a.AgentTerminal.Restart()
 						}
 					}
 				})
@@ -2012,7 +2012,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						a.RightDrawerTab = RightTabSubagent
 						a.ShowRightDrawer = !a.ShowRightDrawer
 					} else {
-						a.ShowBottomTerminal = !a.ShowBottomTerminal
+						a.ShowAgentBottomTerminal = !a.ShowAgentBottomTerminal
 					}
 				}
 			}
@@ -2481,11 +2481,11 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 }
 
 func (a *AppUI) terminalSessionCount() int {
-	if a.Terminal == nil {
+	if a.AgentTerminal == nil {
 		return 0
 	}
-	count := a.Terminal.TabCount()
-	if count == 0 && a.Terminal.ActiveSessionID != "" {
+	count := a.AgentTerminal.TabCount()
+	if count == 0 && a.AgentTerminal.ActiveSessionID != "" {
 		return 1
 	}
 	return count
@@ -2682,7 +2682,7 @@ func (a *AppUI) renderInspectorBody(c *ui.Context, tc theme.ThemeColors, isFloat
 		termRow.Background(tc.Text.Alpha(0.04))
 	}
 	if termRow.Clicked() {
-		a.ShowBottomTerminal = !a.ShowBottomTerminal
+		a.ShowAgentBottomTerminal = !a.ShowAgentBottomTerminal
 	}
 
 	// 4. Agents / Orchestrator Personas section

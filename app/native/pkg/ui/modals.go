@@ -1252,7 +1252,7 @@ func (a *AppUI) renderTaskActionsMenu(c *ui.Context) {
 
 				menuItem(icons.TablerTerminal, "Toggle terminal", false, func() {
 					a.ShowTaskMenuModal = false
-					a.ShowBottomTerminal = !a.ShowBottomTerminal
+					a.toggleBottomTerminal()
 				})
 
 				divider()

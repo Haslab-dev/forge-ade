@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1038,5 +1039,233 @@ func TestSingletonsDoNotDuplicate(t *testing.T) {
 	}
 	if app.RightDrawerTab != RightTabChanges || app.DrawerTabs[app.drawerActiveIdx].Kind != RightTabChanges {
 		t.Fatalf("expected Review tab to be active, got idx=%d kind=%d", app.drawerActiveIdx, app.RightDrawerTab)
+	}
+}
+
+func TestAgentAndEditorTerminalsAreIndependent(t *testing.T) {
+	dir := t.TempDir()
+	eng := engine.NewEngine(dir)
+	app := NewAppUI(eng, dir)
+	defer app.Close()
+
+	if app.AgentTerminal == nil || app.Terminal == nil || app.EditorBottomTerminal == nil {
+		t.Fatalf("expected AgentTerminal, Terminal, and EditorBottomTerminal to be initialized")
+	}
+	if app.AgentTerminal == app.Terminal || app.EditorBottomTerminal == app.Terminal || app.EditorBottomTerminal == app.AgentTerminal {
+		t.Fatalf("AgentTerminal, EditorBottomTerminal, and Terminal must be distinct TerminalState instances")
+	}
+
+	// 1. In Agent Mode, open a Right Drawer terminal.
+	app.setMode(ModeAgent)
+	app.ShowRightDrawer = true
+	app.openNewLauncherTab()
+	app.pickDrawerPaneTerminal()
+	if !app.ShowRightDrawer || len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabTerminal {
+		t.Fatalf("expected Agent right drawer terminal tab, got show=%v tabs=%+v", app.ShowRightDrawer, app.DrawerTabs)
+	}
+	agentTabCount := app.AgentTerminal.TabCount()
+
+	// 2. Switch to Editor Mode: Agent's right drawer and terminal must not follow.
+	app.setMode(ModeEditor)
+	if app.ShowRightDrawer {
+		t.Fatalf("Agent Mode right drawer must not leak into Editor Mode")
+	}
+	if len(app.DrawerTabs) != 0 {
+		t.Fatalf("Agent Mode drawer tabs must not leak into Editor Mode: %+v", app.DrawerTabs)
+	}
+	if app.activeTerminal() != app.EditorBottomTerminal {
+		t.Fatalf("expected activeTerminal() in Editor Mode to be app.EditorBottomTerminal")
+	}
+
+	// 3. Open an Editor bottom terminal, then open an Editor main-pane shell tab:
+	// the bottom terminal must stay visible and not be hidden/overlapped.
+	app.ShowBottomTerminal = true
+	app.openEditorTerminalTab("Editor Shell")
+	if !app.ShowBottomTerminal {
+		t.Fatalf("opening Editor main-pane shell must not hide ShowBottomTerminal")
+	}
+	if app.AgentTerminal.TabCount() != agentTabCount {
+		t.Fatalf("Editor shell must not mutate AgentTerminal tabs: want %d, got %d", agentTabCount, app.AgentTerminal.TabCount())
+	}
+
+	// 4. Switch back to Agent Mode: Agent's right terminal is preserved and bottom terminal stays closed.
+	app.setMode(ModeAgent)
+	if app.activeTerminal() != app.AgentTerminal {
+		t.Fatalf("expected activeTerminal() in Agent Mode to be app.AgentTerminal")
+	}
+	if app.isBottomTerminalVisible() {
+		t.Fatalf("Editor ShowBottomTerminal must not open bottom terminal in Agent Mode")
+	}
+	if !app.ShowRightDrawer || len(app.DrawerTabs) != 1 || app.DrawerTabs[0].Kind != RightTabTerminal {
+		t.Fatalf("expected Agent right drawer terminal to be restored, got show=%v tabs=%+v", app.ShowRightDrawer, app.DrawerTabs)
+	}
+
+	// 5. Switch back to Editor Mode: Editor's bottom terminal state and main-pane terminal are preserved.
+	app.setMode(ModeEditor)
+	if !app.isBottomTerminalVisible() {
+		t.Fatalf("expected Editor Mode bottom terminal visibility to be preserved")
+	}
+	if app.activeTerminal() != app.EditorBottomTerminal {
+		t.Fatalf("expected activeTerminal() in Editor Mode to be app.EditorBottomTerminal")
+	}
+}
+
+func TestEditorShellPersistsAcrossDifferentModeWorkspaces(t *testing.T) {
+	dirAgent := t.TempDir()
+	dirEditor := t.TempDir()
+	eng := engine.NewEngine(dirAgent)
+	app := NewAppUI(eng, dirAgent)
+	defer app.Close()
+
+	app.setMode(ModeAgent)
+	app.switchWorkspace(dirAgent)
+
+	app.setMode(ModeEditor)
+	app.switchWorkspace(dirEditor)
+	app.openEditorTerminalTab("pchain-api")
+	editorTerm := app.Terminal
+	if app.Editor.ActivePath != "terminal://pchain-api" {
+		t.Fatalf("expected active tab 'terminal://pchain-api', got %q", app.Editor.ActivePath)
+	}
+
+	// Switch to Agent Mode (switches workspace to dirAgent), then back to Editor Mode.
+	app.setMode(ModeAgent)
+	app.setMode(ModeEditor)
+
+	if app.Terminal != editorTerm {
+		t.Fatalf("expected Editor Mode terminal instance to be preserved across mode/workspace switch")
+	}
+	if app.Editor.ActivePath != "terminal://pchain-api" {
+		t.Fatalf("expected 'terminal://pchain-api' tab to survive Agent Mode round-trip, got ActivePath=%q tabs=%v", app.Editor.ActivePath, app.Editor.OpenTabPaths)
+	}
+}
+
+func TestExplorerOpenInTerminalRespectsAgentMode(t *testing.T) {
+	dir := t.TempDir()
+	eng := engine.NewEngine(dir)
+	app := NewAppUI(eng, dir)
+	defer app.Close()
+
+	app.setMode(ModeAgent)
+	editorTabsBefore := app.Terminal.TabCount()
+
+	app.OpenDrawerPaneTerminalInDir(dir)
+
+	if app.ShowBottomTerminal || app.ShowAgentBottomTerminal {
+		t.Fatalf("opening sidebar terminal in Agent Mode must not move shell to bottom")
+	}
+	if !app.ShowRightDrawer || app.RightDrawerTab != RightTabTerminal {
+		t.Fatalf("expected terminal to open in Agent Mode right drawer, got show=%v tab=%d", app.ShowRightDrawer, app.RightDrawerTab)
+	}
+	if app.Terminal.TabCount() != editorTabsBefore {
+		t.Fatalf("opening Agent Mode terminal must not affect Editor Mode terminal tabs")
+	}
+}
+
+func TestMentionMatchesIncludesFoldersAndScrollableCount(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "src")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 16; i++ {
+		name := filepath.Join(subDir, fmt.Sprintf("file_%02d.go", i))
+		if err := os.WriteFile(name, []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	eng := engine.NewEngine(dir)
+	app := NewAppUI(eng, dir)
+	defer app.Close()
+	app.Workspace.Refresh()
+
+	// Empty query should include the folder "src/" and more than 12 items (17 total: 1 dir + 16 files).
+	all := app.mentionMatches("")
+	if len(all) <= 12 {
+		t.Fatalf("expected >12 mention items for scrolling, got %d", len(all))
+	}
+	foundDir := false
+	for _, it := range all {
+		if it.Category == "folder" && it.Name == "src/" && it.Insert == "@src/ " {
+			foundDir = true
+			break
+		}
+	}
+	if !foundDir {
+		t.Fatalf("expected folder 'src/' in mentionMatches(\"\"), got %+v", all)
+	}
+
+	// Querying "src/" should also match the folder.
+	dirHits := app.mentionMatches("src/")
+	foundDirHit := false
+	for _, it := range dirHits {
+		if it.Category == "folder" && it.Name == "src/" {
+			foundDirHit = true
+			break
+		}
+	}
+	if !foundDirHit {
+		t.Fatalf("expected folder 'src/' in mentionMatches(\"src/\"), got %+v", dirHits)
+	}
+}
+
+func TestOpenLocalFileURLAndBinaryGuard(t *testing.T) {
+	wsDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	eng := engine.NewEngine(wsDir)
+	app := NewAppUI(eng, wsDir)
+	defer app.Close()
+
+	// 1. Outside .md file via file:// URL must open in the right drawer preview (not external editor).
+	outsideMd := filepath.Join(outsideDir, "audit_report.md")
+	if err := os.WriteFile(outsideMd, []byte("# Audit\n\nDetails"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !app.openLocalFileURL("file://" + outsideMd) {
+		t.Fatalf("expected openLocalFileURL to handle outside .md file")
+	}
+	if !app.ShowRightDrawer || app.RightDrawerTab != RightTabSideFile || app.SideFilePreviewMd != outsideMd {
+		t.Fatalf("expected outside .md opened in side preview, got show=%v tab=%d md=%q", app.ShowRightDrawer, app.RightDrawerTab, app.SideFilePreviewMd)
+	}
+
+	// 2. Workspace .tsx file with #L272-L276 anchor must load into Editor and SideFileTabs.
+	tsxDir := filepath.Join(wsDir, "src")
+	if err := os.MkdirAll(tsxDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tsxFull := filepath.Join(tsxDir, "index.tsx")
+	if err := os.WriteFile(tsxFull, []byte("export const x = 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !app.openMarkdownFileMention("file://" + tsxFull + "#L272-L276") {
+		t.Fatalf("expected workspace .tsx link with line anchor to open")
+	}
+	if app.Editor.GetDoc(tsxFull) == nil {
+		t.Fatalf("expected Editor.GetDoc(%q) to be non-nil", tsxFull)
+	}
+
+	// 3. Binary/executable files must be rejected; text/script files must be allowed.
+	exeFile := filepath.Join(wsDir, "app.exe")
+	if err := os.WriteFile(exeFile, []byte{'M', 'Z', 0, 0}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePreviewableFile(exeFile); err == nil {
+		t.Fatalf("expected .exe file to be rejected")
+	}
+	machoFile := filepath.Join(wsDir, "tool")
+	if err := os.WriteFile(machoFile, []byte{0xcf, 0xfa, 0xed, 0xfe, 0x07, 0x00}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePreviewableFile(machoFile); err == nil {
+		t.Fatalf("expected Mach-O binary without extension to be rejected")
+	}
+	scriptFile := filepath.Join(wsDir, "Makefile")
+	if err := os.WriteFile(scriptFile, []byte("all:\n\techo ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePreviewableFile(scriptFile); err != nil {
+		t.Fatalf("expected Makefile to be allowed, got %v", err)
 	}
 }

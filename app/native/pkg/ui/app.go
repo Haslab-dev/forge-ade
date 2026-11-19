@@ -88,44 +88,61 @@ type SideChatSession struct {
 	Streaming bool
 }
 
+// ModeDrawerState stores mode-isolated right drawer visibility and tabs so
+// Agent Mode and Editor Mode never share or overwrite each other's drawer panes.
+type ModeDrawerState struct {
+	Show   bool
+	Tab    int
+	Tabs   []DrawerTabInstance
+	Active int
+}
+
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
 type AppUI struct {
-	Engine                   *engine.Engine
-	Window                   *mygo.Window
-	Workspace                *workspace.WorkspaceState
-	Editor                   *editor.EditorManager
-	Terminal                 *terminal.TerminalState
-	WorkspaceTerminals       map[string]*terminal.TerminalState
-	WorkspaceEditorSnapshots map[string]*editor.WorkspaceEditorSnapshot
-	Agent                    *agent.AgentState
-	Git                      *git.GitManager
-	Database                 *database.DatabaseManager
-	Palette                  *palette.PaletteManager
-	Settings                 *settings.SettingsManager
-	ThemeMgr                 *theme.ThemeManager
-	ACPMgr                   *agent.ACPManager
-	CLIMgr                   *agent.AgentCLIManager
-	Board                    *board.BoardManager
-	Mode                     int      // ModeAgent, ModeEditor, or ModeSettings
-	PrevMode                 int      // Mode to restore when closing Settings
-	AgentWorkspacePath       string   // Independent active workspace for Agent Mode
-	EditorWorkspacePath      string   // Independent active workspace for Editor Mode
-	ActiveTaskKind           string   // "agent" or "cli"
-	ShowLeftSidebar          bool     // Left sidebar visibility
-	LeftSidebarView          string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
-	SideFileTabs             []string // files opened in the right sidebar from the explorer
-	ActiveSideFile           string
-	ShowBottomTerminal       bool    // Collapsible bottom terminal drawer
-	BottomTerminalHeight     float32 // Resizable terminal height
-	ShowRightDrawer          bool    // Collapsible right side pane
-	RightDrawerWidth         float32 // Resizable right pane width
-	LeftSidebarWidth         float32 // Resizable left sidebar width
-	RightDrawerTab           int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
+	Engine                         *engine.Engine
+	Window                         *mygo.Window
+	Workspace                      *workspace.WorkspaceState
+	Editor                         *editor.EditorManager
+	Terminal                       *terminal.TerminalState
+	WorkspaceTerminals             map[string]*terminal.TerminalState
+	EditorBottomTerminal           *terminal.TerminalState
+	EditorBottomWorkspaceTerminals map[string]*terminal.TerminalState
+	AgentTerminal                  *terminal.TerminalState
+	AgentWorkspaceTerminals        map[string]*terminal.TerminalState
+	WorkspaceEditorSnapshots       map[string]*editor.WorkspaceEditorSnapshot
+	Agent                          *agent.AgentState
+	Git                            *git.GitManager
+	Database                       *database.DatabaseManager
+	Palette                        *palette.PaletteManager
+	Settings                       *settings.SettingsManager
+	ThemeMgr                       *theme.ThemeManager
+	ACPMgr                         *agent.ACPManager
+	CLIMgr                         *agent.AgentCLIManager
+	Board                          *board.BoardManager
+	Mode                           int      // ModeAgent, ModeEditor, or ModeSettings
+	PrevMode                       int      // Mode to restore when closing Settings
+	AgentWorkspacePath             string   // Independent active workspace for Agent Mode
+	EditorWorkspacePath            string   // Independent active workspace for Editor Mode
+	ActiveTaskKind                 string   // "agent" or "cli"
+	ShowLeftSidebar                bool     // Left sidebar visibility
+	LeftSidebarView                string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	SideFileTabs                   []string // files opened in the right sidebar from the explorer
+	ActiveSideFile                 string
+	ShowBottomTerminal             bool    // Collapsible bottom terminal drawer (Editor Mode)
+	ShowAgentBottomTerminal        bool    // Collapsible bottom terminal drawer (Agent Mode)
+	BottomTerminalHeight           float32 // Resizable terminal height
+	ShowRightDrawer                bool    // Collapsible right side pane
+	RightDrawerWidth               float32 // Resizable right pane width
+	LeftSidebarWidth               float32 // Resizable left sidebar width
+	RightDrawerTab                 int     // RightTabChanges, RightTabTerminal, RightTabChat, etc.
 	// DrawerTabs holds the OPEN drawer panes as tab instances (launcher
 	// tabs, terminal sessions, review, files… — duplicates allowed, ZCode
 	// style). RightDrawerTab mirrors the active entry.
 	DrawerTabs            []DrawerTabInstance
 	drawerActiveIdx       int
+	agentDrawerState      ModeDrawerState
+	editorDrawerState     ModeDrawerState
+	activeDrawerMode      int
 	EditorActivity        int // ActivityExplorer, ActivityGit, ActivityDatabase
 	SelectedFile          string
 	FileSearchQuery       string
@@ -515,70 +532,79 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	appUI := &AppUI{
-		Engine:                   engine,
-		Workspace:                workspace.NewWorkspaceState(rootDir),
-		Editor:                   editor.NewEditorManager(),
-		Terminal:                 terminal.NewTerminalStateDeferred(terminalDir),
-		WorkspaceTerminals:       make(map[string]*terminal.TerminalState),
-		WorkspaceEditorSnapshots: make(map[string]*editor.WorkspaceEditorSnapshot),
-		ThemeMgr:                 theme.NewThemeManager(),
-		Mode:                     ModeAgent,
-		AgentWorkspacePath:       rootDir,
-		EditorWorkspacePath:      rootDir,
-		ActiveTaskKind:           "agent",
-		AgentViewMode:            AgentViewChat,
-		RecentWorkspaces:         loadRecentWorkspaces(),
-		ShowLeftSidebar:          true,
-		LeftSidebarWidth:         LeftSidebarDefault,
-		RightDrawerWidth:         RightDrawerDefault,
-		BottomTerminalHeight:     240,
-		ShowBottomTerminal:       false,
-		ShowRightDrawer:          false,
-		RightDrawerTab:           RightTabLauncher,
-		ExternalOpenTarget:       "terminal",
-		EditorShellPaneWidth:     380,
-		EditorActivity:           ActivityExplorer,
-		NewTaskAgentType:         "acp",
-		NewTaskFilterTab:         "all",
-		NewTaskStep:              "agent",
-		SelectedAgentID:          "agent-agy",
-		SelectedAgentModel:       "gemini-3.8-flash-high",
-		SelectedHarnessID:        "agent-agy",
-		SelectedProviderTab:      "all",
-		CollapsedProjectGroups:   make(map[string]bool),
-		ExpandedProjectGroups:    make(map[string]bool),
-		ProjectFilter:            "all",
-		TaskSortBy:               "updated",
-		ExpandedFileTreeFolders:  make(map[string]bool),
-		SSHPort:                  22,
-		SSHPortText:              "22",
-		SSHAuthType:              "key_file",
-		SSHKeyPath:               "~/.ssh/id_ed25519",
-		SSHRemotePath:            "/var/www",
-		SSHSavedConfigs:          make([]remotefs.SSHConfig, 0),
-		SideChatModel:            "Claude 3.7 Sonnet",
-		SideChatMode:             "full",
-		SideChatMessages:         make([]*agent.ChatMessage, 0),
-		SideChatSessions:         make(map[string]*SideChatSession),
-		QuestionDrafts:           make(map[string]*string),
-		InlineAI:                 editor.NewInlineAI(),
-		FileSearchMode:           "files",
-		SideFileDiffMode:         make(map[string]bool),
-		ImageZoom:                make(map[string]float32),
-		ImageFitMode:             make(map[string]bool),
-		ImageBgStyle:             make(map[string]string),
-		SVGViewMode:              make(map[string]string),
-		imageCache:               make(map[string]*cachedImage),
-		SidebarListView:          "project",
-		DeckSlideCount:           1,
-		Snippets:                 terminal.NewSnippetManager(engine.DataDir),
-		closeCh:                  make(chan struct{}),
-		tickerDone:               make(chan struct{}),
+		Engine:                         engine,
+		Workspace:                      workspace.NewWorkspaceState(rootDir),
+		Editor:                         editor.NewEditorManager(),
+		Terminal:                       terminal.NewTerminalStateDeferred(terminalDir),
+		WorkspaceTerminals:             make(map[string]*terminal.TerminalState),
+		EditorBottomTerminal:           terminal.NewTerminalStateDeferred(terminalDir),
+		EditorBottomWorkspaceTerminals: make(map[string]*terminal.TerminalState),
+		AgentTerminal:                  terminal.NewTerminalStateDeferred(terminalDir),
+		AgentWorkspaceTerminals:        make(map[string]*terminal.TerminalState),
+		WorkspaceEditorSnapshots:       make(map[string]*editor.WorkspaceEditorSnapshot),
+		ThemeMgr:                       theme.NewThemeManager(),
+		Mode:                           ModeAgent,
+		activeDrawerMode:               ModeAgent,
+		AgentWorkspacePath:             rootDir,
+		EditorWorkspacePath:            rootDir,
+		ActiveTaskKind:                 "agent",
+		AgentViewMode:                  AgentViewChat,
+		RecentWorkspaces:               loadRecentWorkspaces(),
+		ShowLeftSidebar:                true,
+		LeftSidebarWidth:               LeftSidebarDefault,
+		RightDrawerWidth:               RightDrawerDefault,
+		BottomTerminalHeight:           240,
+		ShowBottomTerminal:             false,
+		ShowAgentBottomTerminal:        false,
+		ShowRightDrawer:                false,
+		RightDrawerTab:                 RightTabLauncher,
+		editorDrawerState:              ModeDrawerState{Tab: RightTabLauncher},
+		ExternalOpenTarget:             "terminal",
+		EditorShellPaneWidth:           380,
+		EditorActivity:                 ActivityExplorer,
+		NewTaskAgentType:               "acp",
+		NewTaskFilterTab:               "all",
+		NewTaskStep:                    "agent",
+		SelectedAgentID:                "agent-agy",
+		SelectedAgentModel:             "gemini-3.8-flash-high",
+		SelectedHarnessID:              "agent-agy",
+		SelectedProviderTab:            "all",
+		CollapsedProjectGroups:         make(map[string]bool),
+		ExpandedProjectGroups:          make(map[string]bool),
+		ProjectFilter:                  "all",
+		TaskSortBy:                     "updated",
+		ExpandedFileTreeFolders:        make(map[string]bool),
+		SSHPort:                        22,
+		SSHPortText:                    "22",
+		SSHAuthType:                    "key_file",
+		SSHKeyPath:                     "~/.ssh/id_ed25519",
+		SSHRemotePath:                  "/var/www",
+		SSHSavedConfigs:                make([]remotefs.SSHConfig, 0),
+		SideChatModel:                  "Claude 3.7 Sonnet",
+		SideChatMode:                   "full",
+		SideChatMessages:               make([]*agent.ChatMessage, 0),
+		SideChatSessions:               make(map[string]*SideChatSession),
+		QuestionDrafts:                 make(map[string]*string),
+		InlineAI:                       editor.NewInlineAI(),
+		FileSearchMode:                 "files",
+		SideFileDiffMode:               make(map[string]bool),
+		ImageZoom:                      make(map[string]float32),
+		ImageFitMode:                   make(map[string]bool),
+		ImageBgStyle:                   make(map[string]string),
+		SVGViewMode:                    make(map[string]string),
+		imageCache:                     make(map[string]*cachedImage),
+		SidebarListView:                "project",
+		DeckSlideCount:                 1,
+		Snippets:                       terminal.NewSnippetManager(engine.DataDir),
+		closeCh:                        make(chan struct{}),
+		tickerDone:                     make(chan struct{}),
 	}
 
 	appUI.Editor.WorkspaceDir = rootDir
 	normInitial := normalizeWorkspaceKey(rootDir)
 	appUI.WorkspaceTerminals[normInitial] = appUI.Terminal
+	appUI.EditorBottomWorkspaceTerminals[normInitial] = appUI.EditorBottomTerminal
+	appUI.AgentWorkspaceTerminals[normInitial] = appUI.AgentTerminal
 	appUI.Editor.OnDefinitionRequested = func(symbol string, matches []editor.PeekMatch) {
 		appUI.ShowPeekModal = true
 		appUI.PeekSymbol = symbol
@@ -884,12 +910,12 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		{ID: "agent-mode", Label: "Switch to Agent Mode", Shortcut: "⌘1", Run: func() { a.setMode(ModeAgent) }},
 		{ID: "editor-mode", Label: "Switch to Editor Mode", Shortcut: "⌘2", Run: func() { a.setMode(ModeEditor) }},
 		{ID: "toggle-terminal", Label: "Toggle Terminal", Detail: "Bottom terminal drawer", Shortcut: "⌘`", Run: func() {
-			a.ShowBottomTerminal = !a.ShowBottomTerminal
+			a.toggleBottomTerminal()
 		}},
 		{ID: "terminal-snippets", Label: "Terminal Snippets & History", Detail: "Saved terminal commands and history", Shortcut: "⌥S", Run: func() {
 			sessID := ""
-			if a.Terminal != nil {
-				sessID = a.Terminal.ActiveSessionID
+			if ts := a.activeTerminal(); ts != nil {
+				sessID = ts.ActiveSessionID
 			}
 			a.OpenTerminalSnippetsModal(sessID, "", "")
 		}},
@@ -1065,6 +1091,9 @@ func (a *AppUI) SetVibrancySupport(v bool) {
 // View builds the entire native GPU frame matching ForgeADE layout.
 func (a *AppUI) View(c *ui.Context) {
 	defer recoverFrame("View")
+	if (a.Mode == ModeAgent || a.Mode == ModeEditor) && a.activeDrawerMode != a.Mode {
+		a.syncModeDrawerState(a.Mode)
+	}
 	if a.ThemeMgr != nil {
 		c.SetTheme(a.ThemeMgr.ActiveTheme())
 	}
@@ -1233,15 +1262,15 @@ func (a *AppUI) View(c *ui.Context) {
 		a.toggleAppearance()
 	}
 	if cmdOrCtrl(ui.KeyBackquote) {
-		a.ShowBottomTerminal = !a.ShowBottomTerminal
+		a.toggleBottomTerminal()
 	}
 	if c.Shortcut(ui.Cmd|ui.Alt, ui.KeyO) {
 		a.OpenProjectSwitcherModal()
 	}
 	if c.Shortcut(ui.Alt, ui.KeyS) {
 		sessID := ""
-		if a.Terminal != nil {
-			sessID = a.Terminal.ActiveSessionID
+		if ts := a.activeTerminal(); ts != nil {
+			sessID = ts.ActiveSessionID
 		}
 		a.OpenTerminalSnippetsModal(sessID, "", "")
 	}
@@ -1323,6 +1352,28 @@ func (a *AppUI) Close() {
 	if a.Terminal != nil {
 		a.Terminal.Close()
 	}
+	if a.EditorBottomWorkspaceTerminals != nil {
+		for key, ts := range a.EditorBottomWorkspaceTerminals {
+			if ts != nil {
+				ts.Close()
+			}
+			delete(a.EditorBottomWorkspaceTerminals, key)
+		}
+	}
+	if a.EditorBottomTerminal != nil {
+		a.EditorBottomTerminal.Close()
+	}
+	if a.AgentWorkspaceTerminals != nil {
+		for key, ts := range a.AgentWorkspaceTerminals {
+			if ts != nil {
+				ts.Close()
+			}
+			delete(a.AgentWorkspaceTerminals, key)
+		}
+	}
+	if a.AgentTerminal != nil {
+		a.AgentTerminal.Close()
+	}
 	// Kill ACP CLI children (spawned with Setpgid:true): Manager.Close
 	// SIGTERM→SIGKILLs each process group so agent harnesses never outlive
 	// the app (P1-4).
@@ -1393,7 +1444,7 @@ func (a *AppUI) clearConfirmDialog() {
 // spawner. An invalid shell toasts once and falls back to the user's login
 // shell.
 func (a *AppUI) syncTerminalShell() {
-	if a.Settings == nil || a.Terminal == nil {
+	if a.Settings == nil {
 		return
 	}
 	shell := strings.TrimSpace(a.Settings.DefaultShell)
@@ -1409,7 +1460,30 @@ func (a *AppUI) syncTerminalShell() {
 			shell = ""
 		}
 	}
-	a.Terminal.SetDefaultShell(shell)
+	if a.Terminal != nil {
+		a.Terminal.SetDefaultShell(shell)
+	}
+	if a.EditorBottomTerminal != nil {
+		a.EditorBottomTerminal.SetDefaultShell(shell)
+	}
+	if a.AgentTerminal != nil {
+		a.AgentTerminal.SetDefaultShell(shell)
+	}
+	for _, ts := range a.WorkspaceTerminals {
+		if ts != nil {
+			ts.SetDefaultShell(shell)
+		}
+	}
+	for _, ts := range a.EditorBottomWorkspaceTerminals {
+		if ts != nil {
+			ts.SetDefaultShell(shell)
+		}
+	}
+	for _, ts := range a.AgentWorkspaceTerminals {
+		if ts != nil {
+			ts.SetDefaultShell(shell)
+		}
+	}
 }
 
 // runCustomCommand seeds the agent composer with a custom slash command's
@@ -1734,10 +1808,18 @@ func (a *AppUI) closeWorkspaceFromWindow(ws string) {
 	}
 	a.OpenWorkspaces = remaining
 
-	// Terminate running terminal processes for this closed workspace
+	// Terminate running terminal processes for this closed workspace (all modes/docks)
 	if ts, ok := a.WorkspaceTerminals[normTarget]; ok && ts != nil {
 		ts.Close()
 		delete(a.WorkspaceTerminals, normTarget)
+	}
+	if ts, ok := a.EditorBottomWorkspaceTerminals[normTarget]; ok && ts != nil {
+		ts.Close()
+		delete(a.EditorBottomWorkspaceTerminals, normTarget)
+	}
+	if ts, ok := a.AgentWorkspaceTerminals[normTarget]; ok && ts != nil {
+		ts.Close()
+		delete(a.AgentWorkspaceTerminals, normTarget)
 	}
 	delete(a.WorkspaceEditorSnapshots, normTarget)
 
@@ -1814,7 +1896,10 @@ func (a *AppUI) symbolUnderCursor(doc *editor.OpenDocument) string {
 // openSideFile opens a workspace file in the right sidebar's file tabs, as
 // forge-ade's explorer "Open in Side Preview" does.
 func (a *AppUI) openSideFile(relPath string) {
-	full := a.Workspace.ResolveFullPath(relPath)
+	full := relPath
+	if a.Workspace != nil {
+		full = a.Workspace.ResolveFullPath(relPath)
+	}
 	lower := strings.ToLower(relPath)
 	if strings.HasSuffix(lower, ".pdf") {
 		a.openPdfViewer(full)
@@ -1827,8 +1912,15 @@ func (a *AppUI) openSideFile(relPath string) {
 			_, _ = a.Editor.OpenFile(full, relPath)
 		}
 	} else {
+		if err := validatePreviewableFile(full); err != nil {
+			a.queueToast(ui.Toast{Title: "Cannot open file", Description: err.Error(), Type: "error"})
+			return
+		}
 		if doc := a.Editor.GetDoc(full); doc == nil {
-			_, _ = a.Editor.OpenFile(full, relPath)
+			if _, err := a.Editor.OpenFile(full, relPath); err != nil {
+				a.queueToast(ui.Toast{Title: "Open failed", Description: err.Error(), Type: "error"})
+				return
+			}
 		}
 	}
 	for i, p := range a.SideFileTabs {
@@ -2110,29 +2202,132 @@ func (a *AppUI) selectCLISession(cs *agent.AgentCLISession) {
 	}
 }
 
+// activeTerminal returns the independent TerminalState belonging to the current
+// mode's dock/drawer (AgentTerminal in ModeAgent, EditorBottomTerminal in ModeEditor).
+// Editor main-pane terminal tabs ("terminal://...") use a.Terminal separately.
+func (a *AppUI) activeTerminal() *terminal.TerminalState {
+	if a.Mode == ModeAgent && a.AgentTerminal != nil {
+		return a.AgentTerminal
+	}
+	if a.EditorBottomTerminal != nil {
+		return a.EditorBottomTerminal
+	}
+	return a.Terminal
+}
+
+func (a *AppUI) isBottomTerminalVisible() bool {
+	if a.Mode == ModeAgent {
+		return a.ShowAgentBottomTerminal
+	}
+	return a.ShowBottomTerminal
+}
+
+func (a *AppUI) setBottomTerminalVisible(visible bool) {
+	if a.Mode == ModeAgent {
+		a.ShowAgentBottomTerminal = visible
+		return
+	}
+	a.ShowBottomTerminal = visible
+}
+
+func (a *AppUI) toggleBottomTerminal() {
+	a.setBottomTerminalVisible(!a.isBottomTerminalVisible())
+}
+
+// syncModeDrawerState swaps the right-drawer visibility and tab list when
+// transitioning between ModeAgent and ModeEditor so each mode keeps its own
+// independent drawer panes and terminal tab bindings.
+func (a *AppUI) syncModeDrawerState(targetMode int) {
+	if targetMode != ModeAgent && targetMode != ModeEditor {
+		return
+	}
+	if a.activeDrawerMode == targetMode {
+		return
+	}
+	cur := ModeDrawerState{
+		Show:   a.ShowRightDrawer,
+		Tab:    a.RightDrawerTab,
+		Tabs:   a.DrawerTabs,
+		Active: a.drawerActiveIdx,
+	}
+	if a.activeDrawerMode == ModeEditor {
+		a.editorDrawerState = cur
+	} else {
+		a.agentDrawerState = cur
+	}
+
+	var next ModeDrawerState
+	if targetMode == ModeEditor {
+		next = a.editorDrawerState
+	} else {
+		next = a.agentDrawerState
+	}
+	a.ShowRightDrawer = next.Show
+	a.RightDrawerTab = next.Tab
+	a.DrawerTabs = next.Tabs
+	a.drawerActiveIdx = next.Active
+	a.activeDrawerMode = targetMode
+}
+
+func (a *AppUI) newWorkspaceTerminalState(rawDir string) *terminal.TerminalState {
+	termDir := rawDir
+	if termDir == "" {
+		home, _ := os.UserHomeDir()
+		termDir = home
+	}
+	ts := terminal.NewTerminalStateDeferred(termDir)
+	if a.Settings != nil && strings.TrimSpace(a.Settings.DefaultShell) != "" {
+		ts.SetDefaultShell(strings.TrimSpace(a.Settings.DefaultShell))
+	}
+	if strings.HasPrefix(rawDir, "ssh://") {
+		ts.Cwd = rawDir
+		if a.Engine != nil && a.Engine.RemoteFS != nil {
+			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(rawDir); ok && client != nil {
+				prog, args, env := client.SSHCommand(remotePath)
+				ts.Command = append([]string{prog}, args...)
+				ts.Env = env
+				_, remotePath, _, folderName := parseSSHWorkspaceURI(rawDir)
+				if folderName == "" || folderName == "remote-root" || folderName == "." || folderName == "/" {
+					folderName = filepath.Base(remotePath)
+				}
+				if folderName == "" || folderName == "." || folderName == "/" {
+					folderName = "remote"
+				}
+				ts.Title = folderName
+			}
+		}
+	} else {
+		ts.Title = filepath.Base(termDir)
+	}
+	return ts
+}
+
 // setMode switches between ModeAgent, ModeEditor, and ModeSettings while
-// preserving independent active workspaces for Agent Mode and Editor Mode.
+// preserving independent active workspaces and drawer/terminal state for Agent
+// Mode and Editor Mode.
 func (a *AppUI) setMode(mode int) {
 	if a.Mode == mode {
 		return
 	}
+	prevMode := a.Mode
 	curWs := ""
 	if a.Workspace != nil {
 		curWs = a.Workspace.RootDir
 	}
-	if a.Mode == ModeAgent {
+	if prevMode == ModeAgent {
 		a.AgentWorkspacePath = curWs
-	} else if a.Mode == ModeEditor {
+	} else if prevMode == ModeEditor {
 		a.EditorWorkspacePath = curWs
 	}
+	a.syncModeDrawerState(mode)
 	a.Mode = mode
 	if mode == ModeAgent {
 		if normalizeWorkspaceKey(a.AgentWorkspacePath) != normalizeWorkspaceKey(curWs) {
-			a.switchWorkspaceInternal(a.AgentWorkspacePath, true)
+			a.switchWorkspaceForMode(a.AgentWorkspacePath, true, prevMode)
 		}
 	} else if mode == ModeEditor {
 		if normalizeWorkspaceKey(a.EditorWorkspacePath) != normalizeWorkspaceKey(curWs) {
-			a.switchWorkspaceInternal(a.EditorWorkspacePath, true)
+			a.switchWorkspaceForMode(a.EditorWorkspacePath, true, prevMode)
 		}
 	}
 	if a.Window != nil {
@@ -2145,6 +2340,10 @@ func (a *AppUI) switchWorkspace(dir string) {
 }
 
 func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
+	a.switchWorkspaceForMode(dir, keepActiveSession, a.Mode)
+}
+
+func (a *AppUI) switchWorkspaceForMode(dir string, keepActiveSession bool, fromMode int) {
 	rawDir := dir
 	if !strings.HasPrefix(rawDir, "ssh://") {
 		rawDir = agentsession.NormalizeWorkspacePath(dir)
@@ -2164,18 +2363,35 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 		return
 	}
 
-	// 1. Stash outgoing workspace state (terminals and editor tabs)
+	// 1. Stash outgoing workspace state (mode-isolated terminals and editor tabs)
 	if a.WorkspaceTerminals == nil {
 		a.WorkspaceTerminals = make(map[string]*terminal.TerminalState)
+	}
+	if a.EditorBottomWorkspaceTerminals == nil {
+		a.EditorBottomWorkspaceTerminals = make(map[string]*terminal.TerminalState)
+	}
+	if a.AgentWorkspaceTerminals == nil {
+		a.AgentWorkspaceTerminals = make(map[string]*terminal.TerminalState)
 	}
 	if a.WorkspaceEditorSnapshots == nil {
 		a.WorkspaceEditorSnapshots = make(map[string]*editor.WorkspaceEditorSnapshot)
 	}
-	if prevWs != "" && a.Terminal != nil {
-		a.WorkspaceTerminals[prevKey] = a.Terminal
-	}
-	if prevWs != "" && a.Editor != nil {
-		a.WorkspaceEditorSnapshots[prevKey] = a.Editor.TakeSnapshot()
+	if prevWs != "" {
+		if fromMode == ModeEditor {
+			if a.Terminal != nil {
+				a.WorkspaceTerminals[prevKey] = a.Terminal
+			}
+			if a.EditorBottomTerminal != nil {
+				a.EditorBottomWorkspaceTerminals[prevKey] = a.EditorBottomTerminal
+			}
+			if a.Editor != nil {
+				a.WorkspaceEditorSnapshots[prevKey] = a.Editor.TakeSnapshot()
+			}
+		} else {
+			if a.AgentTerminal != nil {
+				a.AgentWorkspaceTerminals[prevKey] = a.AgentTerminal
+			}
+		}
 	}
 
 	// 2. Set up incoming workspace
@@ -2217,8 +2433,8 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 		}
 	}
 
-	// 3. Restore or initialize editor state for new workspace
-	if a.Editor != nil {
+	// 3. Restore or initialize editor state for new workspace (Editor Mode only)
+	if a.Mode == ModeEditor && a.Editor != nil {
 		a.Editor.WorkspaceDir = rawDir
 		if a.Engine != nil {
 			a.Editor.RemoteFS = a.Engine.RemoteFS
@@ -2245,38 +2461,30 @@ func (a *AppUI) switchWorkspaceInternal(dir string, keepActiveSession bool) {
 		}
 	}
 
-	// 5. Restore or initialize terminal state for new workspace
-	termDir := rawDir
-	if termDir == "" {
-		home, _ := os.UserHomeDir()
-		termDir = home
-	}
-	if existingTerm, ok := a.WorkspaceTerminals[newKey]; ok && existingTerm != nil {
-		a.Terminal = existingTerm
-	} else {
-		ts := terminal.NewTerminalStateDeferred(termDir)
-		if strings.HasPrefix(rawDir, "ssh://") {
-			ts.Cwd = rawDir
-			if a.Engine != nil && a.Engine.RemoteFS != nil {
-				if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(rawDir); ok && client != nil {
-					prog, args, env := client.SSHCommand(remotePath)
-					ts.Command = append([]string{prog}, args...)
-					ts.Env = env
-					_, remotePath, _, folderName := parseSSHWorkspaceURI(rawDir)
-					if folderName == "" || folderName == "remote-root" || folderName == "." || folderName == "/" {
-						folderName = filepath.Base(remotePath)
-					}
-					if folderName == "" || folderName == "." || folderName == "/" {
-						folderName = "remote"
-					}
-					ts.Title = folderName
-				}
-			}
+	// 5. Restore or initialize mode-specific terminal state for new workspace
+	if a.Mode == ModeEditor {
+		if existingTerm, ok := a.WorkspaceTerminals[newKey]; ok && existingTerm != nil {
+			a.Terminal = existingTerm
 		} else {
-			ts.Title = filepath.Base(termDir)
+			ts := a.newWorkspaceTerminalState(rawDir)
+			a.WorkspaceTerminals[newKey] = ts
+			a.Terminal = ts
 		}
-		a.WorkspaceTerminals[newKey] = ts
-		a.Terminal = ts
+		if existingBottom, ok := a.EditorBottomWorkspaceTerminals[newKey]; ok && existingBottom != nil {
+			a.EditorBottomTerminal = existingBottom
+		} else {
+			ts := a.newWorkspaceTerminalState(rawDir)
+			a.EditorBottomWorkspaceTerminals[newKey] = ts
+			a.EditorBottomTerminal = ts
+		}
+	} else {
+		if existingTerm, ok := a.AgentWorkspaceTerminals[newKey]; ok && existingTerm != nil {
+			a.AgentTerminal = existingTerm
+		} else {
+			ts := a.newWorkspaceTerminalState(rawDir)
+			a.AgentWorkspaceTerminals[newKey] = ts
+			a.AgentTerminal = ts
+		}
 	}
 	// Drop state bound to the old workspace so stale relative paths can never
 	// render the wrong files against the new root.

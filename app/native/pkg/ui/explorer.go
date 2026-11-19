@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -268,10 +267,10 @@ func (a *AppUI) openExplorerFileInEditor(fullPath, relPath string) {
 		return
 	}
 	if !strings.HasPrefix(fullPath, "ssh://") {
-		if info, err := os.Stat(fullPath); err == nil && info.Size() > maxOpenTextBytes {
+		if err := validatePreviewableFile(fullPath); err != nil {
 			a.queueToast(ui.Toast{
-				Title:       "File too large to open",
-				Description: fmt.Sprintf("%s is larger than 10 MB", relPath),
+				Title:       "Cannot open file",
+				Description: err.Error(),
 				Type:        "error",
 			})
 			return
@@ -347,8 +346,14 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 				if !node.IsDir {
 					dir = filepath.Dir(dir)
 				}
-				a.ShowBottomTerminal = true
-				_ = a.Terminal.ResetShell(dir)
+				if a.Mode == ModeAgent {
+					a.OpenDrawerPaneTerminalInDir(dir)
+				} else {
+					a.ShowBottomTerminal = true
+					if ts := a.activeTerminal(); ts != nil {
+						_ = ts.ResetShell(dir)
+					}
+				}
 			}
 			m.Separator()
 		} else {

@@ -37,12 +37,16 @@ func (a *AppUI) openRemoteTerminalPath(targetURI string) {
 		a.openEditorTerminalTabForURI("", uri)
 		return
 	}
+	ts := a.activeTerminal()
+	if ts == nil {
+		return
+	}
 	client, remotePath, isRemote := a.Engine.RemoteFS.ParseRemotePath(uri)
 	if isRemote && client != nil {
 		prog, args, env := client.SSHCommand(remotePath)
-		a.ShowBottomTerminal = true
-		a.Terminal.Command = append([]string{prog}, args...)
-		a.Terminal.Env = env
+		a.setBottomTerminalVisible(true)
+		ts.Command = append([]string{prog}, args...)
+		ts.Env = env
 		_, _, _, folder := parseSSHWorkspaceURI(uri)
 		if folder == "" || folder == "remote-root" {
 			folder = filepath.Base(remotePath)
@@ -50,11 +54,11 @@ func (a *AppUI) openRemoteTerminalPath(targetURI string) {
 		if folder == "" || folder == "." || folder == "/" {
 			folder = "remote"
 		}
-		a.Terminal.Title = folder
-		_ = a.Terminal.Restart()
+		ts.Title = folder
+		_ = ts.Restart()
 	} else {
-		a.ShowBottomTerminal = true
-		_ = a.Terminal.ResetShell(uri)
+		a.setBottomTerminalVisible(true)
+		_ = ts.ResetShell(uri)
 	}
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -423,14 +427,14 @@ func (a *AppUI) ReconnectSSH() {
 				a.Workspace.Refresh()
 			}
 			// If active terminal is exited, restart it with fresh connection
-			if a.Terminal != nil {
-				if a.Terminal.IsExited() {
+			if ts := a.activeTerminal(); ts != nil {
+				if ts.IsExited() {
 					if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
 						prog, args, env := client.SSHCommand(remotePath)
-						a.Terminal.Command = append([]string{prog}, args...)
-						a.Terminal.Env = env
+						ts.Command = append([]string{prog}, args...)
+						ts.Env = env
 					}
-					_ = a.Terminal.Restart()
+					_ = ts.Restart()
 				}
 			}
 			if a.Window != nil {
@@ -456,23 +460,24 @@ func (a *AppUI) DisconnectSSH() {
 	}
 }
 
-// connectSSHShell launches an interactive SSH session in the bottom terminal.
+// connectSSHShell launches an interactive SSH session in the active mode terminal.
 func (a *AppUI) connectSSHShell(cfg remotefs.SSHConfig) {
-	if a.Terminal == nil {
-		return
-	}
 	if a.Mode == ModeEditor {
 		a.openEditorTerminalTab("")
+		return
+	}
+	ts := a.activeTerminal()
+	if ts == nil {
 		return
 	}
 	if a.Engine != nil && a.Engine.RemoteFS != nil {
 		if client := a.Engine.RemoteFS.GetClient(cfg.ID); client != nil {
 			prog, args, env := client.SSHCommand(cfg.RemotePath)
-			a.ShowBottomTerminal = true
-			a.Terminal.Command = append([]string{prog}, args...)
-			a.Terminal.Env = env
-			a.Terminal.Title = fmt.Sprintf("SSH: %s", cfg.Host)
-			_ = a.Terminal.Restart()
+			a.setBottomTerminalVisible(true)
+			ts.Command = append([]string{prog}, args...)
+			ts.Env = env
+			ts.Title = fmt.Sprintf("SSH: %s", cfg.Host)
+			_ = ts.Restart()
 			if a.Window != nil {
 				a.Window.Invalidate()
 			}
@@ -502,10 +507,10 @@ func (a *AppUI) connectSSHShell(cfg remotefs.SSHConfig) {
 		// it survive the ssh command line intact.
 		args = append(args, "-t", fmt.Sprintf("cd %s && exec $SHELL -l", quoteRemotePath(cfg.RemotePath)))
 	}
-	a.ShowBottomTerminal = true
-	a.Terminal.Command = args
-	a.Terminal.Title = fmt.Sprintf("SSH: %s", cfg.Host)
-	_ = a.Terminal.Restart()
+	a.setBottomTerminalVisible(true)
+	ts.Command = args
+	ts.Title = fmt.Sprintf("SSH: %s", cfg.Host)
+	_ = ts.Restart()
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}

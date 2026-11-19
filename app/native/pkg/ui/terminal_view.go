@@ -152,6 +152,7 @@ func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts 
 // renderBottomTerminal renders the bottom collapsible terminal drawer.
 func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
+	ts := a.activeTerminal()
 
 	ui.Column(c).Height(a.BottomTerminalHeight).Background(tc.Canvas).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 		// Terminal Drawer Header — ZCode dock style: bold label, shell name,
@@ -161,16 +162,16 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 		hdr.ContextMenu(func(m *ui.Menu) {
 			if m.Item("Add Snippet...").Chosen() {
 				sessID := ""
-				if a.Terminal != nil {
-					sessID = a.Terminal.ActiveSessionID
+				if ts != nil {
+					sessID = ts.ActiveSessionID
 				}
 				clipText := mygo.Clipboard.ReadText()
 				a.OpenAddSnippetModal(sessID, clipText)
 			}
 			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 				sessID := ""
-				if a.Terminal != nil {
-					sessID = a.Terminal.ActiveSessionID
+				if ts != nil {
+					sessID = ts.ActiveSessionID
 				}
 				a.OpenTerminalSnippetsModal(sessID, "", "")
 			}
@@ -178,23 +179,22 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 				a.askAgentFromTerminal()
 			}
 			m.Separator()
-			if m.Item("New Tab").Chosen() && a.Terminal != nil {
-				_ = func() string {
-					if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-						return a.Workspace.RootDir
-					}
-					return ""
-				}()
+			if m.Item("New Tab").Chosen() && ts != nil {
+				cwd := ""
+				if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+					cwd = a.Workspace.RootDir
+				}
+				_ = ts.NewTab(cwd)
 			}
-			if m.Item("Clear Terminal").Chosen() && a.Terminal != nil {
-				a.Terminal.SendInput("\x0c")
+			if m.Item("Clear Terminal").Chosen() && ts != nil {
+				ts.SendInput("\x0c")
 			}
-			if m.Item("Restart Shell").Chosen() && a.Terminal != nil {
-				_ = a.Terminal.Restart()
+			if m.Item("Restart Shell").Chosen() && ts != nil {
+				_ = ts.Restart()
 			}
 			m.Separator()
 			if m.Item("Close Dock").Shortcut(ui.Cmd, ui.KeyBackquote).Chosen() {
-				a.ShowBottomTerminal = false
+				a.setBottomTerminalVisible(false)
 			}
 		})
 		hdr.Children(func() {
@@ -216,7 +216,7 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 			}
 			ui.Text(c, shellName).FontSize(12).TextColor(tc.TextMuted)
 
-			a.renderTerminalTabsStrip(c, tc, a.Terminal, "bottom-term")
+			a.renderTerminalTabsStrip(c, tc, ts, "bottom-term")
 
 			moreBtn := ui.Row(c.Key("term-actions-menu")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 			moreBtn.Children(func() {
@@ -231,46 +231,45 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 				}
 				if m.Item("Add Snippet...").Chosen() {
 					sessID := ""
-					if a.Terminal != nil {
-						sessID = a.Terminal.ActiveSessionID
+					if ts != nil {
+						sessID = ts.ActiveSessionID
 					}
 					clipText := mygo.Clipboard.ReadText()
 					a.OpenAddSnippetModal(sessID, clipText)
 				}
 				if m.Item("Terminal Snippets").Shortcut(ui.Alt, ui.KeyS).Chosen() {
 					sessID := ""
-					if a.Terminal != nil {
-						sessID = a.Terminal.ActiveSessionID
+					if ts != nil {
+						sessID = ts.ActiveSessionID
 					}
 					a.OpenTerminalSnippetsModal(sessID, "", "")
 				}
-				if a.Terminal != nil {
+				if ts != nil {
 					m.Separator()
 					if m.Item("Clear Terminal").Chosen() {
-						a.Terminal.SendInput("\x0c")
+						ts.SendInput("\x0c")
 					}
 					if m.Item("Restart Shell").Chosen() {
-						_ = a.Terminal.Restart()
+						_ = ts.Restart()
 					}
 				}
 			})
 
-			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && a.Terminal != nil {
-				_ = func() string {
-					if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-						return a.Workspace.RootDir
-					}
-					return ""
-				}()
+			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && ts != nil {
+				cwd := ""
+				if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+					cwd = a.Workspace.RootDir
+				}
+				_ = ts.NewTab(cwd)
 			}
 			if IconButton(c, tc, icons.TablerX, 13).Clicked() {
-				a.ShowBottomTerminal = false
+				a.setBottomTerminalVisible(false)
 			}
 		})
 
 		// Terminal Viewport
-		if a.Terminal != nil {
-			a.renderTerminal(c, a.Terminal)
+		if ts != nil {
+			a.renderTerminal(c, ts)
 		}
 	})
 }
@@ -337,14 +336,14 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 // askAgentFromTerminal captures recent output from the active terminal and sends a diagnostic prompt to the agent composer.
 func (a *AppUI) askAgentFromTerminal() {
 	output := ""
-	if a.Terminal != nil {
-		output = a.Terminal.RecentOutput(40)
+	if ts := a.activeTerminal(); ts != nil {
+		output = ts.RecentOutput(40)
 	}
 	if strings.TrimSpace(output) == "" {
 		output = "No recent terminal output recorded."
 	}
 	prompt := fmt.Sprintf("Here is the recent terminal output:\n```\n%s\n```\n\nPlease diagnose any errors, explain what happened, and fix the issues.", strings.TrimSpace(output))
-	a.Mode = ModeAgent
+	a.setMode(ModeAgent)
 	a.AgentViewMode = AgentViewChat
 	a.IsGitClientOpen = false
 	a.ActiveTaskKind = "agent"

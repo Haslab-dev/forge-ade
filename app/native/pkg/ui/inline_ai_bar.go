@@ -283,20 +283,26 @@ func (a *AppUI) formatDocumentSelection(c *ui.Context, doc *editor.OpenDocument)
 // openSidePreviewFile renders image/markdown previews in the drawer Files
 // pane (DeckMotionViewer auto-detect sends decks to the browser tab).
 func (a *AppUI) openSidePreviewFile(c *ui.Context, relPath string) {
+	lower := strings.ToLower(relPath)
 	switch {
-	case isImageOrSVG(relPath):
+	case isImageOrSVG(lower):
 		a.SideFilePreviewImage = relPath
 		a.SideFilePreviewMd = ""
 		a.openSideFile(relPath)
-	case strings.HasSuffix(relPath, ".md"), strings.HasSuffix(relPath, ".mdx"):
+	case strings.HasSuffix(lower, ".md"), strings.HasSuffix(lower, ".mdx"):
 		a.SideFilePreviewImage = ""
 		a.SideFilePreviewMd = relPath
 		a.openSideFile(relPath)
-	case strings.Contains(strings.ToLower(relPath), "deck"), strings.Contains(strings.ToLower(relPath), "motion"):
+	case isDeckOrMotionFile(lower):
 		// Deck/motion HTML files open in the browser viewer tab.
-		full := a.Workspace.ResolveFullPath(relPath)
+		full := relPath
+		if a.Workspace != nil {
+			full = a.Workspace.ResolveFullPath(relPath)
+		}
 		a.openBrowserTab("file://" + full)
 	default:
+		a.SideFilePreviewImage = ""
+		a.SideFilePreviewMd = ""
 		a.openSideFile(relPath)
 	}
 	if a.Window != nil {

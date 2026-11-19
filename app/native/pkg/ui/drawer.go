@@ -214,7 +214,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 			case RightTabChanges:
 				a.renderChangesPane(c)
 			case RightTabTerminal:
-				if a.ShowBottomTerminal {
+				if a.isBottomTerminalVisible() {
 					ui.Column(c).Grow(1).Center().Padding(16).Gap(8).Children(func() {
 						ui.Icon(c, icons.TablerTerminal).Width(24).Height(24).TextColor(tc.IconMuted)
 						ui.Text(c, "Terminal open in bottom panel").FontSize(12).FontWeight(500).TextColor(tc.Text)
@@ -224,12 +224,12 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 							ui.Text(c, "Move to Right Drawer").FontSize(11).FontWeight(600).TextColor(tc.Accent)
 						})
 						if moveBtn.Clicked() {
-							a.ShowBottomTerminal = false
+							a.setBottomTerminalVisible(false)
 						}
 					})
 					break
 				}
-				if a.Terminal != nil {
+				if ts := a.activeTerminal(); ts != nil {
 					// Pane actions row. Terminal SESSIONS are the header
 					// tabs themselves (1 pane = 1 session = 1 tab); use the
 					// launcher or "+" to add another session.
@@ -252,21 +252,17 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 							ui.Text(c, "Snippets").FontSize(10).TextColor(tc.Text)
 						})
 						if snipBtn.Clicked() {
-							sessID := ""
-							if a.Terminal != nil {
-								sessID = a.Terminal.ActiveSessionID
-							}
-							a.OpenTerminalSnippetsModal(sessID, "", "")
+							a.OpenTerminalSnippetsModal(ts.ActiveSessionID, "", "")
 						}
 
 						if IconButton(c, tc, icons.TablerEraser, 11).Clicked() {
-							a.Terminal.SendInput("\x0c")
+							ts.SendInput("\x0c")
 						}
 						if IconButton(c, tc, icons.TablerRefresh, 11).Clicked() {
-							_ = a.Terminal.Restart()
+							_ = ts.Restart()
 						}
 					})
-					a.renderTerminal(c, a.Terminal)
+					a.renderTerminal(c, ts)
 				}
 			case RightTabChat:
 				a.renderSideChatPane(c)
@@ -358,9 +354,10 @@ func (a *AppUI) closeDrawerTabsExcept(keep int) {
 	if keep < 0 || keep >= len(a.DrawerTabs) {
 		return
 	}
+	ts := a.activeTerminal()
 	removed := make([]int, 0, len(a.DrawerTabs))
 	for i, t := range a.DrawerTabs {
-		if i != keep && t.Kind == RightTabTerminal && t.TermIdx >= 0 && a.Terminal != nil {
+		if i != keep && t.Kind == RightTabTerminal && t.TermIdx >= 0 && ts != nil {
 			removed = append(removed, t.TermIdx)
 		}
 		if i != keep && t.Kind == RightTabChat && t.ChatID != "" {
@@ -369,7 +366,7 @@ func (a *AppUI) closeDrawerTabsExcept(keep int) {
 	}
 	sort.Ints(removed)
 	for k := len(removed) - 1; k >= 0; k-- { // close highest session index first
-		a.Terminal.CloseTab(removed[k])
+		ts.CloseTab(removed[k])
 	}
 	kept := a.DrawerTabs[keep]
 	rest := make([]DrawerTabInstance, 0, len(a.DrawerTabs))
@@ -419,9 +416,10 @@ func (a *AppUI) closeDrawerTabsAll() {
 // closeDrawerTabsRange removes tabs in [lo, hi), closing orphaned terminal
 // sessions and remapping surviving session indices.
 func (a *AppUI) closeDrawerTabsRange(lo, hi int) {
+	ts := a.activeTerminal()
 	removed := make([]int, 0, hi-lo)
 	for _, t := range a.DrawerTabs[lo:hi] {
-		if t.Kind == RightTabTerminal && t.TermIdx >= 0 && a.Terminal != nil {
+		if t.Kind == RightTabTerminal && t.TermIdx >= 0 && ts != nil {
 			removed = append(removed, t.TermIdx)
 		}
 		if t.Kind == RightTabChat && t.ChatID != "" {
@@ -432,8 +430,8 @@ func (a *AppUI) closeDrawerTabsRange(lo, hi int) {
 	rest := append(a.DrawerTabs[:lo:lo], a.DrawerTabs[hi:]...)
 	a.DrawerTabs = rest
 	for k := len(removed) - 1; k >= 0; k-- {
-		if a.Terminal != nil {
-			a.Terminal.CloseTab(removed[k])
+		if ts != nil {
+			ts.CloseTab(removed[k])
 		}
 	}
 	for j := range a.DrawerTabs {
@@ -557,29 +555,40 @@ func (a *AppUI) openNewLauncherTab() {
 // (or remote host default for ssh://), titled after the project with a duplicate counter
 // ("forge-ade", "forge-ade 2", …). Returns the title and session index.
 func (a *AppUI) newTerminalSession() (string, int) {
-	if a.Terminal == nil {
+	return a.newTerminalSessionInDir("")
+}
+
+// newTerminalSessionInDir spawns a NEW terminal session at targetDir (or workspace root
+// when targetDir is empty) inside the active mode's TerminalState.
+func (a *AppUI) newTerminalSessionInDir(targetDir string) (string, int) {
+	ts := a.activeTerminal()
+	if ts == nil {
 		return "Terminal", -1
 	}
-	root := ""
+	root := targetDir
 	var cmd, env []string
-	if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-		root = a.Workspace.RootDir
+	if root == "" {
+		if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+			root = a.Workspace.RootDir
+		} else if a.Workspace != nil && a.Workspace.RootDir != "" {
+			root = a.Workspace.RootDir
+		}
+	}
+	if strings.HasPrefix(root, "ssh://") {
 		if a.Engine != nil && a.Engine.RemoteFS != nil {
-			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
+			if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(root); ok && client != nil {
 				prog, args, rEnv := client.SSHCommand(remotePath)
 				cmd = append([]string{prog}, args...)
 				env = rEnv
 			}
 		}
-	} else if a.Workspace != nil && a.Workspace.RootDir != "" {
-		root = a.Workspace.RootDir
 	}
 	base := "Terminal"
-	if a.Workspace != nil && a.Workspace.RootDir != "" {
-		base = resolveProjectName(a.Workspace.RootDir)
+	if root != "" {
+		base = resolveProjectName(root)
 	}
 	title := base
-	snaps, _ := a.Terminal.SnapshotTabs()
+	snaps, _ := ts.SnapshotTabs()
 	for n := 2; ; n++ {
 		taken := false
 		for _, t := range snaps {
@@ -593,12 +602,12 @@ func (a *AppUI) newTerminalSession() (string, int) {
 		}
 		title = fmt.Sprintf("%s %d", base, n)
 	}
-	tab, err := a.Terminal.NewTabCustom(title, root, cmd, env)
+	tab, err := ts.NewTabCustom(title, root, cmd, env)
 	if err != nil {
 		return title, -1
 	}
 	idx := -1
-	snaps2, _ := a.Terminal.SnapshotTabs()
+	snaps2, _ := ts.SnapshotTabs()
 	for _, t := range snaps2 {
 		if t.ID == tab.ID {
 			idx = t.Index
@@ -618,10 +627,22 @@ func (a *AppUI) OpenDrawerPaneNewTerminal() {
 	a.openDrawerTabInstance(RightTabTerminal, title, idx)
 }
 
+// OpenDrawerPaneTerminalInDir spawns a NEW terminal session in targetDir and
+// opens it in the right drawer without moving the shell to the bottom panel.
+func (a *AppUI) OpenDrawerPaneTerminalInDir(targetDir string) {
+	title, idx := a.newTerminalSessionInDir(targetDir)
+	if idx < 0 {
+		return
+	}
+	a.setBottomTerminalVisible(false)
+	a.ShowRightDrawer = true
+	a.openDrawerTabInstance(RightTabTerminal, title, idx)
+}
+
 // pickDrawerPaneTerminal spawns a fresh terminal session and opens it as a
 // new co-existing pane tab, closing the launcher instance it came from.
 func (a *AppUI) pickDrawerPaneTerminal() {
-	a.ShowBottomTerminal = false
+	a.setBottomTerminalVisible(false)
 	title, idx := a.newTerminalSession()
 	if idx < 0 {
 		return
@@ -718,8 +739,10 @@ func (a *AppUI) closeDrawerTab(i int) {
 	if a.drawerActiveIdx > i {
 		a.drawerActiveIdx--
 	}
-	if closed.Kind == RightTabTerminal && a.Terminal != nil && closed.TermIdx >= 0 {
-		a.Terminal.CloseTab(closed.TermIdx)
+	if closed.Kind == RightTabTerminal && closed.TermIdx >= 0 {
+		if ts := a.activeTerminal(); ts != nil {
+			ts.CloseTab(closed.TermIdx)
+		}
 		for j := range a.DrawerTabs {
 			if a.DrawerTabs[j].Kind == RightTabTerminal && a.DrawerTabs[j].TermIdx > closed.TermIdx {
 				a.DrawerTabs[j].TermIdx--
@@ -746,8 +769,10 @@ func (a *AppUI) activateDrawerTab(i int) {
 	}
 	a.drawerActiveIdx = i
 	a.RightDrawerTab = a.DrawerTabs[i].Kind
-	if a.DrawerTabs[i].Kind == RightTabTerminal && a.Terminal != nil {
-		a.Terminal.SelectTab(a.DrawerTabs[i].TermIdx)
+	if a.DrawerTabs[i].Kind == RightTabTerminal {
+		if ts := a.activeTerminal(); ts != nil {
+			ts.SelectTab(a.DrawerTabs[i].TermIdx)
+		}
 	}
 	if a.DrawerTabs[i].Kind == RightTabChat && a.DrawerTabs[i].ChatID != "" {
 		a.ActiveSideChatID = a.DrawerTabs[i].ChatID
@@ -2112,7 +2137,7 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		return
 	}
 
-	full := ""
+	full := a.ActiveSideFile
 	if a.Workspace != nil {
 		full = a.Workspace.ResolveFullPath(a.ActiveSideFile)
 	}
@@ -2138,6 +2163,11 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 
 	// Editor view of the active file.
 	doc := a.Editor.GetDoc(full)
+	if doc == nil && full != "" {
+		if validatePreviewableFile(full) == nil {
+			doc, _ = a.Editor.OpenFile(full, a.ActiveSideFile)
+		}
+	}
 	if doc == nil {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Text(c, "File unavailable").FontSize(12).TextColor(tc.TextMuted)

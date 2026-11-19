@@ -8,6 +8,7 @@ package ui
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -147,8 +148,8 @@ func activeMentionToken(text string) (query string, ok bool) {
 	return token, true
 }
 
-// mentionMatches lists workspace files matching the @ query (fuzzy basename
-// first, exactly as AtMentionMenu.tsx flattens the file tree).
+// mentionMatches lists workspace files and folders matching the @ query (fuzzy
+// basename first, exactly as AtMentionMenu.tsx flattens the file tree).
 func (a *AppUI) mentionMatches(query string) []composerSuggestion {
 	if a.Workspace == nil {
 		return nil
@@ -161,25 +162,68 @@ func (a *AppUI) mentionMatches(query string) []composerSuggestion {
 	files := a.Workspace.FilteredFiles()
 	type scored struct {
 		path  string
+		isDir bool
 		score float64
 	}
 	var matches []scored
-	for _, f := range files {
-		if f.IsDir {
-			continue
+	seenDirs := make(map[string]bool)
+	addCandidate := func(relPath string, isDir bool) {
+		matchTarget := relPath
+		if isDir && strings.HasSuffix(query, "/") {
+			matchTarget = strings.TrimSuffix(relPath, "/") + "/"
 		}
 		if query == "" {
-			matches = append(matches, scored{f.RelativePath, 0})
-		} else if m := fuzzy.ScoreFilePath(query, f.RelativePath); m != nil {
-			matches = append(matches, scored{f.RelativePath, m.Score})
+			matches = append(matches, scored{path: relPath, isDir: isDir, score: 0})
+		} else if m := fuzzy.ScoreFilePath(query, matchTarget); m != nil {
+			matches = append(matches, scored{path: relPath, isDir: isDir, score: m.Score})
 		}
 	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
-	if len(matches) > 12 {
-		matches = matches[:12]
+	for _, f := range files {
+		normRel := strings.TrimSuffix(strings.ReplaceAll(f.RelativePath, "\\", "/"), "/")
+		if normRel == "" || normRel == "." {
+			continue
+		}
+		if f.IsDir {
+			if !seenDirs[normRel] {
+				seenDirs[normRel] = true
+				addCandidate(normRel, true)
+			}
+			continue
+		}
+		// Synthesize parent directories because WorkspaceState.Refresh() only
+		// stores leaf files in Files.
+		for dir := path.Dir(normRel); dir != "." && dir != "" && dir != "/"; dir = path.Dir(dir) {
+			if !seenDirs[dir] {
+				seenDirs[dir] = true
+				addCandidate(dir, true)
+			}
+		}
+		addCandidate(f.RelativePath, false)
+	}
+	if query != "" {
+		sort.SliceStable(matches, func(i, j int) bool {
+			if matches[i].score != matches[j].score {
+				return matches[i].score > matches[j].score
+			}
+			return matches[i].path < matches[j].path
+		})
+	}
+	const maxMentionMatches = 50
+	if len(matches) > maxMentionMatches {
+		matches = matches[:maxMentionMatches]
 	}
 	out := make([]composerSuggestion, 0, len(matches))
 	for _, m := range matches {
+		if m.isDir {
+			dirPath := strings.TrimSuffix(m.path, "/") + "/"
+			out = append(out, composerSuggestion{
+				Name:        dirPath,
+				Description: "Folder",
+				Category:    "folder",
+				Insert:      "@" + dirPath + " ",
+			})
+			continue
+		}
 		out = append(out, composerSuggestion{
 			Name:     m.path,
 			Category: "file",
@@ -194,43 +238,52 @@ func (a *AppUI) mentionMatches(query string) []composerSuggestion {
 }
 
 // renderComposerMenu draws the floating autocomplete panel above the input:
-// rows with category color dot, mono name, muted description, selection
-// highlight, and the footer hint bar of the webview menus.
+// scrollable rows with category/file/folder icon, mono name, muted description,
+// selection highlight, and the pinned footer hint bar of the webview menus.
 func (a *AppUI) renderComposerMenu(c *ui.Context, tc theme.ThemeColors, items []composerSuggestion, selected int, kind string) {
 	panel := ui.Column(c).Radius(12).Background(tc.SurfaceRaised).
 		BorderWidth(1).BorderColor(tc.Border).
 		Shadow(0, 8, 24, -12, ui.RGBA(0, 0, 0, 0.45)).
 		MaxHeight(260).Clip()
 	panel.Children(func() {
-		for i, it := range items {
-			idx, item := i, it
-			row := ui.Row(c.Key(fmt.Sprintf("%s-item-%s-%d", kind, item.Name, idx))).
-				Padding(6, 10).Gap(8).AlignItems(ui.Center)
-			row.Children(func() {
-				ui.Box(c).Size(6, 6).Radius(3).Background(categoryColor(tc, item.Category))
-				name := ui.Text(c, item.Name).FontSize(12)
-				if item.Category == "file" {
-					name.Font("Geist Mono")
-				} else {
-					name.FontWeight(500)
-				}
-				if item.Description != "" {
-					ui.Text(c, item.Description).FontSize(11).TextColor(tc.TextMuted).SingleLine().Grow(1)
-				}
-				ui.Box(c).Grow(1)
+		ui.Scroll(c.Key(kind + "-menu-scroll")).MaxHeight(220).Children(func() {
+			for i, it := range items {
+				idx, item := i, it
+				row := ui.Row(c.Key(fmt.Sprintf("%s-item-%s-%d", kind, item.Name, idx))).
+					Padding(6, 10).Gap(8).AlignItems(ui.Center)
+				row.Children(func() {
+					switch item.Category {
+					case "folder":
+						ui.Icon(c, icons.TablerFolder).Width(13).Height(13).TextColor(tc.Accent)
+					case "file":
+						ui.Icon(c, icons.TablerFile).Width(13).Height(13).TextColor(tc.TextMuted)
+					default:
+						ui.Box(c).Size(6, 6).Radius(3).Background(categoryColor(tc, item.Category))
+					}
+					name := ui.Text(c, item.Name).FontSize(12)
+					if item.Category == "file" || item.Category == "folder" {
+						name.Font("Geist Mono")
+					} else {
+						name.FontWeight(500)
+					}
+					if item.Description != "" {
+						ui.Text(c, item.Description).FontSize(11).TextColor(tc.TextMuted).SingleLine().Grow(1)
+					}
+					ui.Box(c).Grow(1)
+					if idx == selected {
+						ui.Text(c, "↵").FontSize(11).TextColor(tc.TextMuted)
+					}
+				})
 				if idx == selected {
-					ui.Text(c, "↵").FontSize(11).TextColor(tc.TextMuted)
+					row.Background(tc.Text.Alpha(0.08))
+				} else if row.Hovered() {
+					row.Background(tc.Text.Alpha(0.05))
 				}
-			})
-			if idx == selected {
-				row.Background(tc.Text.Alpha(0.08))
-			} else if row.Hovered() {
-				row.Background(tc.Text.Alpha(0.05))
+				if row.Clicked() {
+					a.applyComposerSuggestion(item)
+				}
 			}
-			if row.Clicked() {
-				a.applyComposerSuggestion(item)
-			}
-		}
+		})
 		footer := ui.Row(c).Padding(5, 10).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.5)).Gap(8).AlignItems(ui.Center)
 		footer.Children(func() {
 			KbdText(c, tc, "↑↓")
