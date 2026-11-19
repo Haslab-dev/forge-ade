@@ -215,6 +215,7 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 				shellName = filepath.Base(a.Settings.DefaultShell)
 			}
 			ui.Text(c, shellName).FontSize(12).TextColor(tc.TextMuted)
+			a.renderTerminalFocusBadge(c, tc, ts)
 
 			a.renderTerminalTabsStrip(c, tc, ts, "bottom-term")
 
@@ -274,7 +275,28 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 	})
 }
 
-// renderTerminal renders the Ghostty terminal viewport.
+func (a *AppUI) isTerminalFocused(ts *terminal.TerminalState) bool {
+	if ts == nil || a.termFocusWasFocused == nil {
+		return false
+	}
+	return a.termFocusWasFocused[ts]
+}
+
+func (a *AppUI) renderTerminalFocusBadge(c *ui.Context, tc theme.ThemeColors, ts *terminal.TerminalState) {
+	if !a.isTerminalFocused(ts) {
+		return
+	}
+	pill := ui.Row(c.Key("term-active-badge")).Height(18).Radius(9).Padding(0, 6).Gap(4).
+		AlignItems(ui.Center).Shrink(0).
+		Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+	pill.Children(func() {
+		ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success)
+		ui.Text(c, "Active").FontSize(10).FontWeight(600).TextColor(tc.Accent)
+	})
+}
+
+// renderTerminal renders the Ghostty terminal viewport (native blinking cursor
+// activates automatically while focused).
 func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 	if ts == nil {
 		return
@@ -287,10 +309,13 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 		term = ts.Term()
 	}
 	if term != nil {
+		if a.termFocusWasFocused == nil {
+			a.termFocusWasFocused = make(map[*terminal.TerminalState]bool)
+		}
 		// Key by active session: without a per-session key MyGo may reuse the
 		// previous GPU surface element, so switching tabs would keep showing
 		// the old shell ("switching doesn't work").
-		termplugin.View(c, term).Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
+		termView := termplugin.View(c, term).Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
 			// No "Copy" item: the terminal copies on select (copy-on-select)
 			// and ⌘C is handled by the terminal itself; mygo exposes no API to
 			// read back the terminal selection to copy it manually.
@@ -323,6 +348,7 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 				_ = ts.Restart()
 			}
 		})
+		a.termFocusWasFocused[ts] = termView.Focused()
 	} else {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Text(c, "Terminal not available").TextColor(t.TextMuted)

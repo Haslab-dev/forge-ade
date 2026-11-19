@@ -17,6 +17,7 @@ func (a *AppUI) OpenTerminalSnippetsModal(targetSessionID, draftCommand, draftTi
 	a.ShowTerminalSnippetsModal = true
 	a.TerminalSnippetTab = "snippets"
 	a.TerminalSnippetTargetSession = targetSessionID
+	a.TerminalSnippetTargetState = a.resolveSnippetTargetState(targetSessionID)
 	a.TerminalSnippetSearch = ""
 	a.TerminalSnippetCategory = "all"
 	a.TerminalSnippetDraftCmd = draftCommand
@@ -424,17 +425,32 @@ func (a *AppUI) runTerminalCommand(cmd string) {
 		a.Snippets.RecordHistory(cmd, "snippet")
 	}
 
-	// Send to active terminal PTY
-	ts := a.activeTerminal()
+	// Send to target terminal PTY (main-pane terminal, bottom dock, or right drawer)
+	ts := a.TerminalSnippetTargetState
+	if ts == nil {
+		ts = a.resolveSnippetTargetState(a.TerminalSnippetTargetSession)
+	}
 	targetSessionID := a.TerminalSnippetTargetSession
 	if targetSessionID == "" && ts != nil {
 		targetSessionID = ts.ActiveSessionID
 	}
 
 	if ts != nil {
-		if !a.isBottomTerminalVisible() && !(a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
+		isMainEditorPane := ts == a.Terminal && a.Mode == ModeEditor && a.Editor != nil && strings.HasPrefix(a.Editor.ActivePath, "terminal://")
+		if !isMainEditorPane && !a.isBottomTerminalVisible() && !(a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
 			a.setBottomTerminalVisible(true)
 		}
 		_ = ts.WriteInput(targetSessionID, cmd+"\n")
 	}
+}
+
+func (a *AppUI) resolveSnippetTargetState(targetSessionID string) *terminal.TerminalState {
+	if targetSessionID != "" {
+		for _, cand := range []*terminal.TerminalState{a.Terminal, a.EditorBottomTerminal, a.AgentTerminal} {
+			if cand != nil && cand.ActiveSessionID == targetSessionID {
+				return cand
+			}
+		}
+	}
+	return a.snippetDefaultTerminal()
 }

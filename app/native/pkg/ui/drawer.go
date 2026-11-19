@@ -261,6 +261,8 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 						if IconButton(c, tc, icons.TablerRefresh, 11).Clicked() {
 							_ = ts.Restart()
 						}
+						ui.Box(c).Grow(1)
+						a.renderTerminalFocusBadge(c, tc, ts)
 					})
 					a.renderTerminal(c, ts)
 				}

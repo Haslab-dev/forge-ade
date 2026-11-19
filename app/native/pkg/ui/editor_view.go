@@ -441,8 +441,8 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 
 		actionBtn(icons.TablerBook, "Snippets", false, func() {
 			sessID := ""
-			if a.Terminal != nil {
-				sessID = a.Terminal.ActiveSessionID
+			if ts := a.snippetDefaultTerminal(); ts != nil {
+				sessID = ts.ActiveSessionID
 			}
 			a.OpenTerminalSnippetsModal(sessID, "", "")
 		})

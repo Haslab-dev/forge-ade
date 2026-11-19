@@ -406,6 +406,10 @@ type AppUI struct {
 	TerminalSnippetEditID        string
 	TerminalSnippetFormOpen      bool
 	TerminalSnippetTargetSession string
+	TerminalSnippetTargetState   *terminal.TerminalState
+
+	// Terminal active-focus badge state
+	termFocusWasFocused map[*terminal.TerminalState]bool
 
 	// Timeline vs Project view in sidebar
 	SidebarListView string // "project" (default) or "timeline"
@@ -914,7 +918,7 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		}},
 		{ID: "terminal-snippets", Label: "Terminal Snippets & History", Detail: "Saved terminal commands and history", Shortcut: "⌥S", Run: func() {
 			sessID := ""
-			if ts := a.activeTerminal(); ts != nil {
+			if ts := a.snippetDefaultTerminal(); ts != nil {
 				sessID = ts.ActiveSessionID
 			}
 			a.OpenTerminalSnippetsModal(sessID, "", "")
@@ -1269,7 +1273,7 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if c.Shortcut(ui.Alt, ui.KeyS) {
 		sessID := ""
-		if ts := a.activeTerminal(); ts != nil {
+		if ts := a.snippetDefaultTerminal(); ts != nil {
 			sessID = ts.ActiveSessionID
 		}
 		a.OpenTerminalSnippetsModal(sessID, "", "")
@@ -2213,6 +2217,16 @@ func (a *AppUI) activeTerminal() *terminal.TerminalState {
 		return a.EditorBottomTerminal
 	}
 	return a.Terminal
+}
+
+// snippetDefaultTerminal returns the terminal that keyboard/toolbar snippet
+// actions should target: the main-pane terminal when a "terminal://" tab is
+// active in Editor Mode, otherwise the mode's active dock/drawer terminal.
+func (a *AppUI) snippetDefaultTerminal() *terminal.TerminalState {
+	if a.Mode == ModeEditor && a.Editor != nil && strings.HasPrefix(a.Editor.ActivePath, "terminal://") && a.Terminal != nil {
+		return a.Terminal
+	}
+	return a.activeTerminal()
 }
 
 func (a *AppUI) isBottomTerminalVisible() bool {

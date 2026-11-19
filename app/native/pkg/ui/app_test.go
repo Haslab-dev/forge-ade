@@ -1140,6 +1140,30 @@ func TestEditorShellPersistsAcrossDifferentModeWorkspaces(t *testing.T) {
 	}
 }
 
+func TestSnippetTargetsMainEditorPaneWithoutOpeningBottomTerminal(t *testing.T) {
+	dir := t.TempDir()
+	eng := engine.NewEngine(dir)
+	app := NewAppUI(eng, dir)
+	defer app.Close()
+
+	app.setMode(ModeEditor)
+	app.ShowBottomTerminal = false
+	app.openEditorTerminalTab("pchain-api")
+
+	sessID := ""
+	if ts := app.snippetDefaultTerminal(); ts != nil {
+		sessID = ts.ActiveSessionID
+	}
+	app.OpenTerminalSnippetsModal(sessID, "", "")
+	if app.TerminalSnippetTargetState != app.Terminal {
+		t.Fatalf("expected snippet target to be main-pane app.Terminal, got %p (want %p)", app.TerminalSnippetTargetState, app.Terminal)
+	}
+	app.runTerminalCommand("echo hello")
+	if app.ShowBottomTerminal {
+		t.Fatalf("applying snippet to main-pane terminal must not open bottom terminal")
+	}
+}
+
 func TestExplorerOpenInTerminalRespectsAgentMode(t *testing.T) {
 	dir := t.TempDir()
 	eng := engine.NewEngine(dir)
