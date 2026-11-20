@@ -2409,6 +2409,69 @@ func (as *AgentState) ActiveSession() *AgentSession {
 	return nil
 }
 
+// FindSession returns the session with the matching ID, or nil if not found.
+func (as *AgentState) FindSession(sessionID string) *AgentSession {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			return s
+		}
+	}
+	return nil
+}
+
+// GetLastUserPrompt returns the text of the most recent user prompt in the session.
+func (as *AgentState) GetLastUserPrompt(sessionID string) string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			for i := len(s.Messages) - 1; i >= 0; i-- {
+				if s.Messages[i] != nil && s.Messages[i].Role == "user" {
+					return s.Messages[i].Text
+				}
+			}
+			break
+		}
+	}
+	return ""
+}
+
+// RestartACPSession restarts the backend ACP client process for the given session
+// so it immediately adopts new credentials from Keychain/environment, while preserving
+// the full conversation transcript and state.
+func (as *AgentState) RestartACPSession(sessionID string) error {
+	as.mu.Lock()
+	var targetSess *AgentSession
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			targetSess = s
+			break
+		}
+	}
+	if targetSess == nil {
+		as.mu.Unlock()
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	as.mu.Unlock()
+
+	var newSess *acp.Session
+	var err error
+	if as.ACPMgr != nil {
+		newSess, err = as.ACPMgr.RestartSession(sessionID)
+	} else if as.engine != nil && as.engine.ACPMgr != nil {
+		newSess, err = as.engine.ACPMgr.RestartSession(sessionID)
+	} else {
+		return fmt.Errorf("no ACP manager available")
+	}
+
+	if err == nil && newSess != nil {
+		as.syncACPSessionState(targetSess, newSess.Model, newSess.RemoteSessionID)
+	}
+	return err
+}
+
 func (as *AgentState) nextSessionIDLocked() string {
 	base := fmt.Sprintf("session-%d", time.Now().UnixMilli())
 	candidate := base

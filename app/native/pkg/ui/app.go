@@ -273,48 +273,49 @@ type AppUI struct {
 	ThinkingBlockExpanded map[string]bool
 	InspectorCollapsed    bool
 
-	ShowNewFileModal        bool
-	NewFileName             string
-	ShowNewFolderModal      bool
-	NewFolderName           string
-	ShowNewTaskModal        bool
-	NewTaskTitle            string
-	NewTaskWorkspacePath    string // preselected folder for group-level "+ New task"
-	NewTaskAgentType        string // "acp" or "cli"
-	NewTaskSearchQuery      string
-	NewTaskFilterTab        string // "all", "acp", "cli"
-	NewTaskSelectedKind     string // "acp", "cli"
-	NewTaskSelectedAgentID  string
-	NewTaskSelectedName     string
-	NewTaskSelectedExec     string
-	NewTaskSelectedArgs     []string
-	NewTaskUninstalledOpen  bool
-	NewTaskStep             string // "agent" or "workspace"
-	SelectedAgentID         string
-	SelectedAgentModel      string
-	ShowTaskMenuModal       bool
-	ShowRenameModal         bool
-	RenameSessionTitle      string
-	RenameSessionID         string
-	RenameSessionIsCLI      bool
-	ShowRenameFileModal     bool
-	RenameFileOldPath       string
-	RenameFilePath          string
-	ShowBranchModal         bool
-	BranchSearchQuery       string
-	ShowModelPalette        bool
-	ModelSearchQuery        string
-	SelectedHarnessID       string
-	SelectedProviderTab     string
-	CollapsedProjectGroups  map[string]bool
-	ExpandedProjectGroups   map[string]bool
-	ExpandedFileTreeFolders map[string]bool
-	explorerTreeRoot        string
-	explorerTreeVersion     uint64
-	explorerTreeQuery       string
-	explorerTreeCached      []*FileTreeNode
-	ProjectFilter           string // "all" or a project name (sidebar "All projects" menu)
-	TaskSortBy              string // "updated" (default) or "created" (sidebar sort menu)
+	ShowNewFileModal            bool
+	NewFileName                 string
+	ShowNewFolderModal          bool
+	NewFolderName               string
+	ShowNewTaskModal            bool
+	NewTaskTitle                string
+	NewTaskWorkspacePath        string // preselected folder for group-level "+ New task"
+	NewTaskAgentType            string // "acp" or "cli"
+	NewTaskSearchQuery          string
+	NewTaskFilterTab            string // "all", "acp", "cli"
+	NewTaskSelectedKind         string // "acp", "cli"
+	NewTaskSelectedAgentID      string
+	NewTaskSelectedName         string
+	NewTaskSelectedExec         string
+	NewTaskSelectedArgs         []string
+	NewTaskUninstalledOpen      bool
+	NewTaskStep                 string // "agent" or "workspace"
+	SelectedAgentID             string
+	SelectedAgentModel          string
+	ShowTaskMenuModal           bool
+	ShowRenameModal             bool
+	RenameSessionTitle          string
+	RenameSessionID             string
+	RenameSessionIsCLI          bool
+	ShowRenameFileModal         bool
+	RenameFileOldPath           string
+	RenameFilePath              string
+	ShowBranchModal             bool
+	BranchSearchQuery           string
+	ShowModelPalette            bool
+	ModelSearchQuery            string
+	SelectedHarnessID           string
+	SelectedProviderTab         string
+	isFetchingAntigravityModels bool
+	CollapsedProjectGroups      map[string]bool
+	ExpandedProjectGroups       map[string]bool
+	ExpandedFileTreeFolders     map[string]bool
+	explorerTreeRoot            string
+	explorerTreeVersion         uint64
+	explorerTreeQuery           string
+	explorerTreeCached          []*FileTreeNode
+	ProjectFilter               string // "all" or a project name (sidebar "All projects" menu)
+	TaskSortBy                  string // "updated" (default) or "created" (sidebar sort menu)
 	// ProjectOrder holds the sidebar's custom project-group display order
 	// (project names, earliest first, most-recently-moved last). Names not
 	// listed keep the implicit alphabetical order after the ordered ones;
@@ -716,6 +717,32 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		// FollowAgent) below MUST run on the main thread: this handler executes
 		// on the ACPManager event-consumer goroutine (P1-2).
 		nativeID := appUI.Agent.MapInternalSession(sessionID)
+
+		// Autonomous Failover: If the turn failed due to quota exhaustion / 429,
+		// automatically rotate to the next healthy account and resume the turn in-place.
+		if isQuotaExhaustedError(info.Error) && appUI.Settings != nil {
+			if mgr := appUI.Settings.AntigravityAccountMgr(); mgr != nil {
+				if nextAcc := mgr.NextAvailableAccount(); nextAcc != nil {
+					_ = mgr.SetActive(nextAcc.ID)
+					appUI.refreshQuotaAsync()
+					lastPrompt := appUI.Agent.GetLastUserPrompt(nativeID)
+					if lastPrompt != "" {
+						_ = appUI.Agent.RestartACPSession(nativeID)
+						go appUI.Agent.TriggerTurnForSession(nativeID, lastPrompt)
+						appUI.queueToast(ui.Toast{
+							Title:       "Quota Failover",
+							Description: fmt.Sprintf("Auto-switched to %s and resumed turn", nextAcc.Email),
+							Type:        "info",
+						})
+						if appUI.Window != nil {
+							appUI.Window.Invalidate()
+						}
+						return
+					}
+				}
+			}
+		}
+
 		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
 			go appUI.Agent.TriggerTurnForSession(nativeID, next)
 		}
@@ -896,6 +923,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		}
 	}()
 
+	appUI.syncAntigravityModelsToACP()
+
 	return appUI
 }
 
@@ -1020,6 +1049,7 @@ func (a *AppUI) refreshQuotaAsync() {
 			if data != nil {
 				a.QuotaData = data
 			}
+			a.syncAntigravityModelsToACP()
 			a.invalidateUI()
 		})
 	}()

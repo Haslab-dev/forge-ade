@@ -103,6 +103,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "ACP")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAntigravityQuota, "Antigravity Quota", icons.TablerChartBar, "MULTI")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
@@ -146,6 +147,8 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 								a.renderSettingsTabModels(c, tc, sm)
 							case settings.SettingsTabAgents:
 								a.renderSettingsTabAgents(c, tc, sm)
+							case settings.SettingsTabAntigravityQuota:
+								a.renderSettingsTabAntigravityQuota(c, tc, sm)
 							case settings.SettingsTabMCP:
 								a.renderSettingsTabMCPReal(c, tc, sm)
 							case settings.SettingsTabSkills:
@@ -189,6 +192,8 @@ func settingsSectionTitle(tab int) string {
 		return "Providers & Models"
 	case settings.SettingsTabAgents:
 		return "ACP & Agent CLIs"
+	case settings.SettingsTabAntigravityQuota:
+		return "Antigravity Quota Tracker"
 	case settings.SettingsTabMCP:
 		return "MCP Servers"
 	case settings.SettingsTabSkills:

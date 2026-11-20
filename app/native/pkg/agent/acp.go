@@ -643,6 +643,26 @@ func (mgr *ACPManager) RefreshAvailability() {
 	}
 }
 
+// UpdateAgentSupportedModels updates the supported models for a registered ACP agent.
+func (mgr *ACPManager) UpdateAgentSupportedModels(agentID string, models []string) {
+	if len(models) == 0 {
+		return
+	}
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
+	norm := normalizeACPAgentLookupID(agentID)
+	for i := range mgr.Agents {
+		if strings.EqualFold(mgr.Agents[i].ID, agentID) || strings.EqualFold(mgr.Agents[i].ID, norm) {
+			mgr.Agents[i].SupportedModels = append([]string(nil), models...)
+			if mgr.Agents[i].Model == "" && len(models) > 0 {
+				mgr.Agents[i].Model = models[0]
+			}
+			break
+		}
+	}
+}
+
 // StartSession launches an ACP agent session.
 func (mgr *ACPManager) StartSession(agentID, cwd string, model string) (*acp.Session, error) {
 	return mgr.StartSessionWithID("", agentID, cwd, model, "supervised")
@@ -731,6 +751,14 @@ func (mgr *ACPManager) StartSessionWithID(sessionID, agentID, cwd, model, permis
 
 	if mgr.manager != nil {
 		return mgr.manager.StartSession(opts)
+	}
+	return nil, fmt.Errorf("acp manager not initialized")
+}
+
+// RestartSession restarts the underlying ACP process for a session, keeping its conversation ID intact.
+func (mgr *ACPManager) RestartSession(sessionID string) (*acp.Session, error) {
+	if mgr.manager != nil {
+		return mgr.manager.RestartSession(sessionID)
 	}
 	return nil, fmt.Errorf("acp manager not initialized")
 }

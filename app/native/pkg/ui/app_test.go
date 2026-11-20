@@ -1293,3 +1293,26 @@ func TestOpenLocalFileURLAndBinaryGuard(t *testing.T) {
 		t.Fatalf("expected Makefile to be allowed, got %v", err)
 	}
 }
+
+func TestIsQuotaExhaustedError(t *testing.T) {
+	cases := []struct {
+		errStr   string
+		expected bool
+	}{
+		{"", false},
+		{"normal network timeout", false},
+		{"syntax error in input", false},
+		{"HTTP 429 Too Many Requests", true},
+		{"error: resource_exhausted: quota exceeded for model gemini-pro", true},
+		{"Google Generative AI: Rate limit exceeded", true},
+		{"Rate_Limit hit, please wait", true},
+		{"insufficient_quota for project", true},
+		{"QuotaResetDelay reached", true},
+	}
+
+	for _, tc := range cases {
+		if got := isQuotaExhaustedError(tc.errStr); got != tc.expected {
+			t.Errorf("isQuotaExhaustedError(%q) = %v; want %v", tc.errStr, got, tc.expected)
+		}
+	}
+}

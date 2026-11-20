@@ -16,6 +16,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/core/quota"
 )
 
 // SupportedLLMProviders lists the primary LLM provider options.
@@ -33,22 +34,29 @@ var ProviderDefaultModels = map[string]string{}
 
 // SettingsTab Constants
 const (
-	SettingsTabModels     = 0  // Providers & Models
-	SettingsTabAppearance = 1  // Appearance & Themes
-	SettingsTabAgents     = 2  // ACP & Agent CLIs
-	SettingsTabShortcuts  = 3  // Terminal & Shortcuts
-	SettingsTabGeneral    = 4  // General
-	SettingsTabMCP        = 5  // MCP Servers
-	SettingsTabSkills     = 6  // Skills
-	SettingsTabPlugins    = 7  // Plugins
-	SettingsTabMemory     = 8  // Memory
-	SettingsTabAutos      = 9  // Automations (bots)
-	SettingsTabSubagents  = 10 // Sub-Agents & Roles
-	SettingsTabBrowser    = 11 // Browser Use
-	SettingsTabComputer   = 12 // Computer Use
-	SettingsTabCommands   = 13 // Slash Commands
-	SettingsTabHooks      = 14 // Lifecycle Hooks
-	SettingsTabIndexing   = 15 // Codebase Indexing
+	SettingsTabModels           = 0  // Providers & Models
+	SettingsTabAppearance       = 1  // Appearance & Themes
+	SettingsTabAgents           = 2  // ACP & Agent CLIs
+	SettingsTabShortcuts        = 3  // Terminal & Shortcuts
+	SettingsTabGeneral          = 4  // General
+	SettingsTabMCP              = 5  // MCP Servers
+	SettingsTabSkills           = 6  // Skills
+	SettingsTabPlugins          = 7  // Plugins
+	SettingsTabMemory           = 8  // Memory
+	SettingsTabAutos            = 9  // Automations (bots)
+	SettingsTabSubagents        = 10 // Sub-Agents & Roles
+	SettingsTabBrowser          = 11 // Browser Use
+	SettingsTabComputer         = 12 // Computer Use
+	SettingsTabCommands         = 13 // Slash Commands
+	SettingsTabHooks            = 14 // Lifecycle Hooks
+	SettingsTabIndexing         = 15 // Codebase Indexing
+	SettingsTabAntigravityQuota = 16 // Antigravity Quota Tracker
+)
+
+// AddAccountMode constants
+const (
+	AddAccountModeOAuth  = 0
+	AddAccountModeManual = 1
 )
 
 // CustomSlashCommand represents a user-defined prompt expansion.
@@ -165,6 +173,38 @@ type SettingsManager struct {
 	NewModelName            string
 	ModelSearchQuery        string
 	IsFetchingModels        bool
+
+	// Antigravity Quota Tracker state
+	accountMgr           *quota.AntigravityAccountManager
+	IsRefreshingQuota    bool
+	RefreshingAccountID  string
+	IsAddingAccount      bool
+	AddAccountMode       int // 0: OAuth (automatic), 1: Manual (token/json)
+	IsOAuthFlowActive    bool
+	OAuthFlowURL         string
+	OAuthFlowStatus      string
+	NewAccountInput      string
+	NewAccountLabel      string
+	AccountStatusMessage string
+}
+
+// AntigravityAccountMgr returns the active AntigravityAccountManager instance.
+func (sm *SettingsManager) AntigravityAccountMgr() *quota.AntigravityAccountManager {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.accountMgr != nil {
+		return sm.accountMgr
+	}
+	if sm.engine != nil && sm.engine.AntigravityAccounts != nil {
+		sm.accountMgr = sm.engine.AntigravityAccounts
+		return sm.accountMgr
+	}
+	dataDir := ""
+	if sm.engine != nil && sm.engine.DataDir != "" {
+		dataDir = sm.engine.DataDir
+	}
+	sm.accountMgr = quota.NewAccountManager(dataDir)
+	return sm.accountMgr
 }
 
 // DefaultBaseURL returns the OpenAI-compatible base URL assumed per provider.

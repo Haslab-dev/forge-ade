@@ -1361,6 +1361,37 @@ func (m *Manager) GetSession(sessionID string) (*Session, bool) {
 	return sess, ok
 }
 
+// RestartSession terminates the active client process for a session and respawns it
+// with continuation arguments (preserving RemoteSessionID / conversation ID), so it
+// immediately adopts newly rotated credentials without losing history or changing session ID.
+func (m *Manager) RestartSession(sessionID string) (*Session, error) {
+	m.mu.Lock()
+	sess, ok := m.sessions[sessionID]
+	if !ok || sess == nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("acp: session not found: %s", sessionID)
+	}
+	oldCli := m.clients[sessionID]
+	if oldCli == nil || oldCli.IsClosed() {
+		m.mu.Unlock()
+		return sess, nil
+	}
+	delete(m.clients, sessionID)
+	opts := SessionOpts{
+		SessionID:       sessionID,
+		AgentID:         sess.AgentID,
+		Cwd:             sess.Cwd,
+		Model:           sess.Model,
+		PermissionMode:  sess.PermissionMode,
+		Title:           sess.Title,
+		ResumeSessionID: sess.RemoteSessionID,
+	}
+	m.mu.Unlock()
+
+	_ = oldCli.Close()
+	return m.StartSession(opts)
+}
+
 // Close terminates every live ACP CLI child process at app shutdown: each
 // Client was spawned with Setpgid:true, so Client.Close's process-group
 // SIGTERM→SIGKILL also reaps the harness's own children (P1-4). Called from

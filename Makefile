@@ -7,9 +7,9 @@
 .SHELLFLAGS := -eu -o pipefail -c
 
 # Locate go even when it is not on PATH (common install locations).
-GO := $(shell command -v go 2>/dev/null || ls /usr/local/go/bin/go /opt/homebrew/opt/go/bin/go 2>/dev/null | head -1)
+GO := $(shell command -v go 2>/dev/null || ls /Users/hy4-mac-002/homebrew/bin/go /opt/homebrew/bin/go /usr/local/go/bin/go /opt/homebrew/opt/go/bin/go 2>/dev/null | head -1)
 GOPATH := $(shell $(GO) env GOPATH 2>/dev/null)
-export PATH := $(dir $(GO))$(GOPATH)/bin:$(PATH)
+export PATH := $(dir $(GO)):/Users/hy4-mac-002/homebrew/bin:$(GOPATH)/bin:$(PATH)
 
 # ── Current version (major.minor.patch) & build ──────────────────
 # web/package.json is the single source of truth for version bumps.

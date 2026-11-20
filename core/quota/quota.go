@@ -363,7 +363,18 @@ func FormatAntigravityResetDuration(remainingFraction float64, resetTimeStr stri
 	}
 	hours := int(diff.Hours())
 	mins := int(diff.Minutes()) % 60
-	return fmt.Sprintf("Refreshes in %dh %dm", hours, mins)
+	if hours >= 24 {
+		days := hours / 24
+		remHours := hours % 24
+		if remHours > 0 {
+			return fmt.Sprintf("Refreshes in %dd %dh", days, remHours)
+		}
+		return fmt.Sprintf("Refreshes in %dd", days)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("Refreshes in %dh %dm", hours, mins)
+	}
+	return fmt.Sprintf("Refreshes in %dm", mins)
 }
 
 var (
@@ -624,7 +635,7 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 			if err == nil {
 				reqModels.Header.Set("Authorization", "Bearer "+accessToken)
 				reqModels.Header.Set("Content-Type", "application/json")
-				reqModels.Header.Set("User-Agent", "Antigravity/1.4.5")
+				reqModels.Header.Set("User-Agent", AntigravityHubUserAgent)
 
 				respModels, doErr := client.Do(reqModels)
 				if doErr == nil {
@@ -665,7 +676,7 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 			if err == nil {
 				reqQuota.Header.Set("Authorization", "Bearer "+accessToken)
 				reqQuota.Header.Set("Content-Type", "application/json")
-				reqQuota.Header.Set("User-Agent", "Antigravity/1.4.5")
+				reqQuota.Header.Set("User-Agent", AntigravityHubUserAgent)
 
 				respQuota, doErr := client.Do(reqQuota)
 				if doErr == nil {

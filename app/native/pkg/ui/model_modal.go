@@ -9,6 +9,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/core/quota"
 )
 
 // ModelMetadata describes a model option for selection.
@@ -196,6 +197,44 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		}
 	}
 
+	getAgentModels := func(ag agent.ACPAgentDefinition) []string {
+		models := ag.SupportedModels
+		if ag.ID == "agent-agy" && a.Settings != nil {
+			if acctMgr := a.Settings.AntigravityAccountMgr(); acctMgr != nil {
+				if activeAcc := acctMgr.ActiveAccount(); activeAcc != nil {
+					if len(activeAcc.AvailableModels) > 0 {
+						models = activeAcc.AvailableModels
+					} else if activeAcc.SupportsArgon() {
+						models = quota.DefaultArgonModels()
+					}
+				}
+			}
+		}
+		return models
+	}
+
+	if a.SelectedHarnessID == "agent-agy" && a.Settings != nil && !a.isFetchingAntigravityModels {
+		if acctMgr := a.Settings.AntigravityAccountMgr(); acctMgr != nil {
+			if activeAcc := acctMgr.ActiveAccount(); activeAcc != nil && activeAcc.AccessToken != "" && len(activeAcc.AvailableModels) == 0 {
+				a.isFetchingAntigravityModels = true
+				go func() {
+					mList, err := acctMgr.FetchAccountAvailableModels(activeAcc.AccessToken)
+					a.runOnUI(func() {
+						a.isFetchingAntigravityModels = false
+						if err == nil && len(mList) > 0 {
+							activeAcc.AvailableModels = mList
+							_ = acctMgr.Save()
+							if a.ACPMgr != nil {
+								a.ACPMgr.UpdateAgentSupportedModels("agent-agy", mList)
+							}
+							a.invalidateUI()
+						}
+					})
+				}()
+			}
+		}
+	}
+
 	if isSearching {
 		for _, m := range internalModels {
 			if strings.Contains(strings.ToLower(m.DisplayName), search) ||
@@ -210,7 +249,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 				if !ag.Available {
 					continue
 				}
-				for _, sm := range ag.SupportedModels {
+				for _, sm := range getAgentModels(ag) {
 					if strings.Contains(strings.ToLower(sm), search) ||
 						strings.Contains(strings.ToLower(ag.Name), search) {
 						visibleModels = append(visibleModels, ModelMetadata{
@@ -252,7 +291,8 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		if a.ACPMgr != nil {
 			for _, ag := range a.ACPMgr.Agents {
 				if ag.ID == a.SelectedHarnessID {
-					for _, sm := range ag.SupportedModels {
+					models := getAgentModels(ag)
+					for _, sm := range models {
 						visibleModels = append(visibleModels, ModelMetadata{
 							ID:            sm,
 							DisplayName:   sm,
@@ -264,7 +304,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 							ContextWindow: "ACP",
 						})
 					}
-					if len(ag.SupportedModels) == 0 && ag.Model != "" {
+					if len(models) == 0 && ag.Model != "" {
 						visibleModels = append(visibleModels, ModelMetadata{
 							ID:            ag.Model,
 							DisplayName:   ag.Model,

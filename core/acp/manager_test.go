@@ -301,6 +301,49 @@ func TestSessionResumeOpts(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "session not found") {
 		t.Errorf("expected 'session not found' error for closed session, got %v", err)
 	}
+
+	// Test RestartSession on unknown session
+	_, err = mgr.RestartSession("non-existent-session")
+	if err == nil || !strings.Contains(err.Error(), "session not found") {
+		t.Errorf("expected 'session not found' error for non-existent session, got %v", err)
+	}
+
+	// Test RestartSession closes existing client
+	fakeCli := &Client{}
+	mgr.mu.Lock()
+	mgr.sessions["restart-me"] = &Session{
+		ID:              "restart-me",
+		AgentID:         "agent-opencode",
+		RemoteSessionID: "convo-999",
+	}
+	mgr.clients["restart-me"] = fakeCli
+	mgr.mu.Unlock()
+
+	_, _ = mgr.RestartSession("restart-me")
+	if !fakeCli.IsClosed() {
+		t.Errorf("expected old client to be closed by RestartSession")
+	}
+
+	// Test RestartSession on idle session (no running client) returns session without respawning
+	mgr.mu.Lock()
+	mgr.sessions["idle-session"] = &Session{
+		ID:      "idle-session",
+		AgentID: "agent-opencode",
+	}
+	mgr.mu.Unlock()
+	sess, err := mgr.RestartSession("idle-session")
+	if err != nil {
+		t.Errorf("expected no error restarting idle session, got: %v", err)
+	}
+	if sess == nil || sess.ID != "idle-session" {
+		t.Errorf("expected idle session to be returned unchanged")
+	}
+	mgr.mu.Lock()
+	_, spawned := mgr.clients["idle-session"]
+	mgr.mu.Unlock()
+	if spawned {
+		t.Errorf("idle session should not spawn a new client")
+	}
 }
 
 func TestCommandCodeToolLifecycle(t *testing.T) {

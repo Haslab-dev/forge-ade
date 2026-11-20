@@ -54,6 +54,9 @@ type Engine struct {
 	AgentMgr  *agent.Manager
 	AutoMgr   *automations.Manager
 
+	// AntigravityAccounts tracks multiple Antigravity accounts, tiers, and quotas.
+	AntigravityAccounts *quota.AntigravityAccountManager
+
 	watcherMu         sync.Mutex
 	watcherSubscribed bool
 	watcherOnChange   func()
@@ -111,23 +114,30 @@ func NewEngine(dataDir string) *Engine {
 	}
 
 	e := &Engine{
-		GitEngine:       gitEngine,
-		LLMClient:       llmClient,
-		CommitGenerator: commitGen,
-		Watcher:         w,
-		ACPMgr:          acpMgr,
-		RemoteFS:        remoteMgr,
-		Bus:             bus,
-		DataDir:         dataDir,
-		SearchMgr:       mgrs.Search,
-		ToolReg:         mgrs.Tools,
-		SkillMgr:        mgrs.Skills,
-		PluginMgr:       mgrs.Plugin,
-		MemoryMgr:       mgrs.Memory,
-		MCPMgr:          mgrs.MCP,
-		ShellMgr:        mgrs.Shells,
-		AgentMgr:        mgrs.Agent,
-		AutoMgr:         autoMgr,
+		GitEngine:           gitEngine,
+		LLMClient:           llmClient,
+		CommitGenerator:     commitGen,
+		Watcher:             w,
+		ACPMgr:              acpMgr,
+		RemoteFS:            remoteMgr,
+		Bus:                 bus,
+		DataDir:             dataDir,
+		SearchMgr:           mgrs.Search,
+		ToolReg:             mgrs.Tools,
+		SkillMgr:            mgrs.Skills,
+		PluginMgr:           mgrs.Plugin,
+		MemoryMgr:           mgrs.Memory,
+		MCPMgr:              mgrs.MCP,
+		ShellMgr:            mgrs.Shells,
+		AgentMgr:            mgrs.Agent,
+		AutoMgr:             autoMgr,
+		AntigravityAccounts: quota.NewAccountManager(dataDir),
+	}
+
+	if len(e.AntigravityAccounts.Accounts()) == 0 {
+		go func() {
+			_, _ = e.AntigravityAccounts.ImportLocalAccount()
+		}()
 	}
 
 	// Run the cron scheduler for the engine's lifetime: it advances and
