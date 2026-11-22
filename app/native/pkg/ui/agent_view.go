@@ -204,7 +204,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								mygo.Clipboard.WriteText(m.Text)
 								c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
 							}
-							bubble := ui.Column(c).Padding(10, 14).Radius(18).
+							bubble := ui.Column(c).Padding(10, 14).Radius(18, 4, 18, 18).
 								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
 								MaxWidth(600)
 							bubble.Children(func() {
@@ -293,35 +293,90 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 									if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
 										a.renderThinkingBlock(c, tc, sessionID, m)
 									}
-									if len(m.Tools) > 1 {
-										a.renderToolGroupBar(c, tc, sessionID, m)
-									}
 									// ZCode's indented lane for everything that worked:
-									// thoughts, tool traces and narration text in
+									// thoughts, tool rows/groups and narration text in
 									// execution order; hidden entirely when collapsed.
-									work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
-										BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+									work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
+										BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6))
 									work.Children(func() {
-										for bi, blk := range m.Blocks {
+										toolAt := func(idx int) *agent.ToolExecution {
+											if idx >= len(m.Blocks) || m.Blocks[idx] == nil || m.Blocks[idx].Kind != "tool" {
+												return nil
+											}
+											for _, t := range m.Tools {
+												if t != nil && t.ID == m.Blocks[idx].ToolID {
+													return t
+												}
+											}
+											return nil
+										}
+										bi := 0
+										for bi < len(m.Blocks) {
+											blk := m.Blocks[bi]
 											if blk == nil || bi == finalTextIdx {
+												bi++
 												continue
 											}
 											if blk.Kind == "thinking" {
 												isLast := bi == len(m.Blocks)-1
 												a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
+												bi++
 												continue
 											}
 											if blk.Kind == "tool" {
-												for _, t := range m.Tools {
-													if t != nil && t.ID == blk.ToolID {
-														a.renderToolTraceRow(c, tc, sessionID, m, t)
+												first := toolAt(bi)
+												if first == nil {
+													bi++
+													continue
+												}
+												fam := classifyTool(first).Family
+												if fam != tfExplore && fam != tfRun && fam != tfChange {
+													// Agent/MCP/skill/design rows stay standalone.
+													a.renderToolTraceRow(c, tc, sessionID, m, first)
+													bi++
+													continue
+												}
+												// Collect the strictly-consecutive run of groupable
+												// tools. ZCode does NOT absorb reasoning into the
+												// group: a thinking block ends the run and renders
+												// as its own standalone row; tools after it start
+												// a fresh run.
+												children := []groupChild{}
+												j := bi
+												for j < len(m.Blocks) && j != finalTextIdx {
+													b := m.Blocks[j]
+													if b == nil {
+														j++
+														continue
+													}
+													if b.Kind != "tool" {
+														break // thinking or narration breaks the run
+													}
+													t := toolAt(j)
+													if t == nil {
+														j++
+														continue
+													}
+													tf := classifyTool(t).Family
+													if tf != tfExplore && tf != tfRun && tf != tfChange {
 														break
 													}
+													children = append(children, groupChild{blockIdx: j, tool: t})
+													j++
 												}
+												if len(children) >= 2 {
+													a.renderConsecutiveSummaryGroup(c, tc, sessionID, m, children,
+														fmt.Sprintf("%s-%d-%d", sessionID, m.ID, bi))
+													bi = j
+													continue
+												}
+												a.renderToolTraceRow(c, tc, sessionID, m, first)
+												bi++
 												continue
 											}
 											// Narration text segment
 											renderTextBlock(blk, false)
+											bi++
 										}
 										if hasThinkingBlocks && m.IsThinking && !m.Done {
 											last := m.Blocks[len(m.Blocks)-1]
@@ -341,7 +396,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 									a.renderWorkPill(c, tc, sessionID, m)
 									open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
 									if open {
-										work := ui.Column(c).Gap(4).Padding(0, 0, 0, 10).
+										work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
 											BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
 										work.Children(func() {
 											if m.Thinking != "" || m.IsThinking {
@@ -501,24 +556,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			})
 		}
 
-		// Floating Task Tracker overlay (pill <-> card), top-right
-		if a.ShowTurnStatusCard {
-			statusSessionID := ""
-			if a.Agent != nil {
-				statusSessionID = a.Agent.ActiveSessionID
-			}
-			a.renderTurnStatusCard(c, tc, statusSessionID)
-		} else {
-			a.renderTaskTracker(c, tc)
-		}
-
-		// ZCode-style floating "Changes +A -D" pill, just below the task
-		// tracker: live working-tree totals while the turn edits files, the
-		// finished turn's totals once done. Hidden while the status card owns
-		// that corner.
-		if !a.ShowTurnStatusCard {
-			a.renderLiveChangesPill(c, tc, msgs)
-		}
+		// ZCode ConversationStatusPanel: capsule ↔ expanded panel in the
+		// top-right corner (Changes / Progress / Agents). Supersedes the old
+		// task-tracker pill, turn-status card and live-changes pill.
+		a.renderStatusPanel(c, tc, msgs)
 	})
 }
 
@@ -569,60 +610,15 @@ func (a *AppUI) liveChangesStats(msgs []*agent.ChatMessage) (add, del, files int
 	return add, del, files, files > 0
 }
 
-// renderLiveChangesPill draws the floating top-right "Changes +A -D" pill
-// (ZCode parity); clicking it opens the right drawer's changes view.
-func (a *AppUI) renderLiveChangesPill(c *ui.Context, tc theme.ThemeColors, msgs []*agent.ChatMessage) {
-	add, del, files, ok := a.liveChangesStats(msgs)
-	if !ok {
-		return
-	}
-	pill := ui.Row(c.Key("changes-pill")).Absolute().Top(50).Right(16).Height(28).Radius(999).
-		Padding(0, 12).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).
-		Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).
-		Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.2))
-	pill.Children(func() {
-		ui.Icon(c, icons.TablerFileDiff).Width(13).Height(13).TextColor(tc.TextMuted)
-		ui.Text(c, "Changes").FontSize(12).FontWeight(600)
-		if add+del > 0 {
-			if add > 0 {
-				ui.Text(c, fmt.Sprintf("+%d", add)).FontSize(11).FontWeight(600).TextColor(tc.DiffAdditionForeground)
-			}
-			if del > 0 {
-				ui.Text(c, fmt.Sprintf("-%d", del)).FontSize(11).FontWeight(600).TextColor(tc.DiffDeletionForeground)
-			}
-		} else {
-			ui.Text(c, fmt.Sprintf("%d files", files)).FontSize(11).TextColor(tc.TextMuted)
-		}
-	})
-	if pill.Clicked() {
-		if a.Git != nil {
-			a.Git.RefreshAsync()
-		}
-		a.RightDrawerTab = RightTabChanges
-		a.ShowRightDrawer = true
-		a.invalidateUI()
-	}
-}
-
 func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
 	running := !m.Done
-	totalSteps := m.TotalSteps
-	if totalSteps == 0 {
-		totalSteps = len(m.Tools)
-	}
 
 	// Live elapsed while the turn runs; the app ticks once a second while
-	// streaming, so this label counts up like forge-ade's "Working for 12s".
-	elapsedSec := m.ThinkingTimeSec
-	if running && !m.TurnStartedAt.IsZero() {
-		elapsedSec = time.Since(m.TurnStartedAt).Seconds()
-	}
-
-	label := "Worked"
+	// streaming, so this label counts up like ZCode's "Working for 12s".
+	label := "Working"
 	if running {
-		label = "Working…"
-		if elapsedSec >= 1 {
-			label = fmt.Sprintf("Working for %.0fs…", elapsedSec)
+		if !m.TurnStartedAt.IsZero() {
+			label = fmt.Sprintf("Working for %s", formatWorkDuration(time.Since(m.TurnStartedAt)))
 		}
 	} else {
 		// forge-ade's workSecs: thought durations when known, otherwise an
@@ -631,43 +627,40 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID st
 		if durationSec <= 0 {
 			durationSec = math.Max(float64(len(m.Tools))*2, 2)
 		}
-		if totalSteps > 0 {
-			stepWord := "steps"
-			if totalSteps == 1 {
-				stepWord = "step"
-			}
-			label = fmt.Sprintf("Worked for %.0fs · Done in %d %s", durationSec, totalSteps, stepWord)
-		} else {
-			label = fmt.Sprintf("Worked for %.0fs", durationSec)
-		}
+		label = fmt.Sprintf("Worked for %s", formatWorkDuration(time.Duration(durationSec*float64(time.Second))))
 	}
 
 	open := m.ShowTools || running
-	pill := ui.Row(c).Radius(8).Padding(4, 10).Gap(6).AlignItems(ui.Center).
-		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).
-		Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.04))
-	pill.Children(func() {
+	// ZCode AssistantHistoryStatus: a full-width borderless row with a
+	// bottom hairline; the running label shimmers, done shows the green
+	// check disc. No boxed pill, no spinner.
+	header := ui.Row(c).Height(32).Padding(0, 2, 6, 2).Gap(8).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5))
+	header.Children(func() {
 		if running {
-			ui.Spinner(c).Size(13, 13).Label("Working")
-			ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(tc.Accent)
+			ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(shimmerTextColor(tc))
 		} else {
-			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
+			ui.Box(c).Size(15, 15).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
 				Background(tc.Success.Alpha(0.15)).Children(func() {
-				ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
+				ui.Icon(c, icons.TablerCheck).Width(10).Height(10).TextColor(tc.Success)
 			})
-			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(tc.Text)
+			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(tc.Text)
 		}
 		ui.Box(c).Grow(1)
 		chev := icons.TablerChevronRight
 		if open {
 			chev = icons.TablerChevronDown
 		}
-		ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+		chevColor := tc.IconMuted.Alpha(0.55)
+		if header.Hovered() {
+			chevColor = tc.IconMuted
+		}
+		ui.Icon(c, chev).Width(13).Height(13).TextColor(chevColor)
 	})
-	if pill.Hovered() {
-		pill.Background(tc.SurfaceRaised)
+	if header.Hovered() {
+		header.Background(tc.Text.Alpha(0.03))
 	}
-	if pill.Clicked() {
+	if header.Clicked() {
 		// m is a frame snapshot; flip the live message under the lock.
 		a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
 			lm.ShowTools = !lm.ShowTools
@@ -680,33 +673,35 @@ func (a *AppUI) renderThinkingBlock(c *ui.Context, tc theme.ThemeColors, session
 }
 
 func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, blockIdx int, text string, isThinking bool) {
-	tokens := len(text) / 4
-	if tokens < 1 && text != "" {
-		tokens = 1
-	}
-
+	// ZCode reasoning rows: collapsed by default even while streaming — the
+	// header shimmers "Thinking" with a one-line preview of the newest
+	// thought; completed turns read "Thought · 4.2s". Body is plain muted
+	// text behind a left guide rail.
 	label := "Thought"
 	if isThinking {
-		label = "Thinking…"
-		elapsed := m.ThinkingTimeSec
-		if !m.TurnStartedAt.IsZero() {
-			elapsed = time.Since(m.TurnStartedAt).Seconds()
-		}
-		if elapsed >= 1 {
-			label = fmt.Sprintf("Thinking for %.0fs…", elapsed)
-		}
+		label = "Thinking"
 	} else {
+		// ZCode: sub-second thoughts read "a few seconds", never "0s".
 		durationText := "a few seconds"
-		if m.ThinkingTimeSec > 0 && blockIdx < 0 {
-			durationText = fmt.Sprintf("%.1fs", m.ThinkingTimeSec)
+		if blockIdx < 0 && m.ThinkingTimeSec >= 1 {
+			durationText = formatWorkDuration(time.Duration(m.ThinkingTimeSec * float64(time.Second)))
+		} else if blockIdx >= 0 {
+			// Per-block duration from the timeline stamps, falling back to
+			// the message-level total for legacy sessions.
+			if n := len(m.Blocks); blockIdx < n && m.Blocks[blockIdx] != nil && m.Blocks[blockIdx].StartedAtMs > 0 {
+				blk := m.Blocks[blockIdx]
+				endMs := blk.EndedAtMs
+				if endMs == 0 {
+					endMs = time.Now().UnixMilli()
+				}
+				if secs := float64(endMs-blk.StartedAtMs) / 1000; secs >= 1 {
+					durationText = formatWorkDuration(time.Duration(maxInt64(endMs-blk.StartedAtMs, 0) * int64(time.Millisecond)))
+				}
+			} else if m.ThinkingTimeSec >= 1 {
+				durationText = formatWorkDuration(time.Duration(m.ThinkingTimeSec * float64(time.Second)))
+			}
 		}
-		if tokens > 0 && blockIdx >= 0 {
-			label = fmt.Sprintf("Thought · %d tokens", tokens)
-		} else if tokens > 0 {
-			label = fmt.Sprintf("Thought · %s · %d tokens", durationText, tokens)
-		} else if blockIdx < 0 {
-			label = fmt.Sprintf("Thought · %s", durationText)
-		}
+		label = "Thought · " + durationText
 	}
 
 	expandKey := fmt.Sprintf("%s-%d-%d", sessionID, m.ID, blockIdx)
@@ -717,25 +712,36 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 		}
 	}
 
-	ui.Column(c.Key("think-" + expandKey)).FillWidth().Gap(3).Children(func() {
-		header := ui.Row(c).Radius(6).Padding(3, 6).Gap(6).AlignItems(ui.Center).MinHeight(26)
+	ui.Column(c.Key("think-" + expandKey)).FillWidth().Gap(2).Children(func() {
+		header := ui.Row(c).Radius(6).Padding(3, 8).Gap(8).AlignItems(ui.Center).MinHeight(30)
 		header.Children(func() {
-			if isThinking {
-				ui.Spinner(c).Size(13, 13).Label("Thinking")
-			} else {
-				ui.Icon(c, icons.TablerBrain).Width(14).Height(14).TextColor(tc.IconMuted)
-			}
+			ui.Icon(c, icons.TablerBrain).Width(15).Height(15).TextColor(tc.IconMuted)
 			labelColor := tc.SecondaryLabel
 			if isThinking {
-				labelColor = tc.Accent
+				labelColor = shimmerTextColor(tc)
 			}
-			ui.Text(c, label).FontSize(11).TextColor(labelColor).FontWeight(500)
-			ui.Box(c).Grow(1)
+			ui.Text(c, label).FontSize(13).TextColor(labelColor).FontWeight(500)
+			if isThinking && !expanded {
+				// Live one-line preview of the newest thought, clamped.
+				if line := lastNonEmptyLine(text); line != "" {
+					ui.Text(c, clampRunes(line, 70)).FontSize(13).TextColor(tc.TextMuted.Alpha(0.8)).Grow(1).SingleLine()
+				} else {
+					ui.Box(c).Grow(1)
+				}
+			} else {
+				ui.Box(c).Grow(1)
+			}
 
 			if text != "" {
+				// Copy affordance appears on hover only, like ZCode's
+				// hover-revealed header actions.
 				copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 				copyBtn.Children(func() {
-					ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
+					copyColor := ui.RGBA(0, 0, 0, 0)
+					if header.Hovered() {
+						copyColor = tc.IconMuted
+					}
+					ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(copyColor)
 				})
 				if copyBtn.Hovered() {
 					copyBtn.Background(tc.Text.Alpha(0.06))
@@ -750,7 +756,11 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 			if expanded {
 				chev = icons.TablerChevronDown
 			}
-			ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+			chevColor := ui.RGBA(0, 0, 0, 0) // hidden until hover, ZCode-style
+			if expanded || header.Hovered() {
+				chevColor = tc.IconMuted
+			}
+			ui.Icon(c, chev).Width(12).Height(12).TextColor(chevColor)
 		})
 		if header.Hovered() {
 			header.Background(tc.Text.Alpha(0.04))
@@ -768,22 +778,26 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 			}
 		}
 
-		showCoT := expanded || (!m.Done && isThinking)
-		if showCoT && text != "" {
-			card := ui.Column(c).Padding(10, 12).Radius(8).
-				Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Gap(8)
-			card.Children(func() {
-				ui.Scroll(c).MaxHeight(260).Children(func() {
-					ui.Text(c, text).FontSize(11).TextColor(tc.TextMuted).Selectable()
-				})
-				ui.Row(c).Padding(6, 0, 0, 0).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.3)).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "Chain of Thought (CoT)").FontSize(10).TextColor(tc.TextMuted)
-					ui.Box(c).Grow(1)
-					ui.Text(c, fmt.Sprintf("%d tokens", tokens)).FontSize(10).TextColor(tc.TextMuted)
+		// Collapsed by default — even mid-stream. Only an explicit toggle
+		// opens the CoT body.
+		if expanded && text != "" {
+			ui.Column(c).Padding(0, 0, 0, 14).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
+				ui.Scroll(c).MaxHeight(240).Children(func() {
+					ui.Column(c).Padding(0, 0, 4, 10).Children(func() {
+						ui.Text(c, text).FontSize(11.5).TextColor(tc.TextMuted).Selectable()
+					})
 				})
 			})
 		}
 	})
+}
+
+// maxInt64 returns the larger of two int64 values.
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // renderFoldedToolTraces draws forge-ade's folded tool traces: a summary bar
@@ -867,188 +881,128 @@ func (a *AppUI) renderToolGroupBar(c *ui.Context, tc theme.ThemeColors, sessionI
 	}
 }
 
-// renderToolTraceRow renders one tool call’s trace row (label, badge and
-// expanded output) in the agent transcript. Shared by the folded traces
-// list and the ordered text/tool block timeline.
+// renderToolTraceRow renders one tool call as a ZCode-v4 summary row:
+// muted icon + kind label (shimmer while running, no spinner) + summary
+// text + "+N −N" diffstat + status, with the detail view expanding into an
+// indented card below. Shared by the work lane, the consecutive-step groups
+// and the folded legacy traces.
 func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, thisTool *agent.ToolExecution) {
+	a.renderToolRowEx(c, tc, sessionID, m, thisTool, false)
+}
+
+// renderToolRowEx is renderToolTraceRow with a nested flag: children inside
+// a consecutive-step group drop the leading family icon (the rail already
+// groups them) and tighten the row height, ZCode's "child icons hidden".
+func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, thisTool *agent.ToolExecution, nested bool) {
+	v := classifyTool(thisTool)
+	if v.IsSubagent {
+		// ZCode renders Agent/Task calls as a single face-tile summary row
+		// that opens the child timeline in the right drawer — never an
+		// inline expandable card.
+		a.renderAgentToolRow(c, tc, sessionID, m, thisTool, v)
+		return
+	}
 	args := parseToolArgsCached(thisTool)
-	nl := strings.ToLower(thisTool.ToolName)
-	isSkill := strings.Contains(nl, "skill")
-	isMCPLoad := strings.Contains(nl, "mcp_load") || strings.Contains(nl, "load_mcp") || strings.Contains(nl, "mcp_connect") || strings.Contains(nl, "connect_mcp") || strings.Contains(nl, "mcp_server") || strings.Contains(nl, "list_mcp")
-	isMCPTool := strings.HasPrefix(nl, "mcp__") || strings.HasPrefix(nl, "mcp_") || strings.Contains(nl, "mcp_tool") || strings.Contains(nl, "mcptool")
-	isDesignTool := strings.Contains(nl, "deck") || strings.Contains(nl, "motion") || strings.Contains(nl, "opendesign") || strings.Contains(nl, "open-design") || strings.Contains(nl, "forge-design") || strings.Contains(nl, "hyperframe") || isDeckOrMotionFile(args.Path)
-	isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
-	isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
-	isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create")
-	isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find")
-	isSubagent := strings.Contains(nl, "invoke_subagent") || strings.Contains(nl, "subagent") || nl == "task" || strings.Contains(nl, "spawn_subagent")
 	failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
+	running := thisTool.Status == "running"
+	isRead := v.Family == tfExplore && v.IsRead
+	isEdit := v.IsEdit
+	isBash := v.IsBash
+	isSearch := v.Family == tfExplore && !v.IsRead
 
-	toolIcon := icons.TablerTerminal
-	if isSkill {
-		toolIcon = icons.TablerSparkles
-	} else if isMCPLoad {
-		toolIcon = icons.TablerPlug
-	} else if isMCPTool {
-		toolIcon = icons.TablerCpu
-	} else if isDesignTool {
-		toolIcon = icons.TablerPalette
-	} else if isRead {
-		toolIcon = icons.TablerFileText
-	} else if isEdit {
-		toolIcon = icons.TablerFilePen
-	} else if isSearch {
-		toolIcon = icons.TablerSearch
-	} else if isSubagent {
-		toolIcon = icons.TablerBot
-	}
-
-	// Row label + kind badge. filePathLabel is set whenever the label itself
-	// is a workspace file path, making it a clickable chip that opens the
-	// file in the right drawer's side file pane.
-	badge := ""
-	filePathLabel := ""
-	displayLabel := thisTool.ToolName
-	if isSkill {
-		badge = "Skill"
-		displayLabel = extractSkillLabel(thisTool.Command, thisTool.ToolName)
-	} else if isMCPLoad {
-		badge = "MCP Server"
-		displayLabel = extractMCPServerLabel(thisTool.Command, thisTool.ToolName)
-	} else if isMCPTool {
-		server, tool := extractMCPToolParts(thisTool.ToolName)
-		if server != "" {
-			badge = "MCP: " + server
-		} else {
-			badge = "MCP"
-		}
-		displayLabel = tool
-	} else if isDesignTool {
-		badge = "Forge Design"
-		if args.Path != "" {
-			displayLabel = filepath.Base(args.Path)
-			filePathLabel = args.Path
-		} else {
-			displayLabel = "Presentation / Motion"
-		}
-	} else if isSubagent {
-		badge = "Subagent"
-		role := "Subagent"
-		taskPrompt := ""
-		var rawArgs map[string]interface{}
-		if json.Unmarshal([]byte(thisTool.Command), &rawArgs) == nil {
-			if r, ok := rawArgs["Role"].(string); ok && r != "" {
-				role = r
-			} else if r, ok := rawArgs["role"].(string); ok && r != "" {
-				role = r
-			} else if r, ok := rawArgs["TypeName"].(string); ok && r != "" {
-				role = r
-			}
-			if p, ok := rawArgs["Prompt"].(string); ok {
-				taskPrompt = p
-			} else if p, ok := rawArgs["prompt"].(string); ok {
-				taskPrompt = p
-			}
-		}
-		if taskPrompt != "" {
-			displayLabel = fmt.Sprintf("%s: %s", role, taskPrompt)
-		} else {
-			displayLabel = role
-		}
-	} else if isEdit {
-		badge = "Write"
-		if nl != "write" && (strings.Contains(nl, "edit") || strings.Contains(nl, "patch")) {
-			badge = "Edit"
-		}
-		displayLabel = args.Path
-		filePathLabel = args.Path
-	} else if isRead {
-		badge = "Read"
-		displayLabel = args.Path
-		filePathLabel = args.Path
-	} else if isSearch {
-		badge = "Search"
-		if args.Query != "" {
-			displayLabel = args.Query
-		} else if args.Path != "" {
-			displayLabel = args.Path
-			filePathLabel = args.Path
-		}
-	} else if isBash {
-		badge = "$"
-		if cmd := extractShellCommand(thisTool.Command, args.Cmd); cmd != "" {
-			displayLabel = cmd
-		}
-	} else if args.Path != "" {
-		displayLabel = args.Path
-		filePathLabel = args.Path
-	}
-	if displayLabel == "" {
-		displayLabel = thisTool.ToolName
-	}
-	if runes := []rune(displayLabel); len(runes) > 72 {
-		displayLabel = string(runes[:69]) + "…"
-	}
-
-	// Output line count on the right, like the original's read rows.
+	// Output line count on the right — only when it carries information.
+	// Meta-only read results ("4104 lines, 140821 bytes") render as one
+	// line, which ZCode never shows.
 	outLines := 0
-	if thisTool.Output != "" && (isRead || isSearch) {
+	if thisTool.Output != "" && (isRead || isSearch) && !readMetaOnlyOutput(thisTool.Output) {
 		outLines = strings.Count(thisTool.Output, "\n") + 1
 	}
-
-	toolCard := ui.Column(c.Key("tool-" + thisTool.ID)).Radius(8).
-		Background(tc.SurfaceRaised.Alpha(0.35)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
-	if failed {
-		toolCard.BorderColor(tc.Error.Alpha(0.4))
+	rowHeight := float32(30)
+	if nested {
+		rowHeight = 28
 	}
 
-	toolCard.Children(func() {
-		// Row header: chevron left, icon, badge, mono label, extras right.
-		row := ui.Row(c).Height(30).Padding(0, 8).Gap(7).AlignItems(ui.Center)
+	ui.Column(c.Key("tool-" + thisTool.ID)).FillWidth().Children(func() {
+		// ZCode ToolSummaryRow: family icon, kind label, content (filename
+		// bright + directory muted / mono command), diffstat, then the
+		// chevron trailing at the row's right edge, hidden until hover.
+		row := ui.Row(c).Height(rowHeight).Radius(6).Padding(0, 8).Gap(8).AlignItems(ui.Center)
 		labelClicked := false
 		row.Children(func() {
-			chev := icons.TablerChevronRight
-			if thisTool.Expanded {
-				chev = icons.TablerChevronDown
+			if !nested {
+				ui.Icon(c, v.Icon).Width(15).Height(15).TextColor(tc.IconMuted)
 			}
-			ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
-			ui.Icon(c, toolIcon).Width(13).Height(13).TextColor(tc.IconMuted)
-			if badge != "" {
+			kindColor := tc.SecondaryLabel
+			if running {
+				kindColor = shimmerTextColor(tc)
+			}
+			ui.Text(c, v.KindLabel).FontSize(13).FontWeight(500).TextColor(kindColor)
+			// Source chip survives only where the kind label doesn't carry
+			// the provenance: MCP server, skill, Forge Design.
+			if v.Badge != "" && (v.Family == tfMCP || v.Family == tfSkill || v.Family == tfDesign) {
 				ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Text.Alpha(0.06)).
 					BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
-					ui.Text(c, badge).FontSize(10).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
+					ui.Text(c, v.Badge).FontSize(10).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
 				})
 			}
-			if filePathLabel != "" {
-				// Highlighted file chip: opens the file in the right drawer's
-				// side file pane (clicking the row itself still toggles the
-				// expanded detail below).
-				fileChip := ui.Row(c.Key("tfile-"+thisTool.ID)).Gap(4).AlignItems(ui.Center).
+			if v.FilePath != "" && v.Label != "" {
+				// ZCode file content: workspace-relative leaf name in bright
+				// text plus the parent directory muted — not one mono chip.
+				// Click opens the file in the right drawer's side file pane.
+				rel := a.displayToolPath(v.FilePath)
+				leaf := filepath.Base(rel)
+				dir := ""
+				if d := filepath.Dir(rel); d != "." && d != "" && d != "/" {
+					dir = d + "/"
+				}
+				fileChip := ui.Row(c.Key("tfile-"+thisTool.ID)).Gap(5).AlignItems(ui.Center).
 					Radius(4).Padding(1, 4).MinWidth(0).Cursor(ui.CursorPointer)
 				fileChip.Children(func() {
-					ui.Icon(c, icons.FileIconSVG(displayLabel)).Width(12).Height(12).TextColor(tc.IconMuted)
-					ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+					ui.Icon(c, icons.FileIconSVG(leaf)).Width(14).Height(14).TextColor(tc.IconMuted)
+					ui.Text(c, leaf).FontSize(13).FontWeight(500).TextColor(tc.Text).SingleLine()
+					if dir != "" {
+						ui.Text(c, dir).FontSize(12).TextColor(tc.TextMuted).SingleLine()
+					}
 				})
 				if fileChip.Hovered() {
 					fileChip.Background(tc.Text.Alpha(0.07))
 				}
 				if fileChip.Clicked() {
 					labelClicked = true
-					a.openTranscriptFileInSidePane(filePathLabel)
+					a.openTranscriptFileInSidePane(v.FilePath)
 				}
-			} else {
-				ui.Text(c, displayLabel).FontSize(12).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
+			} else if v.Label != "" {
+				lbl := ui.Text(c, v.Label).FontSize(13).TextColor(tc.Text).SingleLine()
+				if v.Family == tfRun || v.Family == tfMCP || isSearch {
+					lbl.Font("monospace")
+				}
 			}
-			if outLines > 0 {
-				ui.Text(c, fmt.Sprintf("%d lines", outLines)).FontSize(10).Font("monospace").TextColor(tc.TextMuted)
+			// "+N −N" diffstat on edit rows, ZCode-style colored mono,
+			// sitting right after the content like ZCode's Edit rows.
+			if isEdit {
+				if add, del, ok := toolDiffStatCached(thisTool); ok {
+					ui.Text(c, fmt.Sprintf("+%d", add)).FontSize(12).Font("monospace").TextColor(tc.DiffAdditionForeground)
+					ui.Text(c, fmt.Sprintf("-%d", del)).FontSize(12).Font("monospace").TextColor(tc.DiffDeletionForeground)
+				}
 			}
-			if thisTool.Status == "running" {
-				ui.Spinner(c).Size(12, 12).Label("Running")
-			} else if failed {
-				ui.Box(c).Radius(4).Padding(1, 5).Background(tc.Error.Alpha(0.12)).Children(func() {
-					ui.Text(c, "Failed").FontSize(10).FontWeight(600).TextColor(tc.Error)
-				})
+			if outLines > 1 {
+				ui.Text(c, fmt.Sprintf("%d lines", outLines)).FontSize(11).Font("monospace").TextColor(tc.TextMuted)
 			}
+			if failed {
+				ui.Text(c, "Failed").FontSize(12).FontWeight(600).TextColor(tc.Error)
+			}
+			// Trailing expand affordance: pushes to the row's right edge,
+			// invisible until hover or expanded — ZCode's trailing chevron.
+			ui.Box(c).Grow(1)
+			chev := icons.TablerChevronRight
+			if thisTool.Expanded {
+				chev = icons.TablerChevronDown
+			}
+			chevColor := ui.RGBA(0, 0, 0, 0) // invisible until hover
+			if thisTool.Expanded || row.Hovered() {
+				chevColor = tc.IconMuted
+			}
+			ui.Icon(c, chev).Width(14).Height(14).TextColor(chevColor)
 		})
 		if row.Hovered() {
 			row.Background(tc.Text.Alpha(0.04))
@@ -1066,12 +1020,12 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 			})
 		}
 
-		// Expanded detail views, mirroring forge-ade's tool blocks.
+		// Expanded detail views, mirroring forge-ade's tool blocks. ZCode
+		// indents the body under the summary and lets each detail renderer
+		// draw its own rounded card — no extra chrome here.
 		if thisTool.Expanded {
 			ui.Scroll(c).MaxHeight(340).Children(func() {
-				ui.Column(c).Padding(8, 10).Gap(6).
-					BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4)).
-					Background(tc.Canvas.Alpha(0.6)).Children(func() {
+				ui.Column(c).Padding(6, 0, 4, 24).Gap(6).Children(func() {
 					cleanOut := thisTool.Output
 					if failed {
 						cleanOut = strings.ReplaceAll(cleanOut, "<tool_use_error>", "")
@@ -1080,32 +1034,20 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 					}
 
 					switch {
-					case isSkill:
+					case v.Family == tfSkill:
 						a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
-					case isMCPLoad:
+					case v.Family == tfMCP && v.IsMCPLoad:
 						a.renderToolMCPLoadBlock(c, tc, thisTool, cleanOut, failed)
-					case isMCPTool:
+					case v.Family == tfMCP:
 						a.renderToolMCPCallBlock(c, tc, thisTool, cleanOut, failed)
-					case isDesignTool:
+					case v.Family == tfDesign:
 						a.renderToolDesignBlock(c, tc, thisTool, cleanOut, failed)
-					case isSubagent:
-						ui.Column(c).Gap(6).Children(func() {
-							ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-								ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(tc.Accent)
-								ui.Text(c, displayLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1)
-								openSubBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-									Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-								openSubBtn.Children(func() {
-									ui.Text(c, "View in Drawer").FontSize(10).FontWeight(600).TextColor(tc.Accent)
-								})
-								if openSubBtn.Clicked() {
-									a.RightDrawerTab = RightTabSubagent
-									a.ShowRightDrawer = true
-								}
-							})
-							if cleanOut != "" {
-								renderToolOutputBox(c, tc, cleanOut, failed)
-							}
+					case isRead && args.Path != "" && readMetaOnlyOutput(cleanOut):
+						// Harness returned only the size meta line — no content
+						// to preview; a muted note beats a bloated editor card.
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.TablerFileText).Width(12).Height(12).TextColor(tc.IconMuted)
+							ui.Text(c, cleanOut).FontSize(11).TextColor(tc.TextMuted).SingleLine()
 						})
 					case isRead && args.Path != "":
 						a.renderToolReadBlock(c, tc, args.Path, cleanOut)
@@ -1178,6 +1120,340 @@ func (a *AppUI) renderToolTraceRow(c *ui.Context, tc theme.ThemeColors, sessionI
 			})
 		}
 	})
+}
+
+// renderAgentToolRow is the ZCode Agent/Task block: a face-tile identity,
+// the agent role name, and the child's latest activity rolling in the
+// summary line. The whole row is a button that opens the child timeline in
+// the right drawer — matching ZCode's "full child timeline lives in the
+// side pane" contract (no inline expand).
+func (a *AppUI) renderAgentToolRow(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, thisTool *agent.ToolExecution, v toolVisual) {
+	failed := thisTool.Status == "failed" || strings.Contains(thisTool.Output, "<tool_use_error>")
+	running := thisTool.Status == "running"
+
+	// Best-effort child match: same role while running, else the most
+	// recent running child, else the latest finished one with that role.
+	var matched *subagentSnapshot
+	if a.Agent != nil {
+		subs := a.snapshotSubagents(sessionID)
+		role := strings.ToLower(v.SubRole)
+		for i := len(subs) - 1; i >= 0; i-- {
+			s := subs[i]
+			if subagentRunning(s.state) && (role == "" || strings.Contains(strings.ToLower(s.roleFilter), role) || strings.Contains(strings.ToLower(s.name), role)) {
+				matched = &subs[i]
+				break
+			}
+		}
+		if matched == nil {
+			for i := len(subs) - 1; i >= 0; i-- {
+				if subagentRunning(subs[i].state) {
+					matched = &subs[i]
+					break
+				}
+			}
+		}
+		if matched == nil {
+			for i := len(subs) - 1; i >= 0; i-- {
+				if role == "" || strings.Contains(strings.ToLower(subs[i].roleFilter), role) {
+					matched = &subs[i]
+					break
+				}
+			}
+		}
+	}
+
+	faceStatus := "running"
+	switch {
+	case failed:
+		faceStatus = "failed"
+	case running && matched != nil && !subagentRunning(matched.state):
+		faceStatus = "running"
+	case running:
+		faceStatus = "running"
+	case matched != nil:
+		faceStatus = subagentFaceState(matched.state)
+	default:
+		faceStatus = "done"
+	}
+
+	name := v.SubRole
+	if matched != nil && strings.TrimSpace(matched.name) != "" {
+		name = matched.name
+	}
+
+	// Live child activity, ZCode's getLatestAgentChildSummaryFromChildren.
+	activity := ""
+	if running && matched != nil {
+		activity = subagentLiveSummary(matched)
+	} else if v.SubPrompt != "" && v.Label == clampRunes(v.SubPrompt, 80) {
+		activity = ""
+	}
+	if activity == "" {
+		activity = clampRunes(v.SubPrompt, 60)
+	}
+
+	row := ui.Row(c.Key("agent-tool-"+thisTool.ID)).Height(30).Radius(6).Padding(0, 8).Gap(8).
+		AlignItems(ui.Center).FillWidth().Cursor(ui.CursorPointer)
+	row.Children(func() {
+		ui.Box(c).Size(20, 20).Children(func() {
+			agentFace(c, tc, name, faceStatus)
+		})
+		ui.Text(c, name).FontSize(13).FontWeight(500).TextColor(agentFaceColor(tc, name)).SingleLine()
+		if activity != "" {
+			ui.Text(c, activity).FontSize(13).TextColor(tc.TextMuted).Grow(1).SingleLine()
+		} else {
+			ui.Box(c).Grow(1)
+		}
+		if running {
+			ui.Text(c, "Working").FontSize(12).FontWeight(500).TextColor(shimmerTextColor(tc))
+		} else if failed {
+			ui.Text(c, "Failed").FontSize(12).FontWeight(600).TextColor(tc.Error)
+		}
+		chevColor := ui.RGBA(0, 0, 0, 0) // hidden until hover, ZCode-style
+		if row.Hovered() {
+			chevColor = tc.IconMuted
+		}
+		ui.Icon(c, icons.TablerChevronRight).Width(14).Height(14).TextColor(chevColor)
+	})
+	if row.Hovered() {
+		row.Background(tc.Text.Alpha(0.04))
+	}
+	if row.Clicked() {
+		a.RightDrawerTab = RightTabSubagent
+		a.ShowRightDrawer = true
+		if matched != nil {
+			a.SelectedSubagentID = matched.id
+		}
+		a.invalidateUI()
+	}
+}
+
+// subagentFaceState maps an engine subagent state onto a face status.
+func subagentFaceState(state string) string {
+	if subagentRunning(state) {
+		return "running"
+	}
+	switch strings.ToLower(state) {
+	case "completed", "done", "success", "finished":
+		return "done"
+	case "error", "failed", "cancelled", "stopped":
+		return "failed"
+	default:
+		return "idle"
+	}
+}
+
+// subagentLiveSummary derives the child's rolling activity line from its
+// snapshot: the newest tool call ("Reading src/main.go"), else the newest
+// assistant text line, else "Working…".
+func subagentLiveSummary(sub *subagentSnapshot) string {
+	if sub == nil {
+		return "Working…"
+	}
+	for i := len(sub.messages) - 1; i >= 0; i-- {
+		msg := &sub.messages[i]
+		if msg.role != "assistant" {
+			continue
+		}
+		if msg.lastTool != "" {
+			return agentActivityLabel(msg.lastTool, msg.lastToolDetail)
+		}
+		if line := lastNonEmptyLine(msg.text); line != "" {
+			return clampRunes(line, 64)
+		}
+	}
+	if len(sub.pendingTools) > 0 {
+		return "Awaiting approval"
+	}
+	return "Working…"
+}
+
+// agentActivityLabel renders "<Verb> <object>" for the rolling summary.
+func agentActivityLabel(toolName, detail string) string {
+	nl := strings.ToLower(toolName)
+	obj := clampRunes(detail, 56)
+	switch {
+	case strings.Contains(nl, "read"), strings.Contains(nl, "view"), strings.Contains(nl, "cat"):
+		if obj == "" {
+			return "Reading files"
+		}
+		return "Reading " + obj
+	case strings.Contains(nl, "edit"), strings.Contains(nl, "write"), strings.Contains(nl, "patch"), strings.Contains(nl, "create"):
+		if obj == "" {
+			return "Editing files"
+		}
+		return "Editing " + obj
+	case strings.Contains(nl, "bash"), strings.Contains(nl, "shell"), strings.Contains(nl, "exec"), strings.Contains(nl, "command"):
+		if obj == "" {
+			return "Running command"
+		}
+		return "Running " + obj
+	case strings.Contains(nl, "search"), strings.Contains(nl, "grep"), strings.Contains(nl, "find"), strings.Contains(nl, "glob"), strings.Contains(nl, "list"):
+		if obj == "" {
+			return "Searching"
+		}
+		return "Searching " + obj
+	default:
+		if obj == "" {
+			return "Running " + toolName
+		}
+		return "Running " + toolName + " · " + obj
+	}
+}
+
+// groupChild is one entry of a consecutive-step group: a grouped tool call
+// or an absorbed interleaved thinking block (nil tool).
+type groupChild struct {
+	blockIdx int
+	tool     *agent.ToolExecution
+}
+
+// renderConsecutiveSummaryGroup collapses a run of consecutive
+// explore/run/change tool calls into one ZCode statistics row — "Explored 3
+// files · Ran 2 commands" — showing the active call's live summary with the
+// shimmer while the group is still running, and expanding to an indented
+// guide rail of nested child rows (absorbed thinking blocks render their
+// collapsed headers inside the rail).
+func (a *AppUI) renderConsecutiveSummaryGroup(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, children []groupChild, groupKey string) {
+	nouns := groupNouns{}
+	anyRunning := false
+	var active *agent.ToolExecution
+	var activeVisual toolVisual
+	for _, ch := range children {
+		if ch.tool == nil {
+			continue
+		}
+		v := classifyTool(ch.tool)
+		switch {
+		case v.IsBash:
+			nouns.command++
+		case v.Family == tfChange:
+			nouns.edit++
+		case v.IsRead:
+			nouns.file++
+		default:
+			nouns.search++
+		}
+		if ch.tool.Status == "running" {
+			anyRunning = true
+			active = ch.tool
+			activeVisual = v
+		}
+	}
+
+	expanded := a.ToolGroupExpanded[groupKey]
+	kindWord := nouns.kind()
+	stats := nouns.line()
+
+	ui.Column(c.Key("tgroup-" + groupKey)).FillWidth().Children(func() {
+		// ZCode ConsecutiveSummaryGroup header: "Explore · 1 search, 1 file"
+		// — kind word bright, noun counts muted, chevron trailing.
+		header := ui.Row(c).Height(30).Radius(6).Padding(0, 8).Gap(8).AlignItems(ui.Center)
+		header.Children(func() {
+			ui.Icon(c, groupRepresentativeIcon(kindWord)).Width(15).Height(15).TextColor(tc.IconMuted)
+			if anyRunning && active != nil {
+				// Rolling live summary of the in-flight call, ZCode-style.
+				ui.Text(c, activeVisual.KindLabel).FontSize(13).FontWeight(500).TextColor(shimmerTextColor(tc)).SingleLine()
+				ui.Text(c, clampRunes(activeVisual.Label, 72)).FontSize(13).TextColor(tc.Text).Grow(1).SingleLine()
+			} else {
+				ui.Text(c, kindWord).FontSize(13).FontWeight(500).TextColor(tc.Text).SingleLine()
+				if stats != "" {
+					ui.Text(c, "·  "+stats).FontSize(13).TextColor(tc.SecondaryLabel).Grow(1).SingleLine()
+				} else {
+					ui.Box(c).Grow(1)
+				}
+			}
+			// Failure status lives on the failing child row, not the group —
+			// matching ZCode's ConsecutiveSummaryGroup.
+			chev := icons.TablerChevronRight
+			if expanded {
+				chev = icons.TablerChevronDown
+			}
+			chevColor := ui.RGBA(0, 0, 0, 0) // invisible until hover/expanded
+			if expanded || header.Hovered() {
+				chevColor = tc.IconMuted
+			}
+			ui.Icon(c, chev).Width(14).Height(14).TextColor(chevColor)
+		})
+		if header.Hovered() {
+			header.Background(tc.Text.Alpha(0.04))
+		}
+		if header.Clicked() {
+			if a.ToolGroupExpanded == nil {
+				a.ToolGroupExpanded = make(map[string]bool)
+			}
+			a.ToolGroupExpanded[groupKey] = !expanded
+		}
+
+		if expanded {
+			// Long runs scroll inside a capped rail, like ZCode's
+			// max-h-[calc(16lh+30px)] container.
+			drawRail := func() {
+				rail := ui.Column(c).Padding(2, 0, 2, 16).Gap(2).
+					BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.5))
+				rail.Children(func() {
+					for _, ch := range children {
+						if ch.tool != nil {
+							a.renderToolRowEx(c, tc, sessionID, m, ch.tool, true)
+							continue
+						}
+						// Absorbed thinking: collapsed reasoning header inside
+						// the rail; live shimmer only for the streaming tail.
+						if ch.blockIdx < len(m.Blocks) && m.Blocks[ch.blockIdx] != nil {
+							isLast := ch.blockIdx == len(m.Blocks)-1
+							a.renderThinkingBlockSegment(c, tc, sessionID, m, ch.blockIdx,
+								m.Blocks[ch.blockIdx].Text, m.IsThinking && !m.Done && isLast)
+						}
+					}
+				})
+			}
+			if len(children) > 12 {
+				ui.Scroll(c).MaxHeight(460).Children(drawRail)
+			} else {
+				drawRail()
+			}
+		}
+	})
+}
+
+// displayToolPath shortens an absolute path to its workspace-relative form
+// (or the bare filename outside the workspace) for ZCode-style file chips.
+func (a *AppUI) displayToolPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if a.Workspace != nil && a.Workspace.RootDir != "" {
+		if rel, err := filepath.Rel(a.Workspace.RootDir, path); err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+			return rel
+		}
+	}
+	return filepath.Base(path)
+}
+
+// readMetaOnlyOutput reports whether a read tool's output is just the
+// harness's "4104 lines, 140821 bytes" meta line rather than file content —
+// rendering that through the editor card is noise, ZCode hides it.
+func readMetaOnlyOutput(out string) bool {
+	s := strings.TrimSpace(out)
+	if s == "" || strings.Contains(s, "\n") {
+		return false
+	}
+	lower := strings.ToLower(s)
+	if !strings.Contains(lower, "lines") || !strings.Contains(lower, "bytes") {
+		return false
+	}
+	// Only digits, spaces, commas, and the two words — otherwise it's real
+	// content that happens to mention both.
+	for _, r := range lower {
+		switch {
+		case r >= '0' && r <= '9':
+		case r == 'l' || r == 'i' || r == 'n' || r == 'e' || r == 's' || r == 'b' || r == 'y' || r == 't':
+		case r == ' ' || r == ',':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // renderToolReadBlock draws forge-ade's ToolReadBlock: a file header with
@@ -2489,65 +2765,6 @@ func (a *AppUI) terminalSessionCount() int {
 		return 1
 	}
 	return count
-}
-
-// renderTaskTracker draws a compact top-right pill when active work is running,
-// clicking it opens the Plan & Progress modal. If no work is running, it hides completely.
-func (a *AppUI) renderTaskTracker(c *ui.Context, tc theme.ThemeColors) {
-	if a.Agent == nil {
-		return
-	}
-	snap := a.Agent.TaskTrackerSnapshot()
-	if !snap.HasWork {
-		return
-	}
-
-	current := snap.CurrentTask
-	completed := snap.CompletedTasks
-	total := snap.TotalTasks
-	allDone := snap.AllDone
-	runningSubs := snap.RunningSubs
-	isSessionRunning := snap.IsSessionRunning
-
-	// Compact floating top-right pill
-	pill := ui.Row(c.Key("inspector-pill")).Absolute().Top(12).Right(16).Height(30).Radius(999).
-		Padding(0, 12).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer).
-		Background(tc.SurfaceRaised.Alpha(0.95)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).
-		Shadow(0, 4, 12, 0, ui.RGBA(0, 0, 0, 0.18))
-	pill.Children(func() {
-		if current != nil || isSessionRunning {
-			ui.Spinner(c).Size(11, 11).Label("working")
-		} else if allDone {
-			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Success.Alpha(0.15)).Children(func() {
-				ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
-			})
-		} else {
-			ui.Icon(c, icons.TablerChecklist).Width(12).Height(12).TextColor(tc.IconMuted)
-		}
-		if total > 0 {
-			ui.Text(c, fmt.Sprintf("%d/%d", completed, total)).FontSize(11).FontWeight(600)
-		}
-		label := ""
-		if current != nil {
-			label = current.Title
-			if current.ActiveForm != "" {
-				label = current.ActiveForm
-			}
-		} else if runningSubs > 0 {
-			label = fmt.Sprintf("%d subagent running", runningSubs)
-		} else if isSessionRunning {
-			label = "Working…"
-		}
-		if label != "" {
-			ui.Text(c, label).FontSize(11).TextColor(tc.TextMuted).MaxWidth(180).SingleLine()
-		}
-		ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
-	})
-	if pill.Clicked() {
-		a.ShowTurnStatusCard = !a.ShowTurnStatusCard
-		a.invalidateUI()
-	}
 }
 
 // renderInspectorBody renders the Plans, Progress, Terminals, and Agents sections

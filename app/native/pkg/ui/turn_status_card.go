@@ -31,62 +31,6 @@ func subagentRunning(state string) bool {
 	return false
 }
 
-// renderTurnStatusToggle draws the slim strip shown above the composer when
-// the card is closed and there is something worth showing (changes, task
-// progress, or running agents). Clicking it opens the floating card.
-func (a *AppUI) renderTurnStatusToggle(c *ui.Context, tc theme.ThemeColors, sessionID string) {
-	if a.ShowTurnStatusCard {
-		return
-	}
-	files, additions, deletions := 0, 0, 0
-	hasGit := false
-	if a.Git != nil && a.Workspace != nil && a.Workspace.RootDir != "" {
-		files, additions, deletions = a.gitDirtySummary()
-		hasGit = true
-	}
-	tasks := a.agentProgressTasks()
-	runningSubs := a.activeSubagents(sessionID)
-	goal := a.agentGoalText()
-
-	hasWork := len(tasks) > 0 || len(runningSubs) > 0 || (hasGit && files > 0) || goal != ""
-	if !hasWork {
-		return
-	}
-
-	strip := ui.Row(c.Key("turn-status-toggle")).Height(26).Radius(8).Padding(0, 10).Gap(8).
-		AlignItems(ui.Center).FillWidth().Justify(ui.Start).Cursor(ui.CursorPointer).
-		Background(tc.SurfaceRaised.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
-	strip.Children(func() {
-		ui.Icon(c, icons.TablerFileDiff).Width(13).Height(13).TextColor(tc.TextMuted)
-		if hasGit && files > 0 {
-			ui.Text(c, fmt.Sprintf("%d file%s", files, pluralS(files))).FontSize(11).TextColor(tc.TextMuted)
-			ui.Text(c, fmt.Sprintf("+%d", additions)).FontSize(11).FontWeight(600).TextColor(tc.Success)
-			ui.Text(c, fmt.Sprintf("-%d", deletions)).FontSize(11).FontWeight(600).TextColor(tc.Error)
-		}
-		if len(tasks) > 0 {
-			done := 0
-			for _, t := range tasks {
-				if t.Status == agent.TaskCompleted {
-					done++
-				}
-			}
-			ui.Text(c, fmt.Sprintf("Progress %d/%d", done, len(tasks))).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
-		}
-		if n := len(runningSubs); n > 0 {
-			ui.Text(c, fmt.Sprintf("Agents %d running", n)).FontSize(11).FontWeight(500).TextColor(tc.Accent)
-		}
-		ui.Box(c).Size(1, 12).Background(tc.Border.Alpha(0.5))
-		ui.Icon(c, icons.TablerChevronUp).Width(12).Height(12).TextColor(tc.TextMuted)
-	})
-	if strip.Hovered() {
-		strip.Background(tc.SurfaceRaised)
-	}
-	if strip.Clicked() {
-		a.ShowTurnStatusCard = true
-		a.invalidateUI()
-	}
-}
-
 // agentGoalText returns the active session's plan/goal summary if set.
 func (a *AppUI) agentGoalText() string {
 	if a.Agent == nil {
@@ -140,24 +84,9 @@ func (a *AppUI) activeSubagents(sessionID string) []*rakitagent.Session {
 	return running
 }
 
-// renderTurnStatusCard draws the floating card in the top-right corner of the
-// chat pane: Changes header + diffstat, branch row, commit jump, Goal, task
-// Progress checklist, and active Agents rows with Stop buttons.
-func (a *AppUI) renderTurnStatusCard(c *ui.Context, tc theme.ThemeColors, sessionID string) {
-	if !a.ShowTurnStatusCard {
-		return
-	}
-	card := ui.Column(c.Key("turn-status-card")).Absolute().Top(12).Right(16).
-		Width(turnStatusCardWidth).MaxHeight(520).Radius(14).
-		Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).
-		Shadow(0, 24, 64, -24, ui.RGBA(0, 0, 0, 0.55)).Clip()
-	card.Children(func() {
-		ui.Scroll(c).MaxHeight(520).Children(func() {
-			a.renderTurnStatusSections(c, tc, sessionID)
-		})
-	})
-}
-
+// renderTurnStatusSections draws the Changes / Branch / Goal / Progress /
+// Agents body shared by the plan modal. The floating chat surface moved to
+// status_panel.go (capsule ↔ expanded panel).
 func (a *AppUI) renderTurnStatusSections(c *ui.Context, tc theme.ThemeColors, sessionID string) {
 	// ── Changes header ────────────────────────────────────────────────
 	files, additions, deletions := 0, 0, 0

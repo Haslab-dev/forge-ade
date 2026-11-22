@@ -33,11 +33,15 @@ func TestTurnStatusCardRenders(t *testing.T) {
 		{ID: "t3", Title: "Third task", Status: agent.TaskPending},
 	})
 	sess := &agent.AgentSession{
-		ID: "sess-status", Title: "Status", Status: "running",
+		ID: "sess-status", Title: "Status", Status: "idle",
 		WorkspacePath: tempDir, Tasks: tm,
 		Messages: []*agent.ChatMessage{
 			{ID: 1, Role: "user", Text: "go", Done: true, Timestamp: time.Now()},
-			{ID: 2, Role: "assistant", Text: "working", Done: false, Timestamp: time.Now(), TurnStartedAt: time.Now()},
+			// The completed turn carries its file changes: the status panel's
+			// Changes section reads the last assistant message's Changes once
+			// no session is streaming (no live git polling in the test).
+			{ID: 2, Role: "assistant", Text: "done", Done: true, Timestamp: time.Now(),
+				Changes: []*agent.FileChange{{Path: "main.go", Additions: 3, Deletions: 1}}},
 		},
 	}
 	as.Lock()
@@ -47,21 +51,21 @@ func TestTurnStatusCardRenders(t *testing.T) {
 	as.TaskManager = tm
 	as.Unlock()
 
-	// Card open: the Progress sections must lay out.
+	// Panel expanded: Changes and Progress sections must lay out.
 	app.ShowTurnStatusCard = true
 	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
 	if _, ok := tw.Find("Progress"); !ok {
-		t.Fatalf("Progress header not found in open turn-status card")
+		t.Fatalf("Progress header not found in open status panel")
 	}
 	if _, ok := tw.Find("Changes"); !ok {
-		t.Fatalf("Changes header not found in open turn-status card")
+		t.Fatalf("Changes header not found in open status panel")
 	}
 
-	// Card closed + toggle strip: strip appears when there is work to show.
+	// Collapsed capsule: sections must not render.
 	app.ShowTurnStatusCard = false
 	tw2 := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
 	if _, ok := tw2.Find("Progress"); ok {
-		t.Fatalf("closed card must not render Progress")
+		t.Fatalf("collapsed capsule must not render Progress")
 	}
 }
 

@@ -217,6 +217,11 @@ type subagentMessageSnapshot struct {
 	thinking  string
 	text      string
 	toolCalls []string
+	// lastTool/lastToolDetail feed the parent-side rolling activity line
+	// ("Reading src/main.go"): the newest tool_call's name plus a defensive
+	// copy of its most useful argument (path / command / query).
+	lastTool       string
+	lastToolDetail string
 }
 
 // subagentPendingToolSnapshot is one pending approval request with its
@@ -274,6 +279,8 @@ func (a *AppUI) snapshotSubagents(sessionID string) []subagentSnapshot {
 					sm.thinking += b.Text
 				case "tool_call":
 					sm.toolCalls = append(sm.toolCalls, b.Name)
+					sm.lastTool = b.Name
+					sm.lastToolDetail = summarizeToolArgsCopy(b.Arguments)
 				}
 			}
 			snap.messages = append(snap.messages, sm)
@@ -303,6 +310,40 @@ func (a *AppUI) snapshotSubagents(sessionID string) []subagentSnapshot {
 		out = append(out, snap)
 	}
 	return out
+}
+
+// summarizeToolArgsCopy defensively copies a tool-call arguments map (same
+// bounded pass as the PendingTools copy) and returns the most useful single
+// value — path, command, or query — for the parent-side activity line.
+// Reading values from a live racing map is never done; only the bounded
+// key-copy is touched.
+func summarizeToolArgsCopy(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	copied := make(map[string]string, 16)
+	n := 0
+	for k, v := range args {
+		if n >= 16 {
+			break
+		}
+		n++
+		if s, ok := v.(string); ok {
+			copied[k] = s
+		}
+	}
+	for _, keys := range [][]string{
+		{"path", "file_path", "filePath", "file"},
+		{"command", "cmd", "script"},
+		{"query", "pattern", "url"},
+	} {
+		for _, k := range keys {
+			if s := copied[k]; s != "" {
+				return clampRunes(s, 56)
+			}
+		}
+	}
+	return ""
 }
 
 // renderSubagentPane lists the child agents of the active session
@@ -356,16 +397,21 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 
 	scroll := ui.Scroll(c)
 	scroll.Children(func() {
-		col := ui.Column(c).Gap(4).Padding(8)
+		col := ui.Column(c).Gap(2).Padding(8)
 		col.Children(func() {
 			for i := range subs {
 				sub := subs[i]
-				statusLabel, statusColor := subagentStatus(sub.state, tc)
-				row := ui.Row(c.Key("sub-"+sub.id)).Radius(8).Padding(8, 10).Gap(8).AlignItems(ui.Center).
-					Background(tc.SurfaceRaised.Alpha(0.4)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Cursor(ui.CursorPointer)
+				// ZCode SubagentDirectory row: face tile + name + role badge,
+				// a one-line summary of the latest activity, and a relative
+				// timestamp on the trailing edge.
+				row := ui.Row(c.Key("sub-"+sub.id)).Radius(8).Padding(8, 10).Gap(9).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				row.Children(func() {
-					ui.Box(c).Size(7, 7).Radius(4).Background(statusColor)
-					colRow := ui.Column(c).Gap(2)
+					faceStatus := subagentFaceState(sub.state)
+					ui.Box(c).Size(20, 20).Children(func() {
+						agentFace(c, tc, sub.name, faceStatus)
+					})
+					colRow := ui.Column(c).Gap(2).Grow(1)
 					colRow.Children(func() {
 						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 							ui.Text(c, sub.name).FontSize(12).FontWeight(500).SingleLine()
@@ -373,14 +419,9 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 								Badge(c, tc, sub.roleFilter, tc.Info)
 							}
 						})
-						meta := fmt.Sprintf("%s · %d messages", statusLabel, len(sub.messages))
-						if sub.model != "" {
-							meta = fmt.Sprintf("%s · %s · %d msgs", statusLabel, sub.model, len(sub.messages))
-						}
-						ui.Text(c, meta).FontSize(10).TextColor(tc.TextMuted)
+						ui.Text(c, subagentDirectorySummary(&sub)).FontSize(10.5).TextColor(tc.TextMuted).SingleLine()
 					})
-					ui.Box(c).Grow(1)
-					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
+					ui.Text(c, subagentRelativeTime(&sub)).FontSize(10).TextColor(tc.IconMuted)
 				})
 				if row.Hovered() {
 					row.Background(tc.Text.Alpha(0.05))
@@ -394,6 +435,41 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 			}
 		})
 	}).Grow(1)
+}
+
+// subagentDirectorySummary returns the latest activity line for a directory
+// row: newest tool activity or assistant text, falling back to a message
+// count.
+func subagentDirectorySummary(sub *subagentSnapshot) string {
+	if line := subagentLiveSummary(sub); line != "Working…" {
+		return line
+	}
+	if len(sub.messages) > 0 {
+		return fmt.Sprintf("%d messages", len(sub.messages))
+	}
+	return "No activity yet"
+}
+
+// subagentRelativeTime renders the newest message timestamp as "3m ago".
+func subagentRelativeTime(sub *subagentSnapshot) string {
+	for i := len(sub.messages) - 1; i >= 0; i-- {
+		ts := sub.messages[i].timestamp
+		if ts.IsZero() {
+			continue
+		}
+		d := time.Since(ts)
+		switch {
+		case d < time.Minute:
+			return "just now"
+		case d < time.Hour:
+			return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		case d < 24*time.Hour:
+			return fmt.Sprintf("%dh ago", int(d.Hours()))
+		default:
+			return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+		}
+	}
+	return ""
 }
 
 // renderSubagentChatView renders the detailed subagent conversation,
@@ -423,7 +499,9 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *subagentSnapshot) {
 			return
 		}
 
-		ui.Box(c).Size(6, 6).Radius(3).Background(statusColor)
+		ui.Box(c).Size(20, 20).Children(func() {
+			agentFace(c, tc, sub.name, subagentFaceState(sub.state))
+		})
 		nameText := sub.name
 		if nameText == "" {
 			nameText = "Child Agent"
@@ -513,47 +591,42 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *subagentSnapshot) {
 				for i, msg := range sub.messages {
 					msgKey := fmt.Sprintf("submsg-%d", i)
 					isUser := msg.role == "user"
-					bubble := ui.Column(c.Key(msgKey)).Radius(8).Padding(8, 10).Gap(4)
 					if isUser {
-						bubble.Background(tc.Accent.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25))
-					} else {
-						bubble.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-					}
-					bubble.Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-							roleLabel := "Assistant"
-							roleColor := tc.TextMuted
-							if isUser {
-								roleLabel = "You"
-								roleColor = tc.Accent
-							}
-							ui.Text(c, roleLabel).FontSize(10).FontWeight(600).TextColor(roleColor)
-							if !msg.timestamp.IsZero() {
-								ui.Text(c, msg.timestamp.Format("15:04")).FontSize(9).TextColor(tc.TextMuted)
-							}
+						// User prompts: right-aligned bubble like the main chat.
+						ui.Row(c.Key(msgKey)).Justify(ui.End).Children(func() {
+							bubble := ui.Column(c).MaxWidth(420).Radius(14).Padding(8, 12).Gap(4).
+								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
+							bubble.Children(func() {
+								ui.Text(c, msg.text).FontSize(12).TextColor(tc.MessageForeground)
+							})
 						})
-
+						continue
+					}
+					// Assistant: ZCode-style column — reasoning behind a guide
+					// rail, tool activity as summary lines, markdown body.
+					assist := ui.Column(c.Key(msgKey)).Gap(4).Padding(2, 0)
+					assist.Children(func() {
 						if msg.thinking != "" {
-							ui.Column(c).Radius(4).Padding(6).Gap(2).Background(tc.Surface.Alpha(0.6)).
-								BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Children(func() {
-								ui.Text(c, "Thought Process").FontSize(9).FontWeight(600).TextColor(tc.TextMuted)
-								ui.Text(c, msg.thinking).FontSize(10).TextColor(tc.TextMuted)
+							ui.Column(c).Padding(0, 0, 0, 10).BorderWidth(0, 0, 0, 1).
+								BorderColor(tc.Border.Alpha(0.6)).Children(func() {
+								ui.Text(c, clampRunes(msg.thinking, 600)).FontSize(10.5).TextColor(tc.TextMuted)
 							})
 						}
-
+						for ti, toolName := range msg.toolCalls {
+							detail := ""
+							if ti == len(msg.toolCalls)-1 {
+								detail = msg.lastToolDetail
+							}
+							toolRow := ui.Row(c).Height(20).Padding(0, 2).Gap(6).AlignItems(ui.Center)
+							toolRow.Children(func() {
+								ui.Text(c, agentActivityLabel(toolName, detail)).FontSize(11).
+									TextColor(tc.TextMuted).Grow(1).SingleLine()
+							})
+						}
 						txt := strings.TrimSpace(msg.text)
 						if txt != "" {
 							a.SideChatMd.Theme = a.ThemeMgr.MarkdownTheme()
 							markdown.View(c, txt, &a.SideChatMd)
-						}
-
-						for _, toolName := range msg.toolCalls {
-							toolRow := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center).
-								Background(tc.Surface.Alpha(0.8)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4))
-							toolRow.Children(func() {
-								ui.Icon(c, icons.TablerWrench).Width(10).Height(10).TextColor(tc.Accent)
-								ui.Text(c, toolName).FontSize(10).FontWeight(500)
-							})
 						}
 					})
 				}

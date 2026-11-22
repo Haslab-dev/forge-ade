@@ -189,6 +189,25 @@ type MessageBlock struct {
 	Kind   string `json:"kind"` // "text" | "tool" | "thinking"
 	Text   string `json:"text,omitempty"`
 	ToolID string `json:"toolId,omitempty"`
+	// Started/ended wall-clock stamps ("Thought 4.2s" labels). Zero values on
+	// legacy sessions fall back to the message-level ThinkingTimeSec.
+	StartedAtMs int64 `json:"startedAtMs,omitempty"`
+	EndedAtMs   int64 `json:"endedAtMs,omitempty"`
+}
+
+// stampBlockTimesLocked closes the timeline's last open block (EndedAtMs) and
+// stamps the new block's start, so per-block reasoning durations render like
+// ZCode's "Thought 4.2s" rows.
+func stampBlockTimesLocked(msg *ChatMessage, blk *MessageBlock) {
+	now := time.Now().UnixMilli()
+	if n := len(msg.Blocks); n > 0 {
+		if prev := msg.Blocks[n-1]; prev != nil && prev.EndedAtMs == 0 {
+			prev.EndedAtMs = now
+		}
+	}
+	if blk != nil && blk.StartedAtMs == 0 {
+		blk.StartedAtMs = now
+	}
 }
 
 // ChatMessage represents a single interaction turn in the AI Agent conversation.
@@ -231,7 +250,9 @@ func appendTextBlockDeltaLocked(msg *ChatMessage, delta string) {
 		msg.Blocks[n-1].Text += delta
 		return
 	}
-	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "text", Text: delta})
+	blk := &MessageBlock{Kind: "text", Text: delta}
+	stampBlockTimesLocked(msg, blk)
+	msg.Blocks = append(msg.Blocks, blk)
 }
 
 // appendThinkingBlockDeltaLocked appends a streamed reasoning delta to the
@@ -242,13 +263,17 @@ func appendThinkingBlockDeltaLocked(msg *ChatMessage, delta string) {
 		msg.Blocks[n-1].Text += delta
 		return
 	}
-	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "thinking", Text: delta})
+	blk := &MessageBlock{Kind: "thinking", Text: delta}
+	stampBlockTimesLocked(msg, blk)
+	msg.Blocks = append(msg.Blocks, blk)
 }
 
 // appendToolBlockLocked records a new tool call in the timeline. Called only
 // when a ToolExecution is created — tool_end updates must not add blocks.
 func appendToolBlockLocked(msg *ChatMessage, toolID string) {
-	msg.Blocks = append(msg.Blocks, &MessageBlock{Kind: "tool", ToolID: toolID})
+	blk := &MessageBlock{Kind: "tool", ToolID: toolID}
+	stampBlockTimesLocked(msg, blk)
+	msg.Blocks = append(msg.Blocks, blk)
 }
 
 // findToolByID returns the ToolExecution with the given ID, or nil.
@@ -1191,6 +1216,11 @@ func (as *AgentState) HandleTurnDone(sessionID string, info TurnEndInfo) (nextSt
 		msg.IsThinking = false
 		msg.ShowThinking = false
 		msg.ShowTools = false
+		// Close any still-open timeline block so per-block "Thought Ns" labels
+		// freeze at the turn boundary.
+		if n := len(msg.Blocks); n > 0 && msg.Blocks[n-1] != nil && msg.Blocks[n-1].EndedAtMs == 0 {
+			msg.Blocks[n-1].EndedAtMs = time.Now().UnixMilli()
+		}
 		msg.Text = cleanTaskJSONBlocks(cleanRawToolTags(cleanHarnessDumps(msg.Text)))
 		for _, b := range msg.Blocks {
 			if b == nil {
@@ -1940,14 +1970,20 @@ func (as *AgentState) RestoreStash(idx int) {
 }
 
 type diskSessionRaw struct {
-	ID                   string           `json:"id"`
-	Title                string           `json:"title"`
-	Name                 string           `json:"name"`
-	Goal                 string           `json:"goal"`
-	Status               string           `json:"status"`
-	State                string           `json:"state"`
-	CreatedAt            json.RawMessage  `json:"createdAt"`
-	UpdatedAt            json.RawMessage  `json:"updatedAt"`
+	ID        string          `json:"id"`
+	Title     string          `json:"title"`
+	Name      string          `json:"name"`
+	Goal      string          `json:"goal"`
+	Status    string          `json:"status"`
+	State     string          `json:"state"`
+	CreatedAt json.RawMessage `json:"createdAt"`
+	UpdatedAt json.RawMessage `json:"updatedAt"`
+	// Engine-internal sub-agent schema markers (RakitKode agent.Session
+	// dumps): presence means this file is a child-agent session, never a
+	// user task. Their timestamps live in created_at/updated_at (snake_case)
+	// which the fields above never read.
+	ParentSessionID      string           `json:"parent_session_id"`
+	RoleFilter           string           `json:"role_filter"`
 	Model                string           `json:"model"`
 	Provider             string           `json:"provider"`
 	AgentID              string           `json:"agentId"`
@@ -1988,7 +2024,7 @@ type diskMessageRaw struct {
 
 func parseTimeRaw(raw json.RawMessage) time.Time {
 	if len(raw) == 0 {
-		return time.Now()
+		return time.Time{}
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil && s != "" {
@@ -2003,7 +2039,11 @@ func parseTimeRaw(raw json.RawMessage) time.Time {
 	if err := json.Unmarshal(raw, &n); err == nil && n > 0 {
 		return time.UnixMilli(n)
 	}
-	return time.Now()
+	// Missing or unparsable timestamps must stay zero, never "now": a now
+	// fallback made every session with a foreign/absent updatedAt render
+	// "now" in the sidebar forever (the timestamp is re-derived each launch).
+	// SaveSessionToDisk stamps zero UpdatedAt with time.Now() on write.
+	return time.Time{}
 }
 
 func extractMessageText(m diskMessageRaw) string {
@@ -2073,6 +2113,13 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 	for _, raw := range rawSessions {
 		var diskSess diskSessionRaw
 		if err := json.Unmarshal([]byte(raw), &diskSess); err != nil || diskSess.ID == "" {
+			continue
+		}
+		// Engine-internal sub-agent sessions must never load as user tasks:
+		// they render in the Subagent drawer, and their snake_case
+		// timestamps parse as zero (previously: time.Now(), which is what
+		// made the sidebar show "now" for all of them on every launch).
+		if diskSess.ParentSessionID != "" || diskSess.RoleFilter != "" {
 			continue
 		}
 

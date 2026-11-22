@@ -202,6 +202,16 @@ type AppUI struct {
 	ShowBgShellPopover bool
 	subagentFirstSeen  map[string]time.Time
 
+	// ToolGroupExpanded tracks the open/closed state of consecutive tool
+	// step groups ("Explored 3 files · Ran 2 commands"), keyed
+	// sessionID-msgID-groupStartIdx — the same pattern as
+	// ThinkingBlockExpanded for per-thinking-block toggles.
+	ToolGroupExpanded map[string]bool
+
+	// StatusSectionOpen tracks the collapsible sections of the floating
+	// status panel (changes / progress / agents); absent = open (default).
+	StatusSectionOpen map[string]bool
+
 	// Generic confirm dialog (confirmDialog / renderConfirmDialog): one
 	// pending destructive action at a time; Escape and outside click cancel.
 	ShowConfirmDialog  bool
@@ -884,10 +894,20 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		defer close(appUI.tickerDone)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		// Shimmer ticker: the ZCode-style running labels ("Working for 12s",
+		// tool kind labels) pulse between muted and accent on a ~1.1s sine,
+		// which only reads as motion if frames land faster than the 1s tick.
+		// Invalidate at 150ms while a session streams; zero cost when idle.
+		shimmer := time.NewTicker(150 * time.Millisecond)
+		defer shimmer.Stop()
 		for {
 			select {
 			case <-appUI.closeCh:
 				return
+			case <-shimmer.C:
+				if appUI.Agent.HasRunningSession() && appUI.Window != nil {
+					appUI.Window.Invalidate()
+				}
 			case <-ticker.C:
 				// A panicking tick handler must be logged and the ticker must
 				// keep ticking — not take the app down (P1-6).
