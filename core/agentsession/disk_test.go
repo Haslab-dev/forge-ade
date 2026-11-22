@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,40 @@ func TestTempTestPathIsolation(t *testing.T) {
 	}
 	if _, err := os.Stat(expectedFile); !os.IsNotExist(err) {
 		t.Fatalf("expected %s to be removed after delete, err=%v", expectedFile, err)
+	}
+}
+
+func TestLoadSessionsDiskSkipsInternalSubagentSessions(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
+	projDir := filepath.Join(fakeHome, ".forge", "sessions", "proj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// A real user task session (camelCase timestamps, no internal markers).
+	real := `{"id":"session-1000","title":"Real task","createdAt":"2026-11-01T10:00:00+07:00","updatedAt":"2026-11-02T10:00:00+07:00","workspacePath":"/non-temp/proj"}`
+	if err := os.WriteFile(filepath.Join(projDir, "session-1000.json"), []byte(real), 0o644); err != nil {
+		t.Fatalf("write real: %v", err)
+	}
+
+	// An engine-internal sub-agent dump (the sidebar "now" bug): snake_case
+	// schema with parent_session_id / role_filter.
+	internal := `{"id":"20bc1634-8a8e-4702-b694-ec920dd9ef82","name":"Coding Agent Sub-agent","parent_session_id":"c6d101da-1b93-4f96-b957-13b028146fbf","role_filter":"coding","state":"idle","created_at":"2026-10-18T16:46:59.095639+07:00","updated_at":"2026-10-18T16:46:59.154233+07:00","messages":[]}`
+	if err := os.WriteFile(filepath.Join(projDir, "20bc1634-8a8e-4702-b694-ec920dd9ef82.json"), []byte(internal), 0o644); err != nil {
+		t.Fatalf("write internal: %v", err)
+	}
+
+	loaded, err := LoadSessionsDisk("/non-temp/proj")
+	if err != nil {
+		t.Fatalf("LoadSessionsDisk failed: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("expected only the real session to load, got %d sessions", len(loaded))
+	}
+	if !strings.Contains(loaded[0], `"session-1000"`) {
+		t.Fatalf("loaded session is not the real task: %s", loaded[0])
 	}
 }
 

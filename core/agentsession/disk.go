@@ -199,6 +199,27 @@ func extractDiskSessionRef(content []byte) (id, sessWs string, ok bool) {
 	return sess.ID, ws, true
 }
 
+// internalSessionProbe detects engine-internal sub-agent session files.
+// RakitKode agent.Session dumps use a snake_case schema with
+// parent_session_id / role_filter and store timestamps as created_at /
+// updated_at — none of which the user-task session schema reads.
+type internalSessionProbe struct {
+	ParentSessionID string `json:"parent_session_id"`
+	RoleFilter      string `json:"role_filter"`
+}
+
+// isInternalSubagentSessionFile reports whether content is an internal
+// sub-agent session rather than a user task session. Loading them as user
+// sessions pollutes the task list with "Coding Agent Sub-agent" rows whose
+// timestamps derive as "now" on every launch.
+func isInternalSubagentSessionFile(content []byte) bool {
+	var probe internalSessionProbe
+	if err := json.Unmarshal(content, &probe); err != nil {
+		return false
+	}
+	return probe.ParentSessionID != "" || probe.RoleFilter != ""
+}
+
 func readProjectSessionInfo(projectDir string) (ProjectSessionInfo, bool) {
 	var info ProjectSessionInfo
 	data, err := os.ReadFile(filepath.Join(projectDir, "info.json"))
@@ -276,6 +297,11 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 			}
 			content, err := os.ReadFile(filepath.Join(dir, e.Name()))
 			if err == nil && len(content) > 0 {
+				// Internal sub-agent session files never surface as user
+				// sessions, regardless of which directory they sit in.
+				if isInternalSubagentSessionFile(content) {
+					continue
+				}
 				if skipTemp {
 					if _, sessWs, ok := extractDiskSessionRef(content); ok && IsTempTestPath(sessWs) {
 						continue
@@ -306,7 +332,7 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 					content, rerr := os.ReadFile(filepath.Join(legacyGlobalDir, e.Name()))
 					if rerr == nil && len(content) > 0 {
 						if id, sessWs, ok := extractDiskSessionRef(content); ok {
-							if IsTempTestPath(sessWs) {
+							if IsTempTestPath(sessWs) || isInternalSubagentSessionFile(content) {
 								continue
 							}
 							projDir, projName, tws, _ := resolveProjectDir("", sessWs)
@@ -337,7 +363,7 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 						if !seen[id] {
 							content, err := os.ReadFile(filepath.Join(globalSessionsRoot, e.Name()))
 							if err == nil && len(content) > 0 {
-								if _, sessWs, ok := extractDiskSessionRef(content); !ok || !IsTempTestPath(sessWs) {
+								if _, sessWs, ok := extractDiskSessionRef(content); !ok || (!IsTempTestPath(sessWs) && !isInternalSubagentSessionFile(content)) {
 									seen[id] = true
 									result = append(result, string(content))
 								}
@@ -364,7 +390,7 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 							if rerr != nil || len(content) == 0 {
 								continue
 							}
-							if id, sessWs, ok := extractDiskSessionRef(content); ok && !IsTempTestPath(sessWs) {
+							if id, sessWs, ok := extractDiskSessionRef(content); ok && !IsTempTestPath(sessWs) && !isInternalSubagentSessionFile(content) {
 								tDir, tName, tws, _ := resolveProjectDir("", sessWs)
 								if tDir != "" {
 									_ = os.MkdirAll(tDir, 0755)
@@ -404,6 +430,11 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 						if parsedID, sessWs, ok := extractDiskSessionRef(content); ok {
 							id = parsedID
 							if IsTempTestPath(sessWs) {
+								_ = os.Remove(filePath)
+								dirModified = true
+								continue
+							}
+							if isInternalSubagentSessionFile(content) {
 								_ = os.Remove(filePath)
 								dirModified = true
 								continue
