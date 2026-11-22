@@ -158,6 +158,12 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		default:
 			title = "New task"
 		}
+	} else if a.Mode == ModeStudio {
+		if a.Studio != nil && a.Studio.ActiveProject() != nil {
+			title = "Studio: " + a.Studio.ActiveProject().Name
+		} else {
+			title = "Studio"
+		}
 	} else {
 		if doc := a.Editor.ActiveDoc(); doc != nil {
 			title = filepath.Base(doc.RelativePath)
@@ -449,6 +455,10 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					}
 					if m.Item(menuChecked(a.Mode == ModeEditor, "Editor Mode")).Shortcut(ui.Cmd, ui.Key2).Chosen() {
 						a.setMode(ModeEditor)
+						a.IsGitClientOpen = false
+					}
+					if m.Item(menuChecked(a.Mode == ModeStudio, "Studio Mode")).Shortcut(ui.Cmd, ui.Key3).Chosen() {
+						a.setMode(ModeStudio)
 						a.IsGitClientOpen = false
 					}
 					m.Separator()

@@ -27,6 +27,7 @@ import (
 	"github.com/hasdev/forge-ade/core/git"
 	"github.com/hasdev/forge-ade/core/quota"
 	"github.com/hasdev/forge-ade/core/remotefs"
+	corestudio "github.com/hasdev/forge-ade/core/studio"
 	"github.com/hasdev/forge-ade/core/terminal"
 	"github.com/hasdev/forge-ade/core/watcher"
 )
@@ -53,6 +54,7 @@ type Engine struct {
 	ShellMgr  *terminal.Manager
 	AgentMgr  *agent.Manager
 	AutoMgr   *automations.Manager
+	StudioMgr *corestudio.Manager
 
 	// AntigravityAccounts tracks multiple Antigravity accounts, tiers, and quotas.
 	AntigravityAccounts *quota.AntigravityAccountManager
@@ -131,6 +133,7 @@ func NewEngine(dataDir string) *Engine {
 		ShellMgr:            mgrs.Shells,
 		AgentMgr:            mgrs.Agent,
 		AutoMgr:             autoMgr,
+		StudioMgr:           corestudio.NewManager(dataDir),
 		AntigravityAccounts: quota.NewAccountManager(dataDir),
 	}
 

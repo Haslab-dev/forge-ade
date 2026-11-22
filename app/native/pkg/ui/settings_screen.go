@@ -109,6 +109,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerBot, "MULTI")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabCommands, "Slash Commands", icons.TablerCode, "")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabStudio, "Studio & Generative APIs", icons.TablerSparkles, "NEW")
 					})
 
 					// Group 2: Workspace & Capabilities
@@ -177,6 +178,8 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 								a.renderSettingsTabIndexing(c, tc, sm)
 							case settings.SettingsTabHooks:
 								a.renderSettingsTabHooks(c, tc, sm)
+							case settings.SettingsTabStudio:
+								a.renderSettingsTabStudio(c, tc, sm)
 							}
 						})
 					})

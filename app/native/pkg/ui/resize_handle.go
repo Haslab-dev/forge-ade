@@ -30,6 +30,34 @@ func LeftResizeHandle(c *ui.Context, width *float32, minW, maxW, resetW float32)
 	}
 }
 
+// RightResizeHandle renders an interactive draggable divider for a left-anchored panel (e.g. Left Chat Agent).
+// Dragging right (positive dx) expands width; dragging left (negative dx) contracts width.
+func RightResizeHandle(c *ui.Context, width *float32, minW, maxW, resetW float32) {
+	t := c.Theme()
+	handle := ui.Box(c).Width(4).FillHeight().Cursor(ui.CursorResizeEW)
+	dx, _, held := handle.Dragged()
+	hovered := handle.Hovered()
+
+	if handle.DoubleClicked() {
+		*width = resetW
+	} else if held && dx != 0 {
+		next := *width + dx
+		if next < minW {
+			next = minW
+		}
+		if next > maxW {
+			next = maxW
+		}
+		*width = next
+	}
+
+	if held || hovered {
+		handle.Background(t.Accent)
+	} else {
+		handle.Background(t.Border)
+	}
+}
+
 // TopResizeHandle renders an interactive draggable divider for a bottom-anchored panel (e.g. Bottom Terminal).
 // Dragging up (negative dy) expands height; dragging down (positive dy) contracts height.
 func TopResizeHandle(c *ui.Context, height *float32, minH, maxH, resetH float32) {

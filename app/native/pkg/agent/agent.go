@@ -4272,6 +4272,33 @@ func extractPathFromTool(cmd string) string {
 	return ""
 }
 
+// LastTurnChangedFiles returns the files the session's last assistant turn
+// changed, most significant first.
+func (as *AgentState) LastTurnChangedFiles(sessionID string) []FileChange {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			m := s.Messages[i]
+			if m.Role == "assistant" && len(m.Changes) > 0 {
+				out := make([]FileChange, 0, len(m.Changes))
+				for _, ch := range m.Changes {
+					if ch == nil {
+						continue
+					}
+					out = append(out, *ch)
+				}
+				return out
+			}
+		}
+		break
+	}
+	return nil
+}
+
 // LastTurnChangedFile returns the first file the session's last turn changed
 // (Follow Agent auto-jump source).
 func (as *AgentState) LastTurnChangedFile(sessionID string) (string, bool) {
@@ -4290,4 +4317,82 @@ func (as *AgentState) LastTurnChangedFile(sessionID string) (string, bool) {
 		break
 	}
 	return "", false
+}
+
+// writeToolPathArgKeys mirrors the path-argument keys the engine's file tools
+// accept (RakitKode write/edit families).
+var writeToolPathArgKeys = []string{
+	"path", "file_path", "filepath", "filePath", "file", "filename", "target_file", "targetFile",
+}
+
+// writeToolPath extracts the target file path from a write/edit tool call's
+// raw argument JSON.
+func writeToolPath(argsJSON string) string {
+	if argsJSON == "" {
+		return ""
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	for _, key := range writeToolPathArgKeys {
+		if v, ok := args[key].(string); ok {
+			if s := strings.TrimSpace(v); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// LastTurnWrittenFiles returns the files the session's last assistant turn
+// wrote or edited, newest first — derived from the turn's file tool calls so
+// it works outside git workspaces, where the git-based change list stays
+// empty.
+func (as *AgentState) LastTurnWrittenFiles(sessionID string) []string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			m := s.Messages[i]
+			if m.Role != "assistant" {
+				continue
+			}
+			var out []string
+			for j := len(m.Tools) - 1; j >= 0; j-- {
+				t := m.Tools[j]
+				if t == nil {
+					continue
+				}
+				name := strings.ToLower(t.ToolName)
+				isFileTool := strings.Contains(name, "write") || strings.Contains(name, "edit") ||
+					strings.Contains(name, "create") || strings.Contains(name, "save") ||
+					strings.Contains(name, "apply")
+				if !isFileTool {
+					continue
+				}
+				if p := writeToolPath(t.Command); p != "" {
+					out = append(out, p)
+				}
+			}
+			return out
+		}
+		break
+	}
+	return nil
+}
+
+// SessionWorkspacePath returns the workspace folder a session runs in.
+func (as *AgentState) SessionWorkspacePath(sessionID string) string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID == sessionID {
+			return s.WorkspacePath
+		}
+	}
+	return ""
 }

@@ -63,6 +63,9 @@ func (a *AppUI) renderAgentSurface(c *ui.Context) {
 // the chat column; "full" (default) is ZCode-style left-aligned content
 // with a fixed 32px gutter.
 func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
+	if a.Mode == ModeStudio {
+		return 10, 10
+	}
 	const gutter = float32(32)
 	colW := a.chatColumnWidth(c)
 	lane := float32(0)
@@ -137,6 +140,10 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 	msgs, sessionID, checkpointTurnID := as.ActiveTranscriptSnapshot()
 
 	if sessionID == "" || len(msgs) == 0 {
+		if a.Mode == ModeStudio {
+			a.renderStudioAgentHome(c)
+			return
+		}
 		a.renderAgentHome(c)
 		return
 	}
@@ -3762,6 +3769,12 @@ func (a *AppUI) renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, key, old
 // (window minus optional left sidebar and right drawer), used to cap the
 // transcript's intrinsic width.
 func (a *AppUI) chatColumnWidth(c *ui.Context) float32 {
+	if a.Mode == ModeStudio {
+		if a.StudioLeftChatWidth > 0 {
+			return a.StudioLeftChatWidth
+		}
+		return 420
+	}
 	w, _ := c.Size()
 	if w <= 0 {
 		return 800

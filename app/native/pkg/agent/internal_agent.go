@@ -562,9 +562,30 @@ func (as *AgentState) RespondInternalAsk(sessionID string, answers map[string]an
 	}
 	mgrID := as.internalManagerID(sessionID)
 	if mgrID == "" {
+		// The ask may belong to a skill sub-agent without a native session
+		// mapping — deliver the answers to whichever engine session is
+		// actually blocked on questions, or the turn hangs forever.
+		mgrID = as.findAwaitingAskSession()
+	}
+	if mgrID == "" {
 		return fmt.Errorf("internal session %s has no connected agent session: answers were not delivered", sessionID)
 	}
 	return as.engine.AgentMgr.RespondAsk(mgrID, answers)
+}
+
+// findAwaitingAskSession finds the engine session currently blocked on ask
+// questions (any session, including skill sub-agents whose native mapping is
+// absent).
+func (as *AgentState) findAwaitingAskSession() string {
+	if as.engine == nil || as.engine.AgentMgr == nil {
+		return ""
+	}
+	for _, sess := range as.engine.AgentMgr.ListSessions() {
+		if sess != nil && sess.State == agent.StateAwaitingInput {
+			return sess.ID
+		}
+	}
+	return ""
 }
 
 // StopInternalTurn cancels the running turn of an internal session

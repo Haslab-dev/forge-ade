@@ -27,6 +27,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/palette"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/studio"
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
@@ -39,6 +40,7 @@ const (
 	ModeAgent    = 0
 	ModeEditor   = 1
 	ModeSettings = 2
+	ModeStudio   = 3
 )
 
 // Editor activity bar tabs
@@ -119,10 +121,45 @@ type AppUI struct {
 	ACPMgr                         *agent.ACPManager
 	CLIMgr                         *agent.AgentCLIManager
 	Board                          *board.BoardManager
-	Mode                           int      // ModeAgent, ModeEditor, or ModeSettings
-	PrevMode                       int      // Mode to restore when closing Settings
-	AgentWorkspacePath             string   // Independent active workspace for Agent Mode
-	EditorWorkspacePath            string   // Independent active workspace for Editor Mode
+	Studio                         *studio.StudioManager
+	Mode                           int    // ModeAgent, ModeEditor, ModeSettings, or ModeStudio
+	PrevMode                       int    // Mode to restore when closing Settings
+	AgentWorkspacePath             string // Independent active workspace for Agent Mode
+	EditorWorkspacePath            string // Independent active workspace for Editor Mode
+	StudioWorkspacePath            string // Independent active workspace for Studio Mode
+	StudioViewMode                 string // "canvas" (default), "nodes", "code"
+	StudioActiveTab                string // "assets" (default), "skills"
+	StudioPromptInput              string
+	StudioTimelinePlaying          bool
+	StudioTimelineTime             float64
+	studioTimelineAnchor           time.Time      // wall-clock anchor while the timeline plays
+	studioWebviewSynced            bool           // studio WebView state push confirmed by the page
+	studioAssetVer                 map[string]int // project ID → last asset-file version written
+	studioLastImportAt             time.Time      // debounce for the live write-tool import
+	studioArtifactScanAt           time.Time      // artifact explorer scan cache stamp
+	studioArtifactCache            []studioArtifactFile
+	StudioSplitCompare             bool
+	StudioLeftChatWidth            float32 // Resizable left chat pane width in Studio Mode
+	StudioChatCollapsed            bool    // Hide the left chat pane so the viewer gets full width
+	StudioShowArtifacts            bool    // Show the agent artifact explorer panel
+	StudioSelectedSlideIdx         int
+	StudioWebView                  *mygo.WebView
+	StudioWebViewURL               string
+	StudioPositivePrompt           string
+	StudioNegativePrompt           string
+	StudioModel                    string
+	StudioSampler                  string
+	StudioSteps                    int
+	StudioCFGScale                 float32
+	StudioSeed                     int64
+	StudioAspectRatio              string
+	StudioGeneratedImagePath       string
+	StudioGeneratedFormat          string
+	StudioGeneratedWidth           int
+	StudioGeneratedHeight          int
+	StudioIsGenerating             bool
+	StudioGenerationProgress       float32
+	StudioGenerationStatus         string
 	ActiveTaskKind                 string   // "agent" or "cli"
 	ShowLeftSidebar                bool     // Left sidebar visibility
 	LeftSidebarView                string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
@@ -558,6 +595,20 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		AgentWorkspaceTerminals:        make(map[string]*terminal.TerminalState),
 		WorkspaceEditorSnapshots:       make(map[string]*editor.WorkspaceEditorSnapshot),
 		ThemeMgr:                       theme.NewThemeManager(),
+		Studio:                         studio.NewStudioManager(rootDir),
+		StudioWorkspacePath:            rootDir,
+		StudioViewMode:                 "canvas",
+		StudioActiveTab:                "assets",
+		StudioLeftChatWidth:            420,
+		studioAssetVer:                 make(map[string]int),
+		StudioPositivePrompt:           "Cyberpunk neon city street at dusk, cinematic volumetric fog, raytraced reflections, 8k octane render",
+		StudioNegativePrompt:           "blurry, low quality, artifacts, watermark",
+		StudioModel:                    "flux-1-schnell",
+		StudioSampler:                  "Euler a",
+		StudioSteps:                    25,
+		StudioCFGScale:                 7.5,
+		StudioSeed:                     4928172,
+		StudioAspectRatio:              "16:9",
 		Mode:                           ModeAgent,
 		activeDrawerMode:               ModeAgent,
 		AgentWorkspacePath:             rootDir,
@@ -616,6 +667,13 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	appUI.Editor.WorkspaceDir = rootDir
+	if appUI.Studio != nil {
+		appUI.Studio.SetOnChanged(func() {
+			if appUI.Window != nil {
+				appUI.Window.Invalidate()
+			}
+		})
+	}
 	normInitial := normalizeWorkspaceKey(rootDir)
 	appUI.WorkspaceTerminals[normInitial] = appUI.Terminal
 	appUI.EditorBottomWorkspaceTerminals[normInitial] = appUI.EditorBottomTerminal
@@ -702,6 +760,24 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI.ACPMgr.OnToolEvent = func(ev agent.ToolEvent) {
 		ev.SessionID = appUI.Agent.MapInternalSession(ev.SessionID)
 		appUI.Agent.HandleToolEvent(ev)
+		// Studio Mode live import: as soon as the agent finishes writing a
+		// file, offer it to the active studio project (debounced) — the
+		// viewer updates mid-turn instead of waiting for turn end.
+		name := strings.ToLower(ev.Name)
+		if appUI.Mode == ModeStudio && ev.Status == "completed" &&
+			(strings.Contains(name, "write") || strings.Contains(name, "edit") ||
+				strings.Contains(name, "create") || strings.Contains(name, "apply")) {
+			appUI.runOnUI(func() {
+				if time.Since(appUI.studioLastImportAt) < 800*time.Millisecond {
+					return
+				}
+				appUI.studioLastImportAt = time.Now()
+				appUI.studioImportAgentArtifacts(ev.SessionID)
+				if appUI.Window != nil {
+					appUI.Window.Invalidate()
+				}
+			})
+		}
 	}
 	appUI.ACPMgr.OnTurnStart = func(sessionID, prompt string) {
 		appUI.Agent.HandleTurnStart(appUI.Agent.MapInternalSession(sessionID), prompt)
@@ -711,7 +787,18 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Agent.HandleAsk(req)
 	}
 	appUI.ACPMgr.OnQuestions = func(sessionID string, questions []agent.AgentQuestion) {
-		appUI.Agent.HandleQuestions(appUI.Agent.MapInternalSession(sessionID), questions)
+		nativeID := appUI.Agent.MapInternalSession(sessionID)
+		if nativeID == "" {
+			// The ask may come from a skill sub-agent without a native session
+			// mapping — surface the card on the active session so the user
+			// still sees the questions and can answer them.
+			nativeID = appUI.Agent.ActiveSessionID
+		}
+		if nativeID != "" {
+			appUI.Agent.HandleQuestions(nativeID, questions)
+		} else {
+			log.Printf("[acp] ask questions dropped: no session for %q", sessionID)
+		}
 	}
 	appUI.ACPMgr.OnUsage = func(sessionID string, usage agent.UsageInfo) {
 		appUI.Agent.HandleUsage(appUI.Agent.MapInternalSession(sessionID), usage)
@@ -755,6 +842,17 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 
 		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
 			go appUI.Agent.TriggerTurnForSession(nativeID, next)
+		}
+		// Studio Mode: import the files the agent wrote this turn as a new
+		// project version so the viewer shows the real artifact instead of
+		// the seeded placeholder.
+		if appUI.Mode == ModeStudio {
+			appUI.runOnUI(func() {
+				appUI.studioImportAgentArtifacts(nativeID)
+				if appUI.Window != nil {
+					appUI.Window.Invalidate()
+				}
+			})
 		}
 		// Follow Agent: jump the editor to the file the turn edited
 		// (layoutStore.isFollowAgentMode parity).
@@ -917,7 +1015,8 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 							log.Printf("[forge-ade] ticker tick panicked: %v\n%s", r, debug.Stack())
 						}
 					}()
-					if (appUI.Agent.HasRunningSession() || appUI.ShowBgShellPopover) && appUI.Window != nil {
+					if (appUI.Agent.HasRunningSession() || appUI.ShowBgShellPopover ||
+						(appUI.Mode == ModeStudio && appUI.StudioTimelinePlaying)) && appUI.Window != nil {
 						appUI.Window.Invalidate()
 					}
 					// Live changes pill: poll git numstat every 3s while a turn
@@ -962,6 +1061,9 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		}},
 		{ID: "agent-mode", Label: "Switch to Agent Mode", Shortcut: "⌘1", Run: func() { a.setMode(ModeAgent) }},
 		{ID: "editor-mode", Label: "Switch to Editor Mode", Shortcut: "⌘2", Run: func() { a.setMode(ModeEditor) }},
+		{ID: "studio-mode", Label: "Switch to Studio Mode", Detail: "Generative media & visual design environment", Shortcut: "⌘3", Run: func() { a.setMode(ModeStudio) }},
+		{ID: "studio-export", Label: "Studio: Send to Editor", Detail: "Export active studio asset to editor workspace", Shortcut: "⌘⇧E", Run: func() { a.studioExportActive() }},
+		{ID: "studio-pin", Label: "Studio: Toggle Element Pinning", Detail: "Direct manipulation element selection", Shortcut: "V", Run: func() { a.studioTogglePinning() }},
 		{ID: "toggle-terminal", Label: "Toggle Terminal", Detail: "Bottom terminal drawer", Shortcut: "⌘`", Run: func() {
 			a.toggleBottomTerminal()
 		}},
@@ -1255,9 +1357,13 @@ func (a *AppUI) View(c *ui.Context) {
 		}
 	}
 	if cmdOrCtrlShift(ui.KeyE) {
-		a.Mode = ModeEditor
-		a.ShowLeftSidebar = true
-		a.EditorActivity = ActivityExplorer
+		if a.Mode == ModeStudio {
+			a.studioExportActive()
+		} else {
+			a.Mode = ModeEditor
+			a.ShowLeftSidebar = true
+			a.EditorActivity = ActivityExplorer
+		}
 	}
 	if cmdOrCtrlShift(ui.KeyO) {
 		// Go to symbol (⌘⇧O) — the "@" palette mode.
@@ -1308,6 +1414,12 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 	if cmdOrCtrl(ui.Key2) {
 		a.setMode(ModeEditor)
+	}
+	if cmdOrCtrl(ui.Key3) {
+		a.setMode(ModeStudio)
+	}
+	if a.Mode == ModeStudio && c.Shortcut(0, ui.KeyV) {
+		a.studioTogglePinning()
 	}
 	if cmdOrCtrl(ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
@@ -2382,6 +2494,8 @@ func (a *AppUI) setMode(mode int) {
 		a.AgentWorkspacePath = curWs
 	} else if prevMode == ModeEditor {
 		a.EditorWorkspacePath = curWs
+	} else if prevMode == ModeStudio {
+		a.StudioWorkspacePath = curWs
 	}
 	a.syncModeDrawerState(mode)
 	a.Mode = mode
@@ -2392,6 +2506,13 @@ func (a *AppUI) setMode(mode int) {
 	} else if mode == ModeEditor {
 		if normalizeWorkspaceKey(a.EditorWorkspacePath) != normalizeWorkspaceKey(curWs) {
 			a.switchWorkspaceForMode(a.EditorWorkspacePath, true, prevMode)
+		}
+	} else if mode == ModeStudio {
+		if normalizeWorkspaceKey(a.StudioWorkspacePath) != normalizeWorkspaceKey(curWs) {
+			a.switchWorkspaceForMode(a.StudioWorkspacePath, true, prevMode)
+		}
+		if a.Studio != nil && a.Workspace != nil {
+			a.Studio.SetWorkspace(a.Workspace.RootDir)
 		}
 	}
 	if a.Window != nil {
@@ -2513,6 +2634,11 @@ func (a *AppUI) switchWorkspaceForMode(dir string, keepActiveSession bool, fromM
 	// 4. Update mode-specific active workspace & agent workspace
 	if a.Mode == ModeEditor {
 		a.EditorWorkspacePath = rawDir
+	} else if a.Mode == ModeStudio {
+		a.StudioWorkspacePath = rawDir
+		if a.Studio != nil {
+			a.Studio.SetWorkspace(rawDir)
+		}
 	} else {
 		a.AgentWorkspacePath = rawDir
 		if a.Agent != nil {
@@ -2691,6 +2817,10 @@ func (a *AppUI) closeSettings() {
 func (a *AppUI) renderMainColumn(c *ui.Context) {
 	if a.Mode == ModeSettings {
 		a.renderSettingsScreen(c)
+		return
+	}
+	if a.Mode == ModeStudio {
+		a.renderStudioSurface(c)
 		return
 	}
 	if a.Mode == ModeEditor {

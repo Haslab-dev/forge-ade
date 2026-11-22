@@ -1061,6 +1061,7 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 				}
 			}
 			if len(questions) > 0 && sessionID != "" {
+				log.Printf("[acp] agent:ask for session %q (%d questions)", sessionID, len(questions))
 				mgr.postEvent(func() {
 					if mgr.OnQuestions != nil {
 						mgr.OnQuestions(sessionID, questions)
@@ -1071,6 +1072,7 @@ func (mgr *ACPManager) subscribeToBusEvents() {
 				})
 				return
 			}
+			log.Printf("[acp] agent:ask without routable questions (session=%q)", sessionID)
 		}
 		reqID := str(e.Data, "requestId", "request_id")
 		if reqID == "" {

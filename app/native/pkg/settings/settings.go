@@ -51,6 +51,7 @@ const (
 	SettingsTabHooks            = 14 // Lifecycle Hooks
 	SettingsTabIndexing         = 15 // Codebase Indexing
 	SettingsTabAntigravityQuota = 16 // Antigravity Quota Tracker
+	SettingsTabStudio           = 17 // Studio Media & Generation APIs
 )
 
 // AddAccountMode constants
