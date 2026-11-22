@@ -32,6 +32,14 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			}
 			btn := ui.Row(c).Size(ActivityBarWidth-8, 40).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
 			btn.Children(func() {
+				if active {
+					// Active indicator INSIDE the button's children: MyGo
+					// absolute insets resolve against the parent's padding
+					// box, so creating this after the closure attached it to
+					// the full-height activity column instead — a white 2px
+					// line down the whole window's left edge.
+					ui.Box(c).Absolute().Left(0).Width(2).Top(8).Bottom(8).Background(tc.Text).Radius(0, 1, 1, 0)
+				}
 				ic := ui.Icon(c, icon).Width(20).Height(20)
 				if active {
 					ic.TextColor(tc.Text)
@@ -60,9 +68,6 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 				} else {
 					a.EditorActivity = tab
 				}
-			}
-			if active {
-				ui.Box(c).Absolute().Left(0).Width(2).Top(8).Bottom(8).Background(tc.Text).Radius(0, 1, 1, 0)
 			}
 		}
 
