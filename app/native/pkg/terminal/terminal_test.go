@@ -2,7 +2,10 @@ package terminal
 
 import (
 	"os"
+	"reflect"
 	"testing"
+
+	termplugin "github.com/egoist/mygo/plugins/terminal"
 )
 
 func TestTerminalStateInit(t *testing.T) {
@@ -80,3 +83,47 @@ func TestTerminalMultiTabState(t *testing.T) {
 		t.Fatalf("expected TabCount=1 and title 'ssh', got count=%d title=%q", ts.TabCount(), ts.GetTitle())
 	}
 }
+
+func TestTerminalScrollReflect(t *testing.T) {
+	termType := reflect.TypeOf(termplugin.Terminal{})
+	field, ok := termType.FieldByName("term")
+	if !ok {
+		t.Fatalf("field 'term' not found in termplugin.Terminal")
+	}
+	t.Logf("field 'term' found: type=%v, offset=%d", field.Type, field.Offset)
+
+	muField, ok := termType.FieldByName("mu")
+	if !ok {
+		t.Fatalf("field 'mu' not found in termplugin.Terminal")
+	}
+	t.Logf("field 'mu' found: type=%v, offset=%d", muField.Type, muField.Offset)
+
+	// Check methods on field.Type (*vt.Terminal)
+	for i := 0; i < field.Type.NumMethod(); i++ {
+		m := field.Type.Method(i)
+		t.Logf("method: %s", m.Name)
+	}
+
+	if _, ok := field.Type.MethodByName("ScrollToBottom"); !ok {
+		t.Fatalf("method ScrollToBottom not found on %v", field.Type)
+	}
+	if _, ok := field.Type.MethodByName("ScrollBy"); !ok {
+		t.Fatalf("method ScrollBy not found on %v", field.Type)
+	}
+
+	drawField, ok := termType.FieldByName("draw")
+	if !ok {
+		t.Fatalf("field 'draw' not found in termplugin.Terminal")
+	}
+	t.Logf("field 'draw' found: type=%v, offset=%d", drawField.Type, drawField.Offset)
+
+	// Verify methods don't panic on nil terminal
+	ts := &TerminalState{}
+	ts.ScrollPageUp()
+	ts.ScrollPageDown()
+	ts.ScrollToTop()
+	ts.ScrollToBottom()
+}
+
+
+

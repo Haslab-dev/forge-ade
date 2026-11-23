@@ -247,6 +247,16 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 				}
 				if ts != nil {
 					m.Separator()
+					if m.Item("Scroll Up (Page)").Shortcut(ui.Shift, ui.KeyPageUp).Chosen() {
+						ts.ScrollPageUp()
+					}
+					if m.Item("Scroll to Bottom").Shortcut(ui.Cmd, ui.KeyEnd).Chosen() {
+						ts.ScrollToBottom()
+					}
+					if m.Item("Scroll to Top").Shortcut(ui.Cmd, ui.KeyHome).Chosen() {
+						ts.ScrollToTop()
+					}
+					m.Separator()
 					if m.Item("Clear Terminal").Chosen() {
 						ts.SendInput("\x0c")
 					}
@@ -256,6 +266,12 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 				}
 			})
 
+			if IconButton(c, tc, icons.TablerArrowUp, 13).Tooltip("Scroll Up (Page)").Clicked() && ts != nil {
+				ts.ScrollPageUp()
+			}
+			if IconButton(c, tc, icons.TablerArrowDownToLine, 13).Tooltip("Scroll to Bottom").Clicked() && ts != nil {
+				ts.ScrollToBottom()
+			}
 			if IconButton(c, tc, icons.TablerPlus, 13).Clicked() && ts != nil {
 				cwd := ""
 				if a.Workspace != nil && a.Workspace.RootDir != "" && !strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
@@ -326,6 +342,13 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 			}
 			if m.Item("Clear Terminal").Shortcut(ui.Cmd, ui.KeyK).Chosen() {
 				ts.SendInput("\x0c")
+			}
+			m.Separator()
+			if m.Item("Scroll Up (Page)").Shortcut(ui.Shift, ui.KeyPageUp).Chosen() {
+				ts.ScrollPageUp()
+			}
+			if m.Item("Scroll to Bottom").Shortcut(ui.Cmd, ui.KeyEnd).Chosen() {
+				ts.ScrollToBottom()
 			}
 			m.Separator()
 			if m.Item("Add Snippet...").Chosen() {

@@ -3,6 +3,7 @@ package terminal
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -175,6 +176,20 @@ func ptyEnv() map[string]string {
 		"/bin",
 		"/usr/sbin",
 		"/sbin",
+	}
+	// Detect any NVM installed node versions (prepend latest)
+	if nvmMatches, err := filepath.Glob(filepath.Join(homeDir, ".nvm/versions/node/*/bin")); err == nil && len(nvmMatches) > 0 {
+		extraPaths = append([]string{nvmMatches[len(nvmMatches)-1]}, extraPaths...)
+	}
+	for _, candidate := range []string{
+		filepath.Join(homeDir, ".local/share/fnm/current/bin"),
+		filepath.Join(homeDir, ".fnm/current/bin"),
+		filepath.Join(homeDir, ".asdf/shims"),
+		filepath.Join(homeDir, ".volta/bin"),
+	} {
+		if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+			extraPaths = append([]string{candidate}, extraPaths...)
+		}
 	}
 	for _, p := range extraPaths {
 		if p != "" && !strings.Contains(currentPath, p) {

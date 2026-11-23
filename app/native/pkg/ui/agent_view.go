@@ -785,8 +785,23 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 		// Collapsed by default — even mid-stream. Only an explicit toggle
 		// opens the CoT body.
 		if expanded && text != "" {
+			if a.ThinkingScrollStates == nil {
+				a.ThinkingScrollStates = make(map[string]*ui.ScrollState)
+			}
+			ss := a.ThinkingScrollStates[expandKey]
+			if ss == nil {
+				ss = &ui.ScrollState{Y: math.MaxFloat32}
+				a.ThinkingScrollStates[expandKey] = ss
+			}
+			if isThinking {
+				// While streaming, automatically follow newest thinking tokens to the bottom
+				// unless the user intentionally scrolled up to read earlier reasoning.
+				if ss.MaxY == 0 || ss.Y >= ss.MaxY-30 {
+					ss.Y = math.MaxFloat32
+				}
+			}
 			ui.Column(c).Padding(0, 0, 0, 14).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
-				ui.Scroll(c).MaxHeight(240).Children(func() {
+				ui.Scroll(c).TrackScroll(ss).MaxHeight(240).Children(func() {
 					ui.Column(c).Padding(0, 0, 4, 10).Children(func() {
 						ui.Text(c, text).FontSize(11.5).TextColor(tc.TextMuted).Selectable()
 					})

@@ -3,9 +3,12 @@ package terminal
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"unsafe"
 
 	termplugin "github.com/egoist/mygo/plugins/terminal"
 )
@@ -560,3 +563,146 @@ func (ts *TerminalState) ExitStatus() int {
 	defer ts.mu.Unlock()
 	return ts.ExitCode
 }
+
+var (
+	termFieldOffset uintptr
+	termFieldFound  bool
+	termMuOffset    uintptr
+	termMuFound     bool
+	drawFieldOffset uintptr
+	drawFieldFound  bool
+)
+
+func init() {
+	termType := reflect.TypeOf(termplugin.Terminal{})
+	if f, ok := termType.FieldByName("term"); ok {
+		termFieldOffset = f.Offset
+		termFieldFound = true
+	}
+	if f, ok := termType.FieldByName("mu"); ok {
+		termMuOffset = f.Offset
+		termMuFound = true
+	}
+	if f, ok := termType.FieldByName("draw"); ok {
+		drawFieldOffset = f.Offset
+		drawFieldFound = true
+	}
+}
+
+// scrollTerminal moves the terminal scrollback buffer and triggers an immediate view redraw.
+func scrollTerminal(t *termplugin.Terminal, action string) bool {
+	if t == nil || !termFieldFound {
+		return false
+	}
+	tPtr := unsafe.Pointer(t)
+	if termMuFound {
+		mu := (*sync.Mutex)(unsafe.Pointer(uintptr(tPtr) + termMuOffset))
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	vtPtr := *(*unsafe.Pointer)(unsafe.Pointer(uintptr(tPtr) + termFieldOffset))
+	if vtPtr == nil {
+		return false
+	}
+	f, _ := reflect.TypeOf(termplugin.Terminal{}).FieldByName("term")
+	vtVal := reflect.NewAt(f.Type.Elem(), vtPtr)
+
+	if alt := vtVal.MethodByName("AltScreen"); alt.IsValid() {
+		res := alt.Call(nil)
+		if len(res) > 0 && res[0].Bool() {
+			return false
+		}
+	}
+
+	switch action {
+	case "to_top":
+		if m := vtVal.MethodByName("ScrollToTop"); m.IsValid() {
+			m.Call(nil)
+		}
+	case "to_bottom":
+		if m := vtVal.MethodByName("ScrollToBottom"); m.IsValid() {
+			m.Call(nil)
+		}
+	case "page_up":
+		rows := 24
+		if sz := vtVal.MethodByName("Size"); sz.IsValid() {
+			res := sz.Call(nil)
+			if len(res) == 2 {
+				rows = int(res[1].Int())
+			}
+		}
+		page := rows - 1
+		if page < 1 {
+			page = 1
+		}
+		if m := vtVal.MethodByName("ScrollBy"); m.IsValid() {
+			m.Call([]reflect.Value{reflect.ValueOf(-page)})
+		}
+	case "page_down":
+		rows := 24
+		if sz := vtVal.MethodByName("Size"); sz.IsValid() {
+			res := sz.Call(nil)
+			if len(res) == 2 {
+				rows = int(res[1].Int())
+			}
+		}
+		page := rows - 1
+		if page < 1 {
+			page = 1
+		}
+		if m := vtVal.MethodByName("ScrollBy"); m.IsValid() {
+			m.Call([]reflect.Value{reflect.ValueOf(page)})
+		}
+	default:
+		return false
+	}
+
+	if drawFieldFound {
+		drawPtr := (*atomic.Pointer[func()])(unsafe.Pointer(uintptr(tPtr) + drawFieldOffset))
+		if f := drawPtr.Load(); f != nil {
+			(*f)()
+		}
+	}
+	return true
+}
+
+// ScrollPageUp scrolls the active tab's viewport up by one display page.
+func (ts *TerminalState) ScrollPageUp() {
+	ts.mu.Lock()
+	term := ts.term
+	ts.mu.Unlock()
+	if term != nil {
+		scrollTerminal(term, "page_up")
+	}
+}
+
+// ScrollPageDown scrolls the active tab's viewport down by one display page.
+func (ts *TerminalState) ScrollPageDown() {
+	ts.mu.Lock()
+	term := ts.term
+	ts.mu.Unlock()
+	if term != nil {
+		scrollTerminal(term, "page_down")
+	}
+}
+
+// ScrollToTop scrolls the active tab's viewport to the very top of the scrollback.
+func (ts *TerminalState) ScrollToTop() {
+	ts.mu.Lock()
+	term := ts.term
+	ts.mu.Unlock()
+	if term != nil {
+		scrollTerminal(term, "to_top")
+	}
+}
+
+// ScrollToBottom scrolls the active tab's viewport to the bottom (active prompt).
+func (ts *TerminalState) ScrollToBottom() {
+	ts.mu.Lock()
+	term := ts.term
+	ts.mu.Unlock()
+	if term != nil {
+		scrollTerminal(term, "to_bottom")
+	}
+}
+

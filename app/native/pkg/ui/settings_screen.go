@@ -103,6 +103,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "ACP")
+						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabUsage, "Usage Stats", icons.TablerChartBar, "STATS")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAntigravityQuota, "Antigravity Quota", icons.TablerChartBar, "MULTI")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
 						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
@@ -180,6 +181,8 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 								a.renderSettingsTabHooks(c, tc, sm)
 							case settings.SettingsTabStudio:
 								a.renderSettingsTabStudio(c, tc, sm)
+							case settings.SettingsTabUsage:
+								a.renderSettingsTabUsage(c, tc, sm)
 							}
 						})
 					})
@@ -195,6 +198,8 @@ func settingsSectionTitle(tab int) string {
 		return "Providers & Models"
 	case settings.SettingsTabAgents:
 		return "ACP & Agent CLIs"
+	case settings.SettingsTabUsage:
+		return "Usage Stats & Token Analytics"
 	case settings.SettingsTabAntigravityQuota:
 		return "Antigravity Quota Tracker"
 	case settings.SettingsTabMCP:

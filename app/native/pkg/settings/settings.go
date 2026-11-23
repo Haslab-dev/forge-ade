@@ -52,6 +52,7 @@ const (
 	SettingsTabIndexing         = 15 // Codebase Indexing
 	SettingsTabAntigravityQuota = 16 // Antigravity Quota Tracker
 	SettingsTabStudio           = 17 // Studio Media & Generation APIs
+	SettingsTabUsage            = 18 // Usage & Token Stats
 )
 
 // AddAccountMode constants
@@ -136,6 +137,14 @@ type SettingsManager struct {
 
 	// Computer Use state
 	ComputerPermissionMode string
+
+	// Usage Stats filter & UI state
+	UsageTimeRange   string
+	UsageCustomStart string
+	UsageCustomEnd   string
+	UsageFilterModel string
+	UsageFilterProv  string
+	UsageGroupBy     string
 
 	// Indexing state
 	IndexingStatus  string
@@ -391,6 +400,10 @@ func NewSettingsManager(engine *engine.Engine, onSaved func(provider, model stri
 		AutoSave:            true,
 		OnModelSaved:        onSaved,
 		NewProviderProtocol: "openai",
+		UsageTimeRange:      "7d",
+		UsageGroupBy:        "model",
+		UsageCustomStart:    time.Now().Add(-7 * 24 * time.Hour).Format("2006-01-02"),
+		UsageCustomEnd:      time.Now().Format("2006-01-02"),
 	}
 	sm.Load()
 	sm.loadIntegrationLists()

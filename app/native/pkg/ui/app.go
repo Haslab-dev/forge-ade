@@ -30,6 +30,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/studio"
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/usage"
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 	"github.com/hasdev/forge-ade/core/agentsession"
 	"github.com/hasdev/forge-ade/core/remotefs"
@@ -120,6 +121,7 @@ type AppUI struct {
 	Palette                        *palette.PaletteManager
 	Settings                       *settings.SettingsManager
 	ThemeMgr                       *theme.ThemeManager
+	UsageMgr                       *usage.UsageManager
 	ACPMgr                         *agent.ACPManager
 	CLIMgr                         *agent.AgentCLIManager
 	Board                          *board.BoardManager
@@ -324,6 +326,7 @@ type AppUI struct {
 	navigatingHistory     bool
 	ChangesCardCollapsed  map[int]bool
 	ThinkingBlockExpanded map[string]bool
+	ThinkingScrollStates  map[string]*ui.ScrollState
 	InspectorCollapsed    bool
 
 	ShowNewFileModal            bool
@@ -824,8 +827,20 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 			log.Printf("[acp] ask questions dropped: no session for %q", sessionID)
 		}
 	}
-	appUI.ACPMgr.OnUsage = func(sessionID string, usage agent.UsageInfo) {
-		appUI.Agent.HandleUsage(appUI.Agent.MapInternalSession(sessionID), usage)
+	appUI.ACPMgr.OnUsage = func(sessionID string, u agent.UsageInfo) {
+		nativeID := appUI.Agent.MapInternalSession(sessionID)
+		appUI.Agent.HandleUsage(nativeID, u)
+		if appUI.UsageMgr != nil {
+			title := ""
+			model := ""
+			prov := ""
+			if sess := appUI.Agent.FindSession(nativeID); sess != nil {
+				title = sess.Title
+				model = sess.Model
+				prov = sess.Provider
+			}
+			appUI.UsageMgr.RecordTurn(nativeID, title, model, prov, u.InputTokens, u.OutputTokens, u.CachedTokens, u.TotalTokens, u.CostUSD)
+		}
 	}
 	appUI.ACPMgr.OnCommands = func(sessionID string, commands []string) {
 		appUI.Agent.HandleCommands(appUI.Agent.MapInternalSession(sessionID), commands)
@@ -913,6 +928,20 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		appUI.Agent.ActiveModel = appUI.Settings.Model
 	}
 	appUI.Settings.ThemeMgr = appUI.ThemeMgr
+
+	homeDir, _ := os.UserHomeDir()
+	provResolver := func(model, provID string) string {
+		if appUI.Settings != nil {
+			for _, prof := range appUI.Settings.GetProfiles() {
+				if prof.ID == provID {
+					return prof.Name
+				}
+			}
+		}
+		return usage.DefaultProviderName(model, provID)
+	}
+	appUI.UsageMgr = usage.NewUsageManager(filepath.Join(homeDir, ".forge-ade"), provResolver)
+	go appUI.UsageMgr.BackfillHistoricalSessions()
 
 	appUI.Database = database.NewDatabaseManager(appUI.Workspace)
 	appUI.Database.OnNeedRedraw = func() {

@@ -1170,9 +1170,9 @@ func boolOf(v interface{}) bool {
 // deliverUsage parses a usage map into UsageInfo and dispatches it.
 func (mgr *ACPManager) deliverUsage(sessionID string, u map[string]interface{}, num func(map[string]interface{}, ...string) int, stringify func(interface{}) string) {
 	usage := UsageInfo{
-		InputTokens:  num(u, "inputTokens", "input_tokens"),
-		OutputTokens: num(u, "outputTokens", "output_tokens"),
-		CachedTokens: num(u, "cachedTokens", "cached_read_input_tokens", "cache_read_input_tokens", "cached_input_tokens"),
+		InputTokens:  num(u, "inputTokens", "input_tokens", "prompt_tokens", "promptTokens"),
+		OutputTokens: num(u, "outputTokens", "output_tokens", "completion_tokens", "completionTokens"),
+		CachedTokens: num(u, "cachedTokens", "cached_read_input_tokens", "cache_read_input_tokens", "cached_input_tokens", "prompt_cache_hit_tokens", "cached_tokens"),
 		TotalTokens:  num(u, "totalTokens", "total_tokens"),
 	}
 	if cost := stringify(u["costUsd"]); cost != "" {

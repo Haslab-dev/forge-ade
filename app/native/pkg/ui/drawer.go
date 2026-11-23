@@ -255,6 +255,12 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 							a.OpenTerminalSnippetsModal(ts.ActiveSessionID, "", "")
 						}
 
+						if IconButton(c, tc, icons.TablerArrowUp, 11).Tooltip("Scroll Up (Page)").Clicked() && ts != nil {
+							ts.ScrollPageUp()
+						}
+						if IconButton(c, tc, icons.TablerArrowDownToLine, 11).Tooltip("Scroll to Bottom").Clicked() && ts != nil {
+							ts.ScrollToBottom()
+						}
 						if IconButton(c, tc, icons.TablerEraser, 11).Clicked() {
 							ts.SendInput("\x0c")
 						}
