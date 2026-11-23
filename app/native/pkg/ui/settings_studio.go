@@ -63,7 +63,7 @@ func (a *AppUI) renderSettingsTabStudio(c *ui.Context, tc theme.ThemeColors, sm 
 	ui.Column(c.Key("settings-studio-pane")).Gap(20).Children(func() {
 
 		// 1. Image Generation Custom API Card
-		renderSettingSectionCard(c, tc, "IMAGE GENERATION (COMFYUI WORKFLOW API)", icons.TablerPhoto, func() {
+		renderSettingSectionCard(c, tc, "IMAGE GENERATION (NODE WORKFLOW API)", icons.TablerPhoto, func() {
 			ui.Column(c).Gap(12).Children(func() {
 				// Provider & Model Row
 				ui.Row(c).Gap(12).Children(func() {

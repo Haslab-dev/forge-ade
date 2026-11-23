@@ -151,7 +151,7 @@ func DemoSlides() []SlideItem {
 		},
 		{
 			ID:       "slide-2",
-			Title:    "ComfyUI Dataflow Graph",
+			Title:    "Visual Dataflow Graph",
 			Subtitle: "Custom APIs & Visual Workflows",
 			Layout:   "split",
 			Theme:    "accent",

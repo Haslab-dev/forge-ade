@@ -42,11 +42,14 @@ func (a *AppUI) renderStudioSurface(c *ui.Context) {
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
 		// Main Studio Work Area
-		// - Image or Video Generator: ComfyUI-style Visual Node Graph Workflow
-		// - Presentation, Slides, Motion, or 2D/3D Sandbox: Left Chat Agent (ACP & internal) + Right Main Viewer
+		// - Image or Video Generator: Visual Node Graph Workflow (WebView)
+		// - Presentation, Slides, Motion, or 2D/3D Sandbox: Pure Native GPU Canvas + Left Chat Agent
 		if project != nil && (project.Type == corestudio.ArtifactTypeImage || project.Type == corestudio.ArtifactTypeVideo) {
-			a.renderStudioComfyUINodeGraph(c, tc, project)
+			a.closeStudioWebView()
+			a.renderStudioNodeGraph(c, tc, project)
 		} else {
+			a.closeStudioNodeWebView()
+			a.closeStudioWebView()
 			a.renderStudioSplitAgentViewer(c, tc, project)
 		}
 	})
@@ -221,9 +224,9 @@ func (a *AppUI) studioEnsureProjectForType(artType corestudio.ArtifactType) {
 	case corestudio.ArtifactTypeCodeJS:
 		a.Studio.CreateProject("3D Torus Knot", "Three.js Realtime Sandbox", artType)
 	case corestudio.ArtifactTypeImage:
-		a.Studio.CreateProject("Image Node Workflow", "ComfyUI-Style Generative Node Graph", artType)
+		a.Studio.CreateProject("Image Node Workflow", "Visual Node Graph Workflow", artType)
 	case corestudio.ArtifactTypeVideo:
-		a.Studio.CreateProject("Video Node Workflow", "ComfyUI-Style Video Latent Nodes", artType)
+		a.Studio.CreateProject("Video Node Workflow", "Video Latent Node Pipeline", artType)
 	}
 }
 
@@ -616,13 +619,10 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 	if assetPath == "" && project != nil {
 		assetPath = a.ensureStudioAssetFile(project)
 	}
-	if assetPath != "" && mygo.WebViewAvailable() {
-		bg := "#090a0f"
-		if flavor == "3d" {
-			bg = "#0a0c14"
-		}
-		a.openStudioWebView(assetPath, bg)
-		a.studioSyncWebView(project)
+	// Canvas mode is 100% pure-Go native GPU rendered cards. Do NOT spawn a background WebView process.
+	// Only Image / Video maker tab uses a WebView.
+	if a.StudioWebView != nil {
+		a.closeStudioWebView()
 	}
 
 	slides := data.Slides
@@ -761,7 +761,7 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 			reloadBtn.Tooltip("Reload viewer")
 			if reloadBtn.Clicked() {
 				a.closeStudioWebView()
-				a.closeStudioComfyWebView()
+				a.closeStudioNodeWebView()
 				a.studioWebviewSynced = false
 			}
 
@@ -788,73 +788,68 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 			}
 		})
 
-		// Main Viewport
+		// Main Viewport (Pure-Go Native MyGo GPU Rendering)
 		ui.Column(c.Key("studio-stage-viewport")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
-				ui.WebView(c, a.StudioWebView).Grow(1).FillWidth()
-			} else {
-				// Fallback when WebView is not yet initialized or in headless tests
-				stageW, stageH := a.studioStageSize(c)
-				switch flavor {
-				case "motion":
-					stage := ui.Column(c.Key("motion-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(32, 40).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
-					stage.Children(func() {
-						ui.Text(c, "ForgeADE Studio").FontSize(34).FontWeight(800).TextColor(tc.Text)
-						ui.Text(c, "Kinetic Rhythm & Audio Synchronization").FontSize(15).FontWeight(500).TextColor(tc.Accent)
-						ui.Box(c).Size(1, 48)
-						script := data.ScriptText
-						if script == "" {
-							script = "ForgeADE Studio introduces a fluid agentic workspace where design skills meet real-time motion."
-						}
-						ui.Row(c).Padding(8, 20).Radius(20).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-							ui.Text(c, script).FontSize(13).FontWeight(500).TextColor(tc.Text)
-						})
-					})
-
-				case "3d":
-					scene := ui.Column(c.Key("live-3d-scene")).Width(stageW).Height(stageH).Radius(12).
-						Background(ui.Hex("#05070d")).BorderWidth(1).BorderColor(tc.Border).Clip().
-						AlignItems(ui.Center).Justify(ui.Center)
-					scene.Children(func() {
-						ui.Text(c, "WebGL 3D Scene Viewport").FontSize(18).FontWeight(700).TextColor(tc.Text)
-						ui.Text(c, "OrbitControls active • Three.js canvas initialized").FontSize(12).TextColor(tc.TextMuted)
-					})
-
-				default: // slides
-					cardPadY, cardPadX := float32(40), float32(48)
-					if stageW < 480 {
-						cardPadY, cardPadX = 20, 24
+			stageW, stageH := a.studioStageSize(c)
+			switch flavor {
+			case "motion":
+				stage := ui.Column(c.Key("motion-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(32, 40).
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
+				stage.Children(func() {
+					ui.Text(c, "ForgeADE Studio").FontSize(34).FontWeight(800).TextColor(tc.Text)
+					ui.Text(c, "Kinetic Rhythm & Audio Synchronization").FontSize(15).FontWeight(500).TextColor(tc.Accent)
+					ui.Box(c).Size(1, 48)
+					script := data.ScriptText
+					if script == "" {
+						script = "ForgeADE Studio introduces a fluid agentic workspace where design skills meet real-time motion."
 					}
-					slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
-					slideCard.Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
-							ui.Box(c).Grow(1)
-							ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-						})
-						ui.Box(c).Size(1, 24)
-						title := currentSlide.Title
-						if title == "" {
-							title = "Presentation Stage"
-						}
-						ui.Text(c, title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
-						ui.Box(c).Size(1, 8)
-						if currentSlide.Subtitle != "" {
-							ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
-							ui.Box(c).Size(1, 20)
-						}
-						ui.Column(c).Gap(10).Children(func() {
-							for _, b := range currentSlide.Bullets {
-								ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-									ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
-									ui.Text(c, b).FontSize(13).TextColor(tc.Text)
-								})
-							}
-						})
+					ui.Row(c).Padding(8, 20).Radius(20).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+						ui.Text(c, script).FontSize(13).FontWeight(500).TextColor(tc.Text)
 					})
+				})
+
+			case "3d":
+				scene := ui.Column(c.Key("live-3d-scene")).Width(stageW).Height(stageH).Radius(12).
+					Background(ui.Hex("#05070d")).BorderWidth(1).BorderColor(tc.Border).Clip().
+					AlignItems(ui.Center).Justify(ui.Center)
+				scene.Children(func() {
+					ui.Text(c, "WebGL 3D Scene Viewport").FontSize(18).FontWeight(700).TextColor(tc.Text)
+					ui.Text(c, "OrbitControls active • Three.js canvas initialized").FontSize(12).TextColor(tc.TextMuted)
+				})
+
+			default: // slides
+				cardPadY, cardPadX := float32(40), float32(48)
+				if stageW < 480 {
+					cardPadY, cardPadX = 20, 24
 				}
+				slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
+				slideCard.Children(func() {
+					ui.Row(c).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
+						ui.Box(c).Grow(1)
+						ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+					})
+					ui.Box(c).Size(1, 24)
+					title := currentSlide.Title
+					if title == "" {
+						title = "Presentation Stage"
+					}
+					ui.Text(c, title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
+					ui.Box(c).Size(1, 8)
+					if currentSlide.Subtitle != "" {
+						ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
+						ui.Box(c).Size(1, 20)
+					}
+					ui.Column(c).Gap(10).Children(func() {
+						for _, b := range currentSlide.Bullets {
+							ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+								ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
+								ui.Text(c, b).FontSize(13).TextColor(tc.Text)
+							})
+						}
+					})
+				})
 			}
 		})
 
@@ -916,20 +911,20 @@ func (a *AppUI) renderStudio3DSandboxViewer(c *ui.Context, tc theme.ThemeColors,
 	a.renderStudioUnifiedCanvasViewer(c, tc, project, data)
 }
 
-// renderStudioComfyUINodeGraph renders the requested ComfyUI-style Visual Node Graph Workflow for Image & Video Generator!
-func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
+// renderStudioNodeGraph renders the Visual Node Graph Workflow for Image & Video Generator!
+func (a *AppUI) renderStudioNodeGraph(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
 	cfg := corestudio.LoadStudioConfig()
 
-	// Ensure the interactive ComfyUI Node Graph WebView is initialized
-	a.ensureStudioComfyWebView(project)
+	// Ensure the interactive Node Graph WebView is initialized
+	a.ensureStudioNodeWebView(project)
 
-	ui.Column(c.Key("comfyui-canvas-stage")).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
-		// ComfyUI Top Action Bar
-		ui.Row(c.Key("comfyui-topbar")).Height(42).Padding(0, 16).Gap(10).AlignItems(ui.Center).
+	ui.Column(c.Key("node-workflow-stage")).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
+		// Node Workflow Top Action Bar
+		ui.Row(c.Key("node-workflow-topbar")).Height(42).Padding(0, 16).Gap(10).AlignItems(ui.Center).
 			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 
 			ui.Icon(c, icons.TablerGitBranch).Width(14).Height(14).TextColor(tc.Accent)
-			ui.Text(c, "ComfyUI Visual Node Workflow").FontSize(12).FontWeight(700).TextColor(tc.Text)
+			ui.Text(c, "Visual Node Workflow").FontSize(12).FontWeight(700).TextColor(tc.Text)
 
 			pipelineLabel := "IMAGE PIPELINE"
 			if project != nil && project.Type == corestudio.ArtifactTypeVideo {
@@ -957,7 +952,7 @@ func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors
 			ui.Box(c).Grow(1)
 
 			// Settings button
-			settingsBtn := ui.Row(c.Key("comfy-api-settings")).Height(26).Padding(0, 8).Radius(5).
+			settingsBtn := ui.Row(c.Key("node-workflow-api-settings")).Height(26).Padding(0, 8).Radius(5).
 				Background(tc.ToolbarControl).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			settingsBtn.Children(func() {
 				ui.Icon(c, icons.TablerSettings).Width(11).Height(11).TextColor(tc.IconMuted)
@@ -967,7 +962,7 @@ func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors
 				a.openSettings(settings.SettingsTabStudio)
 			}
 
-			// Primary Action: Queue Prompt (⌘↵)
+			// Primary Action: Queue Generation (⌘↵)
 			queueBtn := ui.Row(c.Key("btn-queue-prompt")).Height(28).Padding(0, 14).Radius(6).
 				Background(tc.Accent).AlignItems(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 			queueBtn.Children(func() {
@@ -976,7 +971,7 @@ func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors
 					ui.Text(c, "Generating...").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 				} else {
 					ui.Icon(c, icons.TablerSparkles).Width(13).Height(13).TextColor(tc.AccentForeground)
-					ui.Text(c, "Queue Prompt (⌘↵)").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
+					ui.Text(c, "Queue Generation (⌘↵)").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 				}
 			})
 			if queueBtn.Clicked() && !a.StudioIsGenerating {
@@ -986,28 +981,28 @@ func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors
 
 		// Generation Progress Bar (if executing)
 		if a.StudioIsGenerating {
-			ui.Row(c.Key("comfy-prog-bar")).Height(24).Padding(0, 16).Gap(8).AlignItems(ui.Center).
+			ui.Row(c.Key("node-workflow-prog-bar")).Height(24).Padding(0, 16).Gap(8).AlignItems(ui.Center).
 				Background(tc.Accent.Alpha(0.1)).BorderWidth(0, 0, 1, 0).BorderColor(tc.Accent.Alpha(0.2)).Children(func() {
 				ui.Spinner(c).Size(10, 10).Label("")
 				ui.Text(c, a.StudioGenerationStatus).FontSize(10).FontWeight(600).TextColor(tc.Accent)
 			})
 		}
 
-		// ComfyUI Interactive Viewport
-		if a.StudioComfyWebView != nil && !a.StudioComfyWebView.IsDestroyed() {
-			ui.WebView(c, a.StudioComfyWebView).Grow(1).FillWidth()
+		// Node Graph Interactive Viewport
+		if a.StudioNodeWebView != nil && !a.StudioNodeWebView.IsDestroyed() {
+			ui.WebView(c, a.StudioNodeWebView).Grow(1).FillWidth()
 		} else {
-			a.renderStudioComfyUIFallbackStage(c, tc, project)
+			a.renderStudioNodeFallbackStage(c, tc, project)
 		}
 	})
 }
 
-// renderStudioComfyUIFallbackStage renders the native fallback node canvas for headless environments or when WebView is unavailable.
-func (a *AppUI) renderStudioComfyUIFallbackStage(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
+// renderStudioNodeFallbackStage renders the native fallback node canvas for headless environments or when WebView is unavailable.
+func (a *AppUI) renderStudioNodeFallbackStage(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
 	cfg := corestudio.LoadStudioConfig()
 	// Node Graph Canvas with Nodes and Visual Connections
-	ui.ScrollBoth(c.Key("comfyui-nodes-viewport")).Grow(1).Padding(24, 28).Children(func() {
-		ui.Row(c.Key("comfyui-nodes-row")).Gap(14).AlignItems(ui.Start).Children(func() {
+	ui.ScrollBoth(c.Key("node-workflow-viewport")).Grow(1).Padding(24, 28).Children(func() {
+		ui.Row(c.Key("node-workflow-row")).Gap(14).AlignItems(ui.Start).Children(func() {
 
 			// -------------------------------------------------------------
 			// NODE 1: Text Prompt Node (CLIP Text Encode)
@@ -1248,7 +1243,7 @@ func (a *AppUI) renderStudioComfyUIFallbackStage(c *ui.Context, tc theme.ThemeCo
 						ui.Icon(c, icons.TablerPhoto).Width(48).Height(48).TextColor(tc.Accent)
 						ui.Box(c).Size(1, 8)
 						ui.Text(c, "Ready to Render").FontSize(13).FontWeight(600).TextColor(tc.Text)
-						ui.Text(c, "Click 'Queue Prompt (⌘↵)' to execute ComfyUI pipeline").FontSize(10).TextColor(tc.TextMuted)
+						ui.Text(c, "Click 'Queue Generation (⌘↵)' to execute node workflow").FontSize(10).TextColor(tc.TextMuted)
 					}
 				})
 
@@ -1382,14 +1377,14 @@ func (a *AppUI) studioQueuePrompt() {
 			time.Sleep(120 * time.Millisecond)
 			a.StudioGenerationProgress = float32(step) * 0.22
 			a.StudioGenerationStatus = fmt.Sprintf("Sampling Step %d/%d (KSampler)...", step*6, steps)
-			a.syncComfyUIProgress(true, a.StudioGenerationStatus, a.StudioGenerationProgress, "")
+			a.syncNodeWorkflowProgress(true, a.StudioGenerationStatus, a.StudioGenerationProgress, "")
 			if a.Window != nil {
 				a.Window.Invalidate()
 			}
 		}
 
 		a.StudioGenerationStatus = "Decoding Latent & Generating Assets..."
-		a.syncComfyUIProgress(true, a.StudioGenerationStatus, 0.9, "")
+		a.syncNodeWorkflowProgress(true, a.StudioGenerationStatus, 0.9, "")
 		if a.Window != nil {
 			a.Window.Invalidate()
 		}
@@ -1417,12 +1412,12 @@ func (a *AppUI) studioQueuePrompt() {
 			a.StudioGeneratedWidth = res.Width
 			a.StudioGeneratedHeight = res.Height
 			a.StudioGenerationStatus = fmt.Sprintf("Generation Complete: %s (%dx%d)", filepath.Base(res.FilePath), res.Width, res.Height)
-			a.syncComfyUIProgress(false, a.StudioGenerationStatus, 1.0, res.FilePath)
+			a.syncNodeWorkflowProgress(false, a.StudioGenerationStatus, 1.0, res.FilePath)
 
 			if a.Studio != nil {
 				proj := a.Studio.ActiveProject()
 				if proj != nil {
-					proj.AddVersion(prompt, fmt.Sprintf("ComfyUI Run: %s", filepath.Base(res.FilePath)), corestudio.ArtifactData{
+					proj.AddVersion(prompt, fmt.Sprintf("Workflow Run: %s", filepath.Base(res.FilePath)), corestudio.ArtifactData{
 						OutputAsset: filepath.Base(res.FilePath),
 						AspectRatio: aspect,
 					}, nil)
@@ -1430,7 +1425,7 @@ func (a *AppUI) studioQueuePrompt() {
 			}
 		} else {
 			a.StudioGenerationStatus = "Generation encountered an issue"
-			a.syncComfyUIProgress(false, a.StudioGenerationStatus, 0, "")
+			a.syncNodeWorkflowProgress(false, a.StudioGenerationStatus, 0, "")
 		}
 
 		if a.Window != nil {
@@ -1439,8 +1434,8 @@ func (a *AppUI) studioQueuePrompt() {
 	}()
 }
 
-// ensureStudioComfyWebView initializes and attaches the interactive ComfyUI node graph WebView.
-func (a *AppUI) ensureStudioComfyWebView(project *corestudio.StudioProject) {
+// ensureStudioNodeWebView initializes and attaches the interactive Visual Node Graph WebView.
+func (a *AppUI) ensureStudioNodeWebView(project *corestudio.StudioProject) {
 	if a.Window == nil || !mygo.WebViewAvailable() {
 		return
 	}
@@ -1448,18 +1443,18 @@ func (a *AppUI) ensureStudioComfyWebView(project *corestudio.StudioProject) {
 	if project != nil && project.Type == corestudio.ArtifactTypeVideo {
 		pipeline = "video"
 	}
-	htmlPath := a.ensureStudioComfyAssetFile(project, pipeline)
+	htmlPath := a.ensureStudioNodeAssetFile(project, pipeline)
 	if htmlPath == "" {
 		return
 	}
 	url := "file://" + htmlPath
-	if a.StudioComfyWebView != nil && !a.StudioComfyWebView.IsDestroyed() {
-		if a.StudioComfyWebViewURL == url {
+	if a.StudioNodeWebView != nil && !a.StudioNodeWebView.IsDestroyed() {
+		if a.StudioNodeWebViewURL == url {
 			return
 		}
 		// If already initialized, update pipeline via JS
-		a.StudioComfyWebView.Page().Eval(fmt.Sprintf("if (typeof setPipeline === 'function') { setPipeline('%s'); }", pipeline))
-		a.StudioComfyWebViewURL = url
+		a.StudioNodeWebView.Page().Eval(fmt.Sprintf("if (typeof setPipeline === 'function') { setPipeline('%s'); }", pipeline))
+		a.StudioNodeWebViewURL = url
 		return
 	}
 
@@ -1468,8 +1463,8 @@ func (a *AppUI) ensureStudioComfyWebView(project *corestudio.StudioProject) {
 		BackgroundColor: "#0b0d13",
 	})
 	if err == nil {
-		a.StudioComfyWebView = wv
-		a.StudioComfyWebViewURL = url
+		a.StudioNodeWebView = wv
+		a.StudioNodeWebViewURL = url
 
 		// Listen for IPC messages from webview via title changes
 		wv.Page().OnPageTitleUpdated(func(e *mygo.TitleEvent) {
@@ -1482,14 +1477,14 @@ func (a *AppUI) ensureStudioComfyWebView(project *corestudio.StudioProject) {
 					if len(parts) >= 3 {
 						payloadRaw, _ = urlpkg.QueryUnescape(parts[2])
 					}
-					a.handleComfyUIWebViewMessage(action, payloadRaw)
+					a.handleNodeWebViewMessage(action, payloadRaw)
 				}
 			}
 		})
 	}
 }
 
-func (a *AppUI) handleComfyUIWebViewMessage(action, payloadRaw string) {
+func (a *AppUI) handleNodeWebViewMessage(action, payloadRaw string) {
 	if payloadRaw != "" {
 		var payload struct {
 			PositivePrompt string  `json:"positivePrompt"`
@@ -1525,14 +1520,14 @@ func (a *AppUI) handleComfyUIWebViewMessage(action, payloadRaw string) {
 		}
 	}
 	switch action {
-	case "queue_prompt":
+	case "queue_prompt", "queue_generation":
 		a.studioQueuePrompt()
 	case "open_settings":
 		a.openSettings(settings.SettingsTabStudio)
 	}
 }
 
-func (a *AppUI) ensureStudioComfyAssetFile(project *corestudio.StudioProject, pipeline string) string {
+func (a *AppUI) ensureStudioNodeAssetFile(project *corestudio.StudioProject, pipeline string) string {
 	outDir := ""
 	if a.Workspace != nil && a.Workspace.RootDir != "" {
 		outDir = filepath.Join(a.Workspace.RootDir, ".forge", "studio")
@@ -1541,9 +1536,9 @@ func (a *AppUI) ensureStudioComfyAssetFile(project *corestudio.StudioProject, pi
 		outDir = filepath.Join(home, ".forge-ade", "studio_temp")
 	}
 	_ = os.MkdirAll(outDir, 0755)
-	filePath := filepath.Join(outDir, "comfyui.html")
+	filePath := filepath.Join(outDir, "nodegraph.html")
 
-	state := corestudio.ComfyUIInitialState{
+	state := corestudio.NodeWorkflowInitialState{
 		PipelineType:   pipeline,
 		PositivePrompt: a.StudioPositivePrompt,
 		NegativePrompt: a.StudioNegativePrompt,
@@ -1556,13 +1551,13 @@ func (a *AppUI) ensureStudioComfyAssetFile(project *corestudio.StudioProject, pi
 	if a.StudioGeneratedImagePath != "" {
 		state.ResultURL = "file://" + a.StudioGeneratedImagePath
 	}
-	html := corestudio.GenerateComfyUIHTML(pipeline, state)
+	html := corestudio.GenerateNodeWorkflowHTML(pipeline, state)
 	_ = os.WriteFile(filePath, []byte(html), 0644)
 	return filePath
 }
 
-func (a *AppUI) syncComfyUIProgress(isGen bool, status string, progress float32, resultPath string) {
-	if a.StudioComfyWebView == nil || a.StudioComfyWebView.IsDestroyed() {
+func (a *AppUI) syncNodeWorkflowProgress(isGen bool, status string, progress float32, resultPath string) {
+	if a.StudioNodeWebView == nil || a.StudioNodeWebView.IsDestroyed() {
 		return
 	}
 	resURL := ""
@@ -1571,15 +1566,15 @@ func (a *AppUI) syncComfyUIProgress(isGen bool, status string, progress float32,
 	}
 	js := fmt.Sprintf("if (typeof setGenerationProgress === 'function') { setGenerationProgress(%t, %q, %f, %q); }",
 		isGen, status, progress, resURL)
-	a.StudioComfyWebView.Page().Eval(js)
+	a.StudioNodeWebView.Page().Eval(js)
 }
 
-func (a *AppUI) closeStudioComfyWebView() {
-	if a.StudioComfyWebView != nil && !a.StudioComfyWebView.IsDestroyed() {
-		a.StudioComfyWebView.Destroy()
+func (a *AppUI) closeStudioNodeWebView() {
+	if a.StudioNodeWebView != nil && !a.StudioNodeWebView.IsDestroyed() {
+		a.StudioNodeWebView.Destroy()
 	}
-	a.StudioComfyWebView = nil
-	a.StudioComfyWebViewURL = ""
+	a.StudioNodeWebView = nil
+	a.StudioNodeWebViewURL = ""
 }
 
 // renderStudioTimelineDock renders the contextual timeline dock for Video & Motion projects.
@@ -2253,9 +2248,9 @@ func (a *AppUI) decorateStudioPrompt(sessionID, prompt string) string {
 		b.WriteString(fmt.Sprintf("[STUDIO INTENT ROUTER: DETECTED TARGET = %s]\n", strings.ToUpper(string(intent))))
 	}
 	b.WriteString("You are executing in Forge ADE Studio Mode — an autonomous design and creative engineering environment.\n")
-	b.WriteString("Official Reference: Open Design (https://open-design.ai/skills/), Claude Design, ComfyUI, and Creative Agent Workflows.\n\n")
+	b.WriteString("Official Reference: Open Design (https://open-design.ai/skills/), Claude Design, Visual Node Workflows, and Creative Agent Workflows.\n\n")
 	b.WriteString("STUDIO CORE CAPABILITIES & ENGINE STACKS:\n")
-	b.WriteString("1. Generate Image: Flux / Imagen / ComfyUI API | Source: Prompt + Seed + ControlNet JSON | Formats: PNG, WebP, SVG\n")
+	b.WriteString("1. Generate Image: Flux / Imagen / Visual Node API | Source: Prompt + Seed + ControlNet JSON | Formats: PNG, WebP, SVG\n")
 	b.WriteString("2. Generate Video: Veo / Kling / Runway / Wan API | Source: Storyboard + Keyframe Spec | Formats: MP4, WebM\n")
 	b.WriteString("3. Make Slides (PPT): HTML/CSS + PptxGenJS or Slidev | Source: Structured Slide JSON / Markdown | Formats: .pptx, PDF, Web (write to slides.html, deck.html, or slides.md in workspace or ~/.forge-ade/slides/)\n")
 	b.WriteString("4. Make Motion Video + TTS: Remotion (React) + ElevenLabs | Source: React TSX + Audio Timestamp JSON, or deterministic 60fps HTML5 canvas seekable per-frame | Formats: MP4 via headless render (write to motion.html in workspace or ~/.forge-ade/motion/motion.html)\n")
@@ -2272,7 +2267,7 @@ func (a *AppUI) decorateStudioPrompt(sessionID, prompt string) string {
 			case corestudio.ArtifactTypeCodeJS:
 				b.WriteString("PRIMARY DIRECTIVE: Create / update interactive 3D/2D scene. Generate scene3d.html or scene.js using Three.js with OrbitControls, responsive viewport resize, and clean lighting in ~/.forge-ade/3d/ or workspace.\n")
 			case corestudio.ArtifactTypeImage:
-				b.WriteString("PRIMARY DIRECTIVE: Configure image generation prompt, seed, sampler, and ComfyUI workflow graph.\n")
+				b.WriteString("PRIMARY DIRECTIVE: Configure image generation prompt, seed, sampler, and visual node workflow graph.\n")
 			case corestudio.ArtifactTypeVideo:
 				b.WriteString("PRIMARY DIRECTIVE: Generate video storyboard, motion keyframe schedule, and clip timing.\n")
 			}

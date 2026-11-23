@@ -8,7 +8,7 @@ type NodePort struct {
 	Connected bool   `json:"connected"`
 }
 
-// Node represents a functional block in the monochrome ComfyUI graph.
+// Node represents a functional block in the node graph.
 type Node struct {
 	ID       string                 `json:"id"`
 	Type     string                 `json:"type"` // e.g. "prompt", "skill", "generator", "tts", "timeline", "renderer", "export"
@@ -38,7 +38,7 @@ type NodeGraph struct {
 	Links []NodeLink `json:"links"`
 }
 
-// DefaultGraphForType generates an initial ComfyUI-style graph for a project type.
+// DefaultGraphForType generates an initial node graph for a project type.
 func DefaultGraphForType(t ArtifactType) NodeGraph {
 	switch t {
 	case ArtifactTypeImage:

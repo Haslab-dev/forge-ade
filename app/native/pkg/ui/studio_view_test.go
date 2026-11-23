@@ -159,14 +159,14 @@ func TestStudioProjectsManagement(t *testing.T) {
 	}
 }
 
-func TestStudioComfyUIQueuePrompt(t *testing.T) {
+func TestStudioNodeWorkflowQueuePrompt(t *testing.T) {
 	dir := t.TempDir()
 	eng := engine.NewEngine(dir)
 	app := NewAppUI(eng, dir)
 	app.setMode(ModeStudio)
 
 	// Create Image project
-	p := app.Studio.CreateProject("Image Node Workflow", "ComfyUI Pipeline", corestudio.ArtifactTypeImage)
+	p := app.Studio.CreateProject("Image Node Workflow", "Visual Node Workflow", corestudio.ArtifactTypeImage)
 	if p == nil {
 		t.Fatal("expected created image project")
 	}

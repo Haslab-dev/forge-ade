@@ -148,8 +148,8 @@ type AppUI struct {
 	StudioSelectedSlideIdx         int
 	StudioWebView                  *mygo.WebView
 	StudioWebViewURL               string
-	StudioComfyWebView             *mygo.WebView
-	StudioComfyWebViewURL          string
+	StudioNodeWebView              *mygo.WebView
+	StudioNodeWebViewURL           string
 	StudioPositivePrompt           string
 	StudioNegativePrompt           string
 	StudioModel                    string
@@ -2531,6 +2531,15 @@ func (a *AppUI) setMode(mode int) {
 	} else if prevMode == ModeStudio {
 		a.StudioWorkspacePath = curWs
 	}
+
+	// Clean up active webviews from previous mode to guarantee zero idle background processes
+	if prevMode == ModeStudio && mode != ModeStudio {
+		a.closeStudioWebView()
+		a.closeStudioNodeWebView()
+	}
+	if prevMode == ModeAgent && mode != ModeAgent {
+		a.closeDeckViewer()
+	}
 	a.syncModeDrawerState(mode)
 	a.Mode = mode
 	if mode == ModeAgent {
@@ -2850,6 +2859,14 @@ func (a *AppUI) closeSettings() {
 }
 
 func (a *AppUI) renderMainColumn(c *ui.Context) {
+	if a.Mode != ModeStudio {
+		// Enforce zero idle WebKit background processes when outside Studio Mode
+		if a.StudioWebView != nil || a.StudioNodeWebView != nil {
+			a.closeStudioWebView()
+			a.closeStudioNodeWebView()
+		}
+	}
+
 	if a.Mode == ModeSettings {
 		a.renderSettingsScreen(c)
 		return

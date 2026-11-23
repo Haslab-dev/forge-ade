@@ -5,16 +5,16 @@ import (
 	"testing"
 )
 
-func TestGenerateComfyUIHTML(t *testing.T) {
+func TestGenerateNodeWorkflowHTML(t *testing.T) {
 	// 1. Image Pipeline
-	imgState := ComfyUIInitialState{
+	imgState := NodeWorkflowInitialState{
 		PipelineType:   "image",
 		PositivePrompt: "A cyberpunk city in rain",
 		Model:          "flux-1-schnell",
 		Steps:          25,
 		CFGScale:       7.5,
 	}
-	htmlImg := GenerateComfyUIHTML("image", imgState)
+	htmlImg := GenerateNodeWorkflowHTML("image", imgState)
 	if !strings.Contains(htmlImg, "IMAGE PIPELINE (FLUX / SDXL)") {
 		t.Fatal("expected image pipeline badge in generated HTML")
 	}
@@ -29,14 +29,14 @@ func TestGenerateComfyUIHTML(t *testing.T) {
 	}
 
 	// 2. Video Pipeline
-	vidState := ComfyUIInitialState{
+	vidState := NodeWorkflowInitialState{
 		PipelineType:   "video",
 		PositivePrompt: "Drone shot over alpine mountains",
 		Model:          "veo-2-ai",
 		Duration:       5,
 		FPS:            30,
 	}
-	htmlVid := GenerateComfyUIHTML("video", vidState)
+	htmlVid := GenerateNodeWorkflowHTML("video", vidState)
 	if !strings.Contains(htmlVid, "VIDEO PIPELINE") {
 		t.Fatal("expected video pipeline badge in generated HTML")
 	}

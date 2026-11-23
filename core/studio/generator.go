@@ -36,7 +36,7 @@ type GenerationRequest struct {
 	OutputDir      string  `json:"outputDir"`
 }
 
-// GenerationResult represents the output of a ComfyUI-style generative run.
+// GenerationResult represents the output of a visual node generative run.
 type GenerationResult struct {
 	FilePath string        `json:"filePath"`
 	Format   string        `json:"format"` // "PNG" or "SVG"

@@ -1,8 +1,8 @@
 {
   "name": "forge-ade-landing",
   "private": true,
-  "version": "1.0.28",
-  "build": 8,
+  "version": "1.0.29",
+  "build": 9,
   "type": "module",
   "scripts": {
     "dev": "vite",

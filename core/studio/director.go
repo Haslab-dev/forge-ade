@@ -246,7 +246,7 @@ func synthesizeArtifactData(t ArtifactType, name string, existing ArtifactData) 
 					Theme:    "dark",
 					Bullets: []string{
 						"Instant workspace sync (⌘⇧E)",
-						"ComfyUI pipeline parity",
+						"Visual node pipeline parity",
 						"Continuous Director validation",
 					},
 				},

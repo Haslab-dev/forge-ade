@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 )
 
-// ComfyUIInitialState holds state passed into the webview on initial render.
-type ComfyUIInitialState struct {
+// NodeWorkflowInitialState holds state passed into the webview on initial render.
+type NodeWorkflowInitialState struct {
 	PipelineType   string                 `json:"pipelineType"` // "image" or "video"
 	PositivePrompt string                 `json:"positivePrompt"`
 	NegativePrompt string                 `json:"negativePrompt"`
@@ -28,9 +28,12 @@ type ComfyUIInitialState struct {
 	Values         map[string]interface{} `json:"values,omitempty"`
 }
 
-// GenerateComfyUIHTML returns an interactive, zero-dependency HTML5/Canvas/SVG ComfyUI
+// ComfyUIInitialState is an alias for backward compatibility.
+type ComfyUIInitialState = NodeWorkflowInitialState
+
+// GenerateNodeWorkflowHTML returns an interactive, zero-dependency HTML5/Canvas/SVG
 // visual node graph webview application tailored for Forge ADE Studio.
-func GenerateComfyUIHTML(pipelineType string, state ComfyUIInitialState) string {
+func GenerateNodeWorkflowHTML(pipelineType string, state NodeWorkflowInitialState) string {
 	if state.PipelineType == "" {
 		state.PipelineType = pipelineType
 	}
@@ -71,7 +74,7 @@ func GenerateComfyUIHTML(pipelineType string, state ComfyUIInitialState) string 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>ComfyUI Visual Node Workflow</title>
+<title>Visual Node Workflow</title>
 <style>
   :root {
     --bg-canvas: #0b0d13;
@@ -328,7 +331,7 @@ func GenerateComfyUIHTML(pipelineType string, state ComfyUIInitialState) string 
     <button class="hud-btn hud-btn-secondary" onclick="resetCanvasLayout()">↺ Reset Layout</button>
     <button class="hud-btn hud-btn-primary" id="btn-queue-prompt" onclick="queuePrompt()">
       <span id="queue-icon">⚡</span>
-      <span id="queue-label">Queue Prompt (⌘↵)</span>
+      <span id="queue-label">Queue Generation (⌘↵)</span>
     </button>
   </div>
 
@@ -923,4 +926,9 @@ func GenerateComfyUIHTML(pipelineType string, state ComfyUIInitialState) string 
 </body>
 </html>`
 	return html
+}
+
+// GenerateComfyUIHTML is an alias for GenerateNodeWorkflowHTML for backward compatibility.
+func GenerateComfyUIHTML(pipelineType string, state ComfyUIInitialState) string {
+	return GenerateNodeWorkflowHTML(pipelineType, state)
 }

@@ -26,7 +26,7 @@ func (m *Manager) ImportAgentArtifact(absPath string) (bool, error) {
 		}
 		switch p.Type {
 		case ArtifactTypeImage, ArtifactTypeVideo:
-			return nil, fmt.Errorf("image/video projects import through the ComfyUI pipeline")
+			return nil, fmt.Errorf("image/video projects import through the node workflow pipeline")
 		}
 		return p, nil
 	}()
