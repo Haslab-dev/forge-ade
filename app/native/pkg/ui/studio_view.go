@@ -49,7 +49,6 @@ func (a *AppUI) renderStudioSurface(c *ui.Context) {
 			a.renderStudioNodeGraph(c, tc, project)
 		} else {
 			a.closeStudioNodeWebView()
-			a.closeStudioWebView()
 			a.renderStudioSplitAgentViewer(c, tc, project)
 		}
 	})
@@ -238,6 +237,9 @@ func (a *AppUI) studioChatBounds(c *ui.Context) (float32, float32) {
 	if a.ShowLeftSidebar {
 		availableW -= a.LeftSidebarWidth
 	}
+	if a.ShowRightDrawer {
+		availableW -= a.RightDrawerWidth
+	}
 	minW, maxW := float32(320), float32(720)
 	if availableW > 0 && availableW*0.55 < maxW {
 		maxW = max(minW, availableW*0.55)
@@ -253,6 +255,9 @@ func (a *AppUI) studioStageSize(c *ui.Context) (float32, float32) {
 	if a.ShowLeftSidebar {
 		used += a.LeftSidebarWidth
 	}
+	if a.ShowRightDrawer {
+		used += a.RightDrawerWidth + 4 // right drawer and its resize border
+	}
 	if !a.StudioChatCollapsed {
 		minChatW, maxChatW := a.studioChatBounds(c)
 		chatW := min(max(a.StudioLeftChatWidth, minChatW), maxChatW)
@@ -260,7 +265,7 @@ func (a *AppUI) studioStageSize(c *ui.Context) (float32, float32) {
 	}
 	w := float32(720)
 	if winW > 0 && winW-used < w {
-		w = max(320, winW-used)
+		w = max(240, winW-used)
 	}
 	return w, w * 9 / 16
 }
@@ -619,9 +624,14 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 	if assetPath == "" && project != nil {
 		assetPath = a.ensureStudioAssetFile(project)
 	}
-	// Canvas mode is 100% pure-Go native GPU rendered cards. Do NOT spawn a background WebView process.
-	// Only Image / Video maker tab uses a WebView.
-	if a.StudioWebView != nil {
+	if assetPath != "" && mygo.WebViewAvailable() {
+		bg := "#090a0f"
+		if flavor == "3d" {
+			bg = "#0a0c14"
+		}
+		a.openStudioWebView(assetPath, bg)
+		a.studioSyncWebView(project)
+	} else if a.StudioWebView != nil {
 		a.closeStudioWebView()
 	}
 
@@ -634,10 +644,13 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 			currIdx = 0
 		}
 		currentSlide = slides[currIdx]
-	} else if flavor == "slides" && data.EntryHTML == "" {
+	} else if flavor == "slides" {
 		slides = corestudio.DemoSlides()
 		if len(slides) > 0 {
-			currentSlide = slides[0]
+			if currIdx < 0 || currIdx >= len(slides) {
+				currIdx = 0
+			}
+			currentSlide = slides[currIdx]
 		}
 	}
 
@@ -788,70 +801,74 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 			}
 		})
 
-		// Main Viewport (Pure-Go Native MyGo GPU Rendering)
-		ui.Column(c.Key("studio-stage-viewport")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			stageW, stageH := a.studioStageSize(c)
-			switch flavor {
-			case "motion":
-				stage := ui.Column(c.Key("motion-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(32, 40).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
-				stage.Children(func() {
-					ui.Text(c, "ForgeADE Studio").FontSize(34).FontWeight(800).TextColor(tc.Text)
-					ui.Text(c, "Kinetic Rhythm & Audio Synchronization").FontSize(15).FontWeight(500).TextColor(tc.Accent)
-					ui.Box(c).Size(1, 48)
-					script := data.ScriptText
-					if script == "" {
-						script = "ForgeADE Studio introduces a fluid agentic workspace where design skills meet real-time motion."
-					}
-					ui.Row(c).Padding(8, 20).Radius(20).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-						ui.Text(c, script).FontSize(13).FontWeight(500).TextColor(tc.Text)
-					})
-				})
-
-			case "3d":
-				scene := ui.Column(c.Key("live-3d-scene")).Width(stageW).Height(stageH).Radius(12).
-					Background(ui.Hex("#05070d")).BorderWidth(1).BorderColor(tc.Border).Clip().
-					AlignItems(ui.Center).Justify(ui.Center)
-				scene.Children(func() {
-					ui.Text(c, "WebGL 3D Scene Viewport").FontSize(18).FontWeight(700).TextColor(tc.Text)
-					ui.Text(c, "OrbitControls active • Three.js canvas initialized").FontSize(12).TextColor(tc.TextMuted)
-				})
-
-			default: // slides
-				cardPadY, cardPadX := float32(40), float32(48)
-				if stageW < 480 {
-					cardPadY, cardPadX = 20, 24
-				}
-				slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
-				slideCard.Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
-						ui.Box(c).Grow(1)
-						ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					})
-					ui.Box(c).Size(1, 24)
-					title := currentSlide.Title
-					if title == "" {
-						title = "Presentation Stage"
-					}
-					ui.Text(c, title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
-					ui.Box(c).Size(1, 8)
-					if currentSlide.Subtitle != "" {
-						ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
-						ui.Box(c).Size(1, 20)
-					}
-					ui.Column(c).Gap(10).Children(func() {
-						for _, b := range currentSlide.Bullets {
-							ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-								ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
-								ui.Text(c, b).FontSize(13).TextColor(tc.Text)
-							})
+		// Main Viewport (WebView interactive runtime with pure-Go GPU fallback)
+		if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
+			ui.WebView(c, a.StudioWebView).Grow(1).FillWidth()
+		} else {
+			ui.Column(c.Key("studio-stage-viewport")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+				stageW, stageH := a.studioStageSize(c)
+				switch flavor {
+				case "motion":
+					stage := ui.Column(c.Key("motion-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(32, 40).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
+					stage.Children(func() {
+						ui.Text(c, "ForgeADE Studio").FontSize(34).FontWeight(800).TextColor(tc.Text)
+						ui.Text(c, "Kinetic Rhythm & Audio Synchronization").FontSize(15).FontWeight(500).TextColor(tc.Accent)
+						ui.Box(c).Size(1, 48)
+						script := data.ScriptText
+						if script == "" {
+							script = "ForgeADE Studio introduces a fluid agentic workspace where design skills meet real-time motion."
 						}
+						ui.Row(c).Padding(8, 20).Radius(20).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+							ui.Text(c, script).FontSize(13).FontWeight(500).TextColor(tc.Text)
+						})
 					})
-				})
-			}
-		})
+
+				case "3d":
+					scene := ui.Column(c.Key("live-3d-scene")).Width(stageW).Height(stageH).Radius(12).
+						Background(ui.Hex("#05070d")).BorderWidth(1).BorderColor(tc.Border).Clip().
+						AlignItems(ui.Center).Justify(ui.Center)
+					scene.Children(func() {
+						ui.Text(c, "WebGL 3D Scene Viewport").FontSize(18).FontWeight(700).TextColor(tc.Text)
+						ui.Text(c, "OrbitControls active • Three.js canvas initialized").FontSize(12).TextColor(tc.TextMuted)
+					})
+
+				default: // slides
+					cardPadY, cardPadX := float32(40), float32(48)
+					if stageW < 480 {
+						cardPadY, cardPadX = 20, 24
+					}
+					slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
+					slideCard.Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
+							ui.Box(c).Grow(1)
+							ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+						})
+						ui.Box(c).Size(1, 24)
+						title := currentSlide.Title
+						if title == "" {
+							title = "Presentation Stage"
+						}
+						ui.Text(c, title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
+						ui.Box(c).Size(1, 8)
+						if currentSlide.Subtitle != "" {
+							ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
+							ui.Box(c).Size(1, 20)
+						}
+						ui.Column(c).Gap(10).Children(func() {
+							for _, b := range currentSlide.Bullets {
+								ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+									ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
+									ui.Text(c, b).FontSize(13).TextColor(tc.Text)
+								})
+							}
+						})
+					})
+				}
+			})
+		}
 
 		// Bottom Dock:
 		// If slides: outline thumbnails strip

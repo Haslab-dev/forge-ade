@@ -325,6 +325,27 @@ func TestStudioStageCardFitsPane(t *testing.T) {
 	}
 }
 
+func TestStudioStageCardFitsPaneWithRightDrawer(t *testing.T) {
+	app := newStudioSlidesApp(t)
+	app.StudioLeftChatWidth = 420
+	app.ShowRightDrawer = true
+	app.RightDrawerWidth = 380
+
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+
+	rect, ok := tw.Find("16:9 PRESENTATION")
+	if !ok {
+		t.Skip("slides fallback stage not rendered")
+	}
+	if rect.X < app.StudioLeftChatWidth {
+		t.Fatalf("stage overlaps chat pane: content at x=%.0f < chat width %.0f", rect.X, app.StudioLeftChatWidth)
+	}
+	maxRight := float32(1280) - app.RightDrawerWidth
+	if rect.X+rect.W > maxRight {
+		t.Fatalf("stage card overflows into right drawer: ends at %.0f > maxRight %.0f", rect.X+rect.W, maxRight)
+	}
+}
+
 // TestStudioChatPaneCollapse pins the collapse toggle: when collapsed the
 // chat pane (and its header) must not render at all.
 func TestStudioChatPaneCollapse(t *testing.T) {
