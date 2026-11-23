@@ -1,0 +1,49 @@
+package studio
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestGenerateComfyUIHTML(t *testing.T) {
+	// 1. Image Pipeline
+	imgState := ComfyUIInitialState{
+		PipelineType:   "image",
+		PositivePrompt: "A cyberpunk city in rain",
+		Model:          "flux-1-schnell",
+		Steps:          25,
+		CFGScale:       7.5,
+	}
+	htmlImg := GenerateComfyUIHTML("image", imgState)
+	if !strings.Contains(htmlImg, "IMAGE PIPELINE (FLUX / SDXL)") {
+		t.Fatal("expected image pipeline badge in generated HTML")
+	}
+	if !strings.Contains(htmlImg, "KSampler Engine") {
+		t.Fatal("expected KSampler node in image pipeline HTML")
+	}
+	if !strings.Contains(htmlImg, "A cyberpunk city in rain") {
+		t.Fatal("expected positive prompt embedded in HTML")
+	}
+	if !strings.Contains(htmlImg, "cables-svg") {
+		t.Fatal("expected cables svg layer in HTML")
+	}
+
+	// 2. Video Pipeline
+	vidState := ComfyUIInitialState{
+		PipelineType:   "video",
+		PositivePrompt: "Drone shot over alpine mountains",
+		Model:          "veo-2-ai",
+		Duration:       5,
+		FPS:            30,
+	}
+	htmlVid := GenerateComfyUIHTML("video", vidState)
+	if !strings.Contains(htmlVid, "VIDEO PIPELINE") {
+		t.Fatal("expected video pipeline badge in generated HTML")
+	}
+	if !strings.Contains(htmlVid, "Video Latent Sampler") {
+		t.Fatal("expected Video Latent Sampler node in video pipeline HTML")
+	}
+	if !strings.Contains(htmlVid, "Drone shot over alpine mountains") {
+		t.Fatal("expected video prompt embedded in HTML")
+	}
+}

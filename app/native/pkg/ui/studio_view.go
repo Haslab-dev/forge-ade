@@ -2,9 +2,11 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	urlpkg "net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -759,6 +761,7 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 			reloadBtn.Tooltip("Reload viewer")
 			if reloadBtn.Clicked() {
 				a.closeStudioWebView()
+				a.closeStudioComfyWebView()
 				a.studioWebviewSynced = false
 			}
 
@@ -917,6 +920,9 @@ func (a *AppUI) renderStudio3DSandboxViewer(c *ui.Context, tc theme.ThemeColors,
 func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
 	cfg := corestudio.LoadStudioConfig()
 
+	// Ensure the interactive ComfyUI Node Graph WebView is initialized
+	a.ensureStudioComfyWebView(project)
+
 	ui.Column(c.Key("comfyui-canvas-stage")).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
 		// ComfyUI Top Action Bar
 		ui.Row(c.Key("comfyui-topbar")).Height(42).Padding(0, 16).Gap(10).AlignItems(ui.Center).
@@ -938,10 +944,15 @@ func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors
 			if endpoint == "" {
 				endpoint = "Custom API"
 			}
-			ui.Row(c).Padding(2, 6).Radius(4).Background(tc.ToolbarControl).Gap(4).AlignItems(ui.Center).Children(func() {
+			apiChip := ui.Row(c).Padding(2, 6).Radius(4).Background(tc.ToolbarControl).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			apiChip.Children(func() {
 				ui.Row(c).Size(6, 6).Radius(3).Background(tc.Success)
 				ui.Text(c, "API: "+endpoint).FontSize(10).TextColor(tc.TextMuted).SingleLine()
 			})
+			apiChip.Tooltip("Configure API in Studio Settings")
+			if apiChip.Clicked() {
+				a.openSettings(settings.SettingsTabStudio)
+			}
 
 			ui.Box(c).Grow(1)
 
@@ -982,277 +993,288 @@ func (a *AppUI) renderStudioComfyUINodeGraph(c *ui.Context, tc theme.ThemeColors
 			})
 		}
 
-		// Node Graph Canvas with Nodes and Visual Connections
-		ui.ScrollBoth(c.Key("comfyui-nodes-viewport")).Grow(1).Padding(24, 28).Children(func() {
-			ui.Row(c.Key("comfyui-nodes-row")).Gap(14).AlignItems(ui.Start).Children(func() {
+		// ComfyUI Interactive Viewport
+		if a.StudioComfyWebView != nil && !a.StudioComfyWebView.IsDestroyed() {
+			ui.WebView(c, a.StudioComfyWebView).Grow(1).FillWidth()
+		} else {
+			a.renderStudioComfyUIFallbackStage(c, tc, project)
+		}
+	})
+}
 
-				// -------------------------------------------------------------
-				// NODE 1: Text Prompt Node (CLIP Text Encode)
-				// -------------------------------------------------------------
-				ui.Column(c.Key("node-prompt-box")).Width(270).Radius(10).Background(tc.Surface).
-					BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(8).
-					Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
+// renderStudioComfyUIFallbackStage renders the native fallback node canvas for headless environments or when WebView is unavailable.
+func (a *AppUI) renderStudioComfyUIFallbackStage(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
+	cfg := corestudio.LoadStudioConfig()
+	// Node Graph Canvas with Nodes and Visual Connections
+	ui.ScrollBoth(c.Key("comfyui-nodes-viewport")).Grow(1).Padding(24, 28).Children(func() {
+		ui.Row(c.Key("comfyui-nodes-row")).Gap(14).AlignItems(ui.Start).Children(func() {
 
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "1. CLIP Text Encode").FontSize(11).FontWeight(700).TextColor(tc.Text)
-						ui.Box(c).Grow(1)
-						// Port output indicator (Amber)
-						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Gap(3).AlignItems(ui.Center).Children(func() {
-							ui.Row(c).Size(6, 6).Radius(3).Background(tc.Warning)
-							ui.Text(c, "COND").FontSize(8).FontWeight(700).TextColor(tc.Warning)
-						})
-					})
+			// -------------------------------------------------------------
+			// NODE 1: Text Prompt Node (CLIP Text Encode)
+			// -------------------------------------------------------------
+			ui.Column(c.Key("node-prompt-box")).Width(270).Radius(10).Background(tc.Surface).
+				BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(8).
+				Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
 
-					ui.Text(c, "Positive Prompt").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.TextInput(c, &a.StudioPositivePrompt).Placeholder("Describe your visual scene...").Grow(1)
-
-					ui.Text(c, "Negative Prompt").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.TextInput(c, &a.StudioNegativePrompt).Placeholder("Artifacts to exclude...").Grow(1)
-
-					// Style Preset Chips
-					ui.Row(c).Wrap().Gap(4).Padding(4, 0, 0, 0).Children(func() {
-						preset := func(label, token string) {
-							pBtn := ui.Row(c.Key("preset-"+label)).Height(18).Padding(0, 6).Radius(4).
-								Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-							pBtn.Children(func() {
-								ui.Text(c, label).FontSize(8).FontWeight(500).TextColor(tc.TextMuted)
-							})
-							if pBtn.Clicked() {
-								if a.StudioPositivePrompt == "" {
-									a.StudioPositivePrompt = token
-								} else {
-									a.StudioPositivePrompt += ", " + token
-								}
-							}
-						}
-						preset("Cinematic", "cinematic volumetric lighting 8k")
-						preset("Cyberpunk", "neon rain reflections cyberpunk")
-						preset("Photoreal", "photorealistic 35mm lens")
-						preset("Anime", "makoto shinkai style aesthetic")
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "1. CLIP Text Encode").FontSize(11).FontWeight(700).TextColor(tc.Text)
+					ui.Box(c).Grow(1)
+					// Port output indicator (Amber)
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Gap(3).AlignItems(ui.Center).Children(func() {
+						ui.Row(c).Size(6, 6).Radius(3).Background(tc.Warning)
+						ui.Text(c, "COND").FontSize(8).FontWeight(700).TextColor(tc.Warning)
 					})
 				})
 
-				// Cable 1 -> 2
-				ui.Column(c).Padding(80, 0, 0, 0).Gap(2).AlignItems(ui.Center).Children(func() {
-					ui.Row(c).Size(24, 2).Background(tc.Warning.Alpha(0.8))
-					ui.Icon(c, icons.TablerArrowRight).Width(12).Height(12).TextColor(tc.Warning)
-				})
+				ui.Text(c, "Positive Prompt").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+				ui.TextInput(c, &a.StudioPositivePrompt).Placeholder("Describe your visual scene...").Grow(1)
 
-				// -------------------------------------------------------------
-				// NODE 2: Model & KSampler Parameters Node
-				// -------------------------------------------------------------
-				ui.Column(c.Key("node-model-box")).Width(250).Radius(10).Background(tc.Surface).
-					BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(8).
-					Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
+				ui.Text(c, "Negative Prompt").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+				ui.TextInput(c, &a.StudioNegativePrompt).Placeholder("Artifacts to exclude...").Grow(1)
 
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "2. KSampler").FontSize(11).FontWeight(700).TextColor(tc.Text)
-						ui.Box(c).Grow(1)
-						// Port output indicator (Purple)
-						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Secondary.Alpha(0.15)).Gap(3).AlignItems(ui.Center).Children(func() {
-							ui.Row(c).Size(6, 6).Radius(3).Background(tc.Secondary)
-							ui.Text(c, "LATENT").FontSize(8).FontWeight(700).TextColor(tc.Secondary)
-						})
-					})
-
-					// Sampler selector pills
-					ui.Text(c, "Sampler").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Row(c).Gap(4).Children(func() {
-						sPill := func(name string) {
-							active := a.StudioSampler == name
-							btn := ui.Row(c.Key("sampler-"+name)).Height(20).Padding(0, 6).Radius(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-							if active {
-								btn.Background(tc.Accent)
-								ui.Text(c, name).FontSize(9).FontWeight(600).TextColor(tc.AccentForeground)
-							} else {
-								btn.Background(tc.ToolbarControl)
-								ui.Text(c, name).FontSize(9).TextColor(tc.TextMuted)
-							}
-							if btn.Clicked() {
-								a.StudioSampler = name
-							}
-						}
-						sPill("Euler a")
-						sPill("DPM++ 2M")
-						sPill("DDIM")
-					})
-
-					// Steps counter
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "Steps:").FontSize(10).TextColor(tc.TextMuted).Width(60)
-						minusBtn := IconButton(c, tc, icons.TablerMinus, 10)
-						if minusBtn.Clicked() && a.StudioSteps > 5 {
-							a.StudioSteps -= 5
-						}
-						ui.Text(c, fmt.Sprintf("%d", a.StudioSteps)).FontSize(11).FontWeight(600).TextColor(tc.Text).Center()
-						plusBtn := IconButton(c, tc, icons.TablerPlus, 10)
-						if plusBtn.Clicked() && a.StudioSteps < 60 {
-							a.StudioSteps += 5
-						}
-					})
-
-					// Seed with Randomize button
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "Seed:").FontSize(10).TextColor(tc.TextMuted).Width(60)
-						ui.Text(c, fmt.Sprintf("%d", a.StudioSeed)).FontSize(10).FontWeight(600).TextColor(tc.Text).SingleLine().Grow(1)
-						randBtn := ui.Row(c.Key("btn-rand-seed")).Height(18).Padding(0, 5).Radius(3).
+				// Style Preset Chips
+				ui.Row(c).Wrap().Gap(4).Padding(4, 0, 0, 0).Children(func() {
+					preset := func(label, token string) {
+						pBtn := ui.Row(c.Key("preset-"+label)).Height(18).Padding(0, 6).Radius(4).
 							Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-						randBtn.Children(func() {
-							ui.Text(c, "🎲").FontSize(9)
+						pBtn.Children(func() {
+							ui.Text(c, label).FontSize(8).FontWeight(500).TextColor(tc.TextMuted)
 						})
-						if randBtn.Clicked() {
-							a.StudioSeed = time.Now().UnixNano() % 10000000
-						}
-					})
-
-					// Aspect Ratio
-					ui.Text(c, "Aspect Ratio").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Row(c).Gap(4).Children(func() {
-						aspPill := func(name string) {
-							active := a.StudioAspectRatio == name
-							btn := ui.Row(c.Key("asp-"+name)).Height(20).Padding(0, 6).Radius(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-							if active {
-								btn.Background(tc.Accent)
-								ui.Text(c, name).FontSize(9).FontWeight(600).TextColor(tc.AccentForeground)
+						if pBtn.Clicked() {
+							if a.StudioPositivePrompt == "" {
+								a.StudioPositivePrompt = token
 							} else {
-								btn.Background(tc.ToolbarControl)
-								ui.Text(c, name).FontSize(9).TextColor(tc.TextMuted)
-							}
-							if btn.Clicked() {
-								a.StudioAspectRatio = name
+								a.StudioPositivePrompt += ", " + token
 							}
 						}
-						aspPill("16:9")
-						aspPill("1:1")
-						aspPill("9:16")
+					}
+					preset("Cinematic", "cinematic volumetric lighting 8k")
+					preset("Cyberpunk", "neon rain reflections cyberpunk")
+					preset("Photoreal", "photorealistic 35mm lens")
+					preset("Anime", "makoto shinkai style aesthetic")
+				})
+			})
+
+			// Cable 1 -> 2
+			ui.Column(c).Padding(80, 0, 0, 0).Gap(2).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Size(24, 2).Background(tc.Warning.Alpha(0.8))
+				ui.Icon(c, icons.TablerArrowRight).Width(12).Height(12).TextColor(tc.Warning)
+			})
+
+			// -------------------------------------------------------------
+			// NODE 2: Model & KSampler Parameters Node
+			// -------------------------------------------------------------
+			ui.Column(c.Key("node-model-box")).Width(250).Radius(10).Background(tc.Surface).
+				BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(8).
+				Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
+
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "2. KSampler").FontSize(11).FontWeight(700).TextColor(tc.Text)
+					ui.Box(c).Grow(1)
+					// Port output indicator (Purple)
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Secondary.Alpha(0.15)).Gap(3).AlignItems(ui.Center).Children(func() {
+						ui.Row(c).Size(6, 6).Radius(3).Background(tc.Secondary)
+						ui.Text(c, "LATENT").FontSize(8).FontWeight(700).TextColor(tc.Secondary)
 					})
 				})
 
-				// Cable 2 -> 3
-				ui.Column(c).Padding(80, 0, 0, 0).Gap(2).AlignItems(ui.Center).Children(func() {
-					ui.Row(c).Size(24, 2).Background(tc.Secondary.Alpha(0.8))
-					ui.Icon(c, icons.TablerArrowRight).Width(12).Height(12).TextColor(tc.Secondary)
-				})
-
-				// -------------------------------------------------------------
-				// NODE 3: Custom API Provider Node (From Settings)
-				// -------------------------------------------------------------
-				ui.Column(c.Key("node-api-box")).Width(250).Radius(10).Background(tc.Surface).
-					BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(8).
-					Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
-
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "3. Custom API Engine").FontSize(11).FontWeight(700).TextColor(tc.Text)
-						ui.Box(c).Grow(1)
-						// Port output indicator (Cyan)
-						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Info.Alpha(0.15)).Gap(3).AlignItems(ui.Center).Children(func() {
-							ui.Row(c).Size(6, 6).Radius(3).Background(tc.Info)
-							ui.Text(c, "IMAGE").FontSize(8).FontWeight(700).TextColor(tc.Info)
-						})
-					})
-
-					ui.Text(c, "Endpoint URL").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					endpoint := cfg.ImageEndpoint
-					if endpoint == "" {
-						endpoint = "http://localhost:8000/v1/images/generations"
-					}
-					ui.Text(c, endpoint).FontSize(10).TextColor(tc.Text).SingleLine()
-
-					ui.Text(c, "Model").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					model := a.StudioModel
-					if model == "" {
-						model = cfg.ImageModel
-					}
-					if model == "" {
-						model = "flux-1-schnell"
-					}
-					ui.Text(c, model).FontSize(11).FontWeight(600).TextColor(tc.Accent)
-
-					ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerCircleCheck).Width(10).Height(10).TextColor(tc.Success)
-						ui.Text(c, "Ready / Connected").FontSize(10).FontWeight(600).TextColor(tc.Success)
-					})
-
-					// Configure in settings link
-					cfgLink := ui.Row(c.Key("link-comfy-settings")).Height(24).Padding(0, 6).Radius(4).
-						Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-					cfgLink.Children(func() {
-						ui.Icon(c, icons.TablerSettings).Width(11).Height(11).TextColor(tc.IconMuted)
-						ui.Text(c, "Edit API in Settings ⚙").FontSize(10).TextColor(tc.TextMuted)
-					})
-					if cfgLink.Clicked() {
-						a.openSettings(settings.SettingsTabStudio)
-					}
-				})
-
-				// Cable 3 -> 4
-				ui.Column(c).Padding(80, 0, 0, 0).Gap(2).AlignItems(ui.Center).Children(func() {
-					ui.Row(c).Size(24, 2).Background(tc.Info.Alpha(0.8))
-					ui.Icon(c, icons.TablerArrowRight).Width(12).Height(12).TextColor(tc.Info)
-				})
-
-				// -------------------------------------------------------------
-				// NODE 4: Result / Preview Node
-				// -------------------------------------------------------------
-				ui.Column(c.Key("node-preview-box")).Width(360).Radius(10).Background(tc.Surface).
-					BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(10).
-					Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
-
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, "4. Latent Decode & Image Preview").FontSize(11).FontWeight(700).TextColor(tc.Text)
-						ui.Box(c).Grow(1)
-						statusBadge := "Ready"
-						if a.StudioIsGenerating {
-							statusBadge = "Generating..."
-						}
-						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
-							ui.Text(c, statusBadge).FontSize(9).FontWeight(700).TextColor(tc.Accent)
-						})
-					})
-
-					// High-Resolution Preview Screen
-					previewBox := ui.Column(c).Height(240).Radius(8).Background(tc.Canvas).
-						BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center).Clip()
-
-					previewBox.Children(func() {
-						if a.StudioIsGenerating {
-							ui.Spinner(c).Size(24, 24).Label("Sampling latent tensor...")
-							ui.Box(c).Size(1, 8)
-							ui.Text(c, a.StudioGenerationStatus).FontSize(11).TextColor(tc.TextMuted)
-						} else if img, _, _, _ := a.getStudioPreviewImage(); img != nil {
-							ui.Image(c, img).Fit(ui.Contain).Grow(1)
+				// Sampler selector pills
+				ui.Text(c, "Sampler").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(4).Children(func() {
+					sPill := func(name string) {
+						active := a.StudioSampler == name
+						btn := ui.Row(c.Key("sampler-"+name)).Height(20).Padding(0, 6).Radius(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+						if active {
+							btn.Background(tc.Accent)
+							ui.Text(c, name).FontSize(9).FontWeight(600).TextColor(tc.AccentForeground)
 						} else {
-							ui.Icon(c, icons.TablerPhoto).Width(48).Height(48).TextColor(tc.Accent)
-							ui.Box(c).Size(1, 8)
-							ui.Text(c, "Ready to Render").FontSize(13).FontWeight(600).TextColor(tc.Text)
-							ui.Text(c, "Click 'Queue Prompt (⌘↵)' to execute ComfyUI pipeline").FontSize(10).TextColor(tc.TextMuted)
+							btn.Background(tc.ToolbarControl)
+							ui.Text(c, name).FontSize(9).TextColor(tc.TextMuted)
 						}
-					})
-
-					// Action buttons
-					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-						btn := ui.Row(c.Key("btn-preview-send-editor")).Height(26).Padding(0, 10).Radius(5).
-							Background(tc.Accent).AlignItems(ui.Center).Gap(4).Cursor(ui.CursorPointer)
-						btn.Children(func() {
-							ui.Icon(c, icons.TablerExternalLink).Width(11).Height(11).TextColor(tc.AccentForeground)
-							ui.Text(c, "Send to Editor (⌘⇧E)").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
-						})
 						if btn.Clicked() {
-							a.studioExportActive()
+							a.StudioSampler = name
 						}
+					}
+					sPill("Euler a")
+					sPill("DPM++ 2M")
+					sPill("DDIM")
+				})
 
-						if a.StudioGeneratedImagePath != "" {
-							finderBtn := ui.Row(c.Key("btn-preview-finder")).Height(26).Padding(0, 8).Radius(5).
-								Background(tc.ToolbarControl).AlignItems(ui.Center).Gap(4).Cursor(ui.CursorPointer)
-							finderBtn.Children(func() {
-								ui.Icon(c, icons.TablerFolderOpen).Width(11).Height(11).TextColor(tc.IconMuted)
-								ui.Text(c, "Finder").FontSize(10).TextColor(tc.TextMuted)
-							})
-							if finderBtn.Clicked() {
-								mygo.Shell.ShowItemInFolder(a.StudioGeneratedImagePath)
-							}
-						}
+				// Steps counter
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Steps:").FontSize(10).TextColor(tc.TextMuted).Width(60)
+					minusBtn := IconButton(c, tc, icons.TablerMinus, 10)
+					if minusBtn.Clicked() && a.StudioSteps > 5 {
+						a.StudioSteps -= 5
+					}
+					ui.Text(c, fmt.Sprintf("%d", a.StudioSteps)).FontSize(11).FontWeight(600).TextColor(tc.Text).Center()
+					plusBtn := IconButton(c, tc, icons.TablerPlus, 10)
+					if plusBtn.Clicked() && a.StudioSteps < 60 {
+						a.StudioSteps += 5
+					}
+				})
+
+				// Seed with Randomize button
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Seed:").FontSize(10).TextColor(tc.TextMuted).Width(60)
+					ui.Text(c, fmt.Sprintf("%d", a.StudioSeed)).FontSize(10).FontWeight(600).TextColor(tc.Text).SingleLine().Grow(1)
+					randBtn := ui.Row(c.Key("btn-rand-seed")).Height(18).Padding(0, 5).Radius(3).
+						Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					randBtn.Children(func() {
+						ui.Text(c, "🎲").FontSize(9)
 					})
+					if randBtn.Clicked() {
+						a.StudioSeed = time.Now().UnixNano() % 10000000
+					}
+				})
+
+				// Aspect Ratio
+				ui.Text(c, "Aspect Ratio").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(4).Children(func() {
+					aspPill := func(name string) {
+						active := a.StudioAspectRatio == name
+						btn := ui.Row(c.Key("asp-"+name)).Height(20).Padding(0, 6).Radius(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+						if active {
+							btn.Background(tc.Accent)
+							ui.Text(c, name).FontSize(9).FontWeight(600).TextColor(tc.AccentForeground)
+						} else {
+							btn.Background(tc.ToolbarControl)
+							ui.Text(c, name).FontSize(9).TextColor(tc.TextMuted)
+						}
+						if btn.Clicked() {
+							a.StudioAspectRatio = name
+						}
+					}
+					aspPill("16:9")
+					aspPill("1:1")
+					aspPill("9:16")
+				})
+			})
+
+			// Cable 2 -> 3
+			ui.Column(c).Padding(80, 0, 0, 0).Gap(2).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Size(24, 2).Background(tc.Secondary.Alpha(0.8))
+				ui.Icon(c, icons.TablerArrowRight).Width(12).Height(12).TextColor(tc.Secondary)
+			})
+
+			// -------------------------------------------------------------
+			// NODE 3: Custom API Provider Node (From Settings)
+			// -------------------------------------------------------------
+			ui.Column(c.Key("node-api-box")).Width(250).Radius(10).Background(tc.Surface).
+				BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(8).
+				Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
+
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "3. Custom API Engine").FontSize(11).FontWeight(700).TextColor(tc.Text)
+					ui.Box(c).Grow(1)
+					// Port output indicator (Cyan)
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Info.Alpha(0.15)).Gap(3).AlignItems(ui.Center).Children(func() {
+						ui.Row(c).Size(6, 6).Radius(3).Background(tc.Info)
+						ui.Text(c, "IMAGE").FontSize(8).FontWeight(700).TextColor(tc.Info)
+					})
+				})
+
+				ui.Text(c, "Endpoint URL").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+				endpoint := cfg.ImageEndpoint
+				if endpoint == "" {
+					endpoint = "http://localhost:8000/v1/images/generations"
+				}
+				ui.Text(c, endpoint).FontSize(10).TextColor(tc.Text).SingleLine()
+
+				ui.Text(c, "Model").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+				model := a.StudioModel
+				if model == "" {
+					model = cfg.ImageModel
+				}
+				if model == "" {
+					model = "flux-1-schnell"
+				}
+				ui.Text(c, model).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+
+				ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerCircleCheck).Width(10).Height(10).TextColor(tc.Success)
+					ui.Text(c, "Ready / Connected").FontSize(10).FontWeight(600).TextColor(tc.Success)
+				})
+
+				// Configure in settings link
+				cfgLink := ui.Row(c.Key("link-comfy-settings")).Height(24).Padding(0, 6).Radius(4).
+					Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				cfgLink.Children(func() {
+					ui.Icon(c, icons.TablerSettings).Width(11).Height(11).TextColor(tc.IconMuted)
+					ui.Text(c, "Edit API in Settings ⚙").FontSize(10).TextColor(tc.TextMuted)
+				})
+				if cfgLink.Clicked() {
+					a.openSettings(settings.SettingsTabStudio)
+				}
+			})
+
+			// Cable 3 -> 4
+			ui.Column(c).Padding(80, 0, 0, 0).Gap(2).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Size(24, 2).Background(tc.Info.Alpha(0.8))
+				ui.Icon(c, icons.TablerArrowRight).Width(12).Height(12).TextColor(tc.Info)
+			})
+
+			// -------------------------------------------------------------
+			// NODE 4: Result / Preview Node
+			// -------------------------------------------------------------
+			ui.Column(c.Key("node-preview-box")).Width(360).Radius(10).Background(tc.Surface).
+				BorderWidth(1).BorderColor(tc.Border).Padding(12, 14).Gap(10).
+				Shadow(0, 8, 20, 0, tc.Border.Alpha(0.4)).Children(func() {
+
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "4. Latent Decode & Image Preview").FontSize(11).FontWeight(700).TextColor(tc.Text)
+					ui.Box(c).Grow(1)
+					statusBadge := "Ready"
+					if a.StudioIsGenerating {
+						statusBadge = "Generating..."
+					}
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
+						ui.Text(c, statusBadge).FontSize(9).FontWeight(700).TextColor(tc.Accent)
+					})
+				})
+
+				// High-Resolution Preview Screen
+				previewBox := ui.Column(c).Height(240).Radius(8).Background(tc.Canvas).
+					BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center).Clip()
+
+				previewBox.Children(func() {
+					if a.StudioIsGenerating {
+						ui.Spinner(c).Size(24, 24).Label("Sampling latent tensor...")
+						ui.Box(c).Size(1, 8)
+						ui.Text(c, a.StudioGenerationStatus).FontSize(11).TextColor(tc.TextMuted)
+					} else if img, _, _, _ := a.getStudioPreviewImage(); img != nil {
+						ui.Image(c, img).Fit(ui.Contain).Grow(1)
+					} else {
+						ui.Icon(c, icons.TablerPhoto).Width(48).Height(48).TextColor(tc.Accent)
+						ui.Box(c).Size(1, 8)
+						ui.Text(c, "Ready to Render").FontSize(13).FontWeight(600).TextColor(tc.Text)
+						ui.Text(c, "Click 'Queue Prompt (⌘↵)' to execute ComfyUI pipeline").FontSize(10).TextColor(tc.TextMuted)
+					}
+				})
+
+				// Action buttons
+				ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+					btn := ui.Row(c.Key("btn-preview-send-editor")).Height(26).Padding(0, 10).Radius(5).
+						Background(tc.Accent).AlignItems(ui.Center).Gap(4).Cursor(ui.CursorPointer)
+					btn.Children(func() {
+						ui.Icon(c, icons.TablerExternalLink).Width(11).Height(11).TextColor(tc.AccentForeground)
+						ui.Text(c, "Send to Editor (⌘⇧E)").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
+					})
+					if btn.Clicked() {
+						a.studioExportActive()
+					}
+
+					if a.StudioGeneratedImagePath != "" {
+						finderBtn := ui.Row(c.Key("btn-preview-finder")).Height(26).Padding(0, 8).Radius(5).
+							Background(tc.ToolbarControl).AlignItems(ui.Center).Gap(4).Cursor(ui.CursorPointer)
+						finderBtn.Children(func() {
+							ui.Icon(c, icons.TablerFolderOpen).Width(11).Height(11).TextColor(tc.IconMuted)
+							ui.Text(c, "Finder").FontSize(10).TextColor(tc.TextMuted)
+						})
+						if finderBtn.Clicked() {
+							mygo.Shell.ShowItemInFolder(a.StudioGeneratedImagePath)
+						}
+					}
 				})
 			})
 		})
@@ -1360,12 +1382,14 @@ func (a *AppUI) studioQueuePrompt() {
 			time.Sleep(120 * time.Millisecond)
 			a.StudioGenerationProgress = float32(step) * 0.22
 			a.StudioGenerationStatus = fmt.Sprintf("Sampling Step %d/%d (KSampler)...", step*6, steps)
+			a.syncComfyUIProgress(true, a.StudioGenerationStatus, a.StudioGenerationProgress, "")
 			if a.Window != nil {
 				a.Window.Invalidate()
 			}
 		}
 
 		a.StudioGenerationStatus = "Decoding Latent & Generating Assets..."
+		a.syncComfyUIProgress(true, a.StudioGenerationStatus, 0.9, "")
 		if a.Window != nil {
 			a.Window.Invalidate()
 		}
@@ -1393,6 +1417,7 @@ func (a *AppUI) studioQueuePrompt() {
 			a.StudioGeneratedWidth = res.Width
 			a.StudioGeneratedHeight = res.Height
 			a.StudioGenerationStatus = fmt.Sprintf("Generation Complete: %s (%dx%d)", filepath.Base(res.FilePath), res.Width, res.Height)
+			a.syncComfyUIProgress(false, a.StudioGenerationStatus, 1.0, res.FilePath)
 
 			if a.Studio != nil {
 				proj := a.Studio.ActiveProject()
@@ -1405,12 +1430,156 @@ func (a *AppUI) studioQueuePrompt() {
 			}
 		} else {
 			a.StudioGenerationStatus = "Generation encountered an issue"
+			a.syncComfyUIProgress(false, a.StudioGenerationStatus, 0, "")
 		}
 
 		if a.Window != nil {
 			a.Window.Invalidate()
 		}
 	}()
+}
+
+// ensureStudioComfyWebView initializes and attaches the interactive ComfyUI node graph WebView.
+func (a *AppUI) ensureStudioComfyWebView(project *corestudio.StudioProject) {
+	if a.Window == nil || !mygo.WebViewAvailable() {
+		return
+	}
+	pipeline := "image"
+	if project != nil && project.Type == corestudio.ArtifactTypeVideo {
+		pipeline = "video"
+	}
+	htmlPath := a.ensureStudioComfyAssetFile(project, pipeline)
+	if htmlPath == "" {
+		return
+	}
+	url := "file://" + htmlPath
+	if a.StudioComfyWebView != nil && !a.StudioComfyWebView.IsDestroyed() {
+		if a.StudioComfyWebViewURL == url {
+			return
+		}
+		// If already initialized, update pipeline via JS
+		a.StudioComfyWebView.Page().Eval(fmt.Sprintf("if (typeof setPipeline === 'function') { setPipeline('%s'); }", pipeline))
+		a.StudioComfyWebViewURL = url
+		return
+	}
+
+	wv, err := a.Window.NewWebView(mygo.WebViewOptions{
+		URL:             url,
+		BackgroundColor: "#0b0d13",
+	})
+	if err == nil {
+		a.StudioComfyWebView = wv
+		a.StudioComfyWebViewURL = url
+
+		// Listen for IPC messages from webview via title changes
+		wv.Page().OnPageTitleUpdated(func(e *mygo.TitleEvent) {
+			if strings.HasPrefix(e.Title, "forgeade:") {
+				e.PreventDefault()
+				parts := strings.SplitN(e.Title, ":", 3)
+				if len(parts) >= 2 {
+					action := parts[1]
+					payloadRaw := ""
+					if len(parts) >= 3 {
+						payloadRaw, _ = urlpkg.QueryUnescape(parts[2])
+					}
+					a.handleComfyUIWebViewMessage(action, payloadRaw)
+				}
+			}
+		})
+	}
+}
+
+func (a *AppUI) handleComfyUIWebViewMessage(action, payloadRaw string) {
+	if payloadRaw != "" {
+		var payload struct {
+			PositivePrompt string  `json:"positivePrompt"`
+			NegativePrompt string  `json:"negativePrompt"`
+			Model          string  `json:"model"`
+			AspectRatio    string  `json:"aspectRatio"`
+			Steps          int     `json:"steps"`
+			CFGScale       float32 `json:"cfgScale"`
+			Seed           int64   `json:"seed"`
+		}
+		if err := json.Unmarshal([]byte(payloadRaw), &payload); err == nil {
+			if payload.PositivePrompt != "" {
+				a.StudioPositivePrompt = payload.PositivePrompt
+			}
+			if payload.NegativePrompt != "" {
+				a.StudioNegativePrompt = payload.NegativePrompt
+			}
+			if payload.Model != "" {
+				a.StudioModel = payload.Model
+			}
+			if payload.AspectRatio != "" {
+				a.StudioAspectRatio = payload.AspectRatio
+			}
+			if payload.Steps > 0 {
+				a.StudioSteps = payload.Steps
+			}
+			if payload.CFGScale > 0 {
+				a.StudioCFGScale = payload.CFGScale
+			}
+			if payload.Seed != 0 {
+				a.StudioSeed = payload.Seed
+			}
+		}
+	}
+	switch action {
+	case "queue_prompt":
+		a.studioQueuePrompt()
+	case "open_settings":
+		a.openSettings(settings.SettingsTabStudio)
+	}
+}
+
+func (a *AppUI) ensureStudioComfyAssetFile(project *corestudio.StudioProject, pipeline string) string {
+	outDir := ""
+	if a.Workspace != nil && a.Workspace.RootDir != "" {
+		outDir = filepath.Join(a.Workspace.RootDir, ".forge", "studio")
+	} else {
+		home, _ := os.UserHomeDir()
+		outDir = filepath.Join(home, ".forge-ade", "studio_temp")
+	}
+	_ = os.MkdirAll(outDir, 0755)
+	filePath := filepath.Join(outDir, "comfyui.html")
+
+	state := corestudio.ComfyUIInitialState{
+		PipelineType:   pipeline,
+		PositivePrompt: a.StudioPositivePrompt,
+		NegativePrompt: a.StudioNegativePrompt,
+		Model:          a.StudioModel,
+		Steps:          a.StudioSteps,
+		CFGScale:       a.StudioCFGScale,
+		AspectRatio:    a.StudioAspectRatio,
+		ResultURL:      "",
+	}
+	if a.StudioGeneratedImagePath != "" {
+		state.ResultURL = "file://" + a.StudioGeneratedImagePath
+	}
+	html := corestudio.GenerateComfyUIHTML(pipeline, state)
+	_ = os.WriteFile(filePath, []byte(html), 0644)
+	return filePath
+}
+
+func (a *AppUI) syncComfyUIProgress(isGen bool, status string, progress float32, resultPath string) {
+	if a.StudioComfyWebView == nil || a.StudioComfyWebView.IsDestroyed() {
+		return
+	}
+	resURL := ""
+	if resultPath != "" {
+		resURL = "file://" + resultPath
+	}
+	js := fmt.Sprintf("if (typeof setGenerationProgress === 'function') { setGenerationProgress(%t, %q, %f, %q); }",
+		isGen, status, progress, resURL)
+	a.StudioComfyWebView.Page().Eval(js)
+}
+
+func (a *AppUI) closeStudioComfyWebView() {
+	if a.StudioComfyWebView != nil && !a.StudioComfyWebView.IsDestroyed() {
+		a.StudioComfyWebView.Destroy()
+	}
+	a.StudioComfyWebView = nil
+	a.StudioComfyWebViewURL = ""
 }
 
 // renderStudioTimelineDock renders the contextual timeline dock for Video & Motion projects.

@@ -148,6 +148,8 @@ type AppUI struct {
 	StudioSelectedSlideIdx         int
 	StudioWebView                  *mygo.WebView
 	StudioWebViewURL               string
+	StudioComfyWebView             *mygo.WebView
+	StudioComfyWebViewURL          string
 	StudioPositivePrompt           string
 	StudioNegativePrompt           string
 	StudioModel                    string
