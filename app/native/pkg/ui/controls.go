@@ -209,6 +209,7 @@ type taskRowData struct {
 	IsCLI       bool
 	ProjectName string
 	AgentID     string
+	AgentType   string // "acp" or "internal"
 	Model       string // provider/model used, drives the brand icon lookup
 	UpdatedTime time.Time
 	DiffAdded   int // cumulative +n/−n badge, as forge-ade's diff-stats chip
@@ -272,19 +273,24 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	row.Children(func() {
 		// Dynamic agent brand icon group:
 		// ACP: agent brand icon + status dot overlay
+		// Internal (ForgeADE): official ForgeADE brand icon + status dot overlay
 		// CLI: agent brand icon + terminal icon group (+ status dot)
 		iconGroup := ui.Row(c).Gap(3).AlignItems(ui.Center)
 		iconGroup.Children(func() {
 			agBox := ui.Box(c).Size(16, 16).AlignItems(ui.Center).Justify(ui.Center)
 			agBox.Children(func() {
-				lookup := d.AgentID
-				if d.Model != "" {
-					lookup = d.AgentID + " " + d.Model
-				}
-				if lookup == "" {
-					ui.Icon(c, icons.ForgeSparkSVG).Width(13).Height(13).TextColor(tc.Accent)
+				if d.AgentType == "internal" || strings.Contains(strings.ToLower(d.AgentID), "internal") {
+					ui.Icon(c, icons.ProviderForgeADE).Width(13).Height(13)
 				} else {
-					icons.RenderProviderIcon(c, lookup, 13)
+					lookup := d.AgentID
+					if d.Model != "" {
+						lookup = d.AgentID + " " + d.Model
+					}
+					if lookup == "" {
+						ui.Icon(c, icons.ProviderAntigravity).Width(13).Height(13).TextColor(tc.Accent)
+					} else {
+						icons.RenderProviderIcon(c, lookup, 13)
+					}
 				}
 				if !d.IsCLI {
 					if isAwaiting {
@@ -294,6 +300,11 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 					}
 				}
 			})
+			if d.AgentType == "internal" || strings.Contains(strings.ToLower(d.AgentID), "internal") {
+				agBox.Tooltip("ForgeADE Internal Agent")
+			} else if d.AgentType == "acp" || d.AgentID == "agent-agy" || strings.Contains(strings.ToLower(d.AgentID), "acp") {
+				agBox.Tooltip("ACP Agent (" + d.Model + ")")
+			}
 			if d.IsCLI {
 				termBox := ui.Box(c).Size(14, 14).AlignItems(ui.Center).Justify(ui.Center)
 				termBox.Children(func() {
@@ -315,6 +326,16 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			if d.ProjectName != "" {
 				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.Border.Alpha(0.6)).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, d.ProjectName).FontSize(8).FontWeight(600).TextColor(tc.TextMuted)
+				})
+			}
+			// Agent type badge: ForgeADE vs ACP
+			if d.AgentType == "internal" || strings.Contains(strings.ToLower(d.AgentID), "internal") {
+				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Forge").FontSize(8).FontWeight(700).TextColor(tc.Accent)
+				})
+			} else if d.AgentType == "acp" || d.AgentID == "agent-agy" || strings.Contains(strings.ToLower(d.AgentID), "acp") {
+				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.ToolbarControl).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "ACP").FontSize(8).FontWeight(700).TextColor(tc.TextMuted)
 				})
 			}
 			title := ui.Text(c, d.Title).FontSize(13).SingleLine()

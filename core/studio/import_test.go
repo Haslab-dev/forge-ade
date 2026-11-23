@@ -53,6 +53,27 @@ func TestImportAgentArtifactHTMLPage(t *testing.T) {
 	}
 }
 
+func TestImportAgentArtifactPDFAndPPTX(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(dir)
+
+	pdf := filepath.Join(dir, "presentation.pdf")
+	if err := os.WriteFile(pdf, []byte("%PDF-1.4 test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if imported, err := m.ImportAgentArtifact(pdf); !imported || err != nil {
+		t.Fatalf("expected PDF imported, got imported=%v err=%v", imported, err)
+	}
+
+	pptx := filepath.Join(dir, "slides.pptx")
+	if err := os.WriteFile(pptx, []byte("PK test pptx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if imported, err := m.ImportAgentArtifact(pptx); !imported || err != nil {
+		t.Fatalf("expected PPTX imported, got imported=%v err=%v", imported, err)
+	}
+}
+
 func TestImportAgentArtifactSceneJS(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(dir)

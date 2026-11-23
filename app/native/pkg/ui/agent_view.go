@@ -431,9 +431,6 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 								}
 							}
 
-							// 2.5 Forge-Design Studio presentation / motion block
-							a.renderTurnDesignCard(c, tc, m)
-
 							// 3. ZCode Turn Changes Card
 							if len(m.Changes) > 0 {
 								a.renderTurnChangesCard(c, tc, sessionID, m.ID == lastAssistantID, m)
@@ -1784,6 +1781,48 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, sessi
 	})
 }
 
+// switchToInternalHarness activates the RakitKode internal harness and optional persona.
+func (a *AppUI) switchToInternalHarness(personaID string) {
+	as := a.Agent
+	if as == nil {
+		return
+	}
+	as.ActiveAgentID = "agent-internal"
+	as.ActiveAgentType = "internal"
+	a.SelectedHarnessID = "agent-internal"
+	a.SelectedAgentID = "agent-internal"
+	if sess := as.ActiveSession(); sess != nil {
+		sess.AgentID = "agent-internal"
+		sess.AgentType = "internal"
+		sess.PersonaID = personaID
+	}
+	if personaID != "" {
+		as.SetSessionPersona(as.ActiveSessionID, personaID)
+	}
+	a.invalidateUI()
+}
+
+// switchToACPHarness activates the given ACP external agent harness.
+func (a *AppUI) switchToACPHarness(harnessID string) {
+	as := a.Agent
+	if as == nil {
+		return
+	}
+	as.ActiveAgentID = harnessID
+	as.ActiveAgentType = "acp"
+	a.SelectedHarnessID = harnessID
+	a.SelectedAgentID = harnessID
+	if sess := as.ActiveSession(); sess != nil {
+		sess.AgentID = harnessID
+		sess.AgentType = "acp"
+	}
+	if a.ACPMgr != nil {
+		as.ActiveModel = as.ResolveModelForAgent(harnessID, as.ActiveModel)
+		a.SelectedAgentModel = as.ActiveModel
+	}
+	a.invalidateUI()
+}
+
 // respondApproval routes an approval decision to the right backend: internal
 // sessions go through the RakitKode agent engine (RespondAgentApproval
 // parity), ACP harnesses through the ACP manager. The error is propagated so
@@ -2132,6 +2171,14 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		})
 
 		// 3. Bottom Controls Tray
+		winW, _ := c.Size()
+		isSlim := false
+		if a.Mode == ModeStudio {
+			isSlim = a.StudioLeftChatWidth == 0 || a.StudioLeftChatWidth < 520
+		} else if winW > 0 && winW < 880 {
+			isSlim = true
+		}
+
 		ui.Row(c).Gap(6).Padding(4, 12, 12, 12).AlignItems(ui.Center).Children(func() {
 			// [+] Add Context Button: attach picker, active file, or workspace file
 			addBtn := ui.Row(c).Size(28, 28).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
@@ -2204,24 +2251,32 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			// Permission Mode selector chip
 			var modeIcon *ui.SVG
 			modeLabel := ""
+			slimLabel := ""
 			modeColor := tc.Text
 			switch as.ExecutionMode {
 			case agent.ModeAsk:
-				modeIcon, modeLabel = icons.TablerHand, "Ask"
+				modeIcon, modeLabel, slimLabel = icons.TablerHand, "Ask", "Ask"
 			case agent.ModeCode:
-				modeIcon, modeLabel = icons.TablerPencil, "Edits"
+				modeIcon, modeLabel, slimLabel = icons.TablerPencil, "Edits", "Edit"
 			case agent.ModePlan:
-				modeIcon, modeLabel = icons.TablerShieldCheck, "Auto"
+				modeIcon, modeLabel, slimLabel = icons.TablerShieldCheck, "Auto", "Auto"
 			default:
-				modeIcon, modeLabel = icons.TablerShieldAlert, "Full access"
+				modeIcon, modeLabel, slimLabel = icons.TablerShieldAlert, "Full access", "Full"
 				modeColor = tc.FullAccess
 			}
 			modeBtn := chipRow(c, tc)
+			if isSlim {
+				modeBtn.Padding(0, 6).Tooltip(fmt.Sprintf("Permission: %s", modeLabel))
+			}
 			modeBtn.Children(func() {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, modeIcon).Width(13).Height(13).TextColor(modeColor)
-					ui.Text(c, modeLabel).FontSize(12).FontWeight(500).TextColor(modeColor)
-					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(modeColor.Alpha(0.7))
+				ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, modeIcon).Width(12).Height(12).TextColor(modeColor)
+					lbl := modeLabel
+					if isSlim {
+						lbl = slimLabel
+					}
+					ui.Text(c, lbl).FontSize(11).FontWeight(500).TextColor(modeColor).SingleLine()
+					ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(modeColor.Alpha(0.7))
 				})
 			})
 			if modeBtn.Clicked() {
@@ -2307,50 +2362,120 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			}
 			a.renderBgShellPill(c, tc, bgSessionID)
 
-			// Lead Persona / Orchestrator chip (only when using the internal RakitKode harness)
+			// ACP / Lead Persona Selector (Responsive: slim mode with model & acp selector)
 			isInternalHarness := as.ActiveAgentID == "" || as.ActiveAgentID == "agent-internal" || as.ActiveAgentType == "internal"
-			if isInternalHarness && a.Engine != nil && a.Engine.AgentMgr != nil {
-				activeSess := as.ActiveSession()
-				personaID, personaName := as.EffectivePersona(activeSess)
-				shortPersona := strings.TrimSpace(strings.TrimSuffix(personaName, "Agent"))
+			activeSess := as.ActiveSession()
+			var personaID, personaName, shortPersona string
+			var acpIcon *ui.SVG
+			var acpColor, acpIconColor ui.Color
+
+			if isInternalHarness {
+				if a.Engine != nil && a.Engine.AgentMgr != nil {
+					personaID, personaName = as.EffectivePersona(activeSess)
+				}
+				if personaName == "" {
+					personaName = "Orchestrator"
+				}
+				shortPersona = strings.TrimSpace(strings.TrimSuffix(personaName, "Agent"))
 				if shortPersona == "" {
 					shortPersona = personaName
 				}
-				pColor := tc.Text
-				pIconColor := tc.IconMuted
-				if personaID == "orchestrator" {
-					pColor = tc.Accent
-					pIconColor = tc.Accent
+				acpIcon = icons.TablerBot
+				acpColor = tc.Text
+				acpIconColor = tc.IconMuted
+				if personaID == "orchestrator" || personaID == "" {
+					acpColor = tc.Accent
+					acpIconColor = tc.Accent
 				}
-				personaBtn := chipRow(c, tc)
-				personaBtn.Children(func() {
-					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerBot).Width(13).Height(13).TextColor(pIconColor)
-						ui.Text(c, shortPersona).FontSize(12).FontWeight(500).TextColor(pColor).SingleLine()
-						ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
-					})
-				})
-				personaBtn.Menu(func(m *ui.Menu) {
-					if m.Item("Auto (Follow Orchestration Lead)").Chosen() {
-						as.SetSessionPersona(as.ActiveSessionID, "")
+			} else {
+				// ACP External Harness
+				acpIcon = icons.TablerPlug
+				acpColor = tc.Accent
+				acpIconColor = tc.Accent
+				personaName = as.ActiveAgentID
+				if a.ACPMgr != nil {
+					for _, ag := range a.ACPMgr.Agents {
+						if ag.ID == as.ActiveAgentID {
+							personaName = ag.Name
+							break
+						}
 					}
-					m.Separator()
+				}
+				shortPersona = personaName
+				if strings.HasPrefix(strings.ToLower(shortPersona), "antigravity") {
+					shortPersona = "AGY"
+				} else if len(shortPersona) > 8 {
+					shortPersona = string([]rune(shortPersona)[:7]) + "…"
+				}
+			}
+
+			displayPersona := personaName
+			if isSlim {
+				if isInternalHarness {
+					if personaID == "orchestrator" || personaID == "" {
+						displayPersona = "Orch"
+					} else if len(shortPersona) > 6 {
+						displayPersona = string([]rune(shortPersona)[:5]) + "…"
+					} else {
+						displayPersona = shortPersona
+					}
+				} else {
+					displayPersona = shortPersona
+				}
+			}
+
+			personaBtn := chipRow(c, tc)
+			if isSlim {
+				personaBtn.Padding(0, 6).Tooltip(fmt.Sprintf("Agent/ACP: %s", personaName))
+			}
+			personaBtn.Children(func() {
+				ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
+					ui.Icon(c, acpIcon).Width(12).Height(12).TextColor(acpIconColor)
+					ui.Text(c, displayPersona).FontSize(11).FontWeight(500).TextColor(acpColor).SingleLine()
+					ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
+				})
+			})
+			personaBtn.Menu(func(m *ui.Menu) {
+				m.Item("── Internal (Forge Engine) ──").Disabled(true)
+				if m.Item(menuChecked(isInternalHarness && (activeSess == nil || activeSess.PersonaID == ""), "Auto (Orchestrator)")).Chosen() {
+					a.switchToInternalHarness("")
+				}
+				if a.Engine != nil && a.Engine.AgentMgr != nil {
 					for _, def := range a.Engine.AgentMgr.ListAgentDefinitions() {
 						d := def
-						it := m.Item(d.Name)
+						isThisPersona := isInternalHarness && activeSess != nil && activeSess.PersonaID == d.ID
+						it := m.Item(menuChecked(isThisPersona, d.Name))
 						if d.Role != "" {
 							it = it.Subtitle(string(d.Role))
 						}
 						if it.Chosen() {
-							as.SetSessionPersona(as.ActiveSessionID, d.ID)
+							a.switchToInternalHarness(d.ID)
 						}
 					}
+				}
+				if a.ACPMgr != nil && len(a.ACPMgr.Agents) > 0 {
 					m.Separator()
-					if m.Item("Orchestration & Personas Settings...").Chosen() {
-						a.openSettings(settings.SettingsTabSubagents)
+					m.Item("── ACP Agents (External) ──").Disabled(true)
+					for _, ag := range a.ACPMgr.Agents {
+						if ag.ID == "agent-internal" {
+							continue
+						}
+						agentDef := ag
+						isThisACP := !isInternalHarness && as.ActiveAgentID == agentDef.ID
+						it := m.Item(menuChecked(isThisACP, agentDef.Name))
+						if agentDef.Type != "" {
+							it = it.Subtitle(agentDef.Type)
+						}
+						if it.Chosen() {
+							a.switchToACPHarness(agentDef.ID)
+						}
 					}
-				})
-			}
+				}
+				m.Separator()
+				if m.Item("Orchestration & Personas Settings...").Chosen() {
+					a.openSettings(settings.SettingsTabSubagents)
+				}
+			})
 
 			// Prompt stash chip: appears when entries exist; popover lists
 			// stashed prompts (click restores into the composer).
@@ -2390,7 +2515,12 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 
 			// Context Window Usage Ring (ZCode-style indicator next to model)
 			_, pct := as.ContextUsage()
-			gaugeBtn := ui.Row(c).Height(26).Radius(999).Padding(0, 6).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			gaugeBtn := ui.Row(c).Height(26).Radius(999).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			if isSlim {
+				gaugeBtn.Padding(0, 4)
+			} else {
+				gaugeBtn.Padding(0, 6)
+			}
 			gaugeBtn.Children(func() {
 				ringColor := tc.TextMuted.Alpha(0.55)
 				if pct >= 80 {
@@ -2400,11 +2530,12 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				} else if pct > 0 {
 					ringColor = tc.Success.Alpha(0.8)
 				}
-				ui.Box(c).Size(16, 16).Radius(8).BorderWidth(2).BorderColor(ringColor)
-				if !isHome && pct > 0 {
+				ui.Box(c).Size(14, 14).Radius(7).BorderWidth(2).BorderColor(ringColor)
+				if !isSlim && !isHome && pct > 0 {
 					ui.Text(c, fmt.Sprintf("%d%%", pct)).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
 				}
 			})
+			gaugeBtn.Tooltip(fmt.Sprintf("%d%% context window used", pct))
 			if gaugeBtn.Hovered() {
 				gaugeBtn.Background(tc.Text.Alpha(0.04))
 			}
@@ -2414,15 +2545,23 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 
 			// Model + Effort Selector Button (Triggers ModelProviderPaletteModal)
 			disp := shortModelLabel(as.ActiveModel)
+			if isSlim {
+				if runes := []rune(disp); len(runes) > 13 {
+					disp = string(runes[:11]) + "…"
+				}
+			}
 			modelBtn := chipRow(c, tc)
+			if isSlim {
+				modelBtn.Padding(0, 6).Tooltip(fmt.Sprintf("Model: %s", as.ActiveModel))
+			}
 			modelBtn.Children(func() {
-				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-					icons.RenderProviderIcon(c, as.ActiveModel, 13)
-					ui.Text(c, disp).FontSize(12).FontWeight(500).SingleLine()
-					if as.ReasoningEffort != agent.EffortOff {
-						ui.Text(c, as.ReasoningEffortLabel()).FontSize(12).FontWeight(400).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+					icons.RenderProviderIcon(c, as.ActiveModel, 12)
+					ui.Text(c, disp).FontSize(11).FontWeight(500).SingleLine()
+					if !isSlim && as.ReasoningEffort != agent.EffortOff {
+						ui.Text(c, as.ReasoningEffortLabel()).FontSize(11).FontWeight(400).TextColor(tc.TextMuted)
 					}
-					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+					ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
 				})
 			})
 			if modelBtn.Clicked() {

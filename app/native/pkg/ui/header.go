@@ -14,6 +14,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	corestudio "github.com/hasdev/forge-ade/core/studio"
 )
 
 func (a *AppUI) resolveExternalTargetDir(targetPath string) string {
@@ -173,7 +174,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 	bar := c.TitleBar()
 	leftPad := float32(12)
 	showToggleInHeader := true
-	if a.Mode == ModeAgent && a.ShowLeftSidebar {
+	if (a.Mode == ModeAgent || a.Mode == ModeStudio) && a.ShowLeftSidebar {
 		// Full-height sidebar is visible on the left; navigation icons live in its header.
 		showToggleInHeader = false
 		leftPad = 14
@@ -222,37 +223,39 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					if IconButton(c, tc, icons.TablerArrowRight, 14).Shrink(0).Clicked() {
 						a.cycleAgentSession(1)
 					}
-					if IconButton(c, tc, icons.TablerCirclePlus, 15).Shrink(0).Clicked() {
-						a.handleNewTask()
-					}
-
-					// Compact agent/turn status circle badge
-					isStreaming := a.Agent != nil && a.Agent.IsStreaming
-					needsApproval := a.sessionNeedsApproval(activeSess)
-					badgeBg := tc.Success.Alpha(0.18)
-					badgeColor := tc.Success
-					if needsApproval {
-						badgeBg = tc.Warning.Alpha(0.18)
-						badgeColor = tc.Warning
-					} else if isStreaming {
-						badgeBg = tc.Accent.Alpha(0.18)
-						badgeColor = tc.Accent
-					}
-					statusCircle := ui.Row(c.Key("hdr-status-circle")).Size(18, 18).Radius(9).
-						Shrink(0).AlignItems(ui.Center).Justify(ui.Center).Background(badgeBg).Cursor(ui.CursorPointer)
-					statusCircle.Children(func() {
-						if isStreaming {
-							ui.Spinner(c).Size(10, 10).Label("running")
-						} else if needsApproval {
-							ui.Icon(c, icons.TablerAlertTriangle).Width(10).Height(10).TextColor(badgeColor)
-						} else {
-							ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(badgeColor)
+					if a.Mode != ModeStudio {
+						if IconButton(c, tc, icons.TablerCirclePlus, 15).Shrink(0).Clicked() {
+							a.handleNewTask()
 						}
-					})
-					if statusCircle.Clicked() {
-						a.setMode(ModeAgent)
-						a.IsGitClientOpen = false
-						a.AgentViewMode = AgentViewChat
+
+						// Compact agent/turn status circle badge
+						isStreaming := a.Agent != nil && a.Agent.IsStreaming
+						needsApproval := a.sessionNeedsApproval(activeSess)
+						badgeBg := tc.Success.Alpha(0.18)
+						badgeColor := tc.Success
+						if needsApproval {
+							badgeBg = tc.Warning.Alpha(0.18)
+							badgeColor = tc.Warning
+						} else if isStreaming {
+							badgeBg = tc.Accent.Alpha(0.18)
+							badgeColor = tc.Accent
+						}
+						statusCircle := ui.Row(c.Key("hdr-status-circle")).Size(18, 18).Radius(9).
+							Shrink(0).AlignItems(ui.Center).Justify(ui.Center).Background(badgeBg).Cursor(ui.CursorPointer)
+						statusCircle.Children(func() {
+							if isStreaming {
+								ui.Spinner(c).Size(10, 10).Label("running")
+							} else if needsApproval {
+								ui.Icon(c, icons.TablerAlertTriangle).Width(10).Height(10).TextColor(badgeColor)
+							} else {
+								ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(badgeColor)
+							}
+						})
+						if statusCircle.Clicked() {
+							a.setMode(ModeAgent)
+							a.IsGitClientOpen = false
+							a.AgentViewMode = AgentViewChat
+						}
 					}
 				}
 
@@ -363,6 +366,30 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 						})
 					})
 				}
+
+				// Studio Surface Quick-Switcher in ModeStudio: [Canvas | Image | Video]
+				if a.Mode == ModeStudio {
+					var project *corestudio.StudioProject
+					if a.Studio != nil {
+						project = a.Studio.ActiveProject()
+					}
+					ui.Row(c.Key("hdr-studio-surfaces")).Height(26).Gap(2).Padding(2).Radius(7).Shrink(0).
+						Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
+						AlignItems(ui.Center).Children(func() {
+						canvasActive := project == nil || (project.Type != corestudio.ArtifactTypeImage && project.Type != corestudio.ArtifactTypeVideo)
+						headerSurfaceButton(c, tc, icons.TablerPresentation, "Canvas", 0, tc.Accent, canvasActive, func() {
+							a.studioEnsureCanvasProject()
+						})
+						imageActive := project != nil && project.Type == corestudio.ArtifactTypeImage
+						headerSurfaceButton(c, tc, icons.TablerPhoto, "Image", 0, tc.Accent, imageActive, func() {
+							a.studioEnsureProjectForType(corestudio.ArtifactTypeImage)
+						})
+						videoActive := project != nil && project.Type == corestudio.ArtifactTypeVideo
+						headerSurfaceButton(c, tc, icons.TablerSparkles, "Video", 0, tc.Accent, videoActive, func() {
+							a.studioEnsureProjectForType(corestudio.ArtifactTypeVideo)
+						})
+					})
+				}
 			})
 
 			// Live Agent Activity Pill when outside Chat (Editor, Board, Git, or CLI)
@@ -370,7 +397,7 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				sess := a.Agent.ActiveSession()
 				needsApproval := a.sessionNeedsApproval(sess)
 				isWorking := a.Agent.IsStreaming || (sess != nil && sess.Status == "running")
-				outsideChat := a.Mode != ModeAgent || a.AgentViewMode != AgentViewChat || a.IsGitClientOpen || a.ActiveTaskKind == "cli"
+				outsideChat := (a.Mode != ModeAgent && a.Mode != ModeStudio) || a.AgentViewMode != AgentViewChat || a.IsGitClientOpen || a.ActiveTaskKind == "cli"
 				if outsideChat && (needsApproval || isWorking) {
 					dotColor := tc.Accent
 					pillLabel := "Agent working…"
@@ -399,40 +426,62 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				}
 			}
 
+			winW, _ := c.Size()
+			_ = winW
+
 			// ZCode Split Quick-Action Pill: [ Mode / Target | ▾ ]
 			target := a.ExternalOpenTarget
 			if target == "" {
 				target = "editor"
 			}
 			targetIcon := icons.TablerCode
-			switch target {
-			case "finder":
-				targetIcon = icons.TablerFolder
-			case "terminal":
-				targetIcon = icons.TablerTerminal
-			default:
-				targetIcon = icons.TablerCode
+			if a.Mode == ModeStudio {
+				targetIcon = icons.TablerSparkles
+			} else if a.Mode == ModeAgent {
+				targetIcon = icons.TablerBot
+			} else {
+				switch target {
+				case "finder":
+					targetIcon = icons.TablerFolder
+				case "terminal":
+					targetIcon = icons.TablerTerminal
+				default:
+					targetIcon = icons.TablerCode
+				}
 			}
 
 			splitPill := ui.Row(c.Key("hdr-split-term")).Height(26).Radius(7).Shrink(0).AlignItems(ui.Center).
 				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder)
 			splitPill.Children(func() {
-				termHalf := ui.Row(c.Key("hdr-split-left")).Height(24).Padding(0, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				modeName := "Agent"
+				if a.Mode == ModeEditor {
+					modeName = "Editor"
+				} else if a.Mode == ModeStudio {
+					modeName = "Studio"
+				}
+
+				termHalf := ui.Row(c.Key("hdr-split-left")).Height(24).Padding(0, 7).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				termHalf.Children(func() {
 					ui.Icon(c, targetIcon).Width(13).Height(13).TextColor(tc.ToolbarControlForeground)
+					ui.Text(c, modeName).FontSize(11).FontWeight(500).TextColor(tc.ToolbarControlForeground)
 				})
 				if termHalf.Hovered() {
 					termHalf.Background(tc.ToolbarControlHover)
 				}
 				if termHalf.Clicked() {
-					switch target {
-					case "finder":
-						a.openInFinder("")
-					case "terminal":
-						a.openExternalTerminal("")
-					default:
+					if a.Mode == ModeStudio {
 						a.setMode(ModeEditor)
 						a.IsGitClientOpen = false
+					} else {
+						switch target {
+						case "finder":
+							a.openInFinder("")
+						case "terminal":
+							a.openExternalTerminal("")
+						default:
+							a.setMode(ModeEditor)
+							a.IsGitClientOpen = false
+						}
 					}
 				}
 
@@ -480,14 +529,18 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 				})
 			})
 
-			// Trailing ZCode utility icons: Help, Terminal (internal bottom drawer), and Right Sidebar toggle
-			if IconButton(c, tc, icons.TablerHelp, 14).Shrink(0).Clicked() {
-				a.openSettings(settings.SettingsTabShortcuts)
+			// Trailing utility icons: Settings, Terminal (internal bottom drawer), and Right Sidebar toggle
+			if IconButton(c, tc, icons.TablerSettings, 14).Shrink(0).Clicked() {
+				if a.Mode == ModeStudio {
+					a.openSettings(settings.SettingsTabStudio)
+				} else {
+					a.openSettings(settings.SettingsTabGeneral)
+				}
 			}
 			if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.isBottomTerminalVisible()).Shrink(0).Clicked() {
 				a.toggleBottomTerminal()
 			}
-			if !(a.Mode == ModeAgent && a.ShowRightDrawer) {
+			if !((a.Mode == ModeAgent || a.Mode == ModeStudio) && a.ShowRightDrawer) {
 				if ToggleIconButton(c, tc, icons.TablerPanelRight, 14, a.ShowRightDrawer).Shrink(0).Clicked() {
 					a.ShowRightDrawer = !a.ShowRightDrawer
 				}

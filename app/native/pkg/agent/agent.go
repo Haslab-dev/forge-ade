@@ -418,6 +418,10 @@ type AgentState struct {
 	// acpTransportProbe lets tests fake the live ACP transport/running-state
 	// lookup used by the steer path; nil uses the real ACP manager sessions.
 	acpTransportProbe func(sessionID string) (protocol string, running bool)
+
+	// PromptContextDecorator allows decorating the turn prompt before it is passed
+	// to the execution engine (e.g. injecting Studio Mode domain constraints).
+	PromptContextDecorator func(sessionID, prompt string) string
 }
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
@@ -3959,12 +3963,16 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			var startErr error
 			var acpSess *acp.Session
 			var effModel, effRemote string
+			execPrompt := prompt
+			if as.PromptContextDecorator != nil {
+				execPrompt = as.PromptContextDecorator(sessID, prompt)
+			}
 			if as.ACPMgr != nil {
 				var err error
 				acpSess, err = as.ACPMgr.StartSessionWithID(sessID, agentID, runWs, model, permissionMode, remoteID)
 				startErr = err
 				if startErr == nil {
-					startErr = as.ACPMgr.Prompt(sessID, prompt)
+					startErr = as.ACPMgr.Prompt(sessID, execPrompt)
 				}
 			} else if as.engine != nil && as.engine.ACPMgr != nil {
 				var err error
@@ -3978,7 +3986,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 				})
 				startErr = err
 				if startErr == nil {
-					startErr = as.engine.ACPMgr.Prompt(sessID, prompt)
+					startErr = as.engine.ACPMgr.Prompt(sessID, execPrompt)
 				}
 			} else {
 				startErr = fmt.Errorf("no ACP manager available")
@@ -4029,7 +4037,11 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 					log.Printf("[agent] internal turn goroutine panicked (session %s): %v\n%s", targetSessID, r, debugStack())
 				}
 			}()
-			if err := as.TriggerInternalTurn(targetSess, prompt, attached...); err != nil {
+			execPrompt := prompt
+			if as.PromptContextDecorator != nil {
+				execPrompt = as.PromptContextDecorator(targetSessID, prompt)
+			}
+			if err := as.TriggerInternalTurn(targetSess, execPrompt, attached...); err != nil {
 				as.mu.Lock()
 				assistantMsg.Done = true
 				assistantMsg.IsThinking = false

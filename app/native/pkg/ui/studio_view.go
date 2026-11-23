@@ -16,6 +16,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	nativestudio "github.com/hasdev/forge-ade/app/native/pkg/studio"
@@ -38,10 +39,7 @@ func (a *AppUI) renderStudioSurface(c *ui.Context) {
 	project := a.Studio.ActiveProject()
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
-		// 1. Studio Top Bar with guaranteed clearance for macOS traffic lights
-		a.renderStudioHeader(c, tc, project)
-
-		// 2. Main Studio Work Area
+		// Main Studio Work Area
 		// - Image or Video Generator: ComfyUI-style Visual Node Graph Workflow
 		// - Presentation, Slides, Motion, or 2D/3D Sandbox: Left Chat Agent (ACP & internal) + Right Main Viewer
 		if project != nil && (project.Type == corestudio.ArtifactTypeImage || project.Type == corestudio.ArtifactTypeVideo) {
@@ -186,6 +184,21 @@ func (a *AppUI) renderStudioHeader(c *ui.Context, tc theme.ThemeColors, project 
 	})
 }
 
+// studioEnsureCanvasProject selects the first active canvas project (slides, motion, 3d, pdf, pptx)
+// or seeds a canvas project if none exist.
+func (a *AppUI) studioEnsureCanvasProject() {
+	if a.Studio == nil {
+		return
+	}
+	for _, p := range a.Studio.Projects() {
+		if p.Type != corestudio.ArtifactTypeImage && p.Type != corestudio.ArtifactTypeVideo {
+			a.Studio.SelectProject(p.ID)
+			return
+		}
+	}
+	a.studioEnsureProjectForType(corestudio.ArtifactTypeSlides)
+}
+
 // studioEnsureProjectForType selects the first project of the given type or
 // creates a seeded one; shared by the header domain tabs and the empty state.
 func (a *AppUI) studioEnsureProjectForType(artType corestudio.ArtifactType) {
@@ -214,10 +227,15 @@ func (a *AppUI) studioEnsureProjectForType(artType corestudio.ArtifactType) {
 
 // studioChatBounds returns the window-aware min/max for the left chat pane so
 // the viewer pane always keeps at least ~45% of the window (drawer clamp idiom).
-func studioChatBounds(c *ui.Context) (float32, float32) {
+func (a *AppUI) studioChatBounds(c *ui.Context) (float32, float32) {
+	winW, _ := c.Size()
+	availableW := winW
+	if a.ShowLeftSidebar {
+		availableW -= a.LeftSidebarWidth
+	}
 	minW, maxW := float32(320), float32(720)
-	if winW, _ := c.Size(); winW > 0 && winW*0.55 < maxW {
-		maxW = max(minW, winW*0.55)
+	if availableW > 0 && availableW*0.55 < maxW {
+		maxW = max(minW, availableW*0.55)
 	}
 	return minW, maxW
 }
@@ -227,8 +245,11 @@ func studioChatBounds(c *ui.Context) (float32, float32) {
 func (a *AppUI) studioStageSize(c *ui.Context) (float32, float32) {
 	winW, _ := c.Size()
 	used := float32(64) // stage viewport horizontal padding (32 each side)
+	if a.ShowLeftSidebar {
+		used += a.LeftSidebarWidth
+	}
 	if !a.StudioChatCollapsed {
-		minChatW, maxChatW := studioChatBounds(c)
+		minChatW, maxChatW := a.studioChatBounds(c)
 		chatW := min(max(a.StudioLeftChatWidth, minChatW), maxChatW)
 		used += chatW + 4 // resize handle
 	}
@@ -243,7 +264,7 @@ func (a *AppUI) studioStageSize(c *ui.Context) (float32, float32) {
 // Left pane is the real Chat Agent (ACP & internal forgeade), right pane is the Main Viewer.
 func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject) {
 	// Per-frame window-aware clamp keeps the pane sane even right after a resize.
-	minChatW, maxChatW := studioChatBounds(c)
+	minChatW, maxChatW := a.studioChatBounds(c)
 	a.StudioLeftChatWidth = min(max(a.StudioLeftChatWidth, minChatW), maxChatW)
 
 	ui.Row(c.Key("studio-split-layout")).Grow(1).FillHeight().AlignItems(ui.Stretch).Children(func() {
@@ -258,19 +279,64 @@ func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors
 				ui.Row(c.Key("studio-agent-header")).Height(38).Padding(0, 10).Gap(8).AlignItems(ui.Center).
 					BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 
-					ui.Icon(c, icons.TablerBot).Width(14).Height(14).TextColor(tc.Accent)
-					ui.Text(c, "Studio Agent").FontSize(12).FontWeight(600).TextColor(tc.Text)
+					var activeSess *agent.AgentSession
+					if a.Agent != nil {
+						activeSess = a.Agent.ActiveSession()
+					}
+					isInternal := (activeSess != nil && activeSess.AgentType == "internal") ||
+						(a.Agent != nil && a.Agent.ActiveAgentType == "internal") ||
+						(a.SelectedHarnessID == "agent-internal")
 
-					// Model indicator pill (ACP & Internal)
+					if isInternal {
+						ui.Icon(c, icons.ProviderForgeADE).Width(15).Height(15)
+						ui.Text(c, "ForgeADE").FontSize(12).FontWeight(600).TextColor(tc.Text)
+						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
+							ui.Text(c, "INTERNAL").FontSize(8).FontWeight(700).TextColor(tc.Accent)
+						})
+					} else {
+						ui.Icon(c, icons.ProviderAntigravity).Width(15).Height(15).TextColor(tc.Accent)
+						ui.Text(c, "Studio Agent").FontSize(12).FontWeight(600).TextColor(tc.Text)
+						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.ToolbarControl).Children(func() {
+							ui.Text(c, "ACP").FontSize(8).FontWeight(700).TextColor(tc.TextMuted)
+						})
+					}
+
+					// Model indicator pill (click to open model modal)
 					modelLabel := a.SelectedAgentModel
 					if modelLabel == "" {
-						modelLabel = "Gemini 3.8 Flash (ACP)"
+						if isInternal {
+							modelLabel = "ForgeADE Default"
+						} else {
+							modelLabel = "Gemini 3.8 Flash (ACP)"
+						}
 					}
-					ui.Row(c).Padding(1, 6).Radius(4).Background(tc.ToolbarControl).MinWidth(0).Clip().Children(func() {
+					modelPill := ui.Row(c.Key("studio-model-selector-pill")).Padding(2, 6).Radius(4).
+						Background(tc.ToolbarControl).MinWidth(0).Clip().AlignItems(ui.Center).Gap(3).Cursor(ui.CursorPointer)
+					modelPill.Children(func() {
 						ui.Text(c, shortModelLabel(modelLabel)).FontSize(9).FontWeight(600).TextColor(tc.TextMuted).SingleLine()
+						ui.Icon(c, icons.TablerChevronDown).Width(8).Height(8).TextColor(tc.IconMuted)
 					})
+					modelPill.Tooltip("Select Agent & Model (ACP / ForgeADE)")
+					if modelPill.Clicked() {
+						a.ShowModelPalette = true
+					}
 
 					ui.Box(c).Grow(1)
+
+					// Session History Button (toggles sidebar so user can continue prior work)
+					historyBtn := ui.Row(c.Key("studio-history-btn")).Height(24).Padding(0, 6).Gap(4).Radius(4).
+						Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					if a.ShowLeftSidebar {
+						historyBtn.Background(tc.Accent.Alpha(0.18))
+					}
+					historyBtn.Children(func() {
+						ui.Icon(c, icons.TablerHistory).Width(11).Height(11).TextColor(tc.IconMuted)
+						ui.Text(c, "History").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					})
+					historyBtn.Tooltip("Toggle Session History Sidebar")
+					if historyBtn.Clicked() {
+						a.ShowLeftSidebar = !a.ShowLeftSidebar
+					}
 
 					// New Conversation Button
 					newTaskBtn := ui.Row(c.Key("studio-new-agent-task")).Height(24).Padding(0, 6).Gap(4).Radius(4).
@@ -330,16 +396,7 @@ func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors
 				data = activeVer.Data
 			}
 
-			switch project.Type {
-			case corestudio.ArtifactTypeSlides:
-				a.renderStudioSlidesViewer(c, tc, project, data)
-			case corestudio.ArtifactTypeMotion:
-				a.renderStudioMotionViewer(c, tc, project, data)
-			case corestudio.ArtifactTypeCodeJS:
-				a.renderStudio3DSandboxViewer(c, tc, project, data)
-			default:
-				a.renderStudioSlidesViewer(c, tc, project, data)
-			}
+			a.renderStudioUnifiedCanvasViewer(c, tc, project, data)
 		})
 	})
 }
@@ -451,18 +508,123 @@ func (a *AppUI) renderStudioAgentHome(c *ui.Context) {
 	})
 }
 
-// renderStudioSlidesViewer renders the presentation viewer on the right pane.
-func (a *AppUI) renderStudioSlidesViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
-	slides := data.Slides
-	agentPage := false
-	if len(slides) == 0 {
-		if data.EntryHTML != "" {
-			agentPage = true // custom agent page: no native slide outline to drive
-		} else {
-			slides = corestudio.DemoSlides()
+// StudioIntent represents the user's creative target intent detected from prompt.
+type StudioIntent string
+
+const (
+	IntentSlides  StudioIntent = "slides"
+	IntentMotion  StudioIntent = "motion"
+	Intent3D      StudioIntent = "3d"
+	IntentImage   StudioIntent = "image"
+	IntentVideo   StudioIntent = "video"
+	IntentGeneral StudioIntent = "general"
+)
+
+// detectStudioIntent parses natural language to automatically route to the right creative mode.
+func detectStudioIntent(prompt string) StudioIntent {
+	p := strings.ToLower(prompt)
+	if strings.Contains(p, "motion") || strings.Contains(p, "kinetic") || strings.Contains(p, "animasi") ||
+		strings.Contains(p, "remotion") || strings.Contains(p, "hyperframe") || strings.Contains(p, "elevenlabs") ||
+		strings.Contains(p, "voice sync") || strings.Contains(p, "tts") || strings.Contains(p, "timeline") ||
+		strings.Contains(p, "video text") {
+		return IntentMotion
+	}
+	if strings.Contains(p, "threejs") || strings.Contains(p, "three.js") || strings.Contains(p, "webgl") ||
+		strings.Contains(p, "orbit controls") || strings.Contains(p, "orbitcontrols") ||
+		strings.Contains(p, "3d scene") || strings.Contains(p, "3d sandbox") || strings.Contains(p, "mesh") ||
+		strings.Contains(p, "shader") || strings.Contains(p, "torus") || strings.Contains(p, "p5.js") ||
+		strings.Contains(p, "pixijs") || strings.Contains(p, "r3f") {
+		return Intent3D
+	}
+	if strings.Contains(p, "slide") || strings.Contains(p, "deck") || strings.Contains(p, "presentasi") ||
+		strings.Contains(p, "presentation") || strings.Contains(p, "powerpoint") || strings.Contains(p, "keynote") ||
+		strings.Contains(p, "pptx") || strings.Contains(p, "slidev") || strings.Contains(p, "pptxgenjs") {
+		return IntentSlides
+	}
+	if strings.Contains(p, "generate image") || strings.Contains(p, "bikin gambar") || strings.Contains(p, "buat gambar") ||
+		strings.Contains(p, "flux") || strings.Contains(p, "comfyui") || strings.Contains(p, "midjourney") ||
+		strings.Contains(p, "text to image") {
+		return IntentImage
+	}
+	if strings.Contains(p, "generate video") || strings.Contains(p, "bikin video") || strings.Contains(p, "buat video") ||
+		strings.Contains(p, "veo") || strings.Contains(p, "kling") || strings.Contains(p, "runway") ||
+		strings.Contains(p, "sora") || strings.Contains(p, "wan2") {
+		return IntentVideo
+	}
+	return IntentGeneral
+}
+
+// detectPathFlavor determines the artifact flavor and corresponding studio project type.
+func detectPathFlavor(path string) (string, corestudio.ArtifactType) {
+	lower := strings.ToLower(path)
+	ext := filepath.Ext(lower)
+	if ext == ".pdf" {
+		return "pdf", corestudio.ArtifactTypeSlides
+	}
+	if ext == ".pptx" {
+		return "pptx", corestudio.ArtifactTypeSlides
+	}
+	if strings.Contains(lower, "motion") || ext == ".mp4" {
+		return "motion", corestudio.ArtifactTypeMotion
+	}
+	if strings.Contains(lower, "3d") || strings.Contains(lower, "scene") || ext == ".js" || ext == ".ts" {
+		return "3d", corestudio.ArtifactTypeCodeJS
+	}
+	if strings.Contains(lower, "slide") || strings.Contains(lower, "deck") || ext == ".md" {
+		return "slides", corestudio.ArtifactTypeSlides
+	}
+	return "html", corestudio.ArtifactTypeSlides
+}
+
+// detectStudioFlavor checks the active artifact entry and project type to pick the right viewer mode.
+func detectStudioFlavor(project *corestudio.StudioProject, data corestudio.ArtifactData) string {
+	entry := strings.ToLower(data.EntryHTML)
+	switch {
+	case strings.HasSuffix(entry, ".pdf"):
+		return "pdf"
+	case strings.HasSuffix(entry, ".pptx"):
+		return "pptx"
+	case strings.Contains(entry, "motion") || strings.HasSuffix(entry, ".mp4"):
+		return "motion"
+	case strings.Contains(entry, "3d") || strings.Contains(entry, "scene") || strings.HasSuffix(entry, ".js"):
+		return "3d"
+	case strings.Contains(entry, "slide") || strings.Contains(entry, "deck"):
+		return "slides"
+	}
+	if project != nil {
+		switch project.Type {
+		case corestudio.ArtifactTypeMotion:
+			return "motion"
+		case corestudio.ArtifactTypeCodeJS:
+			return "3d"
+		case corestudio.ArtifactTypeSlides:
+			return "slides"
 		}
 	}
+	return "slides"
+}
 
+// renderStudioUnifiedCanvasViewer provides a unified interactive canvas and viewer
+// for Slides, Motion compositions, 3D Sandbox, PDF, PPTX, and HTML artifacts.
+func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
+	flavor := detectStudioFlavor(project, data)
+
+	// Ensure asset is generated or resolved
+	assetPath := data.EntryHTML
+	if assetPath == "" && project != nil {
+		assetPath = a.ensureStudioAssetFile(project)
+	}
+	if assetPath != "" && mygo.WebViewAvailable() {
+		bg := "#090a0f"
+		if flavor == "3d" {
+			bg = "#0a0c14"
+		}
+		a.openStudioWebView(assetPath, bg)
+		a.studioSyncWebView(project)
+	}
+
+	slides := data.Slides
+	agentPage := data.EntryHTML != ""
 	currIdx := a.StudioSelectedSlideIdx
 	var currentSlide corestudio.SlideItem
 	if len(slides) > 0 {
@@ -470,120 +632,234 @@ func (a *AppUI) renderStudioSlidesViewer(c *ui.Context, tc theme.ThemeColors, pr
 			currIdx = 0
 		}
 		currentSlide = slides[currIdx]
-	}
-
-	// Ensure slides HTML file is ready for webview
-	assetPath := a.ensureStudioAssetFile(project)
-	if assetPath != "" && mygo.WebViewAvailable() {
-		a.openStudioWebView(assetPath, "#090a0f")
-		a.studioSyncWebView(project)
+	} else if flavor == "slides" && data.EntryHTML == "" {
+		slides = corestudio.DemoSlides()
+		if len(slides) > 0 {
+			currentSlide = slides[0]
+		}
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		// Viewer Toolbar
-		ui.Row(c.Key("slides-viewer-toolbar")).Height(38).Padding(0, 16).Gap(8).AlignItems(ui.Center).
+		// Unified Viewer Toolbar
+		ui.Row(c.Key("studio-unified-toolbar")).Height(38).Padding(0, 16).Gap(8).AlignItems(ui.Center).
 			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 
-			ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Accent)
-			if agentPage {
-				ui.Text(c, "Agent Deck — "+filepath.Base(data.EntryHTML)).FontSize(12).FontWeight(600).TextColor(tc.Text)
-			} else {
-				ui.Text(c, fmt.Sprintf("Slide %02d of %02d", currIdx+1, len(slides))).FontSize(12).FontWeight(600).TextColor(tc.Text)
+			switch flavor {
+			case "motion":
+				ui.Icon(c, icons.TablerMovie).Width(14).Height(14).TextColor(tc.Accent)
+				title := "Motion Composition"
+				if data.EntryHTML != "" {
+					title = "Motion — " + filepath.Base(data.EntryHTML)
+				}
+				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
 
-				// Layout pill
-				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
-					ui.Text(c, strings.ToUpper(currentSlide.Layout)).FontSize(9).FontWeight(700).TextColor(tc.Accent)
+				fps := data.FPS
+				if fps <= 0 {
+					fps = 60
+				}
+				spec := fmt.Sprintf("1080P • %d FPS", fps)
+				if data.DurationSec > 0 {
+					spec = fmt.Sprintf("%s • %.0fs", spec, data.DurationSec)
+				}
+				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
+					ui.Text(c, spec).FontSize(9).FontWeight(700).TextColor(tc.Warning)
 				})
-			}
 
-			ui.Box(c).Grow(1)
+				ui.Box(c).Grow(1)
+				voice := data.VoiceID
+				if voice == "" {
+					voice = "Default TTS Voice"
+				}
+				ui.Text(c, "Voice: "+voice).FontSize(11).TextColor(tc.TextMuted)
 
-			// Navigation Controls (< Prev | Next >) — only for generated decks
-			if !agentPage {
-				prevBtn := IconButton(c, tc, icons.TablerArrowLeft, 12)
-				if prevBtn.Clicked() && currIdx > 0 {
-					a.StudioSelectedSlideIdx--
-					a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+			case "3d":
+				ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(tc.Success)
+				title := "3D WebGL Sandbox"
+				if data.EntryHTML != "" {
+					title = "3D Scene — " + filepath.Base(data.EntryHTML)
+				}
+				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Success.Alpha(0.15)).Children(func() {
+					ui.Text(c, "60 FPS").FontSize(9).FontWeight(700).TextColor(tc.Success)
+				})
+				ui.Box(c).Grow(1)
+
+				if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
+					if errCount := len(data.LastErrors); errCount > 0 {
+						ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Error.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.TablerAlertTriangle).Width(11).Height(11).TextColor(tc.Error)
+							ui.Text(c, fmt.Sprintf("%d Error(s)", errCount)).FontSize(10).FontWeight(600).TextColor(tc.Error)
+						})
+					} else {
+						ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+							ui.Icon(c, icons.TablerCircleCheck).Width(11).Height(11).TextColor(tc.Success)
+							ui.Text(c, "WebGL Ready").FontSize(10).FontWeight(600).TextColor(tc.Success)
+						})
+					}
 				}
 
-				nextBtn := IconButton(c, tc, icons.TablerArrowRight, 12)
-				if nextBtn.Clicked() && currIdx < len(slides)-1 {
-					a.StudioSelectedSlideIdx++
-					a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+			case "pdf":
+				ui.Icon(c, icons.TablerFileText).Width(14).Height(14).TextColor(tc.Error)
+				title := "PDF Document"
+				if data.EntryHTML != "" {
+					title = filepath.Base(data.EntryHTML)
 				}
+				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Error.Alpha(0.15)).Children(func() {
+					ui.Text(c, "PDF").FontSize(9).FontWeight(700).TextColor(tc.Error)
+				})
+				ui.Box(c).Grow(1)
 
-				ui.Box(c).Size(1, 14).Background(tc.Border)
+			case "pptx":
+				ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Warning)
+				title := "PowerPoint Presentation"
+				if data.EntryHTML != "" {
+					title = filepath.Base(data.EntryHTML)
+				}
+				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
+					ui.Text(c, "PPTX").FontSize(9).FontWeight(700).TextColor(tc.Warning)
+				})
+				ui.Box(c).Grow(1)
+
+			default: // slides
+				ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Accent)
+				if data.EntryHTML != "" {
+					ui.Text(c, "Deck — "+filepath.Base(data.EntryHTML)).FontSize(12).FontWeight(600).TextColor(tc.Text)
+				} else {
+					ui.Text(c, fmt.Sprintf("Slide %02d of %02d", currIdx+1, len(slides))).FontSize(12).FontWeight(600).TextColor(tc.Text)
+					layoutStr := currentSlide.Layout
+					if layoutStr == "" {
+						layoutStr = "hero"
+					}
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
+						ui.Text(c, strings.ToUpper(layoutStr)).FontSize(9).FontWeight(700).TextColor(tc.Accent)
+					})
+				}
+				ui.Box(c).Grow(1)
+
+				// Navigation Controls (< Prev | Next >) for parsed decks
+				if data.EntryHTML == "" && len(slides) > 1 {
+					prevBtn := IconButton(c, tc, icons.TablerArrowLeft, 12)
+					if prevBtn.Clicked() && currIdx > 0 {
+						a.StudioSelectedSlideIdx--
+						a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+					}
+					nextBtn := IconButton(c, tc, icons.TablerArrowRight, 12)
+					if nextBtn.Clicked() && currIdx < len(slides)-1 {
+						a.StudioSelectedSlideIdx++
+						a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+					}
+					ui.Box(c).Size(1, 14).Background(tc.Border)
+				}
 			}
 
-			// Agent artifact explorer
-			artBtn := ToggleIconButton(c, tc, icons.TablerFolderOpen, 12, a.StudioShowArtifacts)
-			artBtn.Tooltip("Agent artifacts")
+			// Reload button
+			reloadBtn := IconButton(c, tc, icons.TablerRefresh, 12)
+			reloadBtn.Tooltip("Reload viewer")
+			if reloadBtn.Clicked() {
+				a.closeStudioWebView()
+				a.studioWebviewSynced = false
+			}
+
+			// Agent artifact explorer in Right Sidebar
+			artActive := a.ShowRightDrawer && a.RightDrawerTab == RightTabArtifacts
+			artBtn := ToggleIconButton(c, tc, icons.TablerFolderOpen, 12, artActive)
+			artBtn.Tooltip("Artifacts & Explorer (Right sidebar)")
 			if artBtn.Clicked() {
-				a.StudioShowArtifacts = !a.StudioShowArtifacts
+				if a.ShowRightDrawer && a.RightDrawerTab == RightTabArtifacts {
+					a.ShowRightDrawer = false
+				} else {
+					a.ShowRightDrawer = true
+					a.pickDrawerPaneSingleton(RightTabArtifacts, "Artifacts")
+				}
 			}
 
-			// Send to Editor (⌘⇧E)
-			exportBtn := IconButton(c, tc, icons.TablerExternalLink, 12)
-			if exportBtn.Clicked() {
-				a.studioExportActive()
+			// Open in external browser / viewer
+			if assetPath != "" {
+				extBtn := IconButton(c, tc, icons.TablerExternalLink, 12)
+				extBtn.Tooltip("Open in External Viewer")
+				if extBtn.Clicked() {
+					a.openBrowserTab("file://" + assetPath)
+				}
 			}
 		})
 
-		// Agent artifact explorer panel
-		if a.StudioShowArtifacts {
-			a.renderStudioArtifactExplorer(c, tc)
-		}
-
-		// Main Presentation Viewport: WebKit WebView or Native Canvas Stage
-		ui.Column(c.Key("slides-stage-viewport")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+		// Main Viewport
+		ui.Column(c.Key("studio-stage-viewport")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 			if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
 				ui.WebView(c, a.StudioWebView).Grow(1).FillWidth()
 			} else {
-				// Native 16:9 Presentation Stage Fallback — sized to the pane.
+				// Fallback when WebView is not yet initialized or in headless tests
 				stageW, stageH := a.studioStageSize(c)
-				cardPadY, cardPadX := float32(40), float32(48)
-				if stageW < 480 {
-					cardPadY, cardPadX = 20, 24
-				}
-				slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
-
-				slideCard.Children(func() {
-					ui.Row(c).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
-						ui.Box(c).Grow(1)
-						ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					})
-
-					ui.Box(c).Size(1, 24)
-
-					ui.Text(c, currentSlide.Title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
-					ui.Box(c).Size(1, 8)
-
-					if currentSlide.Subtitle != "" {
-						ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
-						ui.Box(c).Size(1, 20)
-					}
-
-					ui.Column(c).Gap(10).Children(func() {
-						for _, b := range currentSlide.Bullets {
-							ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-								ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
-								ui.Text(c, b).FontSize(13).TextColor(tc.Text)
-							})
+				switch flavor {
+				case "motion":
+					stage := ui.Column(c.Key("motion-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(32, 40).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
+					stage.Children(func() {
+						ui.Text(c, "ForgeADE Studio").FontSize(34).FontWeight(800).TextColor(tc.Text)
+						ui.Text(c, "Kinetic Rhythm & Audio Synchronization").FontSize(15).FontWeight(500).TextColor(tc.Accent)
+						ui.Box(c).Size(1, 48)
+						script := data.ScriptText
+						if script == "" {
+							script = "ForgeADE Studio introduces a fluid agentic workspace where design skills meet real-time motion."
 						}
+						ui.Row(c).Padding(8, 20).Radius(20).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+							ui.Text(c, script).FontSize(13).FontWeight(500).TextColor(tc.Text)
+						})
 					})
-				})
+
+				case "3d":
+					scene := ui.Column(c.Key("live-3d-scene")).Width(stageW).Height(stageH).Radius(12).
+						Background(ui.Hex("#05070d")).BorderWidth(1).BorderColor(tc.Border).Clip().
+						AlignItems(ui.Center).Justify(ui.Center)
+					scene.Children(func() {
+						ui.Text(c, "WebGL 3D Scene Viewport").FontSize(18).FontWeight(700).TextColor(tc.Text)
+						ui.Text(c, "OrbitControls active • Three.js canvas initialized").FontSize(12).TextColor(tc.TextMuted)
+					})
+
+				default: // slides
+					cardPadY, cardPadX := float32(40), float32(48)
+					if stageW < 480 {
+						cardPadY, cardPadX = 20, 24
+					}
+					slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
+					slideCard.Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
+							ui.Box(c).Grow(1)
+							ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+						})
+						ui.Box(c).Size(1, 24)
+						title := currentSlide.Title
+						if title == "" {
+							title = "Presentation Stage"
+						}
+						ui.Text(c, title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
+						ui.Box(c).Size(1, 8)
+						if currentSlide.Subtitle != "" {
+							ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
+							ui.Box(c).Size(1, 20)
+						}
+						ui.Column(c).Gap(10).Children(func() {
+							for _, b := range currentSlide.Bullets {
+								ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+									ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
+									ui.Text(c, b).FontSize(13).TextColor(tc.Text)
+								})
+							}
+						})
+					})
+				}
 			}
 		})
 
-		// Slide Outline Thumbnails Strip at Bottom — horizontally scrollable so
-		// long decks scroll instead of overflowing the fixed-height strip.
-		// Hidden for agent-authored pages (they drive their own navigation).
-		if !agentPage {
+		// Bottom Dock:
+		// If slides: outline thumbnails strip
+		if flavor == "slides" && len(slides) > 0 && !agentPage {
 			ui.Row(c.Key("slides-thumbnails-strip")).Height(65).Padding(8, 16).Gap(8).AlignItems(ui.Center).
 				Background(tc.Surface).BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
-
 				ui.ScrollHorizontal(c.Key("slides-thumbnails-scroll")).Grow(1).MinWidth(0).Scrollbars(false).Children(func() {
 					ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 						for i, slideItem := range slides {
@@ -622,171 +898,19 @@ func (a *AppUI) renderStudioSlidesViewer(c *ui.Context, tc theme.ThemeColors, pr
 	})
 }
 
-// renderStudioMotionViewer renders the motion video stage and synchronized timeline scrubber.
-func (a *AppUI) renderStudioMotionViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
-	assetPath := a.ensureStudioAssetFile(project)
-	if assetPath != "" && mygo.WebViewAvailable() {
-		a.openStudioWebView(assetPath, "#08080a")
-		a.studioSyncWebView(project)
-	}
-
-	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		// Motion Toolbar
-		ui.Row(c.Key("motion-viewer-toolbar")).Height(38).Padding(0, 16).Gap(8).AlignItems(ui.Center).
-			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-
-			ui.Icon(c, icons.TablerMovie).Width(14).Height(14).TextColor(tc.Accent)
-			ui.Text(c, "Motion Composition").FontSize(12).FontWeight(600).TextColor(tc.Text)
-
-			// Composition spec from the artifact data (fallback mirrors the
-			// default stage), not a hardcoded marketing badge.
-			fps := data.FPS
-			if fps <= 0 {
-				fps = 60
-			}
-			spec := fmt.Sprintf("1080P • %d FPS", fps)
-			if data.DurationSec > 0 {
-				spec = fmt.Sprintf("%s • %.0fs", spec, data.DurationSec)
-			}
-			ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
-				ui.Text(c, spec).FontSize(9).FontWeight(700).TextColor(tc.Warning)
-			})
-
-			ui.Box(c).Grow(1)
-			voice := data.VoiceID
-			if voice == "" {
-				voice = "Default TTS Voice"
-			}
-			ui.Text(c, "Voice: "+voice).FontSize(11).TextColor(tc.TextMuted)
-
-			// Agent artifact explorer
-			artBtn := ToggleIconButton(c, tc, icons.TablerFolderOpen, 12, a.StudioShowArtifacts)
-			artBtn.Tooltip("Agent artifacts")
-			if artBtn.Clicked() {
-				a.StudioShowArtifacts = !a.StudioShowArtifacts
-			}
-		})
-
-		// Agent artifact explorer panel
-		if a.StudioShowArtifacts {
-			a.renderStudioArtifactExplorer(c, tc)
-		}
-
-		// Kinetic Motion Stage
-		ui.Column(c.Key("motion-stage-viewport")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
-				ui.WebView(c, a.StudioWebView).Grow(1).FillWidth()
-			} else {
-				// Sized to the pane so the card never overflows.
-				stageW, stageH := a.studioStageSize(c)
-				stage := ui.Column(c.Key("motion-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(32, 40).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
-
-				stage.Children(func() {
-					ui.Text(c, "ForgeADE Studio").FontSize(34).FontWeight(800).TextColor(tc.Text)
-					ui.Text(c, "Kinetic Rhythm & Audio Synchronization").FontSize(15).FontWeight(500).TextColor(tc.Accent)
-
-					ui.Box(c).Size(1, 48)
-
-					script := data.ScriptText
-					if script == "" {
-						script = "ForgeADE Studio introduces a fluid agentic workspace where design skills meet real-time motion."
-					}
-					ui.Row(c).Padding(8, 20).Radius(20).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-						ui.Text(c, script).FontSize(13).FontWeight(500).TextColor(tc.Text)
-					})
-				})
-			}
-		})
-
-		// Contextual Timeline Scrubber at Bottom
-		a.renderStudioTimelineDock(c, tc, project, data)
-	})
+// renderStudioSlidesViewer renders the presentation viewer on the right pane (delegates to unified viewer).
+func (a *AppUI) renderStudioSlidesViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
+	a.renderStudioUnifiedCanvasViewer(c, tc, project, data)
 }
 
-// renderStudio3DSandboxViewer renders the interactive WebGL 3D sandbox and self-healing drawer.
+// renderStudioMotionViewer renders the motion video stage and synchronized timeline scrubber (delegates to unified viewer).
+func (a *AppUI) renderStudioMotionViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
+	a.renderStudioUnifiedCanvasViewer(c, tc, project, data)
+}
+
+// renderStudio3DSandboxViewer renders the interactive WebGL 3D sandbox (delegates to unified viewer).
 func (a *AppUI) renderStudio3DSandboxViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
-	assetPath := a.ensureStudioAssetFile(project)
-	if assetPath != "" && mygo.WebViewAvailable() {
-		a.openStudioWebView(assetPath, "#0a0c14")
-		a.studioSyncWebView(project)
-	}
-
-	ui.Column(c).Grow(1).FillHeight().Children(func() {
-		// 3D Toolbar
-		ui.Row(c.Key("3d-viewer-toolbar")).Height(38).Padding(0, 16).Gap(8).AlignItems(ui.Center).
-			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-
-			ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(tc.Success)
-			ui.Text(c, "Three.js / WebGL 2.0 Sandbox").FontSize(12).FontWeight(600).TextColor(tc.Text)
-
-			ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Success.Alpha(0.15)).Children(func() {
-				ui.Text(c, "60 FPS").FontSize(9).FontWeight(700).TextColor(tc.Success)
-			})
-
-			ui.Box(c).Grow(1)
-
-			// Reload re-creates the scene WebView (stuck scene / offline retry).
-			reloadBtn := IconButton(c, tc, icons.TablerRefresh, 12)
-			reloadBtn.Tooltip("Reload scene")
-			if reloadBtn.Clicked() {
-				a.closeStudioWebView()
-				a.studioWebviewSynced = false
-			}
-
-			// Agent artifact explorer
-			artBtn := ToggleIconButton(c, tc, icons.TablerFolderOpen, 12, a.StudioShowArtifacts)
-			artBtn.Tooltip("Agent artifacts")
-			if artBtn.Clicked() {
-				a.StudioShowArtifacts = !a.StudioShowArtifacts
-			}
-
-			// Honest runtime state: only claim a clean runtime when the real
-			// WebView drives the scene; the native fallback is a static card.
-			if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
-				if errCount := len(data.LastErrors); errCount > 0 {
-					ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Error.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerAlertTriangle).Width(11).Height(11).TextColor(tc.Error)
-						ui.Text(c, fmt.Sprintf("%d Runtime Error(s)", errCount)).FontSize(10).FontWeight(600).TextColor(tc.Error)
-					})
-				} else {
-					ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerCircleCheck).Width(11).Height(11).TextColor(tc.Success)
-						ui.Text(c, "Runtime Clean").FontSize(10).FontWeight(600).TextColor(tc.Success)
-					})
-				}
-			} else {
-				ui.Row(c).Padding(2, 6).Radius(4).Background(tc.ToolbarControl).Gap(4).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerInfoCircle).Width(11).Height(11).TextColor(tc.IconMuted)
-					ui.Text(c, "Native Preview (WebView unavailable)").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
-				})
-			}
-		})
-
-		// Agent artifact explorer panel
-		if a.StudioShowArtifacts {
-			a.renderStudioArtifactExplorer(c, tc)
-		}
-
-		// 3D Interactive Viewport
-		ui.Column(c.Key("3d-viewport-stage")).Grow(1).Padding(24, 32).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-			if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
-				ui.WebView(c, a.StudioWebView).Grow(1).FillWidth()
-			} else {
-				// Sized to the pane so the card never overflows.
-				stageW, stageH := a.studioStageSize(c)
-				canvas3D := ui.Column(c.Key("threejs-canvas-card")).Width(stageW).Height(stageH).Radius(12).Padding(24, 28).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center)
-
-				canvas3D.Children(func() {
-					ui.Icon(c, icons.TablerRotate).Width(64).Height(64).TextColor(tc.Accent)
-					ui.Box(c).Size(1, 12)
-					ui.Text(c, "Interactive Torus Knot Mesh").FontSize(16).FontWeight(700).TextColor(tc.Text)
-					ui.Text(c, "OrbitControls: Drag to rotate • Scroll to zoom").FontSize(11).TextColor(tc.TextMuted)
-				})
-			}
-		})
-	})
+	a.renderStudioUnifiedCanvasViewer(c, tc, project, data)
 }
 
 // renderStudioComfyUINodeGraph renders the requested ComfyUI-style Visual Node Graph Workflow for Image & Video Generator!
@@ -1501,13 +1625,18 @@ func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 
 	for _, path := range candidates {
 		for _, full := range a.studioResolveImportPath(sessionID, path) {
+			flavor, targetType := detectPathFlavor(full)
+			if targetType != "" && targetType != proj.Type {
+				a.studioEnsureProjectForType(targetType)
+				proj = a.Studio.ActiveProject()
+			}
 			imported, err := a.Studio.ImportAgentArtifact(full)
 			if err != nil {
 				continue
 			}
 			if imported {
 				a.queueToast(ui.Toast{
-					Title:       "Studio Import",
+					Title:       "Studio Import (" + strings.ToUpper(flavor) + ")",
 					Description: filepath.Base(full) + " → " + proj.Name,
 					Type:        "success",
 				})
@@ -1567,15 +1696,31 @@ func (a *AppUI) studioArtifactDirs(sessionID string) []string {
 	if ws := a.Agent.SessionWorkspacePath(sessionID); ws != "" {
 		add(ws)
 		add(filepath.Join(ws, "slides"))
+		add(filepath.Join(ws, "motion"))
+		add(filepath.Join(ws, "3d"))
+		add(filepath.Join(ws, "scenes"))
 	}
 	if a.Workspace != nil && a.Workspace.RootDir != "" {
 		add(a.Workspace.RootDir)
 		add(filepath.Join(a.Workspace.RootDir, "slides"))
+		add(filepath.Join(a.Workspace.RootDir, "motion"))
+		add(filepath.Join(a.Workspace.RootDir, "3d"))
+		add(filepath.Join(a.Workspace.RootDir, "scenes"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		add(filepath.Join(home, "slides"))
+		add(filepath.Join(home, "motion"))
+		add(filepath.Join(home, "3d"))
+		add(filepath.Join(home, ".forge-ade", "motion"))
 		add(filepath.Join(home, ".forge-ade", "slides"))
+		add(filepath.Join(home, ".forge-ade", "3d"))
+		add(filepath.Join(home, ".forge-ade", "scenes"))
+		add(filepath.Join(home, ".forge-ade", "sandbox"))
+		add(filepath.Join(home, ".forge-ade", "studio"))
 		add(filepath.Join(home, ".forge-ade", "studio_exports"))
+		add(filepath.Join(home, ".forge", "motion"))
+		add(filepath.Join(home, ".forge", "slides"))
+		add(filepath.Join(home, ".forge", "studio"))
 	}
 	return roots
 }
@@ -1614,7 +1759,7 @@ func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 				continue
 			}
 			switch strings.ToLower(filepath.Ext(e.Name())) {
-			case ".html", ".htm", ".md", ".js":
+			case ".html", ".htm", ".md", ".js", ".jsx", ".tsx", ".json", ".pdf", ".pptx":
 			default:
 				continue
 			}
@@ -1637,6 +1782,12 @@ func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 
 // studioImportArtifactFile imports one browsed artifact with user feedback.
 func (a *AppUI) studioImportArtifactFile(path string) {
+	flavor, targetType := detectPathFlavor(path)
+	if targetType != "" && a.Studio != nil {
+		if cur := a.Studio.ActiveProject(); cur == nil || cur.Type != targetType {
+			a.studioEnsureProjectForType(targetType)
+		}
+	}
 	imported, err := a.Studio.ImportAgentArtifact(path)
 	if err != nil || !imported {
 		msg := "not importable into the active project"
@@ -1647,63 +1798,102 @@ func (a *AppUI) studioImportArtifactFile(path string) {
 		return
 	}
 	a.queueToast(ui.Toast{
-		Title:       "Studio Import",
-		Description: filepath.Base(path) + " → viewer",
+		Title:       "Studio Import (" + strings.ToUpper(flavor) + ")",
+		Description: filepath.Base(path) + " → unified viewer",
 		Type:        "success",
 	})
 	a.invalidateUI()
 }
 
-// renderStudioArtifactExplorer draws the browsable list of files the agent
-// produced; clicking a row loads it into the active project's viewer.
-func (a *AppUI) renderStudioArtifactExplorer(c *ui.Context, tc theme.ThemeColors) {
-	sessionID := a.Agent.ActiveSessionID
+// renderStudioArtifactsPane draws the browsable list of files the agent
+// produced in the Right Sidebar; clicking a row loads it into the active project's viewer.
+func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
+	sessionID := ""
+	if a.Agent != nil {
+		sessionID = a.Agent.ActiveSessionID
+	}
 	files := a.studioScanArtifactFiles(sessionID)
 
-	ui.Column(c.Key("studio-artifacts-panel")).Height(190).Background(tc.Surface).
-		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-		// Header
-		ui.Row(c.Key("artifacts-header")).Height(34).Padding(0, 16).Gap(8).AlignItems(ui.Center).
+	ui.Column(c.Key("studio-artifacts-pane")).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
+		// Header Toolbar
+		ui.Row(c.Key("artifacts-toolbar")).Height(38).Padding(0, 12).Gap(8).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
-			ui.Icon(c, icons.TablerFolderOpen).Width(13).Height(13).TextColor(tc.Accent)
-			ui.Text(c, "Agent Artifacts").FontSize(11).FontWeight(700).TextColor(tc.Text)
-			ui.Text(c, fmt.Sprintf("%d files — click to open in the viewer", len(files))).FontSize(10).TextColor(tc.TextMuted)
+			ui.Icon(c, icons.TablerFolderOpen).Width(14).Height(14).TextColor(tc.Accent)
+			ui.Text(c, "Artifacts").FontSize(12).FontWeight(600).TextColor(tc.Text)
+			ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.12)).Children(func() {
+				ui.Text(c, fmt.Sprintf("%d", len(files))).FontSize(10).FontWeight(600).TextColor(tc.Accent)
+			})
 			ui.Box(c).Grow(1)
-			closeBtn := IconButton(c, tc, icons.TablerX, 12)
-			closeBtn.Tooltip("Close")
-			if closeBtn.Clicked() {
-				a.StudioShowArtifacts = false
+
+			// Rescan / Refresh
+			if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() {
+				a.studioArtifactScanAt = time.Time{}
+				a.studioArtifactCache = nil
+			}
+
+			// Switch to full workspace files explorer
+			allFilesBtn := IconButton(c, tc, icons.TablerFolder, 12)
+			allFilesBtn.Tooltip("Browse all workspace files")
+			if allFilesBtn.Clicked() {
+				a.pickDrawerPaneSingleton(RightTabFiles, "Files")
 			}
 		})
 
-		if len(files) == 0 {
-			ui.Column(c).Grow(1).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-				ui.Text(c, "No artifact files found yet — ask the agent to create a deck, scene, or script.").FontSize(11).TextColor(tc.TextMuted)
+		// Filter Query Input
+		ui.Row(c).Padding(6, 10).Children(func() {
+			ui.TextInput(c, &a.StudioArtifactFilterQuery).Placeholder("Filter artifacts...").Grow(1)
+		})
+
+		// Filter files by query if set
+		filtered := files
+		if q := strings.TrimSpace(strings.ToLower(a.StudioArtifactFilterQuery)); q != "" {
+			var match []studioArtifactFile
+			for _, f := range files {
+				if strings.Contains(strings.ToLower(filepath.Base(f.Path)), q) {
+					match = append(match, f)
+				}
+			}
+			filtered = match
+		}
+
+		if len(filtered) == 0 {
+			ui.Column(c).Grow(1).Padding(24, 16).AlignItems(ui.Center).Justify(ui.Center).Gap(10).Children(func() {
+				ui.Icon(c, icons.TablerSparkles).Width(24).Height(24).TextColor(tc.IconMuted)
+				ui.Text(c, "No artifacts found").FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Ask Studio Agent to generate a presentation, kinetic motion, or 3D scene.").
+					FontSize(11).TextColor(tc.TextMuted).Center()
 			})
 			return
 		}
 
 		ui.Scroll(c.Key("artifacts-list")).Grow(1).Children(func() {
 			ui.Column(c).Padding(4, 8).Gap(2).Children(func() {
-				for _, f := range files {
+				for _, f := range filtered {
 					f := f
 					name := filepath.Base(f.Path)
-					dir := filepath.Base(filepath.Dir(f.Path))
-					row := ui.Row(c.Key("artifact-"+name+"-"+fmt.Sprint(f.ModTime.Unix()))).Height(30).Padding(0, 8).Radius(6).
+					row := ui.Row(c.Key("artifact-"+name+"-"+fmt.Sprint(f.ModTime.Unix()))).Height(32).Padding(0, 8).Radius(6).
 						Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					row.Children(func() {
-						switch strings.ToLower(filepath.Ext(name)) {
-						case ".md":
-							ui.Icon(c, icons.TablerFileText).Width(13).Height(13).TextColor(tc.Accent)
-						case ".js":
-							ui.Icon(c, icons.TablerCode).Width(13).Height(13).TextColor(tc.Success)
+						flavor, _ := detectPathFlavor(f.Path)
+						switch flavor {
+						case "motion":
+							ui.Icon(c, icons.TablerMovie).Width(14).Height(14).TextColor(tc.Accent)
+						case "3d":
+							ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(tc.Success)
+						case "pdf":
+							ui.Icon(c, icons.TablerFileText).Width(14).Height(14).TextColor(tc.Error)
+						case "pptx":
+							ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Warning)
+						case "slides":
+							ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Accent)
 						default:
-							ui.Icon(c, icons.TablerFile).Width(13).Height(13).TextColor(tc.Warning)
+							ui.Icon(c, icons.TablerFile).Width(14).Height(14).TextColor(tc.IconMuted)
 						}
-						ui.Text(c, name).FontSize(11).FontWeight(600).TextColor(tc.Text).SingleLine()
-						ui.Text(c, dir).FontSize(10).TextColor(tc.TextMuted).SingleLine()
-						ui.Box(c).Grow(1)
-						ui.Text(c, relativeTime(f.ModTime)).FontSize(10).TextColor(tc.TextMuted)
+						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+							ui.Text(c, name).FontSize(11).FontWeight(600).TextColor(tc.Text).SingleLine()
+							ui.Text(c, flavor).FontSize(9).TextColor(tc.TextMuted).SingleLine()
+						})
+						ui.Text(c, relativeTime(f.ModTime)).FontSize(9).TextColor(tc.TextMuted)
 					})
 					if row.Hovered() {
 						row.Background(tc.ToolbarControlHover)
@@ -1715,6 +1905,11 @@ func (a *AppUI) renderStudioArtifactExplorer(c *ui.Context, tc theme.ThemeColors
 			})
 		})
 	})
+}
+
+// renderStudioArtifactExplorer draws the browsable list of files the agent produced.
+func (a *AppUI) renderStudioArtifactExplorer(c *ui.Context, tc theme.ThemeColors) {
+	a.renderStudioArtifactsPane(c, tc)
 }
 
 // openStudioWebView opens or navigates the dedicated studio webview. bg is
@@ -1873,4 +2068,58 @@ func (a *AppUI) studioRunDirector(prompt string) {
 	if a.Studio != nil {
 		_ = a.Studio.RunDirector(context.Background(), prompt)
 	}
+}
+
+// decorateStudioPrompt injects Open Design system guidelines and studio capabilities
+// into the agent turn prompt when executing in Studio Mode.
+func (a *AppUI) decorateStudioPrompt(sessionID, prompt string) string {
+	if strings.Contains(prompt, "[FORGE STUDIO ENVIRONMENT]") {
+		return prompt
+	}
+
+	var b strings.Builder
+	b.WriteString("[FORGE STUDIO ENVIRONMENT — OPEN DESIGN SKILLS ACTIVATED]\n")
+	intent := detectStudioIntent(prompt)
+	if intent != IntentGeneral {
+		b.WriteString(fmt.Sprintf("[STUDIO INTENT ROUTER: DETECTED TARGET = %s]\n", strings.ToUpper(string(intent))))
+	}
+	b.WriteString("You are executing in Forge ADE Studio Mode — an autonomous design and creative engineering environment.\n")
+	b.WriteString("Official Reference: Open Design (https://open-design.ai/skills/), Claude Design, ComfyUI, and Creative Agent Workflows.\n\n")
+	b.WriteString("STUDIO CORE CAPABILITIES & ENGINE STACKS:\n")
+	b.WriteString("1. Generate Image: Flux / Imagen / ComfyUI API | Source: Prompt + Seed + ControlNet JSON | Formats: PNG, WebP, SVG\n")
+	b.WriteString("2. Generate Video: Veo / Kling / Runway / Wan API | Source: Storyboard + Keyframe Spec | Formats: MP4, WebM\n")
+	b.WriteString("3. Make Slides (PPT): HTML/CSS + PptxGenJS or Slidev | Source: Structured Slide JSON / Markdown | Formats: .pptx, PDF, Web (write to slides.html, deck.html, or slides.md in workspace or ~/.forge-ade/slides/)\n")
+	b.WriteString("4. Make Motion Video + TTS: Remotion (React) + ElevenLabs | Source: React TSX + Audio Timestamp JSON, or deterministic 60fps HTML5 canvas seekable per-frame | Formats: MP4 via headless render (write to motion.html in workspace or ~/.forge-ade/motion/motion.html)\n")
+	b.WriteString("5. 2D & 3D in JS: Three.js / R3F, PixiJS, P5.js | Source: Live JS/TSX Sandbox with OrbitControls | Formats: Interactive Web, .glb, MP4 (write to scene3d.html or scene.js in workspace or ~/.forge-ade/3d/)\n\n")
+
+	if a.Studio != nil {
+		if p := a.Studio.ActiveProject(); p != nil {
+			b.WriteString(fmt.Sprintf("ACTIVE STUDIO TARGET: %s (Type: %s)\n", p.Name, p.Type))
+			switch p.Type {
+			case corestudio.ArtifactTypeSlides:
+				b.WriteString("PRIMARY DIRECTIVE: Create / update slide deck. Generate slides.html (with 16:9 responsive presentation stage, showSlide() pagination, and keyboard nav) or markdown deck.\n")
+			case corestudio.ArtifactTypeMotion:
+				b.WriteString("PRIMARY DIRECTIVE: Create / update motion composition. Generate motion.html (1920x1080 canvas/HTML5 stage, seekable per-frame timeline, and TTS audio timestamp sync) in ~/.forge-ade/motion/motion.html or workspace.\n")
+			case corestudio.ArtifactTypeCodeJS:
+				b.WriteString("PRIMARY DIRECTIVE: Create / update interactive 3D/2D scene. Generate scene3d.html or scene.js using Three.js with OrbitControls, responsive viewport resize, and clean lighting in ~/.forge-ade/3d/ or workspace.\n")
+			case corestudio.ArtifactTypeImage:
+				b.WriteString("PRIMARY DIRECTIVE: Configure image generation prompt, seed, sampler, and ComfyUI workflow graph.\n")
+			case corestudio.ArtifactTypeVideo:
+				b.WriteString("PRIMARY DIRECTIVE: Generate video storyboard, motion keyframe schedule, and clip timing.\n")
+			}
+		}
+		if a.Studio.Skills() != nil {
+			active := a.Studio.Skills().ActiveSkills()
+			if len(active) > 0 {
+				b.WriteString("\nACTIVE DESIGN GUIDELINES:\n")
+				for _, s := range active {
+					b.WriteString(fmt.Sprintf("• %s (%s): %s\n", s.Name, s.Category, strings.Join(s.Rules, "; ")))
+				}
+			}
+		}
+	}
+	b.WriteString("\nCRITICAL DIRECTIVE: Do NOT report that skill /open-design is missing. You HAVE full Open Design skills built-in. Directly construct, write, and execute the requested design artifact without hesitation.\n\n")
+	b.WriteString("USER PROMPT:\n")
+	b.WriteString(prompt)
+	return b.String()
 }

@@ -230,30 +230,49 @@ func newStudioSlidesApp(t *testing.T) *AppUI {
 	return app
 }
 
-// TestStudioHeaderLabelsInsideWideWindow pins the wide layout: full chrome
-// labels render and stay inside the window (no clipping at the right edge).
+// TestStudioHeaderLabelsInsideWideWindow pins the wide layout: surface switcher
+// and mode selector render cleanly without header overflow.
 func TestStudioHeaderLabelsInsideWideWindow(t *testing.T) {
 	app := newStudioSlidesApp(t)
 	const winW = 1024.0
 	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, winW, 700, ui.TesterOptions{Dark: true})
 
-	rect, ok := tw.Find("Send to Editor")
+	// "Send to Editor" was removed per user request for independent studio process
+	if _, ok := tw.Find("Send to Editor"); ok {
+		t.Fatal("expected 'Send to Editor' to be removed from header")
+	}
+
+	rect, ok := tw.Find("Studio")
 	if !ok {
-		t.Fatal("expected 'Send to Editor' label at 1024px width")
+		t.Fatal("expected 'Studio' mode label at 1024px width")
 	}
 	if rect.X+rect.W > winW {
-		t.Fatalf("export button clipped: ends at %.0f > window %.0f", rect.X+rect.W, winW)
+		t.Fatalf("studio button clipped: ends at %.0f > window %.0f", rect.X+rect.W, winW)
+	}
+
+	// Surface tabs: unified Canvas tab should be rendered; separate Slides/Motion/3D tabs are removed
+	if _, ok := tw.Find("Canvas"); !ok {
+		t.Fatal("expected 'Canvas' surface tab at 1024px width")
+	}
+	if _, ok := tw.Find("Slides"); ok {
+		t.Fatal("expected 'Slides' tab to be unified into 'Canvas'")
+	}
+	if _, ok := tw.Find("Motion"); ok {
+		t.Fatal("expected 'Motion' tab to be unified into 'Canvas'")
+	}
+	if _, ok := tw.Find("3D Sandbox"); ok {
+		t.Fatal("expected '3D Sandbox' tab to be unified into 'Canvas'")
 	}
 }
 
-// TestStudioHeaderCollapsesToIconsWhenNarrow pins the narrow behavior: chrome
-// labels degrade to icon-only instead of being squeezed off the bar.
+// TestStudioHeaderCollapsesToIconsWhenNarrow pins narrow behavior:
+// "Send to Editor" is absent, and mode switcher labels survive.
 func TestStudioHeaderCollapsesToIconsWhenNarrow(t *testing.T) {
 	app := newStudioSlidesApp(t)
 	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 940, 700, ui.TesterOptions{Dark: true})
 
 	if _, ok := tw.Find("Send to Editor"); ok {
-		t.Fatal("expected icon-only chrome below 1000px window width, found full label")
+		t.Fatal("expected 'Send to Editor' to be removed from header")
 	}
 	if _, ok := tw.Find("Studio"); !ok {
 		t.Fatal("expected mode switcher labels to survive at 940px width")
@@ -529,5 +548,124 @@ func TestStudioTimecodeFormat(t *testing.T) {
 		if got := studioTimecode(tc.secs); got != tc.want {
 			t.Errorf("studioTimecode(%v) = %q, want %q", tc.secs, got, tc.want)
 		}
+	}
+}
+
+func TestStudioDecoratePrompt(t *testing.T) {
+	app := newStudioSlidesApp(t)
+	rawPrompt := "Make a 5-slide pitch deck about our AI agents"
+	decorated := app.decorateStudioPrompt("sess-test", rawPrompt)
+
+	if !strings.Contains(decorated, "OPEN DESIGN SKILLS ACTIVATED") {
+		t.Fatal("expected Open Design skills header in decorated prompt")
+	}
+	if !strings.Contains(decorated, "Generate Image") || !strings.Contains(decorated, "Make Motion Video") {
+		t.Fatal("expected 5 studio capabilities in prompt")
+	}
+	if !strings.Contains(decorated, "slides.html") {
+		t.Fatal("expected slides target instruction in decorated prompt")
+	}
+	if !strings.Contains(decorated, rawPrompt) {
+		t.Fatal("expected original user prompt to be preserved")
+	}
+}
+
+func TestStudioIntentRouterAndFlavorDetection(t *testing.T) {
+	// Intent routing
+	if intent := detectStudioIntent("buatkan motion video kinetic typography dengan sound sync elevenlabs"); intent != IntentMotion {
+		t.Fatalf("expected IntentMotion, got %s", intent)
+	}
+	if intent := detectStudioIntent("bikin presentasi slide pitch deck untuk saas"); intent != IntentSlides {
+		t.Fatalf("expected IntentSlides, got %s", intent)
+	}
+	if intent := detectStudioIntent("render torus knot mesh dengan threejs webgl"); intent != Intent3D {
+		t.Fatalf("expected Intent3D, got %s", intent)
+	}
+	if intent := detectStudioIntent("buat gambar flux comfyui cyberpunk"); intent != IntentImage {
+		t.Fatalf("expected IntentImage, got %s", intent)
+	}
+	if intent := detectStudioIntent("generate video veo ai storyboard"); intent != IntentVideo {
+		t.Fatalf("expected IntentVideo, got %s", intent)
+	}
+
+	// Path flavor detection
+	if f, typ := detectPathFlavor("/path/to/motion.html"); f != "motion" || typ != corestudio.ArtifactTypeMotion {
+		t.Fatalf("expected motion flavor, got %s, %s", f, typ)
+	}
+	if f, typ := detectPathFlavor("/path/to/deck.html"); f != "slides" || typ != corestudio.ArtifactTypeSlides {
+		t.Fatalf("expected slides flavor, got %s, %s", f, typ)
+	}
+	if f, typ := detectPathFlavor("/path/to/scene3d.html"); f != "3d" || typ != corestudio.ArtifactTypeCodeJS {
+		t.Fatalf("expected 3d flavor, got %s, %s", f, typ)
+	}
+	if f, _ := detectPathFlavor("/path/to/doc.pdf"); f != "pdf" {
+		t.Fatalf("expected pdf flavor, got %s", f)
+	}
+	if f, _ := detectPathFlavor("/path/to/deck.pptx"); f != "pptx" {
+		t.Fatalf("expected pptx flavor, got %s", f)
+	}
+
+	// Studio flavor detection
+	motionData := corestudio.ArtifactData{EntryHTML: "/Users/test/.forge-ade/motion/motion.html"}
+	if f := detectStudioFlavor(nil, motionData); f != "motion" {
+		t.Fatalf("expected motion flavor for motion.html, got %s", f)
+	}
+
+	slidesData := corestudio.ArtifactData{EntryHTML: "/Users/test/.forge-ade/slides/slides.html"}
+	if f := detectStudioFlavor(nil, slidesData); f != "slides" {
+		t.Fatalf("expected slides flavor for slides.html, got %s", f)
+	}
+}
+
+func TestStudioSessionHistoryAndAgentBadges(t *testing.T) {
+	app := newStudioSlidesApp(t)
+	app.ShowLeftSidebar = true
+
+	// Add an internal session and an ACP session
+	now := time.Now()
+	sInternal := &agent.AgentSession{
+		ID:            "sess-internal",
+		Title:         "Internal Studio Task",
+		AgentID:       "agent-internal",
+		AgentType:     "internal",
+		Model:         "mimo-flash",
+		WorkspacePath: app.Workspace.RootDir,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	sACP := &agent.AgentSession{
+		ID:            "sess-acp",
+		Title:         "ACP Studio Task",
+		AgentID:       "agent-agy",
+		AgentType:     "acp",
+		Model:         "gemini-3.8-flash",
+		WorkspacePath: app.Workspace.RootDir,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	app.Agent.ReplaceSessions([]*agent.AgentSession{sInternal, sACP})
+	app.Agent.SelectSession(sACP.ID)
+
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+
+	// 1. History button exists in Studio agent header
+	if _, ok := tw.Find("History"); !ok {
+		t.Fatal("expected 'History' button in studio agent header")
+	}
+
+	// 2. Both sessions are visible in the sidebar session history
+	if _, ok := tw.Find("Internal Studio Task"); !ok {
+		t.Fatal("expected 'Internal Studio Task' in session history sidebar")
+	}
+	if _, ok := tw.Find("ACP Studio Task"); !ok {
+		t.Fatal("expected 'ACP Studio Task' in session history sidebar")
+	}
+
+	// 3. Badges for ForgeADE and ACP are present
+	if _, ok := tw.Find("Forge"); !ok {
+		t.Fatal("expected 'Forge' badge on internal session row")
+	}
+	if _, ok := tw.Find("ACP"); !ok {
+		t.Fatal("expected 'ACP' badge on acp session row")
 	}
 }

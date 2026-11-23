@@ -33,6 +33,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 	"github.com/hasdev/forge-ade/core/agentsession"
 	"github.com/hasdev/forge-ade/core/remotefs"
+	corestudio "github.com/hasdev/forge-ade/core/studio"
 )
 
 // Application surface modes
@@ -53,19 +54,20 @@ const (
 
 // Right drawer tab constants
 const (
-	RightTabChanges  = 0
-	RightTabTerminal = 1
-	RightTabChat     = 2
-	RightTabTasks    = 3
-	RightTabBoard    = 4
-	RightTabGit      = 5
-	RightTabDatabase = 6
-	RightTabFiles    = 7
-	RightTabSideFile = 8
-	RightTabBrowser  = 9
-	RightTabSubagent = 10
-	RightTabDeck     = 11
-	RightTabLauncher = 12
+	RightTabChanges   = 0
+	RightTabTerminal  = 1
+	RightTabChat      = 2
+	RightTabTasks     = 3
+	RightTabBoard     = 4
+	RightTabGit       = 5
+	RightTabDatabase  = 6
+	RightTabFiles     = 7
+	RightTabSideFile  = 8
+	RightTabBrowser   = 9
+	RightTabSubagent  = 10
+	RightTabDeck      = 11
+	RightTabLauncher  = 12
+	RightTabArtifacts = 13
 )
 
 // Layout metrics of ForgeADE's CSS
@@ -142,6 +144,7 @@ type AppUI struct {
 	StudioLeftChatWidth            float32 // Resizable left chat pane width in Studio Mode
 	StudioChatCollapsed            bool    // Hide the left chat pane so the viewer gets full width
 	StudioShowArtifacts            bool    // Show the agent artifact explorer panel
+	StudioArtifactFilterQuery      string
 	StudioSelectedSlideIdx         int
 	StudioWebView                  *mygo.WebView
 	StudioWebViewURL               string
@@ -179,6 +182,7 @@ type AppUI struct {
 	drawerActiveIdx       int
 	agentDrawerState      ModeDrawerState
 	editorDrawerState     ModeDrawerState
+	studioDrawerState     ModeDrawerState
 	activeDrawerMode      int
 	EditorActivity        int // ActivityExplorer, ActivityGit, ActivityDatabase
 	SelectedFile          string
@@ -741,6 +745,24 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		}
 	})
 	appUI.Agent.Theme = appUI.ThemeMgr
+	appUI.Agent.PromptContextDecorator = func(sessionID, prompt string) string {
+		if appUI.Mode == ModeStudio {
+			switch detectStudioIntent(prompt) {
+			case IntentMotion:
+				appUI.studioEnsureProjectForType(corestudio.ArtifactTypeMotion)
+			case IntentSlides:
+				appUI.studioEnsureProjectForType(corestudio.ArtifactTypeSlides)
+			case Intent3D:
+				appUI.studioEnsureProjectForType(corestudio.ArtifactTypeCodeJS)
+			case IntentImage:
+				appUI.studioEnsureProjectForType(corestudio.ArtifactTypeImage)
+			case IntentVideo:
+				appUI.studioEnsureProjectForType(corestudio.ArtifactTypeVideo)
+			}
+			return appUI.decorateStudioPrompt(sessionID, prompt)
+		}
+		return prompt
+	}
 
 	appUI.ACPMgr = agent.NewACPManager(engine, func() {
 		if appUI.Window != nil {
@@ -1247,7 +1269,7 @@ func (a *AppUI) SetVibrancySupport(v bool) {
 // View builds the entire native GPU frame matching ForgeADE layout.
 func (a *AppUI) View(c *ui.Context) {
 	defer recoverFrame("View")
-	if (a.Mode == ModeAgent || a.Mode == ModeEditor) && a.activeDrawerMode != a.Mode {
+	if (a.Mode == ModeAgent || a.Mode == ModeEditor || a.Mode == ModeStudio) && a.activeDrawerMode != a.Mode {
 		a.syncModeDrawerState(a.Mode)
 	}
 	if a.ThemeMgr != nil {
@@ -1454,7 +1476,7 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 
 	// Root layout
-	if a.Mode == ModeAgent && a.ShowLeftSidebar {
+	if (a.Mode == ModeAgent || a.Mode == ModeStudio) && a.ShowLeftSidebar {
 		ui.Split(c, &a.LeftSidebarWidth, func() {
 			a.renderAgentSidebar(c)
 		}, func() {
@@ -2263,6 +2285,9 @@ func (a *AppUI) selectAgentSession(s *agent.AgentSession) {
 	a.AgentViewMode = AgentViewChat
 	if a.Agent != nil {
 		a.Agent.SelectSession(s.ID)
+		if a.Mode == ModeStudio {
+			a.studioImportAgentArtifacts(s.ID)
+		}
 	}
 	targetWs := agentsession.NormalizeWorkspacePath(s.WorkspacePath)
 	curWs := ""
@@ -2411,10 +2436,10 @@ func (a *AppUI) toggleBottomTerminal() {
 }
 
 // syncModeDrawerState swaps the right-drawer visibility and tab list when
-// transitioning between ModeAgent and ModeEditor so each mode keeps its own
-// independent drawer panes and terminal tab bindings.
+// transitioning between ModeAgent, ModeEditor, and ModeStudio so each mode keeps
+// its own independent drawer panes and terminal tab bindings.
 func (a *AppUI) syncModeDrawerState(targetMode int) {
-	if targetMode != ModeAgent && targetMode != ModeEditor {
+	if targetMode != ModeAgent && targetMode != ModeEditor && targetMode != ModeStudio {
 		return
 	}
 	if a.activeDrawerMode == targetMode {
@@ -2428,6 +2453,8 @@ func (a *AppUI) syncModeDrawerState(targetMode int) {
 	}
 	if a.activeDrawerMode == ModeEditor {
 		a.editorDrawerState = cur
+	} else if a.activeDrawerMode == ModeStudio {
+		a.studioDrawerState = cur
 	} else {
 		a.agentDrawerState = cur
 	}
@@ -2435,6 +2462,11 @@ func (a *AppUI) syncModeDrawerState(targetMode int) {
 	var next ModeDrawerState
 	if targetMode == ModeEditor {
 		next = a.editorDrawerState
+	} else if targetMode == ModeStudio {
+		next = a.studioDrawerState
+		if len(next.Tabs) == 0 {
+			next.Tab = RightTabArtifacts
+		}
 	} else {
 		next = a.agentDrawerState
 	}
@@ -2514,6 +2546,7 @@ func (a *AppUI) setMode(mode int) {
 		if a.Studio != nil && a.Workspace != nil {
 			a.Studio.SetWorkspace(a.Workspace.RootDir)
 		}
+		a.ShowLeftSidebar = false
 	}
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -2820,7 +2853,24 @@ func (a *AppUI) renderMainColumn(c *ui.Context) {
 		return
 	}
 	if a.Mode == ModeStudio {
-		a.renderStudioSurface(c)
+		ui.Row(c).Grow(1).FillHeight().AlignItems(ui.Stretch).Children(func() {
+			ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
+				a.renderWorkspaceHeader(c)
+
+				ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+					a.renderStudioSurface(c)
+				})
+			})
+
+			if a.ShowRightDrawer {
+				maxRight := float32(750)
+				if winW, _ := c.Size(); winW > 0 && winW*0.6 < maxRight {
+					maxRight = winW * 0.6
+				}
+				LeftResizeHandle(c, &a.RightDrawerWidth, 280, maxRight, RightDrawerDefault)
+				a.renderRightDrawer(c)
+			}
+		})
 		return
 	}
 	if a.Mode == ModeEditor {

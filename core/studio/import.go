@@ -50,8 +50,8 @@ func (m *Manager) ImportAgentArtifact(absPath string) (bool, error) {
 		data.JSEngine = "threejs"
 		data.Code = string(src)
 		imported = true
-	case ext == ".html" || ext == ".htm":
-		// Agent-authored page: the viewer opens it as-is (custom toolbar).
+	case ext == ".html" || ext == ".htm" || ext == ".pdf" || ext == ".pptx":
+		// Agent-authored page or document: the viewer opens it as-is (custom toolbar).
 		data.EntryHTML = absPath
 		imported = true
 	case p.Type == ArtifactTypeSlides && ext == ".md":

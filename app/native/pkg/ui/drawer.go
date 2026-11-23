@@ -274,6 +274,8 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				a.renderGitPane(c)
 			case RightTabDatabase:
 				a.renderDatabasePane(c)
+			case RightTabArtifacts:
+				a.renderStudioArtifactsPane(c, tc)
 			case RightTabFiles:
 				a.renderFilesPane(c)
 			case RightTabSideFile:
@@ -794,6 +796,8 @@ func drawerTabIcon(kind int) *ui.SVG {
 		return icons.TablerTerminal
 	case RightTabFiles:
 		return icons.TablerFolder
+	case RightTabArtifacts:
+		return icons.TablerFolderOpen
 	case RightTabSubagent:
 		return icons.TablerBot
 	case RightTabTasks:
@@ -830,6 +834,8 @@ func (a *AppUI) drawerTabTitle(kind int) string {
 		return "Terminal"
 	case RightTabFiles:
 		return "Files"
+	case RightTabArtifacts:
+		return "Artifacts"
 	case RightTabSubagent:
 		return "Child Agents"
 	case RightTabTasks:
@@ -938,6 +944,9 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 			ui.Column(c).Gap(4).Children(func() {
 				launcherCard("pdf", "PDF", "PDF", icons.TablerFileText, tc.Error.Alpha(0.14), tc.Error, false, func() {
 					a.pickDrawerPaneSingleton(RightTabFiles, "PDF")
+				})
+				launcherCard("artifacts", "Artifacts", "Agent-generated slides, scenes, and media.", icons.TablerFolderOpen, tc.Accent.Alpha(0.14), tc.Accent, false, func() {
+					a.pickDrawerPaneSingleton(RightTabArtifacts, "Artifacts")
 				})
 				launcherCard("presentations", "Presentations", "Presentations", icons.TablerPresentation, tc.Warning.Alpha(0.14), tc.Warning, false, func() {
 					a.pickDrawerPaneSingleton(RightTabDeck, "Deck")
