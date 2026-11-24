@@ -42,11 +42,11 @@ func (a *AppUI) renderStudioSurface(c *ui.Context) {
 
 	ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
 		// Main Studio Work Area
-		// - Image or Video Generator: Visual Node Graph Workflow (WebView)
+		// - Image or Video Generator: 100% Pure Native Workflow Studio (Pipeline Builder + ComfyUI JSON Injection)
 		// - Presentation, Slides, Motion, or 2D/3D Sandbox: Pure Native GPU Canvas + Left Chat Agent
 		if project != nil && (project.Type == corestudio.ArtifactTypeImage || project.Type == corestudio.ArtifactTypeVideo) {
 			a.closeStudioWebView()
-			a.renderStudioNodeGraph(c, tc, project)
+			a.renderStudioNativeWorkflow(c, tc, project)
 		} else {
 			a.closeStudioNodeWebView()
 			a.renderStudioSplitAgentViewer(c, tc, project)
@@ -137,8 +137,8 @@ func (a *AppUI) renderStudioHeader(c *ui.Context, tc theme.ThemeColors, project 
 				domainTab("tab-dom-motion", "Motion", corestudio.ArtifactTypeMotion, icons.TablerMovie)
 				domainTab("tab-dom-3d", "3D Sandbox", corestudio.ArtifactTypeCodeJS, icons.TablerRotate)
 				ui.Box(c).Size(1, 12).Background(tc.Border)
-				domainTab("tab-dom-image", "Image (Nodes)", corestudio.ArtifactTypeImage, icons.TablerPhoto)
-				domainTab("tab-dom-video", "Video (Nodes)", corestudio.ArtifactTypeVideo, icons.TablerSparkles)
+				domainTab("tab-dom-image", "Image Studio", corestudio.ArtifactTypeImage, icons.TablerPhoto)
+				domainTab("tab-dom-video", "Video Studio", corestudio.ArtifactTypeVideo, icons.TablerSparkles)
 			})
 		})
 
@@ -1408,112 +1408,90 @@ func (a *AppUI) getStudioPreviewImage() (ui.ImageSource, int, int, string) {
 	return nil, 0, 0, ""
 }
 
-// studioQueuePrompt triggers real ComfyUI prompt queue execution.
+// studioQueuePrompt executes the active Native Studio Workflow (Pipeline Builder
+// or ComfyUI JSON Injection) asynchronously and updates preview, history, and logs.
 func (a *AppUI) studioQueuePrompt() {
 	if a.StudioIsGenerating {
 		return
 	}
 	a.StudioIsGenerating = true
-	a.StudioGenerationProgress = 0.1
-	a.StudioGenerationStatus = "Initializing KSampler & Latent Engine..."
+	a.StudioGenerationProgress = 0.05
+	a.StudioGenerationStatus = "Starting Native Workflow..."
+	a.StudioWorkflowError = ""
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}
 
-	cfg := corestudio.LoadStudioConfig()
-	prompt := a.StudioPositivePrompt
-	if prompt == "" {
-		prompt = "Cyberpunk neon city street at dusk, cinematic volumetric fog, raytraced reflections, 8k octane render"
+	var proj *corestudio.StudioProject
+	if a.Studio != nil {
+		proj = a.Studio.ActiveProject()
 	}
-	negPrompt := a.StudioNegativePrompt
-	model := a.StudioModel
-	if model == "" {
-		model = cfg.ImageModel
-	}
-	if model == "" {
-		model = "flux-1-schnell"
-	}
+	wf := a.activeStudioWorkflow(proj)
 
-	aspect := a.StudioAspectRatio
-	if aspect == "" {
-		aspect = "16:9"
-	}
-	steps := a.StudioSteps
-	if steps <= 0 {
-		steps = 25
-	}
-	cfgScale := a.StudioCFGScale
-	if cfgScale <= 0 {
-		cfgScale = 7.5
-	}
-	seed := a.StudioSeed
-	if seed <= 0 {
-		seed = time.Now().UnixNano()
-	}
-
-	endpoint := cfg.ImageEndpoint
-	apiKey := cfg.ImageAPIKey
-
-	outDir := ""
-	if a.Workspace != nil && a.Workspace.RootDir != "" {
-		outDir = filepath.Join(a.Workspace.RootDir, ".forge", "studio", "outputs")
-	}
-
-	go func() {
-		// Realistic sampling step simulation
-		for step := 1; step <= 4; step++ {
-			time.Sleep(120 * time.Millisecond)
-			a.StudioGenerationProgress = float32(step) * 0.22
-			a.StudioGenerationStatus = fmt.Sprintf("Sampling Step %d/%d (KSampler)...", step*6, steps)
-			a.syncNodeWorkflowProgress(true, a.StudioGenerationStatus, a.StudioGenerationProgress, "")
-			if a.Window != nil {
-				a.Window.Invalidate()
+	// Keep prompt step synced if user updated StudioPositivePrompt directly (e.g. tests or shortcuts)
+	if wf != nil && wf.Mode == "pipeline" {
+		for i := range wf.Steps {
+			if wf.Steps[i].Type == corestudio.StepTypePrompt {
+				if a.StudioPositivePrompt != "" && wf.Steps[i].GetString("positive", "") == "" {
+					wf.Steps[i].SetParam("positive", a.StudioPositivePrompt)
+				}
+				if a.StudioNegativePrompt != "" && wf.Steps[i].GetString("negative", "") == "" {
+					wf.Steps[i].SetParam("negative", a.StudioNegativePrompt)
+				}
 			}
 		}
+	}
 
-		a.StudioGenerationStatus = "Decoding Latent & Generating Assets..."
-		a.syncNodeWorkflowProgress(true, a.StudioGenerationStatus, 0.9, "")
-		if a.Window != nil {
-			a.Window.Invalidate()
-		}
+	cfg := corestudio.LoadStudioConfig()
+	outDir := a.studioOutputsDir()
+	wfCopy := *wf
 
-		req := corestudio.GenerationRequest{
-			Prompt:         prompt,
-			NegativePrompt: negPrompt,
-			Model:          model,
-			AspectRatio:    aspect,
-			Steps:          steps,
-			CFGScale:       cfgScale,
-			Seed:           seed,
-			Endpoint:       endpoint,
-			APIKey:         apiKey,
-			OutputDir:      outDir,
-		}
-
-		res, err := corestudio.GenerateImage(context.Background(), req)
+	go func() {
+		res, err := corestudio.RunWorkflow(context.Background(), &wfCopy, corestudio.WorkflowRunOptions{
+			Config:    cfg,
+			OutputDir: outDir,
+			OnProgress: func(stepIdx, total int, status string, progress float32) {
+				a.StudioGenerationProgress = progress
+				a.StudioGenerationStatus = status
+				a.syncNodeWorkflowProgress(true, status, progress, "")
+				if a.Window != nil {
+					a.Window.Invalidate()
+				}
+			},
+		})
 
 		a.StudioIsGenerating = false
-		a.StudioGenerationProgress = 1.0
 		if err == nil && res != nil {
+			a.StudioGenerationProgress = 1.0
 			a.StudioGeneratedImagePath = res.FilePath
 			a.StudioGeneratedFormat = res.Format
 			a.StudioGeneratedWidth = res.Width
 			a.StudioGeneratedHeight = res.Height
-			a.StudioGenerationStatus = fmt.Sprintf("Generation Complete: %s (%dx%d)", filepath.Base(res.FilePath), res.Width, res.Height)
+			a.StudioWorkflowIsVideoOutput = res.IsVideo
+			a.StudioWorkflowLogs = res.StepLogs
+			a.StudioWorkflowLastInjectedJSON = res.InjectedJSON
+			a.StudioGenerationStatus = fmt.Sprintf("Workflow Complete: %s (%dx%d)", filepath.Base(res.FilePath), res.Width, res.Height)
+			a.studioMediaScanAt = time.Time{} // refresh gallery cache
 			a.syncNodeWorkflowProgress(false, a.StudioGenerationStatus, 1.0, res.FilePath)
 
 			if a.Studio != nil {
-				proj := a.Studio.ActiveProject()
-				if proj != nil {
-					proj.AddVersion(prompt, fmt.Sprintf("Workflow Run: %s", filepath.Base(res.FilePath)), corestudio.ArtifactData{
+				activeProj := a.Studio.ActiveProject()
+				if activeProj != nil {
+					activeProj.AddVersion(a.StudioPositivePrompt, fmt.Sprintf("Workflow Run: %s", filepath.Base(res.FilePath)), corestudio.ArtifactData{
 						OutputAsset: filepath.Base(res.FilePath),
-						AspectRatio: aspect,
+						AspectRatio: a.StudioAspectRatio,
 					}, nil)
 				}
 			}
 		} else {
-			a.StudioGenerationStatus = "Generation encountered an issue"
-			a.syncNodeWorkflowProgress(false, a.StudioGenerationStatus, 0, "")
+			a.StudioGenerationProgress = 0
+			msg := "Workflow execution failed"
+			if err != nil {
+				msg = err.Error()
+			}
+			a.StudioGenerationStatus = msg
+			a.StudioWorkflowError = msg
+			a.syncNodeWorkflowProgress(false, msg, 0, "")
 		}
 
 		if a.Window != nil {

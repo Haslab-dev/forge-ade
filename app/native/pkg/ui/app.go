@@ -168,10 +168,20 @@ type AppUI struct {
 	StudioIsGenerating             bool
 	StudioGenerationProgress       float32
 	StudioGenerationStatus         string
-	ActiveTaskKind                 string   // "agent" or "cli"
-	ShowLeftSidebar                bool     // Left sidebar visibility
-	LeftSidebarView                string   // "tasks" (default) or "files" — forge-ade's leftSidebarView
-	SideFileTabs                   []string // files opened in the right sidebar from the explorer
+	StudioImageWorkflow            *corestudio.WorkflowPipeline
+	StudioVideoWorkflow            *corestudio.WorkflowPipeline
+	StudioWorkflowJSONDraft        string
+	StudioWorkflowShowJSON         bool
+	StudioWorkflowLogs             []string
+	StudioWorkflowError            string
+	StudioWorkflowRightTab         string // "preview", "gallery", "logs"
+	StudioWorkflowIsVideoOutput    bool
+	StudioWorkflowLastInjectedJSON string
+	StudioWorkflowStepDrafts       map[string]string // transient string buffers for step TextInputs
+	ActiveTaskKind                 string            // "agent" or "cli"
+	ShowLeftSidebar                bool              // Left sidebar visibility
+	LeftSidebarView                string            // "tasks" (default) or "files" — forge-ade's leftSidebarView
+	SideFileTabs                   []string          // files opened in the right sidebar from the explorer
 	ActiveSideFile                 string
 	ShowBottomTerminal             bool    // Collapsible bottom terminal drawer (Editor Mode)
 	ShowAgentBottomTerminal        bool    // Collapsible bottom terminal drawer (Agent Mode)
