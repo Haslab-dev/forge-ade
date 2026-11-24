@@ -64,7 +64,9 @@ type GitManager struct {
 	OnAICommitResult func(summary, desc string)
 
 	fileDiffCache       map[string]string
+	fileDiffStale       map[string]bool
 	fileDiffPending     map[string]bool
+	lastHistoryAt       time.Time
 	cachedRemoteSource  *internalgit.GitRemoteSource
 	remoteSourceLoaded  bool
 	remoteSourceLoading bool
@@ -95,6 +97,7 @@ func NewGitManagerLazy(engine *engine.Engine, rootDir string, onFileSelect func(
 		ActiveTab:       GitTabChanges,
 		OnFileSelect:    onFileSelect,
 		fileDiffCache:   make(map[string]string),
+		fileDiffStale:   make(map[string]bool),
 		fileDiffPending: make(map[string]bool),
 		cachedRootDir:   rootDir,
 	}
@@ -206,7 +209,9 @@ func (gm *GitManager) SetWorkspace(rootDir string) {
 	gm.RootDir = rootDir
 	gm.cachedRootDir = rootDir
 	gm.fileDiffCache = make(map[string]string)
+	gm.fileDiffStale = make(map[string]bool)
 	gm.fileDiffPending = make(map[string]bool)
+	gm.lastHistoryAt = time.Time{}
 	gm.cachedRemoteSource = nil
 	gm.remoteSourceLoaded = false
 	gm.remoteSourceLoading = false
@@ -216,17 +221,24 @@ func (gm *GitManager) SetWorkspace(rootDir string) {
 
 // GetCachedFileDiff returns a cached working-tree unified diff for relPath if
 // ready, or queues a background fetch and redraw without blocking UI renders.
+// Stale entries are returned immediately (stale-while-revalidate) while a fresh
+// diff is fetched asynchronously, preventing "Loading diff" flicker on refresh.
 func (gm *GitManager) GetCachedFileDiff(relPath string) (string, bool) {
 	gm.mu.Lock()
 	if gm.fileDiffCache == nil {
 		gm.fileDiffCache = make(map[string]string)
 	}
+	if gm.fileDiffStale == nil {
+		gm.fileDiffStale = make(map[string]bool)
+	}
 	if gm.fileDiffPending == nil {
 		gm.fileDiffPending = make(map[string]bool)
 	}
-	if patch, ok := gm.fileDiffCache[relPath]; ok {
+	cachedPatch, hasCached := gm.fileDiffCache[relPath]
+	isStale := gm.fileDiffStale[relPath]
+	if hasCached && !isStale {
 		gm.mu.Unlock()
-		return patch, true
+		return cachedPatch, true
 	}
 	if !gm.fileDiffPending[relPath] && gm.engine != nil && gm.RootDir != "" && relPath != "" {
 		gm.fileDiffPending[relPath] = true
@@ -241,14 +253,21 @@ func (gm *GitManager) GetCachedFileDiff(relPath string) (string, bool) {
 					gm.fileDiffCache = make(map[string]string)
 				}
 				gm.fileDiffCache[relPath] = patch
+				delete(gm.fileDiffStale, relPath)
 			}
 			delete(gm.fileDiffPending, relPath)
 			gm.mu.Unlock()
 			gm.redraw()
 		}()
+		if hasCached {
+			return cachedPatch, true
+		}
 		return "", false
 	}
 	gm.mu.Unlock()
+	if hasCached {
+		return cachedPatch, true
+	}
 	return "", false
 }
 
@@ -257,9 +276,19 @@ func (gm *GitManager) GetCachedFileDiff(relPath string) (string, bool) {
 // render-path Snapshot reads never block on it.
 func (gm *GitManager) Refresh() {
 	gm.mu.Lock()
-	gm.fileDiffCache = make(map[string]string)
-	gm.fileDiffPending = make(map[string]bool)
+	// Mark cached diffs stale rather than wiping them so active DiffViews keep
+	// showing the previous patch while refreshing in the background.
+	if gm.fileDiffStale == nil {
+		gm.fileDiffStale = make(map[string]bool)
+	}
+	for k := range gm.fileDiffCache {
+		gm.fileDiffStale[k] = true
+	}
 	if gm.RootDir != gm.cachedRootDir {
+		gm.fileDiffCache = make(map[string]string)
+		gm.fileDiffStale = make(map[string]bool)
+		gm.fileDiffPending = make(map[string]bool)
+		gm.lastHistoryAt = time.Time{}
 		gm.cachedRemoteSource = nil
 		gm.remoteSourceLoaded = false
 		gm.remoteSourceLoading = false
@@ -267,6 +296,10 @@ func (gm *GitManager) Refresh() {
 	}
 	eng := gm.engine
 	root := gm.RootDir
+	shouldLoadHistory := gm.lastHistoryAt.IsZero() || time.Since(gm.lastHistoryAt) >= 5*time.Second
+	if shouldLoadHistory {
+		gm.lastHistoryAt = time.Now()
+	}
 	gm.mu.Unlock()
 
 	if eng == nil {
@@ -295,8 +328,11 @@ func (gm *GitManager) Refresh() {
 	}
 	gm.mu.Unlock()
 
-	// Fetch history, branches & remote source in background
-	go gm.loadHistoryAndBranches()
+	// Fetch history, branches & remote source in background (throttled to avoid
+	// re-running git log --graph on every stage/unstage or 3s poll).
+	if shouldLoadHistory {
+		go gm.loadHistoryAndBranches()
+	}
 	gm.redraw()
 }
 

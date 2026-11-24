@@ -11,6 +11,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/core/board"
+	internalgit "github.com/hasdev/forge-ade/core/git"
 )
 
 // Full-window surfaces opened from the sidebar dock, as forge-ade opens the
@@ -391,12 +392,15 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			if snap.Branch != "" {
 				branchPill := ui.Row(c).Height(30).Radius(8).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer).Tooltip("Switch Git Branch")
 				branchPill.Children(func() {
 					ui.Icon(c, icons.TablerGitBranch).Width(13).Height(13).TextColor(tc.Accent)
 					ui.Text(c, snap.Branch).FontSize(12).FontWeight(600)
 					ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
 				})
+				if branchPill.Hovered() {
+					branchPill.Background(tc.SurfaceRaised)
+				}
 				if branchPill.Clicked() {
 					a.ShowBranchModal = true
 				}
@@ -419,13 +423,14 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 			for _, tab := range tabs {
 				t := tab
 				active := gm.ActiveTab == t.Tab
-				b := ui.Row(c.Key(fmt.Sprintf("gctab-%d", t.Tab))).Height(30).Radius(8).Padding(0, 12).AlignItems(ui.Center).Justify(ui.Center)
+				b := ui.Row(c.Key(fmt.Sprintf("gctab-%d", t.Tab))).Height(30).Radius(8).Padding(0, 12).
+					AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 				b.Children(func() {
 					txt := ui.Text(c, t.Name).FontSize(12)
 					if active {
 						txt.FontWeight(600).TextColor(tc.Accent)
 					} else {
-						txt.FontWeight(500)
+						txt.FontWeight(500).TextColor(tc.Text)
 					}
 				})
 				if active {
@@ -458,7 +463,7 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 
 			remoteBtn := func(icon *ui.SVG, label string, busy bool, run func() error) {
 				b := ui.Row(c).Height(30).Radius(8).Padding(0, 12).Gap(5).AlignItems(ui.Center).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 				b.Children(func() {
 					if busy {
 						ui.Spinner(c).Size(12, 12).Label(label)
@@ -468,7 +473,7 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 					ui.Text(c, label).FontSize(12).FontWeight(500)
 				})
 				if b.Hovered() {
-					b.Background(tc.Text.Alpha(0.05))
+					b.Background(tc.SurfaceRaised)
 				}
 				if b.Clicked() && !busy {
 					go func() {
@@ -485,17 +490,20 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 			remoteBtn(icons.TablerArrowUp, "Push", snap.IsPushing, func() error { return gm.Push() })
 
 			refreshBtn := ui.Row(c).Size(30, 30).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer).Tooltip("Refresh Git Status")
 			refreshBtn.Children(func() {
 				ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
 			})
+			if refreshBtn.Hovered() {
+				refreshBtn.Background(tc.SurfaceRaised)
+			}
 			if refreshBtn.Clicked() {
 				gm.RefreshAsync()
 				a.loadGitRemoteURL()
 			}
 
 			closeBtn := ui.Row(c).Size(30, 30).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer).Tooltip("Close Git Client")
 			closeBtn.Children(func() {
 				ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
 			})
@@ -527,10 +535,291 @@ func (a *AppUI) renderGitClientSurface(c *ui.Context) {
 	})
 }
 
-// renderGitChangesSurface renders the full-width working tree changes with
-// the commit form.
+// renderGitChangesSurface renders a full-width two-column working-tree view:
+// file list + commit form on the left, wide diff viewer (Split/Unified) on the right.
 func (a *AppUI) renderGitChangesSurface(c *ui.Context, tc theme.ThemeColors, gm *git.GitManager) {
-	a.renderChangesPane(c)
+	if a.Workspace.RootDir == "" {
+		ui.Column(c).Grow(1).Center().Gap(8).Children(func() {
+			ui.Icon(c, icons.TablerFolder).Width(24).Height(24).TextColor(tc.IconMuted)
+			ui.Text(c, "No folder opened").FontSize(12.5).TextColor(tc.TextMuted)
+		})
+		return
+	}
+
+	snap := gm.Snapshot()
+	conflicts := snap.Conflicts
+	staged := snap.Staged
+	unstaged := append(append([]internalgit.FileStatus(nil), snap.Unstaged...), snap.Untracked...)
+	totalFiles := len(conflicts) + len(staged) + len(unstaged)
+
+	if totalFiles == 0 {
+		ui.Column(c).Grow(1).Center().Gap(8).Padding(24).Children(func() {
+			ui.Icon(c, icons.TablerFileDiff).Width(34).Height(34).TextColor(tc.IconMuted)
+			ui.Text(c, "Working tree is clean").FontSize(14).FontWeight(600).TextColor(tc.Text)
+			ui.Text(c, "Modified, staged, and untracked files will appear here.").FontSize(12).TextColor(tc.TextMuted)
+			if ContrastCTA(c, tc, "Refresh changes").Clicked() {
+				gm.RefreshAsync()
+			}
+		})
+		return
+	}
+
+	if a.SelectedDiffPath == "" {
+		if len(conflicts) > 0 {
+			a.SelectedDiffPath = conflicts[0].Path
+		} else if len(staged) > 0 {
+			a.SelectedDiffPath = staged[0].Path
+		} else if len(unstaged) > 0 {
+			a.SelectedDiffPath = unstaged[0].Path
+		}
+	}
+
+	ui.Row(c).Grow(1).FillHeight().AlignItems(ui.Stretch).Children(func() {
+		// Left Column (340px): Staged/Unstaged file list + Commit Form
+		ui.Column(c).Width(340).Shrink(0).FillHeight().Background(tc.Sidebar).
+			BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
+			ui.Row(c).Height(36).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(tc.SidebarBorder).Children(func() {
+				ui.Text(c, "Working Tree").FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Box(c).Grow(1)
+				ui.Text(c, fmt.Sprintf("%d files", totalFiles)).FontSize(11).TextColor(tc.TextMuted)
+			})
+
+			ui.Scroll(c).Grow(1).Children(func() {
+				ui.Column(c).Padding(6, 8).Gap(4).Children(func() {
+					if len(staged) > 0 {
+						ui.Row(c).Padding(2, 4).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, fmt.Sprintf("STAGED (%d)", len(staged))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+							ui.Box(c).Grow(1)
+							unstageAll := ui.Row(c.Key("gc-unstage-all")).Radius(4).Padding(2, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+							unstageAll.Children(func() {
+								ui.Text(c, "Unstage All").FontSize(10).TextColor(tc.TextMuted)
+							})
+							if unstageAll.Hovered() {
+								unstageAll.Background(tc.SidebarRowHover)
+							}
+							if unstageAll.Clicked() && gitOpsBusy.CompareAndSwap(false, true) {
+								go func() {
+									gm.UnstageAll()
+									a.runOnUI(func() { gitOpsBusy.Store(false) })
+								}()
+							}
+						})
+						for _, f := range staged {
+							f := f
+							isSel := a.SelectedDiffPath == f.Path
+							acted := false
+							row := ui.Row(c.Key("gc-staged-"+f.Path)).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+							row.Children(func() {
+								ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Text(c, filepath.Base(f.Path)).FontSize(11.5).Grow(1).SingleLine()
+								DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
+								Badge(c, tc, "S", tc.Success)
+								uBtn := ui.Row(c.Key("gc-u-"+f.Path)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).Tooltip("Unstage")
+								uBtn.Children(func() { ui.Icon(c, icons.TablerMinus).Width(10).Height(10).TextColor(tc.IconMuted) })
+								if uBtn.Hovered() {
+									uBtn.Background(tc.ToolbarControlHover)
+								}
+								if uBtn.Clicked() {
+									acted = true
+									go gm.Unstage(f.Path)
+								}
+							})
+							if isSel {
+								row.Background(tc.SidebarRowSelected)
+							} else if row.Hovered() {
+								row.Background(tc.SidebarRowHover)
+							}
+							if !acted && row.Clicked() {
+								a.SelectedDiffPath = f.Path
+							}
+						}
+					}
+
+					if len(unstaged) > 0 {
+						ui.Row(c).Padding(6, 4, 2, 4).AlignItems(ui.Center).Children(func() {
+							ui.Text(c, fmt.Sprintf("CHANGES (%d)", len(unstaged))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+							ui.Box(c).Grow(1)
+							stageAll := ui.Row(c.Key("gc-stage-all")).Radius(4).Padding(2, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+							stageAll.Children(func() {
+								ui.Text(c, "Stage All").FontSize(10).TextColor(tc.TextMuted)
+							})
+							if stageAll.Hovered() {
+								stageAll.Background(tc.SidebarRowHover)
+							}
+							if stageAll.Clicked() && gitOpsBusy.CompareAndSwap(false, true) {
+								go func() {
+									gm.StageAll()
+									a.runOnUI(func() { gitOpsBusy.Store(false) })
+								}()
+							}
+						})
+						for _, f := range unstaged {
+							f := f
+							isSel := a.SelectedDiffPath == f.Path
+							acted := false
+							row := ui.Row(c.Key("gc-unstaged-"+f.Path)).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+							row.Children(func() {
+								ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Text(c, filepath.Base(f.Path)).FontSize(11.5).Grow(1).SingleLine()
+								DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
+								stLbl := string(f.Status)
+								if stLbl == "" {
+									stLbl = "M"
+								}
+								Badge(c, tc, stLbl, tc.Accent)
+								sBtn := ui.Row(c.Key("gc-s-"+f.Path)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).Tooltip("Stage")
+								sBtn.Children(func() { ui.Icon(c, icons.TablerPlus).Width(10).Height(10).TextColor(tc.IconMuted) })
+								if sBtn.Hovered() {
+									sBtn.Background(tc.ToolbarControlHover)
+								}
+								if sBtn.Clicked() {
+									acted = true
+									go gm.Stage(f.Path)
+								}
+							})
+							if isSel {
+								row.Background(tc.SidebarRowSelected)
+							} else if row.Hovered() {
+								row.Background(tc.SidebarRowHover)
+							}
+							if !acted && row.Clicked() {
+								a.SelectedDiffPath = f.Path
+							}
+						}
+					}
+				})
+			})
+
+			// Commit Form docked at bottom of left column
+			ui.Column(c).Padding(10, 12).Gap(8).BorderWidth(1, 0, 0, 0).BorderColor(tc.SidebarBorder).
+				Background(tc.Surface).Children(func() {
+				ui.TextInput(c, &gm.CommitSummary).Placeholder("Commit summary (required)").Grow(1)
+				ui.TextInput(c, &gm.CommitDesc).Placeholder("Description (optional)").Grow(1)
+				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+					aiBtn := ui.Row(c.Key("gc-ai-msg")).Height(28).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+						Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+					aiBtn.Children(func() {
+						ui.Icon(c, icons.TablerSparkles).Width(12).Height(12).TextColor(tc.Accent)
+						ui.Text(c, "AI Message").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					})
+					if aiBtn.Hovered() {
+						aiBtn.Background(tc.SurfaceRaised)
+					}
+					if aiBtn.Clicked() {
+						go gm.GenerateAICommit("")
+					}
+					ui.Box(c).Grow(1)
+					busy := gitOpsBusy.Load()
+					canCommit := strings.TrimSpace(snap.CommitSummary) != "" && totalFiles > 0
+					branchName := snap.Branch
+					if branchName == "" {
+						branchName = "main"
+					}
+					btnText := fmt.Sprintf("Commit (%s)", branchName)
+					cBtn := ui.Row(c.Key("gc-commit")).Height(28).Radius(6).Padding(0, 12).Gap(5).AlignItems(ui.Center).Justify(ui.Center)
+					if busy {
+						cBtn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+						cBtn.Children(func() { ui.Spinner(c).Size(11, 11).Label("Committing…") })
+					} else if canCommit {
+						cBtn.Background(tc.Accent).Cursor(ui.CursorPointer)
+						cBtn.Children(func() {
+							ui.Icon(c, icons.TablerCheck).Width(11).Height(11).TextColor(tc.AccentForeground)
+							ui.Text(c, btnText).FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
+						})
+						if cBtn.Clicked() && gitOpsBusy.CompareAndSwap(false, true) {
+							summary, desc := snap.CommitSummary, snap.CommitDesc
+							stageFirst := len(staged) == 0 && len(unstaged) > 0
+							go func() {
+								if stageFirst {
+									gm.StageAll()
+								}
+								fullMsg := summary
+								if strings.TrimSpace(desc) != "" {
+									fullMsg += "\n\n" + desc
+								}
+								err := gm.Commit(fullMsg)
+								a.runOnUI(func() {
+									gitOpsBusy.Store(false)
+									if err != nil {
+										a.queueToast(ui.Toast{Title: "Commit Error", Description: err.Error(), Type: "error"})
+									} else {
+										a.queueToast(ui.Toast{Title: "Committed", Description: summary, Type: "success"})
+										gm.ClearCommitDraft()
+										a.SelectedDiffPath = ""
+									}
+								})
+							}()
+						}
+					} else {
+						cBtn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+						cBtn.Children(func() { ui.Text(c, btnText).FontSize(11).TextColor(tc.TextMuted) })
+					}
+				})
+			})
+		})
+
+		// Right Column (Grow 1): Wide Diff Viewer with Split/Unified toggle + Hunk Revert
+		ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
+			diffTitle := a.SelectedDiffPath
+			ui.Row(c).Height(36).Padding(0, 14).Gap(8).AlignItems(ui.Center).
+				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Background(tc.Surface).Children(func() {
+				ui.Icon(c, icons.TablerGitCompare).Width(13).Height(13).TextColor(tc.Accent)
+				ui.Text(c, diffTitle).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1).SingleLine()
+				if a.Editor != nil {
+					layoutLbl := "Unified"
+					if a.Editor.DiffLayout == int(mygoeditor.DiffSplit) {
+						layoutLbl = "Split"
+					}
+					lBtn := ui.Row(c.Key("gc-diff-layout")).Height(24).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+						Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer).Tooltip("Toggle Unified / Split Diff")
+					lBtn.Children(func() { ui.Text(c, layoutLbl).FontSize(11).FontWeight(500).TextColor(tc.Text) })
+					if lBtn.Hovered() {
+						lBtn.Background(tc.SurfaceRaised)
+					}
+					if lBtn.Clicked() {
+						if a.Editor.DiffLayout == int(mygoeditor.DiffSplit) {
+							a.Editor.DiffLayout = int(mygoeditor.DiffUnified)
+						} else {
+							a.Editor.DiffLayout = int(mygoeditor.DiffSplit)
+						}
+					}
+				}
+				openBtn := ui.Row(c.Key("gc-open-ed")).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+					Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+				openBtn.Children(func() {
+					ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.IconMuted)
+					ui.Text(c, "Open in Editor").FontSize(11).TextColor(tc.Text)
+				})
+				if openBtn.Hovered() {
+					openBtn.Background(tc.SurfaceRaised)
+				}
+				if openBtn.Clicked() {
+					fullPath := filepath.Join(a.Workspace.RootDir, diffTitle)
+					_, _ = a.Editor.OpenFile(fullPath, diffTitle)
+					a.IsGitClientOpen = false
+					a.Mode = ModeEditor
+				}
+			})
+
+			patch, diffReady := gm.GetCachedFileDiff(diffTitle)
+			if !diffReady {
+				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
+					ui.Spinner(c).Size(14, 14).Label("Loading diff")
+				})
+			} else if patch == "" {
+				ui.Column(c).Grow(1).Center().Children(func() {
+					ui.Text(c, "No diff available for this file").FontSize(12).TextColor(tc.TextMuted)
+				})
+			} else {
+				a.renderHunkRevertStrip(c, tc, gm, diffTitle, patch)
+				if d := a.Editor.OpenPatchDiff(diffTitle, patch, a.ThemeMgr); d != nil {
+					d.Layout = mygoeditor.DiffLayout(a.Editor.DiffLayout)
+					mygoeditor.DiffView(c, d).Grow(1).FillWidth()
+				}
+			}
+		})
+	})
 }
 
 // renderGitBranchesSurface renders branch list + create at full width.
@@ -542,11 +831,14 @@ func (a *AppUI) renderGitBranchesSurface(c *ui.Context, tc theme.ThemeColors, gm
 			// render thread (this binding and the create-branch handler).
 			ui.TextInput(c, &gm.NewBranchName).Placeholder("New branch name…").Width(260)
 			createBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).Gap(5).AlignItems(ui.Center).
-				Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+				Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3)).Cursor(ui.CursorPointer)
 			createBtn.Children(func() {
 				ui.Icon(c, icons.TablerPlus).Width(12).Height(12).TextColor(tc.Accent)
 				ui.Text(c, "Create").FontSize(11).FontWeight(600).TextColor(tc.Accent)
 			})
+			if createBtn.Hovered() {
+				createBtn.Background(tc.Accent.Alpha(0.2))
+			}
 			if createBtn.Clicked() && strings.TrimSpace(gm.NewBranchName) != "" {
 				name := strings.TrimSpace(gm.NewBranchName)
 				gm.NewBranchName = ""
@@ -564,7 +856,7 @@ func (a *AppUI) renderGitBranchesSurface(c *ui.Context, tc theme.ThemeColors, gm
 				for _, b := range snap.Branches {
 					branch := b
 					isCurrent := branch == snap.Branch
-					row := ui.Row(c.Key("gbr-"+branch)).Height(34).Radius(6).Padding(0, 10).Gap(8).AlignItems(ui.Center)
+					row := ui.Row(c.Key("gbr-"+branch)).Height(34).Radius(6).Padding(0, 10).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					row.Children(func() {
 						ui.Icon(c, icons.TablerGitBranch).Width(13).Height(13).TextColor(tc.IconMuted)
 						ui.Text(c, branch).FontSize(12).FontWeight(500).Grow(1).SingleLine()
@@ -626,7 +918,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 							continue
 						}
 						isSel := snap.SelectedCommitHash == cm.Hash
-						row := ui.Column(c.Key("gcm-"+cm.Hash)).Radius(8).Padding(8, 10).Gap(2)
+						row := ui.Column(c.Key("gcm-"+cm.Hash)).Radius(8).Padding(8, 10).Gap(2).Cursor(ui.CursorPointer)
 						row.Children(func() {
 							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 								renderGraphLanes(c, tc, cm.GraphPrefix)
@@ -654,9 +946,8 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 			})
 		})
 
-		// Drag resizer between the commit list and the detail pane, as
-		// GitClientView's history split does.
-		handle := ui.Box(c.Key("git-history-resizer")).Width(3).FillHeight().Background(tc.Border)
+		// Drag resizer between the commit list and the detail pane.
+		handle := ui.Box(c.Key("git-history-resizer")).Width(4).FillHeight().Background(tc.Border).Cursor(ui.CursorResizeEW)
 		if handle.Hovered() {
 			handle.Background(tc.Accent.Alpha(0.6))
 		}
@@ -682,7 +973,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 				return
 			}
 
-			// Detail header: message, author, hash, stats
+			// Detail header: message, author, hash, stats + diff layout / expand controls
 			ui.Column(c).Padding(14, 16).Gap(6).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, snap.SelectedCommitMessage).FontSize(14).FontWeight(700).Grow(1).SingleLine()
@@ -705,10 +996,64 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 						ui.Text(c, fmt.Sprintf("+%d", add)).FontSize(12).FontWeight(600).TextColor(tc.DiffAdditionForeground)
 						ui.Text(c, fmt.Sprintf("-%d", del)).FontSize(12).FontWeight(600).TextColor(tc.DiffDeletionForeground)
 					}
+					ui.Box(c).Grow(1)
+					if a.Editor != nil {
+						layoutLbl := "Unified"
+						if a.Editor.DiffLayout == int(mygoeditor.DiffSplit) {
+							layoutLbl = "Split"
+						}
+						lBtn := ui.Row(c.Key("ghist-diff-layout")).Height(24).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer).Tooltip("Toggle Unified / Split Diff")
+						lBtn.Children(func() {
+							ui.Text(c, layoutLbl).FontSize(11).FontWeight(500).TextColor(tc.Text)
+						})
+						if lBtn.Hovered() {
+							lBtn.Background(tc.SurfaceRaised)
+						}
+						if lBtn.Clicked() {
+							if a.Editor.DiffLayout == int(mygoeditor.DiffSplit) {
+								a.Editor.DiffLayout = int(mygoeditor.DiffUnified)
+							} else {
+								a.Editor.DiffLayout = int(mygoeditor.DiffSplit)
+							}
+						}
+					}
+					if len(snap.SelectedCommitFiles) > 1 {
+						expBtn := ui.Row(c.Key("ghist-expand-all")).Height(24).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+						expBtn.Children(func() {
+							ui.Text(c, "Expand All").FontSize(11).TextColor(tc.TextMuted)
+						})
+						if expBtn.Hovered() {
+							expBtn.Background(tc.SurfaceRaised)
+						}
+						if expBtn.Clicked() {
+							if a.gitHistoryExpanded == nil {
+								a.gitHistoryExpanded = make(map[string]bool)
+							}
+							for _, f := range snap.SelectedCommitFiles {
+								a.gitHistoryExpanded[f.Path] = true
+							}
+						}
+						colBtn := ui.Row(c.Key("ghist-collapse-all")).Height(24).Radius(6).Padding(0, 8).AlignItems(ui.Center).
+							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+						colBtn.Children(func() {
+							ui.Text(c, "Collapse All").FontSize(11).TextColor(tc.TextMuted)
+						})
+						if colBtn.Hovered() {
+							colBtn.Background(tc.SurfaceRaised)
+						}
+						if colBtn.Clicked() {
+							a.gitHistoryExpanded = make(map[string]bool)
+							for _, f := range snap.SelectedCommitFiles {
+								a.gitHistoryExpanded[f.Path] = false
+							}
+						}
+					}
 				})
 			})
 
-			// Per-file diffs
+			// Per-file diffs (lazy & collapsible so large commits stay smooth)
 			if snap.LoadingCommitDiff {
 				ui.Column(c).Grow(1).Center().Gap(6).Children(func() {
 					ui.Spinner(c).Size(16, 16).Label("Loading commit diff...")
@@ -722,16 +1067,36 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 				})
 				return
 			}
+			if a.gitHistoryExpandedCommit != snap.SelectedCommitHash {
+				a.gitHistoryExpandedCommit = snap.SelectedCommitHash
+				a.gitHistoryExpanded = make(map[string]bool, len(snap.SelectedCommitFiles))
+				autoLimit := 5
+				if len(snap.SelectedCommitFiles) <= 8 {
+					autoLimit = len(snap.SelectedCommitFiles)
+				}
+				for i, f := range snap.SelectedCommitFiles {
+					a.gitHistoryExpanded[f.Path] = i < autoLimit
+				}
+			}
 			ui.Scroll(c).Grow(1).Padding(12, 16).Children(func() {
-				ui.Column(c).Gap(12).Children(func() {
-					// Build lazy per-file diff states in place: the snapshot
-					// contract guarantees writers replace the slice wholesale
-					// and never mutate elements, so this is race-free.
+				ui.Column(c).Gap(10).Children(func() {
 					for i := range snap.SelectedCommitFiles {
 						f := &snap.SelectedCommitFiles[i]
-						ui.Column(c).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Gap(0).Clip().Children(func() {
-							ui.Row(c).Height(34).Padding(0, 12).Gap(8).AlignItems(ui.Center).
-								BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
+						isExpanded := a.gitHistoryExpanded[f.Path]
+						ui.Column(c.Key("ghist-file-" + f.Path)).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Gap(0).Clip().Children(func() {
+							hdr := ui.Row(c.Key("ghist-fhdr-"+f.Path)).Height(34).Padding(0, 12).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+							if isExpanded {
+								hdr.BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5))
+							}
+							if hdr.Hovered() {
+								hdr.Background(tc.SurfaceRaised)
+							}
+							hdr.Children(func() {
+								chev := icons.TablerChevronRight
+								if isExpanded {
+									chev = icons.TablerChevronDown
+								}
+								ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
 								ui.Icon(c, icons.FileIconSVG(f.Path)).Width(13).Height(13).TextColor(tc.IconMuted)
 								ui.Text(c, filepath.Base(f.Path)).FontSize(12).FontWeight(600).Grow(1).SingleLine()
 								dir := filepath.Dir(f.Path)
@@ -745,12 +1110,21 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 									ui.Text(c, fmt.Sprintf("-%d", f.Deletions)).FontSize(11).FontWeight(600).TextColor(tc.DiffDeletionForeground)
 								}
 							})
-							if f.Diff == nil && a.Editor != nil {
-								key := "commit/" + snap.SelectedCommitHash + "/" + f.Path
-								f.Diff = a.Editor.OpenPatchDiffKeyed(key, f.Patch, a.ThemeMgr)
+							if hdr.Clicked() {
+								a.gitHistoryExpanded[f.Path] = !isExpanded
 							}
-							if d, ok := f.Diff.(*mygoeditor.DiffState); ok && d != nil {
-								mygoeditor.DiffView(c, d).Height(360).FillWidth().Clip()
+							if isExpanded {
+								if f.Diff == nil && a.Editor != nil {
+									key := "commit/" + snap.SelectedCommitHash + "/" + f.Path
+									f.Diff = a.Editor.OpenPatchDiffKeyed(key, f.Patch, a.ThemeMgr)
+								}
+								if d, ok := f.Diff.(*mygoeditor.DiffState); ok && d != nil {
+									if a.Editor != nil {
+										d.Layout = mygoeditor.DiffLayout(a.Editor.DiffLayout)
+										a.Editor.ApplyDiffTheme(d)
+									}
+									mygoeditor.DiffView(c, d).Height(340).FillWidth().Clip()
+								}
 							}
 						})
 					}

@@ -1322,7 +1322,28 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 			header.Children(func() {
 				ui.Icon(c, icons.TablerGitCompare).Width(12).Height(12).TextColor(tc.IconMuted)
 				ui.Text(c, filepath.Base(diffTitle)).FontSize(11).FontWeight(500).Grow(1).SingleLine()
-				openBtn := ui.Row(c).Radius(4).Padding(2, 6).Gap(3).AlignItems(ui.Center)
+				if a.Editor != nil {
+					layoutLbl := "Unified"
+					if a.Editor.DiffLayout == int(mygoeditor.DiffSplit) {
+						layoutLbl = "Split"
+					}
+					layoutBtn := ui.Row(c.Key("chg-diff-layout")).Radius(4).Padding(2, 6).Gap(3).AlignItems(ui.Center).
+						Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer).Tooltip("Switch Diff Layout (Unified / Split)")
+					layoutBtn.Children(func() {
+						ui.Text(c, layoutLbl).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					})
+					if layoutBtn.Hovered() {
+						layoutBtn.Background(tc.SurfaceRaised)
+					}
+					if layoutBtn.Clicked() {
+						if a.Editor.DiffLayout == int(mygoeditor.DiffSplit) {
+							a.Editor.DiffLayout = int(mygoeditor.DiffUnified)
+						} else {
+							a.Editor.DiffLayout = int(mygoeditor.DiffSplit)
+						}
+					}
+				}
+				openBtn := ui.Row(c).Radius(4).Padding(2, 6).Gap(3).AlignItems(ui.Center).Cursor(ui.CursorPointer).Tooltip("Open in Editor")
 				openBtn.Children(func() {
 					ui.Icon(c, icons.TablerCode).Width(11).Height(11).TextColor(tc.TextMuted)
 					ui.Text(c, "Open").FontSize(11).TextColor(tc.TextMuted)
@@ -1365,6 +1386,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 				a.renderHunkRevertStrip(c, tc, gm, diffTitle, patch)
 				d := a.Editor.OpenPatchDiff(diffTitle, patch, a.ThemeMgr)
 				if d != nil {
+					d.Layout = mygoeditor.DiffLayout(a.Editor.DiffLayout)
 					mygoeditor.DiffView(c, d).Grow(1).FillWidth()
 				}
 			}
@@ -2293,7 +2315,7 @@ func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *g
 					ui.Text(c, "reverted").FontSize(9).TextColor(tc.Success)
 				} else {
 					btn := ui.Row(c).Height(20).Radius(4).Padding(0, 7).AlignItems(ui.Center).
-						Background(tc.Warning.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.4))
+						Background(tc.Warning.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.4)).Cursor(ui.CursorPointer)
 					btn.Children(func() {
 						ui.Text(c, "Revert").FontSize(9).FontWeight(600).TextColor(tc.Warning)
 					})
@@ -2307,6 +2329,17 @@ func (a *AppUI) renderHunkRevertStrip(c *ui.Context, tc theme.ThemeColors, gm *g
 								// render pass never races the revert goroutine.
 								a.runOnUI(func() {
 									a.HunkRevertPaths[revertKey] = false
+									a.queueToast(ui.Toast{Title: "Revert Hunk Failed", Description: rerr.Error(), Type: "error"})
+								})
+							} else {
+								gm.Refresh()
+								a.runOnUI(func() {
+									for k := range a.HunkRevertPaths {
+										if strings.HasPrefix(k, path+"#") {
+											delete(a.HunkRevertPaths, k)
+										}
+									}
+									a.queueToast(ui.Toast{Title: "Hunk Reverted", Description: filepath.Base(path), Type: "info"})
 								})
 							}
 						}()

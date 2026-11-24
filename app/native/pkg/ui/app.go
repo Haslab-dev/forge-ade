@@ -276,9 +276,11 @@ type AppUI struct {
 	editorReplaceDecide    func(proceed bool)
 
 	// Git client PRs / Worktrees pane states (git_pr_worktrees.go).
-	PRPane          *prPaneState
-	WTPane          *worktreePaneState
-	HunkRevertPaths map[string]bool
+	PRPane                   *prPaneState
+	WTPane                   *worktreePaneState
+	HunkRevertPaths          map[string]bool
+	gitHistoryExpanded       map[string]bool
+	gitHistoryExpandedCommit string
 
 	// Inline AI edit bar (⌘I) + side-file preview modes.
 	InlineAI             *editor.InlineAI

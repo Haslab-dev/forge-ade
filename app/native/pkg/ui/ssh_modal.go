@@ -13,6 +13,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
@@ -422,19 +423,48 @@ func (a *AppUI) ReconnectSSH() {
 				a.queueToast(ui.Toast{Title: "SSH Reconnect Failed", Description: err.Error(), Type: "error"})
 				return
 			}
-			a.queueToast(ui.Toast{Title: "SSH Reconnected", Description: fmt.Sprintf("Connected to %s", status.Host), Type: "success"})
+			a.queueToast(ui.Toast{Title: "SSH Reconnected", Description: fmt.Sprintf("Connected to %s — resuming terminal session", status.Host), Type: "success"})
 			if a.Workspace != nil {
-				a.Workspace.Refresh()
+				go a.Workspace.Refresh()
 			}
-			// If active terminal is exited, restart it with fresh connection
-			if ts := a.activeTerminal(); ts != nil {
-				if ts.IsExited() {
-					if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
-						prog, args, env := client.SSHCommand(remotePath)
-						ts.Command = append([]string{prog}, args...)
-						ts.Env = env
+
+			// Re-attach any open remote terminals (Editor terminal tabs and Bottom
+			// terminal) using the fresh SSHCommand so tmux resumes the latest session.
+			if a.Engine != nil && a.Engine.RemoteFS != nil {
+				if client, remotePath, ok := a.Engine.RemoteFS.ParseRemotePath(a.Workspace.RootDir); ok && client != nil {
+					prog, args, env := client.SSHCommand(remotePath)
+					freshCmd := append([]string{prog}, args...)
+					restarted := map[*terminal.TerminalState]bool{}
+					reattach := func(ts *terminal.TerminalState) {
+						if ts == nil || restarted[ts] {
+							return
+						}
+						restarted[ts] = true
+						ts.Command = append([]string(nil), freshCmd...)
+						ts.Env = append([]string(nil), env...)
+						_ = ts.Restart()
 					}
-					_ = ts.Restart()
+
+					// 1. Editor main-pane terminal tabs (if any terminal:// tab is open).
+					hasEditorTermTab := false
+					if a.Editor != nil {
+						for _, tabPath := range a.Editor.OpenTabs() {
+							if strings.HasPrefix(tabPath, "terminal://") {
+								hasEditorTermTab = true
+								break
+							}
+						}
+					}
+					if hasEditorTermTab && a.Terminal != nil {
+						reattach(a.Terminal)
+					}
+
+					// 2. Active mode terminal (Bottom terminal / Right drawer terminal).
+					if ts := a.activeTerminal(); ts != nil {
+						if ts.IsExited() || a.isBottomTerminalVisible() || (a.ShowRightDrawer && a.RightDrawerTab == RightTabTerminal) {
+							reattach(ts)
+						}
+					}
 				}
 			}
 			if a.Window != nil {

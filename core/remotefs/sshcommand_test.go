@@ -16,7 +16,17 @@ func TestSSHCommand(t *testing.T) {
 		t.Fatalf("expected ssh, got %q", exe)
 	}
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-p 2222", "-i /Users/me/.ssh/id_ed25519", "deploy@example.com", "-t", "cd '/var/www/my project' && exec $SHELL -l"} {
+	for _, want := range []string{
+		"-p 2222",
+		"-o ServerAliveInterval=15",
+		"-o ServerAliveCountMax=2",
+		"-i /Users/me/.ssh/id_ed25519",
+		"deploy@example.com",
+		"-t",
+		"cd '/var/www/my project'",
+		"tmux new-session -A -s 'forge-c1-",
+		"exec $SHELL -l",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in %q", want, joined)
 		}

@@ -297,6 +297,10 @@ func (ws *WorkspaceState) LoadDir(rel string) {
 		}
 		entries, ok, err := rfs.ListDirectory(targetURI)
 		if !ok || err != nil {
+			// Roll back loadedDirs so the folder can be retried after reconnecting.
+			ws.mu.Lock()
+			delete(ws.loadedDirs, rel)
+			ws.mu.Unlock()
 			return
 		}
 		var newFiles []WorkspaceFile

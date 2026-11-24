@@ -510,8 +510,34 @@ func (a *AppUI) renderEditorView(c *ui.Context) {
 	if em == nil {
 		return
 	}
+	tc := a.ThemeMgr.Colors()
 
 	ui.Column(c).Fill().Children(func() {
+		// Remote SSH disconnect banner right above the editor so users never edit
+		// blindly on a dropped connection.
+		if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+			connID, _, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
+			if a.Engine != nil && !a.Engine.IsSSHConnected(connID) {
+				ui.Row(c.Key("ed-ssh-disc-banner")).Height(34).Padding(0, 12).Gap(8).AlignItems(ui.Center).
+					Background(tc.Warning.Alpha(0.12)).BorderWidth(0, 0, 1, 0).BorderColor(tc.Warning.Alpha(0.35)).Children(func() {
+					ui.Icon(c, icons.TablerAlertTriangle).Width(14).Height(14).TextColor(tc.Warning)
+					ui.Text(c, fmt.Sprintf("SSH connection to %s dropped — reconnect to load or save remote files.", displayHost)).
+						FontSize(11.5).FontWeight(500).TextColor(tc.Text).Grow(1).SingleLine()
+					reconBtn := ui.Row(c.Key("ed-ssh-banner-recon")).Height(22).Radius(5).Padding(0, 10).Gap(4).AlignItems(ui.Center).
+						Background(tc.Warning.Alpha(0.2)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.45)).Cursor(ui.CursorPointer)
+					reconBtn.Children(func() {
+						ui.Icon(c, icons.TablerRefresh).Width(11).Height(11).TextColor(tc.Warning)
+						ui.Text(c, "Reconnect").FontSize(11).FontWeight(600).TextColor(tc.Warning)
+					})
+					if reconBtn.Hovered() {
+						reconBtn.Background(tc.Warning.Alpha(0.3))
+					}
+					if reconBtn.Clicked() {
+						a.ReconnectSSH()
+					}
+				})
+			}
+		}
 		a.renderEditorTabBar(c)
 		a.renderEditorContent(c)
 	})
@@ -749,17 +775,20 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 				ui.Text(c, fmt.Sprintf("Connected to %s", displayHost)).FontSize(15).FontWeight(600).TextColor(tc.Text)
 				ui.Text(c, remotePath).FontSize(12).TextColor(tc.TextMuted)
 				ui.Row(c).Gap(8).Padding(6, 0).Children(func() {
-					termBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
-						Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+					termBtn := ui.Row(c.Key("ed-ssh-term")).Height(30).Radius(6).Padding(0, 12).
+						Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 					termBtn.Children(func() {
-						ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Canvas)
-						ui.Text(c, "Remote Terminal").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+						ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.AccentForeground)
+						ui.Text(c, "Remote Terminal").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 					})
+					if termBtn.Hovered() {
+						termBtn.Background(tc.Accent.Alpha(0.85))
+					}
 					if termBtn.Clicked() {
 						a.openEditorTerminalTab("")
 					}
 
-					uploadBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+					uploadBtn := ui.Row(c.Key("ed-ssh-upload")).Height(30).Radius(6).Padding(0, 12).
 						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
 						AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 					uploadBtn.Children(func() {
@@ -767,19 +796,22 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 						ui.Text(c, "Upload Files (SFTP)").FontSize(11).FontWeight(500).TextColor(tc.Text)
 					})
 					if uploadBtn.Hovered() {
-						uploadBtn.Background(tc.Text.Alpha(0.05))
+						uploadBtn.Background(tc.SurfaceRaised)
 					}
 					if uploadBtn.Clicked() {
 						a.OpenRemoteFileUploader("")
 					}
 
-					quickBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
+					quickBtn := ui.Row(c.Key("ed-ssh-quick")).Height(30).Radius(6).Padding(0, 12).
 						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
-						AlignItems(ui.Center).Justify(ui.Center).Gap(6)
+						AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 					quickBtn.Children(func() {
 						ui.Icon(c, icons.TablerServer).Width(13).Height(13).TextColor(tc.Accent)
 						ui.Text(c, "Remote Actions").FontSize(11).FontWeight(500).TextColor(tc.Text)
 					})
+					if quickBtn.Hovered() {
+						quickBtn.Background(tc.SurfaceRaised)
+					}
 					if quickBtn.Clicked() {
 						a.ShowSSHQuickMenu = true
 					}

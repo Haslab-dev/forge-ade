@@ -125,10 +125,6 @@ func (m *Manager) Connect(cfg SSHConfig) (*ConnectionStatus, error) {
 	connID := cfg.ID
 	host := cfg.Host
 	client.StartWatcher(func(discErr error) {
-		m.mu.Lock()
-		client.closed = true
-		m.mu.Unlock()
-
 		m.emitEvent(events.SSHDisconnected, map[string]interface{}{
 			"id":     connID,
 			"host":   host,
@@ -212,9 +208,9 @@ func (m *Manager) Reconnect(id string) (*ConnectionStatus, error) {
 // IsConnected reports whether connection id is registered and active.
 func (m *Manager) IsConnected(id string) bool {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	c, ok := m.clients[id]
-	return ok && c != nil && !c.closed
+	m.mu.RUnlock()
+	return ok && c != nil && !c.IsClosed()
 }
 
 // CloseAll closes all active SSH/SFTP clients.
@@ -268,7 +264,7 @@ func (m *Manager) ListConnections() []ConnectionStatus {
 			Port:        cfg.Port,
 			User:        cfg.User,
 			RemotePath:  cfg.RemotePath,
-			Connected:   !c.closed,
+			Connected:   !c.IsClosed(),
 			ConnectedAt: c.createdAt,
 		})
 	}

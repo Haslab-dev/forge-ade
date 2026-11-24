@@ -3,6 +3,7 @@ package remotefs
 import (
 	"encoding/base64"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net"
 	"os"
@@ -307,10 +308,23 @@ func (c *Client) StartWatcher(onDisconnect func(err error)) {
 					return
 				}
 
-				// Periodic keepalive ping to detect silent socket drops
-				_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-				if err != nil {
-					disconnectErr = err
+				// Periodic keepalive ping with an 8s timeout to detect silent half-open socket drops
+				pingErrCh := make(chan error, 1)
+				go func(cl *ssh.Client) {
+					_, _, err := cl.SendRequest("keepalive@openssh.com", true, nil)
+					pingErrCh <- err
+				}(client)
+				select {
+				case <-stopCh:
+					return
+				case err := <-pingErrCh:
+					if err != nil {
+						disconnectErr = err
+						goto handleDisconnect
+					}
+				case <-time.After(8 * time.Second):
+					disconnectErr = fmt.Errorf("ssh keepalive timed out after 8s")
+					_ = client.Close()
 					goto handleDisconnect
 				}
 			}
@@ -344,7 +358,12 @@ func (c *Client) Close() error {
 		c.stopWatcher = nil
 	}
 	if c.askpassPath != "" {
-		_ = os.Remove(c.askpassPath)
+		dir := filepath.Dir(c.askpassPath)
+		if strings.HasPrefix(filepath.Base(dir), "forge-ssh-askpass-") {
+			_ = os.RemoveAll(dir)
+		} else {
+			_ = os.Remove(c.askpassPath)
+		}
 		c.askpassPath = ""
 	}
 	var errs []string
@@ -369,24 +388,55 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// remoteTmuxSessionName builds a deterministic, tmux-safe session name for a
+// (connection, remotePath) pair so reconnecting re-attaches to the exact latest
+// shell session for that workspace.
+func remoteTmuxSessionName(connID, remotePath string) string {
+	cleanID := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		default:
+			return '_'
+		}
+	}, strings.TrimSpace(connID))
+	if cleanID == "" {
+		cleanID = "ssh"
+	}
+	if len(cleanID) > 20 {
+		cleanID = cleanID[:20]
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(path.Clean(remotePath)))
+	return fmt.Sprintf("forge-%s-%08x", cleanID, h.Sum32())
+}
+
 // SSHCommand builds the argv of a LOCAL ssh process that, when run under a
 // PTY, drops the user into an interactive login shell on the remote host at
-// remotePath. For password (or passphrase-protected key) connections it also
-// returns SSH_ASKPASS env vars wired to a per-connection helper script, so the
-// spawned ssh reuses this connection's credentials instead of prompting the
-// user again — the SFTP session authenticated already, the shell must not ask
-// for the same password a second time. The helper is removed on Close.
+// remotePath. When tmux is installed on the remote host it auto-attaches to a
+// persistent per-workspace session ("tmux new-session -A -s ...") so processes
+// survive disconnects and reconnects resume the latest session; otherwise it
+// falls back cleanly to "exec $SHELL -l".
+// For password (or passphrase-protected key) connections it also returns
+// SSH_ASKPASS env vars wired to a per-connection helper script.
 func (c *Client) SSHCommand(remotePath string) (string, []string, []string) {
 	cfg := c.Config()
 	args := []string{
 		"-p", strconv.Itoa(cfg.Port),
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=2",
 	}
 	if cfg.AuthType == "key_file" && cfg.KeyPath != "" {
 		args = append(args, "-i", cfg.KeyPath)
 	}
-	args = append(args, cfg.User+"@"+cfg.Host, "-t",
-		"cd "+shellQuote(remotePath)+" && exec $SHELL -l")
+	sessName := remoteTmuxSessionName(cfg.ID, remotePath)
+	remoteCmd := fmt.Sprintf(
+		"cd %s && if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s %s; else exec $SHELL -l; fi",
+		shellQuote(remotePath),
+		shellQuote(sessName),
+	)
+	args = append(args, cfg.User+"@"+cfg.Host, "-t", remoteCmd)
 
 	var env []string
 	if secret := c.promptSecret(); secret != "" {
@@ -491,7 +541,9 @@ func (c *Client) ListDirectory(dirPath string) ([]*explorer.FileInfo, error) {
 	return items, nil
 }
 
-// ReadFile reads the full contents of a remote file.
+const maxRemoteReadBytes = 20 << 20 // 20 MiB guard against OOM on giant remote logs/dumps
+
+// ReadFile reads the full contents of a remote file (up to 20 MiB).
 func (c *Client) ReadFile(filePath string) ([]byte, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -506,9 +558,12 @@ func (c *Client) ReadFile(filePath string) ([]byte, error) {
 	}
 	defer f.Close()
 
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxRemoteReadBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("sftp read %s: %w", cleanPath, err)
+	}
+	if int64(len(data)) > maxRemoteReadBytes {
+		return nil, fmt.Errorf("remote file %s exceeds 20 MB editor limit", cleanPath)
 	}
 	return data, nil
 }
@@ -530,7 +585,8 @@ func (c *Client) StatSize(filePath string) (int64, error) {
 	return info.Size(), nil
 }
 
-// WriteFile writes data to a remote file, creating parent directories if needed.
+// WriteFile writes data to a remote file atomically when possible (temp file +
+// PosixRename), avoiding unnecessary MkdirAll round-trips on existing parent dirs.
 func (c *Client) WriteFile(filePath string, data []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -540,18 +596,44 @@ func (c *Client) WriteFile(filePath string, data []byte) error {
 
 	cleanPath := path.Clean(filePath)
 	parent := path.Dir(cleanPath)
-	if err := c.sftpClient.MkdirAll(parent); err != nil {
-		return fmt.Errorf("sftp mkdirall %s: %w", parent, err)
-	}
+	tmpPath := path.Join(parent, fmt.Sprintf(".forge-tmp-%d-%s", time.Now().UnixNano(), path.Base(cleanPath)))
 
-	f, err := c.sftpClient.Create(cleanPath)
+	f, err := c.sftpClient.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("sftp create %s: %w", cleanPath, err)
+		// Parent directory may not exist yet: create it once and retry.
+		if mkErr := c.sftpClient.MkdirAll(parent); mkErr != nil {
+			return fmt.Errorf("sftp mkdirall %s: %w", parent, mkErr)
+		}
+		f, err = c.sftpClient.Create(tmpPath)
+		if err != nil {
+			return fmt.Errorf("sftp create %s: %w", cleanPath, err)
+		}
 	}
-	defer f.Close()
 
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = c.sftpClient.Remove(tmpPath)
 		return fmt.Errorf("sftp write %s: %w", cleanPath, err)
+	}
+	if err := f.Close(); err != nil {
+		_ = c.sftpClient.Remove(tmpPath)
+		return fmt.Errorf("sftp close %s: %w", cleanPath, err)
+	}
+
+	if err := c.sftpClient.PosixRename(tmpPath, cleanPath); err != nil {
+		// Fallback for SFTP servers without posix-rename@openssh.com extension.
+		_ = c.sftpClient.Remove(tmpPath)
+		direct, derr := c.sftpClient.Create(cleanPath)
+		if derr != nil {
+			return fmt.Errorf("sftp create %s: %w", cleanPath, derr)
+		}
+		if _, werr := direct.Write(data); werr != nil {
+			_ = direct.Close()
+			return fmt.Errorf("sftp write %s: %w", cleanPath, werr)
+		}
+		if cerr := direct.Close(); cerr != nil {
+			return fmt.Errorf("sftp close %s: %w", cleanPath, cerr)
+		}
 	}
 	return nil
 }
