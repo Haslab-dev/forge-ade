@@ -346,6 +346,12 @@ type AgentSession struct {
 	Archived             bool
 	Snoozed              bool            `json:"snoozed,omitempty"`
 	RemoteSessionID      string          `json:"remoteSessionId,omitempty"`      // agent conversation id
+	ParentSessionID      string          `json:"parentSessionId,omitempty"`      // coordinator session for hybrid workers
+	WorkerName           string          `json:"workerName,omitempty"`           // short label for hybrid worker rows
+	HandoffFromID        string          `json:"handoffFromId,omitempty"`        // source session when created via handoff
+	HandoffFromAgent     string          `json:"handoffFromAgent,omitempty"`     // source agent label for handoff banner
+	HandoffToIDs         []string        `json:"handoffToIds,omitempty"`         // downstream sessions handed off from this one
+	BotID                string          `json:"botId,omitempty"`                // owning Local Bot ID (if any)
 	LastCheckpointTurnID string          `json:"lastCheckpointTurnId,omitempty"` // pre-turn snapshot id
 	AvailableCommands    []string        `json:"availableCommands,omitempty"`
 	LastUsage            *UsageInfo      `json:"lastUsage,omitempty"`

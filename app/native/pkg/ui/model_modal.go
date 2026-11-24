@@ -781,50 +781,55 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 
 				ui.Box(c).Grow(1)
 
-				// Segmented Reasoning Effort Control (Off, Low, Med, High)
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "Reasoning").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
-					efforts := []struct {
-						ID    agent.ReasoningEffort
-						Label string
-					}{
-						{agent.EffortOff, "Off"},
-						{agent.EffortLow, "Low"},
-						{agent.EffortMedium, "Med"},
-						{agent.EffortHigh, "High"},
-					}
-					seg := ui.Row(c).Height(24).Radius(6).Padding(2).Gap(2).Background(tc.Surface).
-						BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center)
-					seg.Children(func() {
-						for _, ef := range efforts {
-							thisEf := ef
-							isEfActive := (a.Agent.ReasoningEffort == thisEf.ID)
-							btn := ui.Row(c.Key("effort-"+string(thisEf.ID))).Height(20).Radius(4).Padding(0, 6).
-								AlignItems(ui.Center).Justify(ui.Center)
-							btn.Children(func() {
-								ui.Text(c, thisEf.Label).FontSize(10).FontWeight(func() int {
-									if isEfActive {
-										return 600
-									}
-									return 400
-								}())
-							})
-							if isEfActive {
-								btn.Background(tc.Text).TextColor(tc.Canvas)
-							} else if btn.Hovered() {
-								btn.Background(tc.Text.Alpha(0.04))
-							}
-							if btn.Clicked() {
-								a.Agent.ReasoningEffort = thisEf.ID
-								c.AddToast(ui.Toast{
-									Title:       "Reasoning Effort",
-									Description: fmt.Sprintf("Set reasoning effort to %s", thisEf.Label),
-									Type:        "info",
-								})
-							}
+				// Segmented Reasoning Effort Control — hidden for Antigravity/AGY
+				// where effort (-low / -medium / -high / -xhigh) is already part of each model ID.
+				if modelEncodesEffort(a.SelectedHarnessID, "") {
+					ui.Text(c, "Effort encoded in model").FontSize(11).TextColor(tc.TextMuted)
+				} else {
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "Reasoning").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+						efforts := []struct {
+							ID    agent.ReasoningEffort
+							Label string
+						}{
+							{agent.EffortOff, "Off"},
+							{agent.EffortLow, "Low"},
+							{agent.EffortMedium, "Med"},
+							{agent.EffortHigh, "High"},
 						}
+						seg := ui.Row(c).Height(24).Radius(6).Padding(2).Gap(2).Background(tc.Surface).
+							BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center)
+						seg.Children(func() {
+							for _, ef := range efforts {
+								thisEf := ef
+								isEfActive := (a.Agent.ReasoningEffort == thisEf.ID)
+								btn := ui.Row(c.Key("effort-"+string(thisEf.ID))).Height(20).Radius(4).Padding(0, 6).
+									AlignItems(ui.Center).Justify(ui.Center)
+								btn.Children(func() {
+									ui.Text(c, thisEf.Label).FontSize(10).FontWeight(func() int {
+										if isEfActive {
+											return 600
+										}
+										return 400
+									}())
+								})
+								if isEfActive {
+									btn.Background(tc.Text).TextColor(tc.Canvas)
+								} else if btn.Hovered() {
+									btn.Background(tc.Text.Alpha(0.04))
+								}
+								if btn.Clicked() {
+									a.Agent.ReasoningEffort = thisEf.ID
+									c.AddToast(ui.Toast{
+										Title:       "Reasoning Effort",
+										Description: fmt.Sprintf("Set reasoning effort to %s", thisEf.Label),
+										Type:        "info",
+									})
+								}
+							}
+						})
 					})
-				})
+				}
 			})
 		})
 	})

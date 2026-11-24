@@ -66,6 +66,9 @@ func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
 	if a.Mode == ModeStudio {
 		return 10, 10
 	}
+	if a.Mode == ModeAgent && a.AgentSplitSessionID != "" && !a.IsGitClientOpen && a.AgentViewMode == AgentViewChat {
+		return 16, 16
+	}
 	const gutter = float32(32)
 	colW := a.chatColumnWidth(c)
 	lane := float32(0)
@@ -80,6 +83,348 @@ func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
 		inset = 24
 	}
 	return inset, inset
+}
+
+// renderAssistantMessageBody renders the full rich assistant message body
+// (worked-for pill, thinking blocks, tool traces/groups, worker cards,
+// markdown/JSON output, turn changes card, approval bar, and structured
+// questions). Shared by both the primary Agent chat pane and the side-by-side
+// Split Session Pane for 100% visual & functional parity.
+func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, sessionID string, lastAssistantID int, m *agent.ChatMessage) {
+	as := a.Agent
+	if as == nil || m == nil {
+		return
+	}
+	if len(m.Blocks) > 0 {
+		open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
+		hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+		if hasWork {
+			a.renderWorkPill(c, tc, sessionID, m)
+		}
+		hasThinkingBlocks := false
+		for _, b := range m.Blocks {
+			if b != nil && b.Kind == "thinking" {
+				hasThinkingBlocks = true
+				break
+			}
+		}
+		finalTextIdx := -1
+		for bi, blk := range m.Blocks {
+			if blk != nil && blk.Kind == "text" {
+				finalTextIdx = bi
+			}
+		}
+		if finalTextIdx >= 0 {
+			for _, blk := range m.Blocks[finalTextIdx+1:] {
+				if blk != nil && (blk.Kind == "tool" || blk.Kind == "thinking") {
+					finalTextIdx = -1
+					break
+				}
+			}
+		}
+		renderTextBlock := func(blk *agent.MessageBlock, streaming bool) {
+			trimmed := strings.TrimSpace(blk.Text)
+			if trimmed == "" {
+				return
+			}
+			isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+				(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+			if isPureJSON && json.Valid([]byte(trimmed)) {
+				a.renderJSONResponseCard(c, tc, m, trimmed)
+				return
+			}
+			if streaming {
+				markdown.Stream(c, blk.Text, &as.MdOpts)
+			} else {
+				markdown.View(c, blk.Text, &as.MdOpts)
+			}
+		}
+		if open {
+			if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
+				a.renderThinkingBlock(c, tc, sessionID, m)
+			}
+			work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
+				BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6))
+			work.Children(func() {
+				toolAt := func(idx int) *agent.ToolExecution {
+					if idx >= len(m.Blocks) || m.Blocks[idx] == nil || m.Blocks[idx].Kind != "tool" {
+						return nil
+					}
+					for _, t := range m.Tools {
+						if t != nil && t.ID == m.Blocks[idx].ToolID {
+							return t
+						}
+					}
+					return nil
+				}
+				bi := 0
+				for bi < len(m.Blocks) {
+					blk := m.Blocks[bi]
+					if blk == nil || bi == finalTextIdx {
+						bi++
+						continue
+					}
+					if blk.Kind == "thinking" {
+						isLast := bi == len(m.Blocks)-1
+						a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
+						bi++
+						continue
+					}
+					if blk.Kind == "tool" {
+						first := toolAt(bi)
+						if first == nil {
+							bi++
+							continue
+						}
+						fam := classifyTool(first).Family
+						if fam != tfExplore && fam != tfRun && fam != tfChange {
+							a.renderToolTraceRow(c, tc, sessionID, m, first)
+							bi++
+							continue
+						}
+						children := []groupChild{}
+						j := bi
+						for j < len(m.Blocks) && j != finalTextIdx {
+							b := m.Blocks[j]
+							if b == nil {
+								j++
+								continue
+							}
+							if b.Kind != "tool" {
+								break
+							}
+							t := toolAt(j)
+							if t == nil {
+								j++
+								continue
+							}
+							tf := classifyTool(t).Family
+							if tf != tfExplore && tf != tfRun && tf != tfChange {
+								break
+							}
+							children = append(children, groupChild{blockIdx: j, tool: t})
+							j++
+						}
+						if len(children) >= 2 {
+							a.renderConsecutiveSummaryGroup(c, tc, sessionID, m, children,
+								fmt.Sprintf("%s-%d-%d", sessionID, m.ID, bi))
+							bi = j
+							continue
+						}
+						a.renderToolTraceRow(c, tc, sessionID, m, first)
+						bi++
+						continue
+					}
+					renderTextBlock(blk, false)
+					bi++
+				}
+				if hasThinkingBlocks && m.IsThinking && !m.Done {
+					last := m.Blocks[len(m.Blocks)-1]
+					if last == nil || last.Kind != "thinking" {
+						a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
+					}
+				}
+			})
+		}
+		if finalTextIdx >= 0 {
+			renderTextBlock(m.Blocks[finalTextIdx], !m.Done)
+		}
+	} else {
+		hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+		if hasWork {
+			a.renderWorkPill(c, tc, sessionID, m)
+			open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
+			if open {
+				work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
+					BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
+				work.Children(func() {
+					if m.Thinking != "" || m.IsThinking {
+						a.renderThinkingBlock(c, tc, sessionID, m)
+					}
+					if len(m.Tools) > 0 {
+						a.renderFoldedToolTraces(c, tc, sessionID, m)
+					}
+				})
+			}
+		}
+
+		if m.Text != "" {
+			trimmed := strings.TrimSpace(m.Text)
+			isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+				(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+			if isPureJSON && json.Valid([]byte(trimmed)) {
+				a.renderJSONResponseCard(c, tc, m, trimmed)
+			} else if m.Done {
+				markdown.View(c, m.Text, &as.MdOpts)
+			} else {
+				markdown.Stream(c, m.Text, &as.MdOpts)
+			}
+		}
+	}
+
+	if len(m.Changes) > 0 {
+		a.renderTurnChangesCard(c, tc, sessionID, m.ID == lastAssistantID, m)
+	}
+	if m.PendingApproval != nil && !m.PendingApproval.Resolved {
+		a.renderApprovalBar(c, tc, m)
+	}
+	if len(m.PendingQuestions) > 0 {
+		a.renderPendingQuestionsCard(c, tc, sessionID, m)
+	}
+}
+
+// renderUserMessageBubble renders a user turn: either a compact collapsible
+// Orca-style Handoff / Coordinator Task card (so long handoff context never
+// bloats the chat) or a clean flat neutral user bubble.
+func (a *AppUI) renderUserMessageBubble(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage, maxWidth float32) {
+	trimmed := strings.TrimSpace(m.Text)
+	isHandoff := strings.HasPrefix(trimmed, "## Session Handoff")
+	isCoordTask := strings.HasPrefix(trimmed, "## Task from Coordinator")
+
+	if isHandoff || isCoordTask {
+		expandKey := fmt.Sprintf("handoff-%s-%d", sessionID, m.ID)
+		expanded := a.ToolGroupExpanded != nil && a.ToolGroupExpanded[expandKey]
+
+		// Extract concise header metadata from the structured markdown prompt.
+		titlePrefix := "Handoff loaded"
+		detailLabel := ""
+		fileCount := 0
+		if isCoordTask {
+			titlePrefix = "Task from coordinator"
+		}
+		for _, line := range strings.Split(trimmed, "\n") {
+			l := strings.TrimSpace(line)
+			if strings.HasPrefix(l, "- **From:**") {
+				detailLabel = strings.TrimSpace(strings.TrimPrefix(l, "- **From:**"))
+				titlePrefix = "Handoff from"
+			} else if strings.HasPrefix(l, "**Worker:**") {
+				detailLabel = strings.Trim(strings.TrimSpace(strings.TrimPrefix(l, "**Worker:**")), "`")
+			} else if strings.HasPrefix(l, "- `") && strings.HasSuffix(l, "`") {
+				fileCount++
+			}
+		}
+
+		card := ui.Column(c.Key("ho-card-" + expandKey)).FillWidth().Radius(10).
+			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Clip()
+		card.Children(func() {
+			hdr := ui.Row(c.Key("ho-hdr-"+expandKey)).Height(36).Padding(0, 12).Gap(7).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			hdr.Children(func() {
+				ui.Icon(c, icons.TablerGitFork).Width(13).Height(13).TextColor(tc.Accent)
+				ui.Text(c, titlePrefix).FontSize(12).TextColor(tc.TextMuted).SingleLine()
+				if detailLabel != "" {
+					ui.Text(c, detailLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).Grow(1).MinWidth(0).SingleLine()
+				} else {
+					ui.Box(c).Grow(1)
+				}
+				if fileCount > 0 {
+					ui.Row(c).Height(18).Radius(4).Padding(0, 6).AlignItems(ui.Center).
+						Background(tc.ToolbarControl).Children(func() {
+						ui.Text(c, fmt.Sprintf("%d files", fileCount)).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					})
+				} else {
+					ui.Row(c).Height(18).Radius(4).Padding(0, 6).AlignItems(ui.Center).
+						Background(tc.ToolbarControl).Children(func() {
+						ui.Text(c, "Context loaded").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					})
+				}
+				chev := icons.TablerChevronRight
+				if expanded {
+					chev = icons.TablerChevronDown
+				}
+				ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+			})
+			if hdr.Hovered() {
+				hdr.Background(tc.SurfaceRaised)
+			}
+			if hdr.Clicked() {
+				if a.ToolGroupExpanded == nil {
+					a.ToolGroupExpanded = make(map[string]bool)
+				}
+				a.ToolGroupExpanded[expandKey] = !expanded
+			}
+
+			if expanded {
+				ui.Scroll(c.Key("ho-body-"+expandKey)).MaxHeight(220).
+					BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
+					ui.Box(c).Padding(10, 12).Children(func() {
+						ui.Text(c, trimmed).Selectable().FontSize(11.5).LineHeight(1.45).TextColor(tc.TextMuted)
+					})
+				})
+			}
+		})
+		return
+	}
+
+	ui.Row(c).Justify(ui.End).FillWidth().Children(func() {
+		bubble := ui.Column(c).Padding(10, 14).Radius(10).
+			Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border).
+			MaxWidth(maxWidth)
+		bubble.Children(func() {
+			ui.Text(c, m.Text).Selectable().FontSize(13).LineHeight(1.45).TextColor(tc.MessageForeground)
+			atts := userMessageAttachments(m.Text)
+			if len(atts) > 0 {
+				chipRow := ui.Row(c).Gap(5).Wrap().Padding(6, 0, 0, 0)
+				chipRow.Children(func() {
+					for _, att := range atts {
+						att := att
+						chip := ui.Row(c.Key("uatt-"+att)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).
+							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+						chip.Children(func() {
+							icons.RenderFileIcon(c, att, 12, tc.Accent)
+							ui.Text(c, filepath.Base(att)).FontSize(11).FontWeight(500)
+						})
+						if chip.Clicked() {
+							a.openSidePreviewFile(c, att)
+						}
+					}
+				})
+			}
+		})
+	})
+}
+
+// modelEncodesEffort reports whether the harness or model identifier already
+// encodes reasoning effort (e.g. Antigravity/AGY models ending in -low,
+// -medium, -high, -xhigh), so showing a separate Reasoning Effort badge or
+// toggle would be redundant.
+func modelEncodesEffort(agentID, model string) bool {
+	aid := strings.ToLower(strings.TrimSpace(agentID))
+	if aid == "agent-agy" || strings.Contains(aid, "agy") || strings.Contains(aid, "antigravity") {
+		return true
+	}
+	m := strings.ToLower(strings.TrimSpace(model))
+	for _, suf := range []string{"-low", "-medium", "-high", "-xhigh", "-minimal", "-sonar"} {
+		if strings.HasSuffix(m, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// shortHarnessLabel compresses verbose ACP/persona names for the clean
+// composer control row (e.g. "Google Antigravity (AGY)" -> "AGY").
+func shortHarnessLabel(name string) string {
+	low := strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case strings.Contains(low, "antigravity") || strings.Contains(low, "agy"):
+		return "AGY"
+	case strings.Contains(low, "claude"):
+		return "Claude"
+	case strings.Contains(low, "codex"):
+		return "Codex"
+	case strings.Contains(low, "gemini"):
+		return "Gemini"
+	case strings.Contains(low, "opencode"):
+		return "OpenCode"
+	case strings.Contains(low, "orchestrator"):
+		return "Orchestrator"
+	}
+	s := strings.TrimSpace(strings.TrimSuffix(name, "Agent"))
+	if runes := []rune(s); len(runes) > 14 {
+		return string(runes[:13]) + "…"
+	}
+	return s
 }
 
 // shortModelLabel formats a concise model name for headers and chips
@@ -200,7 +545,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 					if m.Role == "user" {
 						uRow := ui.Row(c.Key("urow")).Padding(10, rightInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center)
 						uRow.Children(func() {
-							if uRow.Hovered() {
+							if uRow.Hovered() && !strings.HasPrefix(strings.TrimSpace(m.Text), "## Session Handoff") && !strings.HasPrefix(strings.TrimSpace(m.Text), "## Task from Coordinator") {
 								copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 								copyBtn.Tooltip("Copy prompt")
 								copyBtn.Children(func() {
@@ -214,238 +559,13 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 									c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
 								}
 							}
-							bubble := ui.Column(c).Padding(11, 15).Radius(16, 4, 16, 16).
-								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.65)).
-								MaxWidth(620)
-							bubble.Children(func() {
-								ui.Text(c, m.Text).Selectable().FontSize(13.5).LineHeight(1.45).TextColor(tc.MessageForeground)
-								atts := userMessageAttachments(m.Text)
-								if len(atts) > 0 {
-									chipRow := ui.Row(c).Gap(5).Wrap().Padding(6, 0, 0, 0)
-									chipRow.Children(func() {
-										for _, att := range atts {
-											att := att
-											chip := ui.Row(c.Key("uatt-"+att)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).
-												Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
-											chip.Children(func() {
-												icons.RenderFileIcon(c, att, 12, tc.Accent)
-												ui.Text(c, filepath.Base(att)).FontSize(11).FontWeight(500)
-											})
-											if chip.Clicked() {
-												a.openSidePreviewFile(c, att)
-											}
-										}
-									})
-								}
-							})
-							bubble.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.14))
+							a.renderUserMessageBubble(c, tc, sessionID, m, 620)
 						})
 					} else {
 						// Agent message: ZCode lane with work traces -> markdown ->
 						// changes card -> bottom-left action icons + timestamp.
 						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, leftInset).Gap(8).Children(func() {
-							// 1+2. Ordered text/tool timeline (new sessions): text
-							// segments and tool calls render in execution order.
-							// Legacy sessions without Blocks keep the fixed
-							// thinking -> tools -> text layout.
-							if len(m.Blocks) > 0 {
-								open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
-								hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
-								if hasWork {
-									a.renderWorkPill(c, tc, sessionID, m)
-								}
-								hasThinkingBlocks := false
-								for _, b := range m.Blocks {
-									if b != nil && b.Kind == "thinking" {
-										hasThinkingBlocks = true
-										break
-									}
-								}
-								// The response is the trailing text block: once work
-								// (tool/thinking) follows a text segment, that segment
-								// is narration and folds into the Worked group,
-								// ZCode-style — only the final answer stays outside.
-								finalTextIdx := -1
-								for bi, blk := range m.Blocks {
-									if blk != nil && blk.Kind == "text" {
-										finalTextIdx = bi
-									}
-								}
-								if finalTextIdx >= 0 {
-									for _, blk := range m.Blocks[finalTextIdx+1:] {
-										if blk != nil && (blk.Kind == "tool" || blk.Kind == "thinking") {
-											finalTextIdx = -1
-											break
-										}
-									}
-								}
-								// renderTextBlock draws one text segment: JSON payloads
-								// as a response card, streaming markdown for the live
-								// tail, plain markdown otherwise.
-								renderTextBlock := func(blk *agent.MessageBlock, streaming bool) {
-									trimmed := strings.TrimSpace(blk.Text)
-									if trimmed == "" {
-										return
-									}
-									isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
-										(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
-									if isPureJSON && json.Valid([]byte(trimmed)) {
-										a.renderJSONResponseCard(c, tc, m, trimmed)
-										return
-									}
-									if streaming {
-										markdown.Stream(c, blk.Text, &as.MdOpts)
-									} else {
-										markdown.View(c, blk.Text, &as.MdOpts)
-									}
-								}
-								if open {
-									if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
-										a.renderThinkingBlock(c, tc, sessionID, m)
-									}
-									// ZCode's indented lane for everything that worked:
-									// thoughts, tool rows/groups and narration text in
-									// execution order; hidden entirely when collapsed.
-									work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
-										BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6))
-									work.Children(func() {
-										toolAt := func(idx int) *agent.ToolExecution {
-											if idx >= len(m.Blocks) || m.Blocks[idx] == nil || m.Blocks[idx].Kind != "tool" {
-												return nil
-											}
-											for _, t := range m.Tools {
-												if t != nil && t.ID == m.Blocks[idx].ToolID {
-													return t
-												}
-											}
-											return nil
-										}
-										bi := 0
-										for bi < len(m.Blocks) {
-											blk := m.Blocks[bi]
-											if blk == nil || bi == finalTextIdx {
-												bi++
-												continue
-											}
-											if blk.Kind == "thinking" {
-												isLast := bi == len(m.Blocks)-1
-												a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
-												bi++
-												continue
-											}
-											if blk.Kind == "tool" {
-												first := toolAt(bi)
-												if first == nil {
-													bi++
-													continue
-												}
-												fam := classifyTool(first).Family
-												if fam != tfExplore && fam != tfRun && fam != tfChange {
-													// Agent/MCP/skill/design rows stay standalone.
-													a.renderToolTraceRow(c, tc, sessionID, m, first)
-													bi++
-													continue
-												}
-												// Collect the strictly-consecutive run of groupable
-												// tools. ZCode does NOT absorb reasoning into the
-												// group: a thinking block ends the run and renders
-												// as its own standalone row; tools after it start
-												// a fresh run.
-												children := []groupChild{}
-												j := bi
-												for j < len(m.Blocks) && j != finalTextIdx {
-													b := m.Blocks[j]
-													if b == nil {
-														j++
-														continue
-													}
-													if b.Kind != "tool" {
-														break // thinking or narration breaks the run
-													}
-													t := toolAt(j)
-													if t == nil {
-														j++
-														continue
-													}
-													tf := classifyTool(t).Family
-													if tf != tfExplore && tf != tfRun && tf != tfChange {
-														break
-													}
-													children = append(children, groupChild{blockIdx: j, tool: t})
-													j++
-												}
-												if len(children) >= 2 {
-													a.renderConsecutiveSummaryGroup(c, tc, sessionID, m, children,
-														fmt.Sprintf("%s-%d-%d", sessionID, m.ID, bi))
-													bi = j
-													continue
-												}
-												a.renderToolTraceRow(c, tc, sessionID, m, first)
-												bi++
-												continue
-											}
-											// Narration text segment
-											renderTextBlock(blk, false)
-											bi++
-										}
-										if hasThinkingBlocks && m.IsThinking && !m.Done {
-											last := m.Blocks[len(m.Blocks)-1]
-											if last == nil || last.Kind != "thinking" {
-												a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
-											}
-										}
-									})
-								}
-								if finalTextIdx >= 0 {
-									renderTextBlock(m.Blocks[finalTextIdx], !m.Done)
-								}
-							} else {
-								// 1. "Working / Worked for Ns" pill & trace block
-								hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
-								if hasWork {
-									a.renderWorkPill(c, tc, sessionID, m)
-									open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
-									if open {
-										work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
-											BorderWidth(0, 0, 0, 2).BorderColor(tc.Border.Alpha(0.6))
-										work.Children(func() {
-											if m.Thinking != "" || m.IsThinking {
-												a.renderThinkingBlock(c, tc, sessionID, m)
-											}
-											if len(m.Tools) > 0 {
-												a.renderFoldedToolTraces(c, tc, sessionID, m)
-											}
-										})
-									}
-								}
-
-								// 2. Response Markdown body & JSON block rendering
-								if m.Text != "" {
-									trimmed := strings.TrimSpace(m.Text)
-									isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
-										(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
-									if isPureJSON && json.Valid([]byte(trimmed)) {
-										a.renderJSONResponseCard(c, tc, m, trimmed)
-									} else if m.Done {
-										markdown.View(c, m.Text, &as.MdOpts)
-									} else {
-										markdown.Stream(c, m.Text, &as.MdOpts)
-									}
-								}
-							}
-
-							// 3. ZCode Turn Changes Card
-							if len(m.Changes) > 0 {
-								a.renderTurnChangesCard(c, tc, sessionID, m.ID == lastAssistantID, m)
-							}
-
-							// 4. Pending Approval Bar & Structured Questions Card
-							if m.PendingApproval != nil && !m.PendingApproval.Resolved {
-								a.renderApprovalBar(c, tc, m)
-							}
-							if len(m.PendingQuestions) > 0 {
-								a.renderPendingQuestionsCard(c, tc, sessionID, m)
-							}
+							a.renderAssistantMessageBody(c, tc, sessionID, lastAssistantID, m)
 
 							// 5. ZCode Bottom-Left Action Icons + Timestamp
 							if m.Done && (m.Text != "" || len(m.Tools) > 0) {
@@ -563,10 +683,11 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			})
 		}
 
-		// ZCode ConversationStatusPanel: capsule ↔ expanded panel in the
-		// top-right corner (Changes / Progress / Agents). Supersedes the old
-		// task-tracker pill, turn-status card and live-changes pill.
-		a.renderStatusPanel(c, tc, msgs)
+		// Hide floating status capsule during Split Pane so it never overlaps
+		// narrow split transcripts (diff stats remain visible in the bottom bar).
+		if a.AgentSplitSessionID == "" {
+			a.renderStatusPanel(c, tc, msgs)
+		}
 	})
 }
 
@@ -638,42 +759,29 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID st
 	}
 
 	open := m.ShowTools || running
-	// Clean compact timeline header pill with step count badge
-	header := ui.Row(c).Height(32).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-		Background(tc.Surface.Alpha(0.75)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Cursor(ui.CursorPointer)
+	// Orca-style ultra-minimal work summary line: "Worked for 32s >" + subtle hairline divider
+	header := ui.Row(c).Height(26).Radius(6).Padding(0, 4).Gap(6).AlignItems(ui.Center).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.7)).Cursor(ui.CursorPointer)
 	header.Children(func() {
 		if running {
-			ui.Spinner(c).Size(12, 12).Label("")
-			ui.Text(c, label).FontSize(12.5).FontWeight(600).TextColor(shimmerTextColor(tc))
+			ui.Spinner(c).Size(11, 11).Label("")
+			ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(shimmerTextColor(tc))
 		} else {
-			ui.Box(c).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Success.Alpha(0.16)).Children(func() {
-				ui.Icon(c, icons.TablerCheck).Width(10).Height(10).TextColor(tc.Success)
-			})
-			ui.Text(c, label).FontSize(12.5).FontWeight(500).TextColor(tc.Text)
+			ui.Text(c, label).FontSize(12).FontWeight(400).TextColor(tc.TextMuted)
 		}
-		if len(m.Tools) > 0 {
-			stepText := fmt.Sprintf("%d step", len(m.Tools))
-			if len(m.Tools) > 1 {
-				stepText = fmt.Sprintf("%d steps", len(m.Tools))
-			}
-			ui.Row(c).Padding(1, 6).Radius(4).Background(tc.ToolbarControl).Children(func() {
-				ui.Text(c, stepText).FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-			})
-		}
-		ui.Box(c).Grow(1)
 		chev := icons.TablerChevronRight
 		if open {
 			chev = icons.TablerChevronDown
 		}
-		chevColor := tc.IconMuted.Alpha(0.65)
+		chevColor := tc.IconMuted.Alpha(0.75)
 		if header.Hovered() {
 			chevColor = tc.Text
 		}
-		ui.Icon(c, chev).Width(13).Height(13).TextColor(chevColor)
+		ui.Icon(c, chev).Width(12).Height(12).TextColor(chevColor)
+		ui.Box(c).Grow(1)
 	})
 	if header.Hovered() {
-		header.Background(tc.SurfaceRaised).BorderColor(tc.ToolbarBorder)
+		header.Background(tc.Text.Alpha(0.04))
 	}
 	if header.Clicked() {
 		// m is a frame snapshot; flip the live message under the lock.
@@ -872,44 +980,37 @@ func (a *AppUI) renderFoldedToolTraces(c *ui.Context, tc theme.ThemeColors, sess
 func (a *AppUI) renderToolGroupBar(c *ui.Context, tc theme.ThemeColors, sessionID string, m *agent.ChatMessage) {
 	summary, hasRunning, hasFailed := summarizeTools(m.Tools)
 
-	groupBar := ui.Row(c).Height(30).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-		Background(tc.SurfaceRaised.Alpha(0.5)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+	groupBar := ui.Row(c).Height(28).Radius(7).Padding(0, 8).Gap(7).AlignItems(ui.Center).
+		Cursor(ui.CursorPointer)
 	groupBar.Children(func() {
 		if hasRunning {
-			ui.Spinner(c).Size(13, 13).Label("Running tools")
+			ui.Spinner(c).Size(12, 12).Label("Running tools")
 		} else if hasFailed {
 			ui.Icon(c, icons.TablerAlertTriangle).Width(13).Height(13).TextColor(tc.Error)
 		} else {
-			ui.Box(c).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Success.Alpha(0.15)).Children(func() {
-				ui.Icon(c, icons.TablerCheck).Width(9).Height(9).TextColor(tc.Success)
-			})
+			ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success).Shrink(0)
 		}
 
-		summaryColor := tc.Text
+		summaryColor := tc.TextMuted
 		if hasRunning {
-			summaryColor = tc.Accent
+			summaryColor = tc.Text
+		} else if hasFailed {
+			summaryColor = tc.Error
 		}
-		ui.Text(c, summary).FontSize(11).FontWeight(500).TextColor(summaryColor).Grow(1).SingleLine()
+		ui.Text(c, summary).FontSize(12).FontWeight(500).TextColor(summaryColor).SingleLine()
 
-		// Step toggle pill — fixed content, never wraps.
-		stepLabel := fmt.Sprintf("Show %d steps", len(m.Tools))
+		stepLabel := fmt.Sprintf("%d steps", len(m.Tools))
+		ui.Text(c, "· "+stepLabel).FontSize(11).TextColor(tc.TextMuted.Alpha(0.75)).SingleLine()
+
+		chev := icons.TablerChevronRight
 		if m.ShowTools {
-			stepLabel = fmt.Sprintf("Hide %d steps", len(m.Tools))
+			chev = icons.TablerChevronDown
 		}
-		stepToggle := ui.Row(c.Key("steps-toggle")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5))
-		stepToggle.Children(func() {
-			ui.Text(c, stepLabel).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
-			chev := icons.TablerChevronRight
-			if m.ShowTools {
-				chev = icons.TablerChevronDown
-			}
-			ui.Icon(c, chev).Width(11).Height(11).TextColor(tc.IconMuted)
-		})
+		ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
+		ui.Box(c).Grow(1)
 	})
 	if groupBar.Hovered() {
-		groupBar.Background(tc.SurfaceRaised)
+		groupBar.Background(tc.Surface.Alpha(0.8))
 	}
 	if groupBar.Clicked() {
 		a.Agent.MutateMessage(sessionID, m.ID, func(lm *agent.ChatMessage) {
@@ -1234,31 +1335,48 @@ func (a *AppUI) renderAgentToolRow(c *ui.Context, tc theme.ThemeColors, sessionI
 		activity = clampRunes(v.SubPrompt, 60)
 	}
 
-	row := ui.Row(c.Key("agent-tool-"+thisTool.ID)).Height(30).Radius(6).Padding(0, 8).Gap(8).
-		AlignItems(ui.Center).FillWidth().Cursor(ui.CursorPointer)
+	// Orca-inspired inline worker orchestration card:
+	// "Started worker <name> ↗" while running, "Update from worker <name> ↗" when done.
+	verb := "Update from worker"
+	if running {
+		verb = "Started worker"
+	} else if failed {
+		verb = "Worker failed"
+	}
+
+	row := ui.Column(c.Key("agent-tool-"+thisTool.ID)).Radius(10).Padding(9, 12).Gap(5).
+		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).FillWidth().Cursor(ui.CursorPointer)
 	row.Children(func() {
-		ui.Box(c).Size(20, 20).Children(func() {
-			agentFace(c, tc, name, faceStatus)
-		})
-		ui.Text(c, name).FontSize(13).FontWeight(500).TextColor(agentFaceColor(tc, name)).SingleLine()
-		if activity != "" {
-			ui.Text(c, activity).FontSize(13).TextColor(tc.TextMuted).Grow(1).SingleLine()
-		} else {
+		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(18, 18).Children(func() {
+				agentFace(c, tc, name, faceStatus)
+			})
+			ui.Text(c, verb).FontSize(12).TextColor(tc.TextMuted).SingleLine()
+			ui.Text(c, name).FontSize(12.5).FontWeight(600).TextColor(tc.Text).SingleLine()
+			ui.Icon(c, icons.TablerExternalLink).Width(11).Height(11).TextColor(tc.IconMuted)
 			ui.Box(c).Grow(1)
+			if running {
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+					ui.Text(c, "Working").FontSize(11).FontWeight(500).TextColor(shimmerTextColor(tc))
+				})
+			} else if failed {
+				ui.Text(c, "Failed").FontSize(11).FontWeight(600).TextColor(tc.Error)
+			} else {
+				ui.Text(c, "Done").FontSize(11).FontWeight(500).TextColor(tc.Success)
+			}
+			chevColor := tc.IconMuted.Alpha(0.7)
+			if row.Hovered() {
+				chevColor = tc.Text
+			}
+			ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(chevColor)
+		})
+		if activity != "" {
+			ui.Text(c, activity).FontSize(12).TextColor(tc.TextMuted).SingleLine()
 		}
-		if running {
-			ui.Text(c, "Working").FontSize(12).FontWeight(500).TextColor(shimmerTextColor(tc))
-		} else if failed {
-			ui.Text(c, "Failed").FontSize(12).FontWeight(600).TextColor(tc.Error)
-		}
-		chevColor := ui.RGBA(0, 0, 0, 0) // hidden until hover, ZCode-style
-		if row.Hovered() {
-			chevColor = tc.IconMuted
-		}
-		ui.Icon(c, icons.TablerChevronRight).Width(14).Height(14).TextColor(chevColor)
 	})
 	if row.Hovered() {
-		row.Background(tc.Text.Alpha(0.04))
+		row.Background(tc.SurfaceRaised)
 	}
 	if row.Clicked() {
 		a.RightDrawerTab = RightTabSubagent
@@ -1898,21 +2016,24 @@ func (a *AppUI) renderApprovalBar(c *ui.Context, tc theme.ThemeColors, m *agent.
 		return
 	}
 
-	card := ui.Column(c).Radius(12).Padding(14).Gap(8).
-		Background(tc.Warning.Alpha(0.05)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.4))
+	// Orca-inspired "Needs you" inline decision card
+	card := ui.Column(c).Radius(12).Padding(12, 14).Gap(10).
+		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.45))
 	card.Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Icon(c, icons.TablerShieldAlert).Width(16).Height(16).TextColor(tc.Warning)
-			ui.Column(c).Grow(1).Children(func() {
-				ui.Text(c, "Action Requires Confirmation").FontSize(13).FontWeight(600)
-				ui.Text(c, appr.Summary).FontSize(12).TextColor(tc.TextMuted)
-			})
+		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(7, 7).Radius(3.5).Background(tc.Warning).Shrink(0)
+			ui.Text(c, "Needs you").FontSize(11.5).FontWeight(600).TextColor(tc.Warning)
+			ui.Text(c, "·").FontSize(11).TextColor(tc.TextMuted)
+			ui.Text(c, "Action requires confirmation").FontSize(12).FontWeight(500).TextColor(tc.Text).Grow(1).SingleLine()
 		})
-		ui.Row(c).Gap(6).Justify(ui.End).AlignItems(ui.Center).Children(func() {
+		if strings.TrimSpace(appr.Summary) != "" {
+			ui.Text(c, appr.Summary).FontSize(12).TextColor(tc.TextMuted)
+		}
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			allow := chipRow(c, tc)
-			allow.Background(tc.Warning).Radius(6).Height(26)
+			allow.Background(tc.MessageAction).BorderWidth(0).Radius(7).Height(26).Padding(0, 10)
 			allow.Children(func() {
-				ui.Text(c, "Approve").FontSize(12).FontWeight(500).TextColor(tc.AccentForeground)
+				ui.Text(c, "Approve").FontSize(11.5).FontWeight(600).TextColor(tc.MessageActionForeground)
 			})
 			if allow.Clicked() {
 				a.resolvePendingApproval(m, true, false)
@@ -2106,14 +2227,12 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		return
 	}
 
-	card := ui.Column(c).Radius(16).Background(tc.SurfaceRaised).
-		BorderWidth(1).BorderColor(tc.ToolbarBorder).
-		Shadow(0, 14, 32, -16, ui.RGBA(0, 0, 0, 0.45)).
-		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
+	card := ui.Column(c).Radius(12).Background(tc.Surface).
+		BorderWidth(1).BorderColor(tc.Border).Clip()
 	if isHome {
 		// Landing card: the tray above owns the top corners; this card owns
 		// the bottom ones — one continuous silhouette, width of the unit.
-		card.Radius(0, 0, 16, 16).FillWidth()
+		card.Radius(0, 0, 12, 12).FillWidth()
 	}
 
 	card.Children(func() {
@@ -2499,21 +2618,16 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 						}
 					}
 				}
-				shortPersona = personaName
-				if strings.HasPrefix(strings.ToLower(shortPersona), "antigravity") {
-					shortPersona = "AGY"
-				} else if len(shortPersona) > 8 {
-					shortPersona = string([]rune(shortPersona)[:7]) + "…"
-				}
+				shortPersona = shortHarnessLabel(personaName)
 			}
 
-			displayPersona := personaName
+			displayPersona := shortHarnessLabel(personaName)
 			if isSlim {
 				if isInternalHarness {
 					if personaID == "orchestrator" || personaID == "" {
 						displayPersona = "Orch"
-					} else if len(shortPersona) > 6 {
-						displayPersona = string([]rune(shortPersona)[:5]) + "…"
+					} else if len(shortPersona) > 8 {
+						displayPersona = string([]rune(shortPersona)[:7]) + "…"
 					} else {
 						displayPersona = shortPersona
 					}
@@ -2522,17 +2636,17 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 				}
 			}
 
-			personaBtn := chipRow(c, tc)
-			if isSlim {
-				personaBtn.Padding(0, 6).Tooltip(fmt.Sprintf("Agent/ACP: %s", personaName))
-			}
+			personaBtn := ui.Row(c.Key("composer-harness")).Height(26).Radius(6).Padding(0, 7).Gap(4).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			personaBtn.Tooltip(fmt.Sprintf("Agent / Harness: %s", personaName))
 			personaBtn.Children(func() {
-				ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, acpIcon).Width(12).Height(12).TextColor(acpIconColor)
-					ui.Text(c, displayPersona).FontSize(11).FontWeight(500).TextColor(acpColor).SingleLine()
-					ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
-				})
+				ui.Icon(c, acpIcon).Width(12).Height(12).TextColor(acpIconColor)
+				ui.Text(c, displayPersona).FontSize(11.5).FontWeight(500).TextColor(acpColor).SingleLine()
+				ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
 			})
+			if personaBtn.Hovered() {
+				personaBtn.Background(tc.Text.Alpha(0.06))
+			}
 			personaBtn.Menu(func(m *ui.Menu) {
 				m.Item("── Internal (Forge Engine) ──").Disabled(true)
 				if m.Item(menuChecked(isInternalHarness && (activeSess == nil || activeSess.PersonaID == ""), "Auto (Orchestrator)")).Chosen() {
@@ -2644,24 +2758,24 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			// Model + Effort Selector Button (Triggers ModelProviderPaletteModal)
 			disp := shortModelLabel(as.ActiveModel)
 			if isSlim {
-				if runes := []rune(disp); len(runes) > 13 {
-					disp = string(runes[:11]) + "…"
+				if runes := []rune(disp); len(runes) > 15 {
+					disp = string(runes[:14]) + "…"
 				}
 			}
-			modelBtn := chipRow(c, tc)
-			if isSlim {
-				modelBtn.Padding(0, 6).Tooltip(fmt.Sprintf("Model: %s", as.ActiveModel))
-			}
+			modelBtn := ui.Row(c.Key("composer-model")).Height(26).Radius(6).Padding(0, 7).Gap(5).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			modelBtn.Tooltip(fmt.Sprintf("Model: %s", as.ActiveModel))
 			modelBtn.Children(func() {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					icons.RenderProviderIcon(c, as.ActiveModel, 12)
-					ui.Text(c, disp).FontSize(11).FontWeight(500).SingleLine()
-					if !isSlim && as.ReasoningEffort != agent.EffortOff {
-						ui.Text(c, as.ReasoningEffortLabel()).FontSize(11).FontWeight(400).TextColor(tc.TextMuted)
-					}
-					ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
-				})
+				icons.RenderProviderIcon(c, as.ActiveModel, 12)
+				ui.Text(c, disp).FontSize(11.5).FontWeight(500).TextColor(tc.Text).SingleLine()
+				if !isSlim && as.ReasoningEffort != agent.EffortOff && !modelEncodesEffort(as.ActiveAgentID, as.ActiveModel) {
+					ui.Text(c, as.ReasoningEffortLabel()).FontSize(11).FontWeight(400).TextColor(tc.TextMuted)
+				}
+				ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
 			})
+			if modelBtn.Hovered() {
+				modelBtn.Background(tc.Text.Alpha(0.06))
+			}
 			if modelBtn.Clicked() {
 				a.ShowModelPalette = true
 				a.ModelSearchQuery = ""
@@ -4075,6 +4189,13 @@ func (a *AppUI) chatColumnWidth(c *ui.Context) float32 {
 	if a.ShowRightDrawer {
 		w -= a.RightDrawerWidth
 		w -= 4 // resize handle
+	}
+	if a.Mode == ModeAgent && a.AgentSplitSessionID != "" && !a.IsGitClientOpen && a.AgentViewMode == AgentViewChat {
+		if a.AgentSplitWidth > 0 && a.AgentSplitWidth < w {
+			w = a.AgentSplitWidth
+		} else {
+			w = w / 2
+		}
 	}
 	if w < 320 {
 		w = 320

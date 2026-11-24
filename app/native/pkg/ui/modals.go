@@ -73,6 +73,15 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowUsageModal {
 		a.renderUsageQuotaModal(c)
 	}
+	if a.ShowHandoffModal {
+		a.renderHandoffModal(c)
+	}
+	if a.ShowNewBotModal {
+		a.renderNewBotModal(c)
+	}
+	if a.ShowSpawnWorkerModal {
+		a.renderSpawnWorkerModal(c)
+	}
 	if a.ShowRulesModal {
 		a.renderUnifiedRulesModal(c)
 	}

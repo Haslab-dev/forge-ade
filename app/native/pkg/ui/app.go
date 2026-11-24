@@ -73,10 +73,10 @@ const (
 
 // Layout metrics of ForgeADE's CSS
 const (
-	WorkspaceTopBarHeight = float32(42)
+	WorkspaceTopBarHeight = float32(36)
 	RightDrawerDefault    = float32(360)
 	LeftSidebarDefault    = float32(288)
-	TerminalHeaderHeight  = float32(36)
+	TerminalHeaderHeight  = float32(34)
 	StatusBarHeight       = float32(24)
 	ActivityBarWidth      = float32(48)
 	FileTreeDefaultWidth  = float32(230)
@@ -308,9 +308,40 @@ type AppUI struct {
 	// Image & SVG Viewer state
 	ImageZoom    map[string]float32 // zoom multiplier (0 = fit to window)
 	ImageFitMode map[string]bool    // fit to window flag
-	ImageBgStyle map[string]string  // "grid" (default), "dark", "light"
-	SVGViewMode  map[string]string  // "preview" (default) or "code"
-	imageCache   map[string]*cachedImage
+
+	// Local Bots, ACP Handoff, Multi-Tab & Hybrid Worker Orchestration state
+	AgentOpenTabs          []string
+	AgentSplitSessionID    string
+	AgentSplitWidth        float32
+	AgentSplitInput        string
+	Bots                   *agent.BotStore
+	BotsSectionCollapsed   bool
+	ShowHandoffModal       bool
+	HandoffSourceID        string
+	HandoffTargetAgentID   string
+	HandoffTargetAgentType string
+	HandoffTargetModel     string
+	HandoffGoal            string
+	HandoffNextSteps       string
+	HandoffCreateWorktree  bool
+	HandoffWorktreeBranch  string
+	HandoffError           string
+	ShowNewBotModal        bool
+	NewBotName             string
+	NewBotRole             string
+	NewBotPrompt           string
+	NewBotAgentID          string
+	NewBotAgentType        string
+	ShowSpawnWorkerModal   bool
+	WorkerNameInput        string
+	WorkerTaskInput        string
+	WorkerAgentID          string
+	WorkerAgentType        string
+	WorkerUseWorktree      bool
+	WorkerError            string
+	ImageBgStyle           map[string]string // "grid" (default), "dark", "light"
+	SVGViewMode            map[string]string // "preview" (default) or "code"
+	imageCache             map[string]*cachedImage
 
 	// Render-path performance caches (avoid per-frame os.Stat / os.ReadDir / allocs)
 	dirExistsCache    map[string]dirExistsEntry
@@ -683,6 +714,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		FileSearchMode:                 "files",
 		SideFileDiffMode:               make(map[string]bool),
 		ImageZoom:                      make(map[string]float32),
+		Bots:                           agent.NewBotStore(""),
 		ImageFitMode:                   make(map[string]bool),
 		ImageBgStyle:                   make(map[string]string),
 		SVGViewMode:                    make(map[string]string),
@@ -1545,8 +1577,24 @@ func (a *AppUI) View(c *ui.Context) {
 		}
 	}
 
-	// Root layout
-	if (a.Mode == ModeAgent || a.Mode == ModeStudio) && a.ShowLeftSidebar {
+	// Root layout: in Agent Mode, anchor the Orca-style full-width bottom
+	// quota/status strip cleanly below BOTH the Left Sidebar and Main workspace.
+	if a.Mode == ModeAgent {
+		ui.Column(c).Fill().Children(func() {
+			ui.Box(c).Grow(1).FillWidth().Clip().Children(func() {
+				if a.ShowLeftSidebar {
+					ui.Split(c, &a.LeftSidebarWidth, func() {
+						a.renderAgentSidebar(c)
+					}, func() {
+						a.renderMainColumn(c)
+					}).SplitReset(LeftSidebarDefault).Fill()
+				} else {
+					a.renderMainColumn(c)
+				}
+			})
+			a.renderAgentBottomBar(c)
+		})
+	} else if a.Mode == ModeStudio && a.ShowLeftSidebar {
 		ui.Split(c, &a.LeftSidebarWidth, func() {
 			a.renderAgentSidebar(c)
 		}, func() {
@@ -2376,6 +2424,7 @@ func (a *AppUI) selectAgentSession(s *agent.AgentSession) {
 	}
 	a.ActiveTaskKind = "agent"
 	a.AgentViewMode = AgentViewChat
+	a.ensureAgentTab(s.ID)
 	if a.Agent != nil {
 		a.Agent.SelectSession(s.ID)
 		if a.Mode == ModeStudio {
@@ -2996,16 +3045,49 @@ func (a *AppUI) renderMainColumn(c *ui.Context) {
 		return
 	}
 
-	// ZCode 3-column layout in Agent Mode: Center workspace (header + chat/terminal)
-	// alongside a full-height collapsible Right Sidebar (spanning Y=0 to bottom).
+	// Agent Mode multi-pane workspace: primary center pane (+ optional side-by-side
+	// split session pane, Orca style) + collapsible right drawer.
 	ui.Row(c).Grow(1).FillHeight().AlignItems(ui.Stretch).Children(func() {
-		ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
-			a.renderWorkspaceHeader(c)
+		splitSess := (*agent.AgentSession)(nil)
+		if a.AgentSplitSessionID != "" && !a.IsGitClientOpen && a.AgentViewMode == AgentViewChat {
+			splitSess = a.findAgentSessionByID(a.AgentSplitSessionID)
+		}
 
-			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-				a.renderAgentSurface(c)
+		renderPrimaryPane := func() {
+			ui.Column(c).Grow(1).FillHeight().Clip().Children(func() {
+				a.renderWorkspaceHeader(c)
+
+				ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+					a.renderAgentSurface(c)
+				})
 			})
-		})
+		}
+
+		if splitSess != nil {
+			half := float32(480)
+			if winW, _ := c.Size(); winW > 0 {
+				avail := winW
+				if a.ShowLeftSidebar {
+					avail -= a.LeftSidebarWidth
+				}
+				if a.ShowRightDrawer {
+					avail -= a.RightDrawerWidth
+				}
+				if avail > 640 {
+					half = avail / 2
+				}
+			}
+			if a.AgentSplitWidth <= 0 {
+				a.AgentSplitWidth = half
+			}
+			ui.Split(c, &a.AgentSplitWidth, func() {
+				renderPrimaryPane()
+			}, func() {
+				a.renderSplitSessionPane(c, a.ThemeMgr.Colors(), splitSess)
+			}).SplitReset(half).Grow(1).FillHeight()
+		} else {
+			renderPrimaryPane()
+		}
 
 		if a.ShowRightDrawer {
 			maxRight := float32(750)

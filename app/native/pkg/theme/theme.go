@@ -103,13 +103,14 @@ func ShortenPath(fullPath, rootDir string) string {
 
 // Built-in theme palette identifiers matching ForgeADE themePalettes.ts
 const (
-	ThemePaletteDefault = "forge-default" // ForgeADE
-	ThemePaletteBlossom = "blossom"       // Blossom
-	ThemePaletteGrove   = "grove"         // Grove
-	ThemePaletteOcean   = "ocean"         // Ocean
-	ThemePaletteEmber   = "ember"         // Ember
-	ThemePaletteIris    = "iris"          // Iris
-	ThemePaletteGlass   = "glass"         // Glass — translucent chrome over the OS material
+	ThemePaletteObsidian = "obsidian"      // Obsidian — neutral carbon chrome inspired by Orca
+	ThemePaletteDefault  = "forge-default" // ForgeADE
+	ThemePaletteBlossom  = "blossom"       // Blossom
+	ThemePaletteGrove    = "grove"         // Grove
+	ThemePaletteOcean    = "ocean"         // Ocean
+	ThemePaletteEmber    = "ember"         // Ember
+	ThemePaletteIris     = "iris"          // Iris
+	ThemePaletteGlass    = "glass"         // Glass — translucent chrome over the OS material
 )
 
 // PaletteDefinition describes one theme family for the pickers.
@@ -145,11 +146,11 @@ type ThemeManager struct {
 // (--ui-font-size: 0.875rem at a 16px root).
 const DefaultFontSize = 14
 
-// NewThemeManager constructs the styling engine with default Forge dark appearance.
+// NewThemeManager constructs the styling engine with default Obsidian dark appearance.
 func NewThemeManager() *ThemeManager {
 	return &ThemeManager{
 		Appearance: "dark",
-		PaletteID:  ThemePaletteDefault,
+		PaletteID:  ThemePaletteObsidian,
 		FontSize:   DefaultFontSize,
 		FontFamily: FontSans,
 		ChatWidth:  "full",
@@ -180,17 +181,19 @@ func (tm *ThemeManager) Colors() ThemeColors {
 // AvailablePalettes returns all built-in ForgeADE color palettes.
 func (tm *ThemeManager) AvailablePalettes() []PaletteDefinition {
 	swatches := map[string]string{
-		ThemePaletteDefault: "#6366f1",
-		ThemePaletteBlossom: "#f43f5e",
-		ThemePaletteGrove:   "#10b981",
-		ThemePaletteOcean:   "#0ea5e9",
-		ThemePaletteEmber:   "#f59e0b",
-		ThemePaletteIris:    "#8b5cf6",
-		ThemePaletteGlass:   "#94a3b8",
+		ThemePaletteObsidian: "#27272a",
+		ThemePaletteDefault:  "#6366f1",
+		ThemePaletteBlossom:  "#f43f5e",
+		ThemePaletteGrove:    "#10b981",
+		ThemePaletteOcean:    "#0ea5e9",
+		ThemePaletteEmber:    "#f59e0b",
+		ThemePaletteIris:     "#8b5cf6",
+		ThemePaletteGlass:    "#94a3b8",
 	}
 	metas := []struct {
 		id, name, desc string
 	}{
+		{ThemePaletteObsidian, "Obsidian", "Neutral carbon chrome with hairline borders and high-signal accents"},
 		{ThemePaletteDefault, "ForgeADE", "Cool gray-blue chrome with a cobalt action color"},
 		{ThemePaletteBlossom, "Blossom", "Rose & sakura pastel with soft warm contrasts"},
 		{ThemePaletteGrove, "Grove", "Forest emerald and sage nature aesthetic"},

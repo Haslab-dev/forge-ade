@@ -99,6 +99,72 @@ type ThemeColors struct {
 // palettes; forgePaletteDark its dark variant. Blossom's dark variant is
 // Forge Default's, exactly as in themePalettes.ts.
 
+func obsidianLight() ThemeColors {
+	return ThemeColors{
+		Canvas: ok(0.992, 0.001, 260), Chrome: ok(0.976, 0.001, 260),
+		Toolbar: ok(0.976, 0.001, 260), ToolbarForeground: ok(0.18, 0.004, 260),
+		ToolbarBorder: ok(0.905, 0.002, 260), ToolbarControl: ok(0.952, 0.002, 260),
+		ToolbarControlForeground: ok(0.24, 0.004, 260), ToolbarControlHover: ok(0.928, 0.003, 260),
+		Surface: ok(0.974, 0.001, 260), SurfaceRaised: ok(0.996, 0.001, 260), SurfaceOverlay: ok(1, 0, 0),
+		Text: ok(0.155, 0.004, 260), TextMuted: ok(0.47, 0.006, 260),
+		Border: ok(0.90, 0.003, 260), Input: ok(0.885, 0.003, 260),
+		Focus: ok(0.54, 0.18, 255), Accent: ok(0.54, 0.18, 255), AccentForeground: ok(1, 0, 0),
+		Secondary: ok(0.955, 0.002, 260), SecondaryForeground: ok(0.22, 0.004, 260),
+		Muted: ok(0.948, 0.002, 260), MutedForeground: ok(0.48, 0.006, 260),
+		Placeholder: ok(0.58, 0.005, 260), SecondaryLabel: ok(0.46, 0.006, 260), IconMuted: ok(0.50, 0.005, 260),
+		Error: ok(0.58, 0.21, 25), ErrorForeground: ok(0.44, 0.18, 25), ErrorSurface: ok(0.965, 0.018, 25),
+		Warning: ok(0.73, 0.16, 68), WarningForeground: ok(0.50, 0.14, 55), WarningSurface: ok(0.968, 0.018, 68),
+		Update: ok(0.54, 0.18, 255), UpdateForeground: ok(0.44, 0.17, 255), UpdateSurface: ok(0.955, 0.018, 255),
+		AccentSurface: ok(0.952, 0.012, 255), AccentSurfaceForeground: ok(0.26, 0.03, 255),
+		MessageSurface: ok(0.956, 0.002, 260), MessageForeground: ok(0.16, 0.004, 260),
+		MessageAction: ok(0.20, 0.004, 260), MessageActionForeground: ok(0.99, 0, 0), MessageActionHover: ok(0.28, 0.004, 260),
+		CodeBackground: ok(0.964, 0.002, 260), CodeForeground: ok(0.20, 0.005, 260),
+		SearchMatchBackground: ok(0.915, 0.11, 85), SearchMatchForeground: ok(0.216164, 0.028283, 77.423),
+		SearchMatchActiveBackground: ok(0.774202, 0.151946, 74.331), SearchMatchActiveForeground: ok(0.216164, 0.028283, 77.423),
+		Sidebar: ok(0.968, 0.001, 260), SidebarForeground: ok(0.18, 0.004, 260),
+		SidebarMutedForeground: ok(0.49, 0.006, 260), SidebarControlSurface: ok(0.992, 0.001, 260),
+		SidebarRowHover: ok(0.946, 0.002, 260), SidebarRowActive: ok(0.925, 0.003, 260),
+		SidebarRowSelected: ok(0.932, 0.003, 260), SidebarBorder: ok(0.905, 0.002, 260),
+		TerminalBackground: ok(0.992, 0.001, 260), TerminalForeground: ok(0.18, 0.004, 260),
+		TerminalCursor: ok(0.54, 0.18, 255), TerminalSelection: ok(0.88, 0.03, 255),
+		TerminalScrollbar: ok(0.86, 0.003, 260), TerminalScrollbarHover: ok(0.78, 0.005, 260),
+	}
+}
+
+func obsidianDark() ThemeColors {
+	hairline := ui.RGBA(255, 255, 255, 0.08)
+	return ThemeColors{
+		Canvas: ok(0.105, 0, 0), Chrome: ok(0.125, 0, 0),
+		Toolbar: ok(0.125, 0, 0), ToolbarForeground: ok(0.95, 0, 0),
+		ToolbarBorder: hairline, ToolbarControl: ui.RGBA(255, 255, 255, 0.06),
+		ToolbarControlForeground: ok(0.82, 0, 0), ToolbarControlHover: ui.RGBA(255, 255, 255, 0.10),
+		Surface: ok(0.155, 0, 0), SurfaceRaised: ok(0.195, 0, 0), SurfaceOverlay: ok(0.225, 0, 0),
+		Text: ok(0.95, 0, 0), TextMuted: ok(0.68, 0, 0),
+		Border: hairline, Input: ui.RGBA(255, 255, 255, 0.14),
+		Focus: ok(0.66, 0.16, 250), Accent: ok(0.66, 0.16, 250), AccentForeground: ok(0.99, 0, 0),
+		Secondary: ok(0.21, 0, 0), SecondaryForeground: ok(0.92, 0, 0),
+		Muted: ok(0.20, 0, 0), MutedForeground: ok(0.66, 0, 0),
+		Placeholder: ok(0.50, 0, 0), SecondaryLabel: ok(0.68, 0, 0), IconMuted: ok(0.64, 0, 0),
+		Error: ok(0.62, 0.21, 25), ErrorForeground: ok(0.95, 0.02, 25), ErrorSurface: ok(0.18, 0.055, 25),
+		Warning: ok(0.75, 0.165, 68), WarningForeground: ok(0.95, 0.04, 68), WarningSurface: ok(0.20, 0.045, 68),
+		Update: ok(0.66, 0.16, 250), UpdateForeground: ok(0.95, 0.02, 250), UpdateSurface: ok(0.18, 0.04, 250),
+		AccentSurface: ui.RGBA(255, 255, 255, 0.08), AccentSurfaceForeground: ok(0.95, 0, 0),
+		MessageSurface: ui.RGBA(255, 255, 255, 0.065), MessageForeground: ok(0.95, 0, 0),
+		MessageAction: ok(0.92, 0, 0), MessageActionForeground: ok(0.11, 0, 0), MessageActionHover: ok(0.84, 0, 0),
+		CodeBackground: ui.RGBA(255, 255, 255, 0.04), CodeForeground: ok(0.90, 0, 0),
+		SearchMatchBackground: ok(0.55, 0.1, 85), SearchMatchForeground: ok(0.970151, 0, 0),
+		SearchMatchActiveBackground: ok(0.774202, 0.151946, 74.331), SearchMatchActiveForeground: ok(0.216164, 0.028283, 77.423),
+		// Lifted neutral sidebar above the deep #0a0a0a canvas (Orca style)
+		Sidebar: ok(0.175, 0, 0), SidebarForeground: ok(0.94, 0, 0),
+		SidebarMutedForeground: ok(0.64, 0, 0), SidebarControlSurface: ui.RGBA(255, 255, 255, 0.055),
+		SidebarRowHover: ui.RGBA(255, 255, 255, 0.06), SidebarRowActive: ui.RGBA(255, 255, 255, 0.10),
+		SidebarRowSelected: ui.RGBA(255, 255, 255, 0.11), SidebarBorder: hairline,
+		TerminalBackground: ok(0.105, 0, 0), TerminalForeground: ok(0.94, 0, 0),
+		TerminalCursor: ok(0.92, 0, 0), TerminalSelection: ui.RGBA(255, 255, 255, 0.16),
+		TerminalScrollbar: ui.RGBA(255, 255, 255, 0.14), TerminalScrollbarHover: ui.RGBA(255, 255, 255, 0.24),
+	}
+}
+
 func forgeDefaultLight() ThemeColors {
 	return ThemeColors{
 		Canvas: ok(0.985, 0.002, 260), Chrome: ok(0.98, 0.002, 260),
@@ -487,6 +553,11 @@ func addSemanticExtras(tc *ThemeColors, dark bool) {
 func PaletteColors(paletteID string, dark bool) ThemeColors {
 	tc := func() ThemeColors {
 		switch paletteID {
+		case ThemePaletteObsidian:
+			if dark {
+				return obsidianDark()
+			}
+			return obsidianLight()
 		case ThemePaletteBlossom:
 			if dark {
 				return forgeDefaultDark() // blossom's dark variant is forge-default's

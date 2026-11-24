@@ -12,11 +12,12 @@ func TestThemePalettes(t *testing.T) {
 	}
 
 	palettes := tm.AvailablePalettes()
-	if len(palettes) != 7 {
-		t.Fatalf("expected 7 built-in ForgeADE palettes, got %d", len(palettes))
+	if len(palettes) != 8 {
+		t.Fatalf("expected 8 built-in ForgeADE palettes, got %d", len(palettes))
 	}
 
 	expectedIDs := []string{
+		ThemePaletteObsidian,
 		ThemePaletteDefault,
 		ThemePaletteBlossom,
 		ThemePaletteGrove,

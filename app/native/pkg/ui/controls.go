@@ -247,13 +247,34 @@ func relativeTime(t time.Time) string {
 	}
 }
 
-// renderTaskRow draws AgentSidebar's TaskRow: rounded-[8px] py-1.5 pl-2.5
+// shortSidebarModel compresses a model identifier into a compact Orca-style
+// label for sidebar task rows (e.g., "claude-opus-4-6" -> "opus-4-6").
+func shortSidebarModel(model string) string {
+	m := strings.TrimSpace(model)
+	if m == "" {
+		return ""
+	}
+	if idx := strings.LastIndexByte(m, '/'); idx >= 0 && idx+1 < len(m) {
+		m = m[idx+1:]
+	}
+	if idx := strings.Index(m, " ("); idx > 0 {
+		m = m[:idx]
+	}
+	m = strings.TrimPrefix(m, "claude-")
+	m = strings.TrimPrefix(m, "models-")
+	if runes := []rune(m); len(runes) > 13 {
+		return string(runes[:12]) + "…"
+	}
+	return m
+}
+
+// renderTaskRow draws AgentSidebar's TaskRow: rounded-[6px] py-1 pl-2
 // pr-2 gap-2, active bg-foreground/10, real provider brand SVG icon with status dot
 // pinned to its corner (running/awaiting only — idle rows show no dot),
 // CLI sessions display agent brand icon + terminal icon group,
-// single-line title with inline pin, relative time, hover-only actions.
+// single-line title with inline pin, compact model + relative time, hover-only actions.
 func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
-	row := ui.Row(c.Key(d.Key)).Height(32).Radius(8).Padding(0, 8, 0, 8).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+	row := ui.Row(c.Key(d.Key)).Height(30).Radius(6).Padding(0, 7, 0, 6).Gap(7).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	isRunning := d.Status == "running" || d.Status == "working"
 	isAwaiting := d.Status == "awaiting-approval" || d.Status == "waiting"
 	actionClicked := false
@@ -367,15 +388,18 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			DiffStatText(c, tc, d.DiffAdded, d.DiffRemoved)
 		}
 
-		// Time (with running pulse dot), hidden while the hover actions show.
+		// Model tag + relative time (with running pulse dot), hidden while hover actions show.
 		if !row.Hovered() {
-			timeRow := ui.Row(c).Gap(4).AlignItems(ui.Center)
+			timeRow := ui.Row(c).Gap(5).AlignItems(ui.Center).Shrink(0)
 			timeRow.Children(func() {
 				if isRunning {
 					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
 				}
+				if mLabel := shortSidebarModel(d.Model); mLabel != "" && !d.IsCLI && d.DiffAdded == 0 && d.DiffRemoved == 0 && !isAwaiting {
+					ui.Text(c, mLabel).FontSize(10).TextColor(tc.SidebarMutedForeground.Alpha(0.75)).SingleLine()
+				}
 				if ts := relativeTime(d.UpdatedTime); ts != "" {
-					ui.Text(c, ts).FontSize(11).TextColor(tc.SidebarMutedForeground)
+					ui.Text(c, ts).FontSize(10.5).TextColor(tc.SidebarMutedForeground)
 				}
 			})
 		}
