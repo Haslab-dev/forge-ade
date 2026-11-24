@@ -1887,6 +1887,10 @@ func (a *AppUI) studioOpenLocalHTMLFile() {
 }
 
 func (a *AppUI) scanStudioMediaLibrary() []corestudio.MediaAsset {
+	if !a.studioMediaScanAt.IsZero() && time.Since(a.studioMediaScanAt) < 2*time.Second {
+		return a.studioMediaCache
+	}
+	a.studioMediaScanAt = time.Now()
 	type foundFile struct {
 		asset   corestudio.MediaAsset
 		modTime int64
@@ -1985,6 +1989,7 @@ func (a *AppUI) scanStudioMediaLibrary() []corestudio.MediaAsset {
 	for _, item := range collected {
 		out = append(out, item.asset)
 	}
+	a.studioMediaCache = out
 	return out
 }
 

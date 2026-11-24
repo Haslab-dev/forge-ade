@@ -25,13 +25,25 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 	if as == nil {
 		return
 	}
+	themeKey := a.ThemeMgr.Appearance + ":" + a.ThemeMgr.PaletteID
+	if as.MdOpts.OnLink != nil && a.mdOptsThemeKey == themeKey {
+		return
+	}
+	a.mdOptsThemeKey = themeKey
 	as.MdOpts.Theme = a.ThemeMgr.MarkdownTheme()
 	as.MdOpts.WrapCode = true
 	// Reveal at once with no fade animation so markdown.Stream does not schedule
 	// continuous 60fps/120fps AnimationFrame redraws and repeated AST parsing.
-	as.MdOpts.Reveal = &markdown.Reveal{
-		Unit: markdown.AtOnce,
-		Fade: -1,
+	if as.MdOpts.Reveal == nil {
+		as.MdOpts.Reveal = &markdown.Reveal{
+			Unit: markdown.AtOnce,
+			Fade: -1,
+		}
+	}
+
+	if as.MdOpts.OnLink != nil {
+		// Closures below read live a.ThemeMgr.Colors(), so they only need to be wired once.
+		return
 	}
 
 	// Markdown links to workspace or local files open in the right drawer's side
@@ -51,25 +63,25 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 
 	// Custom CodeBlock renderer for standard programming languages
 	as.MdOpts.CodeBlock = func(c *ui.Context, b *markdown.CodeBlockView) {
-		a.renderMarkdownCodeBlock(c, tc, b)
+		a.renderMarkdownCodeBlock(c, a.ThemeMgr.Colors(), b)
 	}
 
 	// Specialized code block renderers for JSON & Forge-Design
 	as.MdOpts.Code = map[string]func(c *ui.Context, b *markdown.CodeBlockView){
 		"json": func(c *ui.Context, b *markdown.CodeBlockView) {
-			a.renderMarkdownJSONBlock(c, tc, b)
+			a.renderMarkdownJSONBlock(c, a.ThemeMgr.Colors(), b)
 		},
 		"jsonc": func(c *ui.Context, b *markdown.CodeBlockView) {
-			a.renderMarkdownJSONBlock(c, tc, b)
+			a.renderMarkdownJSONBlock(c, a.ThemeMgr.Colors(), b)
 		},
 		"forge-design": func(c *ui.Context, b *markdown.CodeBlockView) {
-			a.renderMarkdownForgeDesignBlock(c, tc, b)
+			a.renderMarkdownForgeDesignBlock(c, a.ThemeMgr.Colors(), b)
 		},
 		"opendesign": func(c *ui.Context, b *markdown.CodeBlockView) {
-			a.renderMarkdownForgeDesignBlock(c, tc, b)
+			a.renderMarkdownForgeDesignBlock(c, a.ThemeMgr.Colors(), b)
 		},
 		"open-design": func(c *ui.Context, b *markdown.CodeBlockView) {
-			a.renderMarkdownForgeDesignBlock(c, tc, b)
+			a.renderMarkdownForgeDesignBlock(c, a.ThemeMgr.Colors(), b)
 		},
 	}
 }

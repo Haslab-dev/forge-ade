@@ -300,6 +300,12 @@ type AppUI struct {
 	SVGViewMode  map[string]string  // "preview" (default) or "code"
 	imageCache   map[string]*cachedImage
 
+	// Render-path performance caches (avoid per-frame os.Stat / os.ReadDir / allocs)
+	dirExistsCache    map[string]dirExistsEntry
+	studioMediaScanAt time.Time
+	studioMediaCache  []corestudio.MediaAsset
+	mdOptsThemeKey    string
+
 	// Right-drawer browser viewer tab (native web view) + subagent pane.
 	BrowserWebView    *mygo.WebView
 	BrowserURLInput   string
@@ -1552,6 +1558,29 @@ func (a *AppUI) View(c *ui.Context) {
 	}
 }
 
+type dirExistsEntry struct {
+	exists    bool
+	checkedAt time.Time
+}
+
+// isExistingDirCached avoids per-frame os.Stat syscalls in the render loop
+// (sidebar project grouping / project selector) using a short 10s TTL cache.
+func (a *AppUI) isExistingDirCached(path string) bool {
+	if path == "" {
+		return false
+	}
+	if a.dirExistsCache == nil {
+		a.dirExistsCache = make(map[string]dirExistsEntry)
+	}
+	if ent, ok := a.dirExistsCache[path]; ok && time.Since(ent.checkedAt) < 10*time.Second {
+		return ent.exists
+	}
+	info, err := os.Stat(path)
+	ok := err == nil && info.IsDir()
+	a.dirExistsCache[path] = dirExistsEntry{exists: ok, checkedAt: time.Now()}
+	return ok
+}
+
 // Close releases background tickers and terminal processes owned by AppUI.
 func (a *AppUI) Close() {
 	if a == nil {
@@ -1569,7 +1598,7 @@ func (a *AppUI) Close() {
 		a.SaveUIPrefs()
 	}
 	if a.Engine != nil {
-		a.Engine.StopWatcher()
+		a.Engine.Close()
 	}
 	if a.CLIMgr != nil {
 		a.CLIMgr.StopAll()

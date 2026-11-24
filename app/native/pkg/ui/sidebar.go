@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -849,7 +848,7 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 				continue
 			}
 			if !strings.HasPrefix(normRP, "ssh://") {
-				if info, err := os.Stat(normRP); err != nil || !info.IsDir() {
+				if !a.isExistingDirCached(normRP) {
 					continue
 				}
 			}
@@ -1129,7 +1128,7 @@ func (a *AppUI) sidebarProjectNames(activeProject string) []string {
 			continue
 		}
 		if !strings.HasPrefix(normRP, "ssh://") {
-			if info, err := os.Stat(normRP); err != nil || !info.IsDir() {
+			if !a.isExistingDirCached(normRP) {
 				continue
 			}
 		}

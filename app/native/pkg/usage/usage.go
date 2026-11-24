@@ -103,6 +103,7 @@ type UsageManager struct {
 	filePath     string
 	entries      []UsageEntry
 	knownIDs     map[string]bool
+	scannedFiles map[string]int64
 	dirty        bool
 	saveTimer    *time.Timer
 	provResolver func(model, provID string) string
@@ -120,6 +121,7 @@ func NewUsageManager(dataDir string, provResolver func(model, provID string) str
 		dataDir:      dataDir,
 		filePath:     filepath.Join(dataDir, "usage_ledger.json"),
 		knownIDs:     make(map[string]bool),
+		scannedFiles: make(map[string]int64),
 		provResolver: provResolver,
 	}
 
@@ -331,10 +333,30 @@ func (um *UsageManager) BackfillHistoricalSessions(customDirs ...string) {
 				return nil
 			}
 
+			// Fast-path skip BEFORE reading/unmarshaling JSON from disk:
+			// 1. Session files are named "<sessionID>.json" -> check knownIDs by filename stem.
+			// 2. Skip unchanged files already scanned in this process.
+			stem := strings.TrimSuffix(info.Name(), ".json")
+			modNano := info.ModTime().UnixNano()
+			um.mu.RLock()
+			skipKnown := um.knownIDs["sess-"+stem] || um.knownIDs[stem]
+			skipScanned := um.scannedFiles != nil && um.scannedFiles[path] == modNano
+			um.mu.RUnlock()
+			if skipKnown || skipScanned {
+				return nil
+			}
+
 			data, rerr := os.ReadFile(path)
 			if rerr != nil {
 				return nil
 			}
+
+			um.mu.Lock()
+			if um.scannedFiles == nil {
+				um.scannedFiles = make(map[string]int64)
+			}
+			um.scannedFiles[path] = modNano
+			um.mu.Unlock()
 
 			var s diskSessRaw
 			if json.Unmarshal(data, &s) != nil || s.ID == "" {

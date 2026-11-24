@@ -615,6 +615,21 @@ func (e *Engine) StopWatcher() {
 	}
 }
 
+// Close stops all background engine goroutines (watcher, automation scheduler, shells).
+func (e *Engine) Close() {
+	if e == nil {
+		return
+	}
+	e.StopWatcher()
+	if e.autoCancel != nil {
+		e.autoCancel()
+		e.autoCancel = nil
+	}
+	if e.ShellMgr != nil {
+		e.ShellMgr.StopAll()
+	}
+}
+
 // GetLLMConfig returns the persisted LLM profile.
 func (e *Engine) GetLLMConfig() llm.Profile {
 	if e.LLMClient == nil {
