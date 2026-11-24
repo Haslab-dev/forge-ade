@@ -49,13 +49,16 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 
 			// 1. Header Bar: Back Button, Breadcrumb, Search Bar, Close Button
 			ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, rightPad, 0, leftPad).Gap(12).AlignItems(ui.Center).
-				BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).DragWindow().Children(func() {
+				Background(tc.Chrome).BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).DragWindow().Children(func() {
 
-				backBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
-					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				backBtn := ui.Row(c.Key("settings-back-btn")).Height(28).Radius(7).Padding(0, 9).Gap(6).AlignItems(ui.Center).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).Cursor(ui.CursorPointer)
+				if backBtn.Hovered() {
+					backBtn.Background(tc.ToolbarControlHover)
+				}
 				backBtn.Children(func() {
 					ui.Icon(c, icons.TablerArrowLeft).Width(13).Height(13).TextColor(tc.IconMuted)
-					ui.Text(c, "Back to workspace").FontSize(12).FontWeight(500)
+					ui.Text(c, "Back to workspace").FontSize(12).FontWeight(500).TextColor(tc.Text)
 				})
 				if backBtn.Clicked() {
 					a.closeSettings()
@@ -63,22 +66,35 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 
 				// Breadcrumb
 				sectionName := settingsSectionTitle(sm.ActiveTab)
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "Settings").FontSize(13).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Settings").FontSize(12.5).TextColor(tc.TextMuted)
 					ui.Icon(c, icons.TablerChevronRight).Width(11).Height(11).TextColor(tc.IconMuted)
-					ui.Text(c, sectionName).FontSize(13).FontWeight(600)
+					ui.Text(c, sectionName).FontSize(12.5).FontWeight(600).TextColor(tc.Text)
 				})
 
 				ui.Box(c).Grow(1)
 
 				// Search input
-				ui.Row(c).Width(220).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).
-					Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+				ui.Row(c).Width(230).Height(28).Radius(7).Padding(0, 8).Gap(6).AlignItems(ui.Center).
+					Background(tc.Input).BorderWidth(1).BorderColor(tc.Border).Children(func() {
 					ui.Icon(c, icons.TablerSearch).Width(12).Height(12).TextColor(tc.IconMuted)
-					ui.TextInput(c, &sm.SearchQuery).Placeholder("Search settings...").Grow(1)
+					ui.TextInput(c, &sm.SearchQuery).Placeholder("Filter settings...").Grow(1)
+					if sm.SearchQuery != "" {
+						clr := ui.Row(c.Key("settings-search-clear")).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+						clr.Children(func() {
+							ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.IconMuted)
+						})
+						if clr.Clicked() {
+							sm.SearchQuery = ""
+						}
+					}
 				})
 
-				closeBtn := ui.Row(c).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+				closeBtn := ui.Row(c.Key("settings-close-btn")).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+				if closeBtn.Hovered() {
+					closeBtn.Background(tc.ToolbarControlHover)
+				}
+				closeBtn.Tooltip("Close Settings (Esc)")
 				closeBtn.Children(func() {
 					ui.Icon(c, icons.TablerX).Width(13).Height(13).TextColor(tc.IconMuted)
 				})
@@ -87,103 +103,103 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 				}
 			})
 
-			// 2. Main Body: Split Sidebar & Content Area
+			// 2. Main Body: Split Scrollable Sidebar & Centered Content Area
 			ui.Row(c).Grow(1).FillWidth().Children(func() {
-				// Left Navigation Sidebar (210px)
-				ui.Column(c).Width(210).FillHeight().Background(tc.Sidebar).
-					BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
-					Padding(12, 8).Gap(14).Children(func() {
+				// Left Navigation Sidebar (228px, scrollable so all 19 sections fit any viewport)
+				ui.Column(c).Width(228).FillHeight().Background(tc.Sidebar).
+					BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
+					ui.Scroll(c.Key("settings-nav-scroll")).Grow(1).Children(func() {
+						ui.Column(c).Padding(14, 10, 20, 10).Gap(14).Children(func() {
+							navGroup := func(title string, items func()) {
+								ui.Column(c).Gap(2).Children(func() {
+									ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
+										ui.Text(c, title).FontSize(10).FontWeight(700).LetterSpacing(0.6).
+											TextColor(tc.SidebarMutedForeground)
+									})
+									items()
+								})
+							}
 
-					// Group 1: Models & Agents
-					ui.Column(c).Gap(2).Children(func() {
-						ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
-							ui.Text(c, "MODELS & AGENTS").FontSize(10).FontWeight(700).LetterSpacing(0.5).
-								TextColor(tc.SidebarMutedForeground)
+							navGroup("MODELS & AGENTS", func() {
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabStudio, "Studio & Generative APIs", icons.TablerSparkles, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerUser, "")
+							})
+
+							navGroup("ANALYTICS & QUOTA", func() {
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabUsage, "Usage Stats", icons.TablerChartBar, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAntigravityQuota, "Antigravity Quota", icons.TablerActivity, "")
+							})
+
+							navGroup("EXTENSIONS & TOOLS", func() {
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabCommands, "Slash Commands", icons.TablerCode, "")
+							})
+
+							navGroup("WORKSPACE & AUTOMATION", func() {
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabGeneral, "General", icons.TablerSettings, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAppearance, "Appearance", icons.TablerPalette, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabShortcuts, "Shortcuts & Keys", icons.TablerKeyboard, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMemory, "Memory", icons.TablerBrain, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabBrowser, "Browser Use", icons.TablerWorld, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabComputer, "Computer Use", icons.TablerCpu, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabIndexing, "Codebase Indexing", icons.TablerDatabase, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAutos, "Automations", icons.TablerClock, "")
+								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabHooks, "Lifecycle Hooks", icons.TablerGitFork, "")
+							})
 						})
-
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "ACP")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabUsage, "Usage Stats", icons.TablerChartBar, "STATS")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAntigravityQuota, "Antigravity Quota", icons.TablerChartBar, "MULTI")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerBot, "MULTI")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabCommands, "Slash Commands", icons.TablerCode, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabStudio, "Studio & Generative APIs", icons.TablerSparkles, "NEW")
-					})
-
-					// Group 2: Workspace & Capabilities
-					ui.Column(c).Gap(2).Children(func() {
-						ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
-							ui.Text(c, "WORKSPACE & CAPABILITIES").FontSize(10).FontWeight(700).LetterSpacing(0.5).
-								TextColor(tc.SidebarMutedForeground)
-						})
-
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabGeneral, "General", icons.TablerSettings, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAppearance, "Appearance", icons.TablerPalette, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMemory, "Memory", icons.TablerBrain, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabShortcuts, "Shortcuts & Keys", icons.TablerKeyboard, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabBrowser, "Browser Use", icons.TablerWorld, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabComputer, "Computer Use", icons.TablerCpu, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabIndexing, "Codebase Indexing", icons.TablerDatabase, "")
-					})
-
-					// Group 3: Automation
-					ui.Column(c).Gap(2).Children(func() {
-						ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
-							ui.Text(c, "AUTOMATION").FontSize(10).FontWeight(700).LetterSpacing(0.5).
-								TextColor(tc.SidebarMutedForeground)
-						})
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAutos, "Automations", icons.TablerClock, "")
-						a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabHooks, "Lifecycle Hooks", icons.TablerGitFork, "")
 					})
 				})
 
-				// Right Content Pane
-				ui.Column(c).Grow(1).FillHeight().Padding(16, 24).Children(func() {
-					ui.Scroll(c).Grow(1).Children(func() {
-						ui.Column(c).Gap(18).Children(func() {
-							switch sm.ActiveTab {
-							case settings.SettingsTabModels:
-								a.renderSettingsTabModels(c, tc, sm)
-							case settings.SettingsTabAgents:
-								a.renderSettingsTabAgents(c, tc, sm)
-							case settings.SettingsTabAntigravityQuota:
-								a.renderSettingsTabAntigravityQuota(c, tc, sm)
-							case settings.SettingsTabMCP:
-								a.renderSettingsTabMCPReal(c, tc, sm)
-							case settings.SettingsTabSkills:
-								a.renderSettingsTabSkillsReal(c, tc, sm)
-							case settings.SettingsTabPlugins:
-								a.renderSettingsTabPlugins(c, tc, sm)
-							case settings.SettingsTabMemory:
-								a.renderSettingsTabMemory(c, tc, sm)
-							case settings.SettingsTabAutos:
-								a.renderSettingsTabAutomations(c, tc, sm)
-							case settings.SettingsTabSubagents:
-								a.renderSettingsTabSubagents(c, tc, sm)
-							case settings.SettingsTabCommands:
-								a.renderSettingsTabCommands(c, tc, sm)
-							case settings.SettingsTabGeneral:
-								a.renderSettingsTabGeneral(c, tc, sm)
-							case settings.SettingsTabAppearance:
-								a.renderSettingsTabAppearance(c, tc, sm)
-							case settings.SettingsTabShortcuts:
-								a.renderSettingsTabShortcuts(c, tc, sm)
-							case settings.SettingsTabBrowser:
-								a.renderSettingsTabBrowser(c, tc, sm)
-							case settings.SettingsTabComputer:
-								a.renderSettingsTabComputer(c, tc, sm)
-							case settings.SettingsTabIndexing:
-								a.renderSettingsTabIndexing(c, tc, sm)
-							case settings.SettingsTabHooks:
-								a.renderSettingsTabHooks(c, tc, sm)
-							case settings.SettingsTabStudio:
-								a.renderSettingsTabStudio(c, tc, sm)
-							case settings.SettingsTabUsage:
-								a.renderSettingsTabUsage(c, tc, sm)
-							}
+				// Right Content Pane (canvas background + max-width editorial lane)
+				ui.Column(c).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
+					ui.Scroll(c.Key("settings-content-scroll")).Grow(1).Children(func() {
+						ui.Column(c).FillWidth().Padding(22, 32, 36, 32).AlignItems(ui.Center).Children(func() {
+							ui.Column(c).FillWidth().MaxWidth(920).Gap(18).Children(func() {
+								switch sm.ActiveTab {
+								case settings.SettingsTabModels:
+									a.renderSettingsTabModels(c, tc, sm)
+								case settings.SettingsTabAgents:
+									a.renderSettingsTabAgents(c, tc, sm)
+								case settings.SettingsTabAntigravityQuota:
+									a.renderSettingsTabAntigravityQuota(c, tc, sm)
+								case settings.SettingsTabMCP:
+									a.renderSettingsTabMCPReal(c, tc, sm)
+								case settings.SettingsTabSkills:
+									a.renderSettingsTabSkillsReal(c, tc, sm)
+								case settings.SettingsTabPlugins:
+									a.renderSettingsTabPlugins(c, tc, sm)
+								case settings.SettingsTabMemory:
+									a.renderSettingsTabMemory(c, tc, sm)
+								case settings.SettingsTabAutos:
+									a.renderSettingsTabAutomations(c, tc, sm)
+								case settings.SettingsTabSubagents:
+									a.renderSettingsTabSubagents(c, tc, sm)
+								case settings.SettingsTabCommands:
+									a.renderSettingsTabCommands(c, tc, sm)
+								case settings.SettingsTabGeneral:
+									a.renderSettingsTabGeneral(c, tc, sm)
+								case settings.SettingsTabAppearance:
+									a.renderSettingsTabAppearance(c, tc, sm)
+								case settings.SettingsTabShortcuts:
+									a.renderSettingsTabShortcuts(c, tc, sm)
+								case settings.SettingsTabBrowser:
+									a.renderSettingsTabBrowser(c, tc, sm)
+								case settings.SettingsTabComputer:
+									a.renderSettingsTabComputer(c, tc, sm)
+								case settings.SettingsTabIndexing:
+									a.renderSettingsTabIndexing(c, tc, sm)
+								case settings.SettingsTabHooks:
+									a.renderSettingsTabHooks(c, tc, sm)
+								case settings.SettingsTabStudio:
+									a.renderSettingsTabStudio(c, tc, sm)
+								case settings.SettingsTabUsage:
+									a.renderSettingsTabUsage(c, tc, sm)
+								}
+							})
 						})
 					})
 				})
@@ -230,6 +246,8 @@ func settingsSectionTitle(tab int) string {
 		return "Codebase Indexing"
 	case settings.SettingsTabHooks:
 		return "Lifecycle Hooks"
+	case settings.SettingsTabStudio:
+		return "Studio & Generative APIs"
 	default:
 		return "Settings"
 	}
@@ -242,16 +260,21 @@ func (a *AppUI) renderSettingsNavItem(c *ui.Context, tc theme.ThemeColors, sm *s
 	}
 
 	isActive := (sm.ActiveTab == tab)
-	btn := ui.Row(c.Key("nav-tab-"+label)).Height(30).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center)
+	btn := ui.Row(c.Key("nav-tab-"+label)).Height(30).Radius(8).Padding(0, 8).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	btn.Children(func() {
-		ic := ui.Icon(c, icon).Width(15).Height(15)
 		if isActive {
-			ic.TextColor(tc.Text)
+			ui.Box(c).Size(3, 14).Radius(2).Background(tc.Accent).Shrink(0)
+		} else {
+			ui.Box(c).Size(3, 14).Shrink(0)
+		}
+		ic := ui.Icon(c, icon).Width(14).Height(14)
+		if isActive {
+			ic.TextColor(tc.Accent)
 		} else {
 			ic.TextColor(tc.IconMuted)
 		}
 
-		txt := ui.Text(c, label).FontSize(12).Grow(1)
+		txt := ui.Text(c, label).FontSize(12).Grow(1).SingleLine()
 		if isActive {
 			txt.FontWeight(600).TextColor(tc.Text)
 		} else {
@@ -343,7 +366,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 						modelCount = len(prof.AvailableModels)
 					}
 
-					btn := ui.Row(c.Key("pcard-"+prof.ID)).Radius(8).Padding(6, 8).Gap(8).AlignItems(ui.Center)
+					btn := ui.Row(c.Key("pcard-"+prof.ID)).Radius(8).Padding(6, 8).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					if isSelected {
 						btn.Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
 					} else if btn.Hovered() {
@@ -397,7 +420,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 
 			// Add Provider Button
 			addBtn := ui.Row(c.Key("add-prov-btn")).Height(32).Radius(8).Padding(0, 10).Gap(6).
-				AlignItems(ui.Center).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7))
+				AlignItems(ui.Center).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7)).Cursor(ui.CursorPointer)
 			if addBtn.Hovered() {
 				addBtn.Background(tc.Text.Alpha(0.04))
 			}
@@ -433,7 +456,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 							isOpenAI := sm.NewProviderProtocol == "openai"
 							isAnthropic := sm.NewProviderProtocol == "anthropic"
 
-							pOpenAI := ui.Row(c.Key("proto-openai")).Grow(1).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center)
+							pOpenAI := ui.Row(c.Key("proto-openai")).Grow(1).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 							if isOpenAI {
 								pOpenAI.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent)
 							} else {
@@ -450,7 +473,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 								sm.NewProviderProtocol = "openai"
 							}
 
-							pAnth := ui.Row(c.Key("proto-anthropic")).Grow(1).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center)
+							pAnth := ui.Row(c.Key("proto-anthropic")).Grow(1).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 							if isAnthropic {
 								pAnth.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent)
 							} else {
@@ -488,7 +511,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 					// API Key
 					ui.Column(c).Gap(4).Children(func() {
 						ui.Text(c, "API Key").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
-						ui.TextInput(c, &sm.NewProviderAPIKey).Placeholder("sk-... (optional for local endpoints)").Grow(1)
+						ui.TextInput(c, &sm.NewProviderAPIKey).Password().Placeholder("sk-... (optional for local endpoints)").Grow(1)
 					})
 
 					// Initial Models
@@ -572,7 +595,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 							Badge(c, tc, strings.ToUpper(proto), tc.Accent)
 
 							// Enabled / Disabled Toggle Pill
-							enBtn := ui.Row(c.Key("entog-"+selectedProfile.ID)).Radius(999).Padding(1, 8).AlignItems(ui.Center)
+							enBtn := ui.Row(c.Key("entog-"+selectedProfile.ID)).Radius(999).Padding(1, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 							if selectedProfile.Enabled {
 								enBtn.Background(tc.Success.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Success.Alpha(0.3))
 								enBtn.Children(func() {
@@ -605,7 +628,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 					}
 
 					// Delete Provider Button
-					delBtn := ui.Row(c.Key("delprov-"+selectedProfile.ID)).Radius(6).Padding(4, 8).Gap(4).AlignItems(ui.Center)
+					delBtn := ui.Row(c.Key("delprov-"+selectedProfile.ID)).Radius(6).Padding(4, 8).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					if delBtn.Hovered() {
 						delBtn.Background(tc.Error.Alpha(0.1))
 					}
@@ -614,18 +637,22 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 						ui.Text(c, "Delete").FontSize(11).TextColor(tc.Error)
 					})
 					if delBtn.Clicked() {
-						if err := sm.DeleteProfile(selectedProfile.ID); err != nil {
-							c.AddToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
-						} else {
-							newProfs := settings.CopyProfiles(sm.GetProfiles())
-							sm.EditingProfileID = ""
-							if len(newProfs) > 0 {
-								sm.SelectedProviderID = newProfs[0].ID
+						profID := selectedProfile.ID
+						profName := selectedProfile.Name
+						a.confirmDialogLabeled("Delete Provider?", fmt.Sprintf("“%s” and its configured credentials will be removed.", profName), "Delete", func() {
+							if err := sm.DeleteProfile(profID); err != nil {
+								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
 							} else {
-								sm.SelectedProviderID = ""
+								newProfs := settings.CopyProfiles(sm.GetProfiles())
+								sm.EditingProfileID = ""
+								if len(newProfs) > 0 {
+									sm.SelectedProviderID = newProfs[0].ID
+								} else {
+									sm.SelectedProviderID = ""
+								}
+								a.queueToast(ui.Toast{Title: "Provider Deleted", Description: profName, Type: "info"})
 							}
-							c.AddToast(ui.Toast{Title: "Provider Deleted", Description: selectedProfile.Name, Type: "info"})
-						}
+						}, nil)
 					}
 				})
 
@@ -647,7 +674,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 							ui.Row(c).AlignItems(ui.Center).Children(func() {
 								ui.Text(c, "API Key").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
 								ui.Box(c).Grow(1)
-								showKeyBtn := ui.Row(c).Gap(3).AlignItems(ui.Center)
+								showKeyBtn := ui.Row(c).Gap(3).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 								showKeyBtn.Children(func() {
 									ic := icons.TablerEye
 									txt := "Show"
@@ -702,7 +729,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 
 						// Fetch Models Button
 						fetchBtn := ui.Row(c.Key("fetch-models-btn")).Radius(6).Padding(3, 8).Gap(4).
-							AlignItems(ui.Center).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+							AlignItems(ui.Center).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 						if fetchBtn.Hovered() {
 							fetchBtn.Background(tc.Text.Alpha(0.04))
 						}
@@ -789,13 +816,13 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 						ui.Text(c, fmt.Sprintf("%d models", len(filtered))).FontSize(11).TextColor(tc.TextMuted)
 						ui.Box(c).Grow(1)
 
-						selAll := ui.Text(c, "Select all").FontSize(11).FontWeight(500).TextColor(tc.Success)
+						selAll := ui.Text(c, "Select all").FontSize(11).FontWeight(500).TextColor(tc.Success).Cursor(ui.CursorPointer)
 						if selAll.Clicked() {
 							selectedProfile.SelectedModels = append([]string(nil), filtered...)
 							saveProfiles()
 						}
 						ui.Text(c, " · ").FontSize(11).TextColor(tc.TextMuted)
-						deselAll := ui.Text(c, "Deselect all").FontSize(11).TextColor(tc.TextMuted)
+						deselAll := ui.Text(c, "Deselect all").FontSize(11).TextColor(tc.TextMuted).Cursor(ui.CursorPointer)
 						if deselAll.Clicked() {
 							selectedProfile.SelectedModels = nil
 							saveProfiles()
@@ -829,7 +856,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 
 									mRow.Children(func() {
 										// Checkbox
-										chk := ui.Row(c.Key("chk-"+m)).Size(14, 14).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
+										chk := ui.Row(c.Key("chk-"+m)).Size(14, 14).Radius(3).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 										if isSelected {
 											chk.Background(tc.Success).Children(func() {
 												ui.Icon(c, icons.TablerCheck).Width(10).Height(10).TextColor(tc.SuccessForeground)
@@ -888,7 +915,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 										}
 
 										// Model Name
-										txt := ui.Text(c, m).FontSize(11).FontWeight(500).Grow(1).SingleLine()
+										txt := ui.Text(c, m).FontSize(11).FontWeight(500).Grow(1).SingleLine().Cursor(ui.CursorPointer)
 										if isCurrentActive {
 											txt.TextColor(tc.Success).FontWeight(600)
 										}
@@ -900,7 +927,7 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 										if isCurrentActive {
 											Badge(c, tc, "ACTIVE", tc.Success)
 										} else {
-											setActBtn := ui.Row(c.Key("setact-"+m)).Radius(4).Padding(1, 6).AlignItems(ui.Center)
+											setActBtn := ui.Row(c.Key("setact-"+m)).Radius(4).Padding(1, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 											if setActBtn.Hovered() {
 												setActBtn.Background(tc.Text.Alpha(0.06))
 											}
@@ -913,7 +940,10 @@ func (a *AppUI) renderSettingsTabModels(c *ui.Context, tc theme.ThemeColors, sm 
 										}
 
 										// Delete from list button
-										delMBtn := ui.Row(c.Key("delm-"+m)).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+										delMBtn := ui.Row(c.Key("delm-"+m)).Size(18, 18).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+										if delMBtn.Hovered() {
+											delMBtn.Background(tc.Error.Alpha(0.12))
+										}
 										delMBtn.Children(func() {
 											ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.IconMuted)
 										})
@@ -1000,25 +1030,71 @@ func (a *AppUI) renderSettingsTabAgents(c *ui.Context, tc theme.ThemeColors, sm 
 	settingsSectionHeader(c, tc, "ACP & Agent CLIs", "External autonomous agents conforming to the Agent Client Protocol (ACP).")
 
 	if a.ACPMgr == nil {
+		settingsEmptyState(c, tc, icons.TablerBot, "ACP manager unavailable", "Restart ForgeADE to reinitialize external agent discovery.")
 		return
 	}
+
+	availCount := 0
+	for _, ag := range a.ACPMgr.Agents {
+		if ag.Available {
+			availCount++
+		}
+	}
+
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		scanBtn := settingsActionPill(c, tc, "acp-scan-path", "Scan System PATH", icons.TablerRefresh, true)
+		if scanBtn.Clicked() {
+			go func() {
+				// Probe off-thread, then apply by index on the UI thread —
+				// range copies would drop the writes, and publishing via
+				// runOnUI avoids racing concurrent render reads.
+				type probe struct {
+					idx int
+					ok  bool
+				}
+				agents := a.ACPMgr.Agents
+				results := make([]probe, 0, len(agents))
+				for i, ag := range agents {
+					if ag.ID == "agent-internal" || ag.Type == "internal" || strings.TrimSpace(ag.Command) == "" {
+						continue // built-in engine: availability is not PATH-derived
+					}
+					_, err := exec.LookPath(ag.Command)
+					results = append(results, probe{idx: i, ok: err == nil})
+				}
+				a.runOnUI(func() {
+					for _, r := range results {
+						if r.idx >= 0 && r.idx < len(a.ACPMgr.Agents) {
+							a.ACPMgr.Agents[r.idx].Available = r.ok
+						}
+					}
+					a.invalidateUI()
+				})
+			}()
+			c.AddToast(ui.Toast{Title: "Scanning", Description: "Probed PATH for installed ACP binaries", Type: "info"})
+		}
+		ui.Box(c).Grow(1)
+		ui.Text(c, fmt.Sprintf("%d available · %d configured", availCount, len(a.ACPMgr.Agents))).FontSize(11).TextColor(tc.TextMuted)
+	})
 
 	ui.Column(c).Gap(8).Children(func() {
 		for _, ag := range a.ACPMgr.Agents {
 			thisAg := ag
 			settingsCard(c, tc, func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					icons.RenderProviderIcon(c, thisAg.Type, 20)
+				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+					ui.Box(c).Size(34, 34).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).
+						AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Children(func() {
+						icons.RenderProviderIcon(c, thisAg.Type, 18)
+					})
 					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, thisAg.Name).FontSize(13).FontWeight(600)
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
+							ui.Text(c, thisAg.Name).FontSize(13).FontWeight(600).TextColor(tc.Text)
 							if thisAg.Model != "" {
-								ui.Text(c, thisAg.Model).FontSize(10).TextColor(tc.TextMuted)
+								Badge(c, tc, thisAg.Model, tc.Info)
 							}
 						})
-						ui.Text(c, thisAg.Description).FontSize(11).TextColor(tc.TextMuted)
+						ui.Text(c, thisAg.Description).FontSize(11.5).TextColor(tc.TextMuted)
 						if thisAg.Command != "" {
-							ui.Text(c, "Command: "+thisAg.Command).FontSize(10).FontWeight(500).TextColor(tc.IconMuted)
+							ui.Text(c, "Command: "+thisAg.Command).FontSize(10.5).Font("monospace").TextColor(tc.IconMuted)
 						}
 					})
 
@@ -1030,63 +1106,41 @@ func (a *AppUI) renderSettingsTabAgents(c *ui.Context, tc theme.ThemeColors, sm 
 				})
 			})
 		}
-
-		ui.Row(c).Padding(6, 0).Children(func() {
-			scanBtn := ui.Button(c, "Scan System PATH for Agents")
-			if scanBtn.Clicked() {
-				go func() {
-					// Probe off-thread, then apply by index on the UI thread —
-					// range copies would drop the writes, and publishing via
-					// runOnUI avoids racing concurrent render reads.
-					type probe struct {
-						idx int
-						ok  bool
-					}
-					agents := a.ACPMgr.Agents
-					results := make([]probe, 0, len(agents))
-					for i, ag := range agents {
-						if ag.ID == "agent-internal" || ag.Type == "internal" || strings.TrimSpace(ag.Command) == "" {
-							continue // built-in engine: availability is not PATH-derived
-						}
-						_, err := exec.LookPath(ag.Command)
-						results = append(results, probe{idx: i, ok: err == nil})
-					}
-					a.runOnUI(func() {
-						for _, r := range results {
-							if r.idx >= 0 && r.idx < len(a.ACPMgr.Agents) {
-								a.ACPMgr.Agents[r.idx].Available = r.ok
-							}
-						}
-						a.invalidateUI()
-					})
-				}()
-				c.AddToast(ui.Toast{Title: "Scanning", Description: "Probed PATH for installed ACP binaries", Type: "info"})
-			}
-		})
 	})
 }
 
 func (a *AppUI) renderSettingsTabGeneral(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "General Workspace", "Workspace preferences, file persistence, and notifications.")
+	settingsSectionHeader(c, tc, "General Workspace", "Workspace directory, external tool launchers, and editor persistence.")
 
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(10).Children(func() {
-			ui.Text(c, "Workspace Root Directory").FontSize(12).FontWeight(600)
-			ui.Text(c, a.Workspace.RootDir).FontSize(11).TextColor(tc.TextMuted)
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.Accent)
+				ui.Text(c, "Workspace Root Directory").FontSize(12.5).FontWeight(600)
+			})
+			ui.Row(c).Padding(7, 10).Radius(7).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+				ui.Text(c, a.Workspace.RootDir).FontSize(11.5).TextColor(tc.TextMuted).SingleLine()
+			})
 
 			ui.Row(c).Gap(8).Children(func() {
 				if ui.Button(c, "Choose Folder...").Clicked() {
 					a.openWorkspaceFolder()
+				}
+				if ui.Button(c, "Reveal in Finder").Clicked() {
+					a.openInFinder("")
+				}
+				if ui.Button(c, "Open External Terminal").Clicked() {
+					a.openExternalTerminal("")
 				}
 			})
 		})
 	})
 
 	settingsCard(c, tc, func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Column(c).Grow(1).Gap(2).Children(func() {
 				ui.Text(c, "Auto Save Files").FontSize(13).FontWeight(600)
-				ui.Text(c, "Automatically persist modified buffers to disk every 30 seconds.").FontSize(11).TextColor(tc.TextMuted)
+				ui.Text(c, "Automatically persist modified buffers to disk every 30 seconds.").FontSize(11.5).TextColor(tc.TextMuted)
 			})
 			ui.Switch(c, &sm.AutoSave)
 		})
@@ -1094,13 +1148,13 @@ func (a *AppUI) renderSettingsTabGeneral(c *ui.Context, tc theme.ThemeColors, sm
 }
 
 func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Appearance & Themes", "Customize UI color palettes, dark/light theme, font sizes, and layout lane width.")
+	settingsSectionHeader(c, tc, "Appearance & Themes", "Customize UI color palettes, dark/light theme, layout lane width, and diff colors.")
 	tm := a.ThemeMgr
 
 	// 1. Dark / Light Toggle
 	settingsCard(c, tc, func() {
-		ui.Column(c).Gap(8).Children(func() {
-			ui.Text(c, "APPEARANCE MODE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+		ui.Column(c).Gap(10).Children(func() {
+			ui.Text(c, "APPEARANCE MODE").FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted)
 			ui.Row(c).Gap(8).Children(func() {
 				darkBtn := func() ui.Element {
 					if tm.Appearance == "dark" {
@@ -1116,6 +1170,7 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 				})
 				if darkBtn.Clicked() {
 					tm.Appearance = "dark"
+					a.SaveUIPrefs()
 				}
 
 				lightBtn := func() ui.Element {
@@ -1132,6 +1187,7 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 				})
 				if lightBtn.Clicked() {
 					tm.Appearance = "light"
+					a.SaveUIPrefs()
 				}
 			})
 		})
@@ -1139,13 +1195,13 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 
 	// 2. Palette Swatches
 	settingsCard(c, tc, func() {
-		ui.Column(c).Gap(8).Children(func() {
-			ui.Text(c, fmt.Sprintf("COLOR PALETTE (%d BUILT-IN PACKS)", len(tm.AvailablePalettes()))).FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+		ui.Column(c).Gap(10).Children(func() {
+			ui.Text(c, fmt.Sprintf("COLOR PALETTE (%d BUILT-IN PACKS)", len(tm.AvailablePalettes()))).FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted)
 			ui.Row(c).Gap(8).Wrap().Children(func() {
 				for _, p := range tm.AvailablePalettes() {
 					thisP := p
 					isSel := (tm.PaletteID == thisP.ID)
-					card := ui.Row(c.Key("pal-card-"+thisP.ID)).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center)
+					card := ui.Row(c.Key("pal-card-"+thisP.ID)).Radius(8).Padding(8, 12).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					card.Children(func() {
 						ui.Box(c).Size(12, 12).Radius(6).Background(theme.SwatchColor(thisP.SwatchHex))
 						ui.Text(c, thisP.Name).FontSize(12).FontWeight(func() int {
@@ -1159,15 +1215,16 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 						}
 					})
 					if isSel {
-						card.Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+						card.Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.45))
 					} else {
-						card.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+						card.Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border)
 						if card.Hovered() {
-							card.Background(tc.Surface.Alpha(0.8))
+							card.Background(tc.ToolbarControlHover)
 						}
 					}
 					if card.Clicked() {
 						tm.PaletteID = thisP.ID
+						a.SaveUIPrefs()
 					}
 				}
 			})
@@ -1177,9 +1234,9 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 	// 3. Chat Lane Width & Diff Color Scheme
 	settingsCard(c, tc, func() {
 		ui.Row(c).Gap(24).Children(func() {
-			ui.Column(c).Grow(1).Gap(6).Children(func() {
+			ui.Column(c).Grow(1).Gap(8).Children(func() {
 				ui.Text(c, "Chat Lane Width").FontSize(12).FontWeight(600)
-				ui.Row(c).Gap(6).Children(func() {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for _, opt := range []struct{ ID, Label string }{
 						{"comfortable", "Comfortable (736px)"},
 						{"wide", "Wide (928px)"},
@@ -1194,14 +1251,15 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 						}()
 						if btn.Clicked() {
 							tm.ChatWidth = thisOpt.ID
+							a.SaveUIPrefs()
 						}
 					}
 				})
 			})
 
-			ui.Column(c).Grow(1).Gap(6).Children(func() {
+			ui.Column(c).Grow(1).Gap(8).Children(func() {
 				ui.Text(c, "Diff Scheme").FontSize(12).FontWeight(600)
-				ui.Row(c).Gap(6).Children(func() {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for _, opt := range []struct{ ID, Label string }{
 						{"classic", "Classic (Green/Red)"},
 						{"modern", "Modern (Blue/Orange)"},
@@ -1215,6 +1273,7 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 						}()
 						if btn.Clicked() {
 							tm.DiffScheme = thisOpt.ID
+							a.SaveUIPrefs()
 						}
 					}
 				})
@@ -1224,49 +1283,83 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 }
 
 func (a *AppUI) renderSettingsTabShortcuts(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Terminal & Shortcuts", "Shell configuration and keybinding shortcuts reference.")
+	settingsSectionHeader(c, tc, "Terminal & Shortcuts", "Default shell configuration and categorized keyboard shortcuts reference.")
 
 	settingsCard(c, tc, func() {
-		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "Default Shell").FontSize(12).FontWeight(600)
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icons.TablerTerminal).Width(14).Height(14).TextColor(tc.Accent)
+				ui.Text(c, "Default Shell").FontSize(12.5).FontWeight(600)
+			})
 			ui.Select(c, &sm.DefaultShell, []string{"/bin/zsh", "/bin/bash", "/bin/sh"})
 		})
 	})
 
-	shortcuts := []struct{ Key, Desc string }{
-		{"⌘S", "Save current active buffer to disk"},
-		{"⌘P", "Quick open file by fuzzy name"},
-		{"⇧⌘P", "Open command palette"},
-		{"⌘M", "Select AI Model & Harness"},
-		{"⌘1", "Switch to Autonomous Agent Mode"},
-		{"⌘2", "Switch to Code Editor Mode"},
-		{"⌘B", "Toggle left sidebar"},
-		{"⌘J", "Toggle right drawer"},
-		{"⌘`", "Toggle collapsible bottom terminal"},
-		{"⌘N", "Start a new task session"},
-		{"⌘,", "Open Settings"},
-		{"⌘/", "Toggle Dark / Light appearance"},
-		{"⌘W", "Close active editor tab"},
-		{"Ctrl+Tab", "Next editor tab"},
-		{"⇧Ctrl+Tab", "Previous editor tab"},
+	type scItem struct{ Key, Desc string }
+	groups := []struct {
+		Title string
+		Items []scItem
+	}{
+		{
+			Title: "MODES & NAVIGATION",
+			Items: []scItem{
+				{"⌘1", "Switch to Agent Chat Mode"},
+				{"⌘2", "Switch to Code Editor Mode"},
+				{"⌘3", "Switch to Studio Mode"},
+				{"⌘P / ⌘K", "Quick open file / command palette"},
+				{"⇧⌘P", "Open command palette directly"},
+				{"⌘M", "Select AI Model & Harness"},
+				{"⌥⌘O", "Switch workspace / project"},
+			},
+		},
+		{
+			Title: "FILES & EXTERNAL TOOLS",
+			Items: []scItem{
+				{"⌘S", "Save active editor file"},
+				{"⌥⌘R", "Reveal workspace or active file in Finder"},
+				{"⌥⌘T", "Open workspace in External Terminal (alias ⇧⌘C)"},
+				{"⇧⌘F", "Search across project files"},
+				{"⇧⌘G", "Open Git Client"},
+				{"⇧⌘E", "Send Studio artifact to Editor"},
+			},
+		},
+		{
+			Title: "WORKSPACE & PANELS",
+			Items: []scItem{
+				{"⌘N", "Start a new agent task"},
+				{"⌘B", "Toggle left sidebar"},
+				{"⌘J", "Toggle right drawer"},
+				{"⌘`", "Toggle bottom terminal drawer"},
+				{"⌘,", "Open Settings"},
+				{"⌘/", "Toggle Dark / Light appearance"},
+				{"⌘W", "Close active editor tab"},
+				{"Ctrl+Tab / ⇧Ctrl+Tab", "Cycle editor tabs"},
+			},
+		},
 	}
 
-	settingsCard(c, tc, func() {
-		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "KEYBOARD SHORTCUTS REFERENCE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-			for _, sc := range shortcuts {
-				s := sc
-				ui.Row(c.Key("sc-"+s.Key)).Height(26).Padding(0, 8).AlignItems(ui.Center).Children(func() {
-					kbd := ui.Row(c).Radius(4).Padding(2, 6).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-					kbd.Children(func() {
-						ui.Text(c, s.Key).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+	for _, g := range groups {
+		grp := g
+		settingsCard(c, tc, func() {
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, grp.Title).FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted)
+				for idx, sc := range grp.Items {
+					s := sc
+					row := ui.Row(c.Key("sc-"+grp.Title+"-"+s.Key)).Height(30).Padding(0, 6).AlignItems(ui.Center)
+					if idx > 0 {
+						row.BorderWidth(1, 0, 0, 0).BorderColor(tc.Border.Alpha(0.4))
+					}
+					row.Children(func() {
+						ui.Text(c, s.Desc).FontSize(12).TextColor(tc.Text).Grow(1)
+						kbd := ui.Row(c).Radius(5).Padding(2, 8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border)
+						kbd.Children(func() {
+							ui.Text(c, s.Key).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+						})
 					})
-					ui.Box(c).Width(12)
-					ui.Text(c, s.Desc).FontSize(12).TextColor(tc.Text)
-				})
-			}
+				}
+			})
 		})
-	})
+	}
 }
 
 // localLLMOnline reports whether a local LLM server (Ollama or LM Studio)
@@ -1300,13 +1393,78 @@ func probeLocalEndpoint(url string) bool {
 }
 
 func settingsSectionHeader(c *ui.Context, tc theme.ThemeColors, title, desc string) {
-	ui.Column(c).Gap(3).Children(func() {
-		ui.Text(c, title).FontSize(18).FontWeight(700)
+	ui.Column(c).Gap(4).Padding(0, 0, 10, 0).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
+		ui.Text(c, title).FontSize(18).FontWeight(700).TextColor(tc.Text)
 		ui.Text(c, desc).FontSize(12).TextColor(tc.TextMuted)
 	})
 }
 
 func settingsCard(c *ui.Context, tc theme.ThemeColors, children func()) {
-	ui.Column(c).Padding(14, 16).Radius(10).Background(tc.Surface.Alpha(0.5)).
+	ui.Column(c).Padding(16, 18).Radius(12).Background(tc.Surface).
 		BorderWidth(1).BorderColor(tc.Border).Children(children)
+}
+
+func settingsDivider(c *ui.Context, tc theme.ThemeColors) {
+	ui.Box(c).Height(1).FillWidth().Background(tc.Border.Alpha(0.5))
+}
+
+func settingsActionPill(c *ui.Context, tc theme.ThemeColors, key, label string, icon *ui.SVG, accent bool) ui.Element {
+	bg := tc.Surface
+	bdr := tc.Border
+	fg := tc.Text
+	icColor := tc.IconMuted
+	if accent {
+		bg = tc.Accent.Alpha(0.14)
+		bdr = tc.Accent.Alpha(0.35)
+		fg = tc.Accent
+		icColor = tc.Accent
+	}
+	btn := ui.Row(c.Key(key)).Height(30).Radius(8).Padding(0, 12).Gap(6).AlignItems(ui.Center).
+		Background(bg).BorderWidth(1).BorderColor(bdr).Cursor(ui.CursorPointer)
+	btn.Children(func() {
+		if icon != nil {
+			ui.Icon(c, icon).Width(13).Height(13).TextColor(icColor)
+		}
+		ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(fg)
+	})
+	if btn.Hovered() {
+		if accent {
+			btn.Background(tc.Accent.Alpha(0.22))
+		} else {
+			btn.Background(tc.SurfaceRaised)
+		}
+	}
+	return btn
+}
+
+func settingsNoticeBanner(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, title, desc string, tone ui.Color) {
+	ui.Row(c).FillWidth().Padding(10, 14).Radius(10).Gap(10).AlignItems(ui.Center).
+		Background(tone.Alpha(0.08)).BorderWidth(1).BorderColor(tone.Alpha(0.3)).Children(func() {
+		if icon != nil {
+			ui.Icon(c, icon).Width(16).Height(16).TextColor(tone).Shrink(0)
+		}
+		ui.Column(c).Grow(1).Gap(2).Children(func() {
+			ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tone)
+			if desc != "" {
+				ui.Text(c, desc).FontSize(11).TextColor(tc.TextMuted)
+			}
+		})
+	})
+}
+
+func settingsEmptyState(c *ui.Context, tc theme.ThemeColors, icon *ui.SVG, title, desc string) {
+	settingsCard(c, tc, func() {
+		ui.Column(c).FillWidth().Center().Padding(20, 16).Gap(6).Children(func() {
+			if icon != nil {
+				ui.Box(c).Size(36, 36).Radius(10).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).
+					AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icon).Width(18).Height(18).TextColor(tc.IconMuted)
+				})
+			}
+			ui.Text(c, title).FontSize(13).FontWeight(600).TextColor(tc.Text)
+			if desc != "" {
+				ui.Text(c, desc).FontSize(11.5).TextColor(tc.TextMuted)
+			}
+		})
+	})
 }

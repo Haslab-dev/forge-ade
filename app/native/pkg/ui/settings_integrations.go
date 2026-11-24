@@ -33,24 +33,18 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 	servers := mgr.ListServers()
 
 	// Add-server form (collapsible) and Refresh All.
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		addBtn := ui.Row(c).Height(28).Radius(8).Padding(0, 12).Gap(5).AlignItems(ui.Center).
-			Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35)).Cursor(ui.CursorPointer)
-		addBtn.Children(func() {
-			ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.Accent)
-			ui.Text(c, "Add Server").FontSize(12).FontWeight(600).TextColor(tc.Accent)
-		})
-		if addBtn.Clicked() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		addLbl := "Add Server"
+		addIc := icons.TablerPlus
+		if sm.MCPFormOpen {
+			addLbl = "Close Form"
+			addIc = icons.TablerX
+		}
+		if settingsActionPill(c, tc, "mcp-add-btn", addLbl, addIc, !sm.MCPFormOpen).Clicked() {
 			sm.MCPFormOpen = !sm.MCPFormOpen
 		}
 
-		syncBtn := ui.Row(c.Key("mcp-sync-all")).Height(28).Radius(8).Padding(0, 10).Gap(5).AlignItems(ui.Center).
-			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
-		syncBtn.Children(func() {
-			ui.Icon(c, icons.TablerRotate).Width(13).Height(13).TextColor(tc.IconMuted)
-			ui.Text(c, "Refresh All").FontSize(12).FontWeight(500)
-		})
-		if syncBtn.Clicked() {
+		if settingsActionPill(c, tc, "mcp-sync-all", "Refresh All", icons.TablerRotate, false).Clicked() {
 			c.AddToast(ui.Toast{Title: "Connecting MCP", Description: "Refreshing all enabled servers...", Type: "info"})
 			go func() {
 				if a.Engine != nil {
@@ -66,17 +60,20 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 
 	if sm.MCPFormOpen {
 		settingsCard(c, tc, func() {
-			ui.Column(c).Gap(8).Children(func() {
-				ui.Text(c, "New MCP Server").FontSize(12).FontWeight(600)
-				ui.Row(c).Gap(6).Children(func() {
-					ui.TextInput(c, &sm.MCPName).Placeholder("name").Grow(1)
-					ui.TextInput(c, &sm.MCPCommand).Placeholder("command (e.g. npx -y @modelcontextprotocol/server-fs)").Grow(1)
+			ui.Column(c).Gap(10).Children(func() {
+				ui.Text(c, "New MCP Server").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Gap(8).Children(func() {
+					ui.TextInput(c, &sm.MCPName).Placeholder("Server name (e.g. filesystem)").Grow(1)
+					ui.TextInput(c, &sm.MCPCommand).Placeholder("Command (e.g. npx -y @modelcontextprotocol/server-fs)").Grow(2)
 				})
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "Type:").FontSize(11).TextColor(tc.TextMuted)
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Transport:").FontSize(11).TextColor(tc.TextMuted)
 					ui.Select(c, &sm.MCPType, []string{"stdio", "http", "sse"})
 					ui.Box(c).Grow(1)
-					if ui.Button(c, "Save Server").Clicked() && strings.TrimSpace(sm.MCPName) != "" {
+					if ui.Button(c, "Cancel").Clicked() {
+						sm.MCPFormOpen = false
+					}
+					if ContrastCTA(c, tc, "Save Server").Clicked() && strings.TrimSpace(sm.MCPName) != "" {
 						cfg := mcp.ServerConfig{
 							Name:    strings.TrimSpace(sm.MCPName),
 							Command: strings.TrimSpace(sm.MCPCommand),
@@ -178,10 +175,7 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 			})
 		}
 		if len(servers) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Icon(c, icons.TablerPlug).Width(24).Height(24).TextColor(tc.IconMuted)
-				ui.Text(c, "No MCP servers configured").FontSize(12).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerPlug, "No MCP servers configured", "Click Add Server above to connect external tools and data sources.")
 		}
 	})
 }
@@ -198,30 +192,46 @@ func (a *AppUI) renderSettingsTabSkillsReal(c *ui.Context, tc theme.ThemeColors,
 	skillMgr := a.Engine.SkillMgr
 	list := skillMgr.List()
 
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		addBtn := ui.Button(c, "+ Create Skill")
-		if addBtn.Clicked() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		addLbl := "Create Skill"
+		addIc := icons.TablerPlus
+		if sm.SkillFormOpen {
+			addLbl = "Close Form"
+			addIc = icons.TablerX
+		}
+		if settingsActionPill(c, tc, "skill-add-btn", addLbl, addIc, !sm.SkillFormOpen).Clicked() {
 			sm.SkillFormOpen = !sm.SkillFormOpen
 		}
-		ui.Box(c).Grow(1)
-		if ui.Button(c, "Reload Skills").Clicked() {
+		if settingsActionPill(c, tc, "skill-reload-btn", "Reload Skills", icons.TablerRefresh, false).Clicked() {
 			skillMgr.Reload()
 			c.AddToast(ui.Toast{Title: "Skills Reloaded", Type: "success"})
 		}
+		ui.Box(c).Grow(1)
 		ui.Text(c, fmt.Sprintf("%d skills", len(list))).FontSize(11).TextColor(tc.TextMuted)
 	})
 
 	if sm.SkillFormOpen {
+		if sm.SkillScope == "" {
+			sm.SkillScope = "workspace"
+		}
 		settingsCard(c, tc, func() {
-			ui.Column(c).Gap(8).Children(func() {
-				ui.Text(c, "Create New Skill").FontSize(12).FontWeight(600)
-				ui.Row(c).Gap(6).Children(func() {
+			ui.Column(c).Gap(10).Children(func() {
+				ui.Text(c, "Create New Skill").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					ui.TextInput(c, &sm.SkillName).Placeholder("Skill name (e.g. explain-code)").Grow(1)
-					ui.TextInput(c, &sm.SkillScope).Placeholder("Scope (workspace / global)").Width(160)
+					ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "Scope:").FontSize(11).TextColor(tc.TextMuted)
+						for _, sc := range []string{"workspace", "global"} {
+							s := sc
+							if renderOrchOptionPill(c, tc, "skill-scope-"+s, s, strings.EqualFold(sm.SkillScope, s)).Clicked() {
+								sm.SkillScope = s
+							}
+						}
+					})
 				})
-				ui.TextInput(c, &sm.SkillDescription).Placeholder("Description").Grow(1)
+				ui.TextInput(c, &sm.SkillDescription).Placeholder("Short description").Grow(1)
 				ui.TextInput(c, &sm.SkillPrompt).Placeholder("Instruction prompt / body").Grow(1)
-				ui.Row(c).Justify(ui.End).Gap(6).Children(func() {
+				ui.Row(c).Justify(ui.End).Gap(8).Children(func() {
 					if ui.Button(c, "Cancel").Clicked() {
 						sm.SkillFormOpen = false
 					}
@@ -279,10 +289,7 @@ func (a *AppUI) renderSettingsTabSkillsReal(c *ui.Context, tc theme.ThemeColors,
 			})
 		}
 		if len(list) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Icon(c, icons.TablerWand).Width(24).Height(24).TextColor(tc.IconMuted)
-				ui.Text(c, "No skills installed").FontSize(12).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerWand, "No skills installed", "Create a workspace or global skill to teach the agent reusable procedures.")
 		}
 	})
 }
@@ -299,12 +306,12 @@ func (a *AppUI) renderSettingsTabPlugins(c *ui.Context, tc theme.ThemeColors, sm
 	plugMgr := a.Engine.PluginMgr
 	list := plugMgr.List()
 
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.Box(c).Grow(1)
-		if ui.Button(c, "Reload Plugins").Clicked() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		if settingsActionPill(c, tc, "plugins-reload-btn", "Reload Plugins", icons.TablerRefresh, false).Clicked() {
 			plugMgr.Reload()
 			c.AddToast(ui.Toast{Title: "Plugins Reloaded", Type: "success"})
 		}
+		ui.Box(c).Grow(1)
 		ui.Text(c, fmt.Sprintf("%d plugins", len(list))).FontSize(11).TextColor(tc.TextMuted)
 	})
 
@@ -332,9 +339,7 @@ func (a *AppUI) renderSettingsTabPlugins(c *ui.Context, tc theme.ThemeColors, sm
 			})
 		}
 		if len(list) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Text(c, "No plugins installed").FontSize(12).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerPuzzle, "No plugins installed", "Drop plugin bundles into the plugins directory and click Reload Plugins.")
 		}
 	})
 }
@@ -351,17 +356,26 @@ func (a *AppUI) renderSettingsTabMemory(c *ui.Context, tc theme.ThemeColors, sm 
 	memMgr := a.Engine.MemoryMgr
 	list := memMgr.List()
 
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.TextInput(c, &sm.MemoryNew).Placeholder("New memory…").Grow(1)
-		if ui.Button(c, "Save").Clicked() && strings.TrimSpace(sm.MemoryNew) != "" {
-			content := sm.MemoryNew
-			if err := memMgr.Save(memory.Entry{Key: fmt.Sprintf("note-%d", time.Now().UnixMilli()), Content: content, Scope: "global"}); err != nil {
-				c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
-			} else {
-				sm.MemoryNew = ""
-				c.AddToast(ui.Toast{Title: "Memory Saved", Type: "success"})
-			}
-		}
+	settingsCard(c, tc, func() {
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Add Persistent Memory").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
+				ui.Box(c).Grow(1)
+				ui.Text(c, fmt.Sprintf("%d saved", len(list))).FontSize(11).TextColor(tc.TextMuted)
+			})
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.TextInput(c, &sm.MemoryNew).Placeholder("Write a preference, rule, or project fact for the agent to remember…").Grow(1)
+				if ContrastCTA(c, tc, "Save Memory").Clicked() && strings.TrimSpace(sm.MemoryNew) != "" {
+					content := sm.MemoryNew
+					if err := memMgr.Save(memory.Entry{Key: fmt.Sprintf("note-%d", time.Now().UnixMilli()), Content: content, Scope: "global"}); err != nil {
+						c.AddToast(ui.Toast{Title: "Save Failed", Description: err.Error(), Type: "error"})
+					} else {
+						sm.MemoryNew = ""
+						c.AddToast(ui.Toast{Title: "Memory Saved", Type: "success"})
+					}
+				}
+			})
+		})
 	})
 
 	ui.Column(c).Gap(8).Children(func() {
@@ -388,9 +402,7 @@ func (a *AppUI) renderSettingsTabMemory(c *ui.Context, tc theme.ThemeColors, sm 
 			})
 		}
 		if len(list) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Text(c, "No memories yet").FontSize(12).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerBrain, "No memories saved yet", "Add persistent notes above so the agent recalls your conventions across sessions.")
 		}
 	})
 }
@@ -407,60 +419,74 @@ func (a *AppUI) renderSettingsTabAutomations(c *ui.Context, tc theme.ThemeColors
 	autoMgr := a.Engine.AutoMgr
 	list := autoMgr.List()
 
-	// Create form.
-	settingsCard(c, tc, func() {
-		ui.Column(c).Gap(8).Children(func() {
-			ui.Text(c, "New Automation").FontSize(12).FontWeight(600)
-			ui.TextInput(c, &sm.AutoName).Placeholder("Name").Grow(1)
-			ui.Row(c).Gap(6).Children(func() {
-				ui.TextInput(c, &sm.AutoCron).Placeholder("cron (e.g. 0 9 * * 1-5, empty = manual)").Grow(1)
-				ui.TextInput(c, &sm.AutoPrompt).Placeholder("Prompt to run").Grow(1)
-			})
-			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Presets:").FontSize(10).TextColor(tc.TextMuted)
-				cronPresets := []struct {
-					label string
-					expr  string
-				}{
-					{"Hourly", "0 * * * *"},
-					{"Daily 9AM", "0 9 * * *"},
-					{"Weekdays", "0 9 * * 1-5"},
-					{"Weekly Mon", "0 9 * * 1"},
-					{"Monthly", "0 9 1 * *"},
-					{"Clear", ""},
-				}
-				for _, p := range cronPresets {
-					preset := p
-					chip := ui.Row(c.Key("cron-pre-"+preset.label)).Height(20).Radius(4).Padding(0, 6).
-						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).
-						Cursor(ui.CursorPointer).AlignItems(ui.Center)
-					chip.Children(func() {
-						ui.Text(c, preset.label).FontSize(10).TextColor(tc.TextMuted)
-					})
-					if chip.Clicked() {
-						sm.AutoCron = preset.expr
+	// Action bar + collapsible create form.
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		addLbl := "New Automation"
+		addIc := icons.TablerPlus
+		if sm.AutoFormOpen {
+			addLbl = "Close Form"
+			addIc = icons.TablerX
+		}
+		if settingsActionPill(c, tc, "auto-add-btn", addLbl, addIc, !sm.AutoFormOpen).Clicked() {
+			sm.AutoFormOpen = !sm.AutoFormOpen
+		}
+		ui.Box(c).Grow(1)
+		ui.Text(c, fmt.Sprintf("%d automations", len(list))).FontSize(11).TextColor(tc.TextMuted)
+	})
+
+	if sm.AutoFormOpen {
+		settingsCard(c, tc, func() {
+			ui.Column(c).Gap(10).Children(func() {
+				ui.Text(c, "New Automation").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
+				ui.TextInput(c, &sm.AutoName).Placeholder("Automation name (e.g. Daily PR Digest)").Grow(1)
+				ui.Row(c).Gap(8).Children(func() {
+					ui.TextInput(c, &sm.AutoCron).Placeholder("Cron (e.g. 0 9 * * 1-5, empty = manual)").Grow(1)
+					ui.TextInput(c, &sm.AutoPrompt).Placeholder("Prompt to run").Grow(2)
+				})
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
+					ui.Text(c, "Presets:").FontSize(11).TextColor(tc.TextMuted)
+					cronPresets := []struct {
+						label string
+						expr  string
+					}{
+						{"Hourly", "0 * * * *"},
+						{"Daily 9AM", "0 9 * * *"},
+						{"Weekdays", "0 9 * * 1-5"},
+						{"Weekly Mon", "0 9 * * 1"},
+						{"Monthly", "0 9 1 * *"},
+						{"Manual", ""},
 					}
-				}
-			})
-			ui.Row(c).Justify(ui.End).Children(func() {
-				if ui.Button(c, "Create Automation").Clicked() && strings.TrimSpace(sm.AutoName) != "" {
-					_, err := autoMgr.Save(automations.Automation{
-						Name:      strings.TrimSpace(sm.AutoName),
-						Prompt:    sm.AutoPrompt,
-						CronExpr:  strings.TrimSpace(sm.AutoCron),
-						Enabled:   strings.TrimSpace(sm.AutoCron) != "",
-						Workspace: a.Workspace.RootDir,
-					})
-					if err != nil {
-						c.AddToast(ui.Toast{Title: "Create Failed", Description: err.Error(), Type: "error"})
-					} else {
-						sm.AutoName, sm.AutoCron, sm.AutoPrompt = "", "", ""
-						c.AddToast(ui.Toast{Title: "Automation Created", Type: "success"})
+					for _, p := range cronPresets {
+						preset := p
+						if renderOrchOptionPill(c, tc, "cron-pre-"+preset.label, preset.label, strings.TrimSpace(sm.AutoCron) == preset.expr).Clicked() {
+							sm.AutoCron = preset.expr
+						}
 					}
-				}
+				})
+				ui.Row(c).Justify(ui.End).Gap(8).Children(func() {
+					if ui.Button(c, "Cancel").Clicked() {
+						sm.AutoFormOpen = false
+					}
+					if ContrastCTA(c, tc, "Create Automation").Clicked() && strings.TrimSpace(sm.AutoName) != "" {
+						_, err := autoMgr.Save(automations.Automation{
+							Name:      strings.TrimSpace(sm.AutoName),
+							Prompt:    sm.AutoPrompt,
+							CronExpr:  strings.TrimSpace(sm.AutoCron),
+							Enabled:   strings.TrimSpace(sm.AutoCron) != "",
+							Workspace: a.Workspace.RootDir,
+						})
+						if err != nil {
+							c.AddToast(ui.Toast{Title: "Create Failed", Description: err.Error(), Type: "error"})
+						} else {
+							sm.AutoName, sm.AutoCron, sm.AutoPrompt = "", "", ""
+							sm.AutoFormOpen = false
+							c.AddToast(ui.Toast{Title: "Automation Created", Type: "success"})
+						}
+					}
+				})
 			})
 		})
-	})
+	}
 
 	ui.Column(c).Gap(8).Children(func() {
 		for _, au := range list {
@@ -516,9 +542,7 @@ func (a *AppUI) renderSettingsTabAutomations(c *ui.Context, tc theme.ThemeColors
 			})
 		}
 		if len(list) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Text(c, "No automations yet").FontSize(12).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerBot, "No automations configured", "Create a scheduled cron prompt or manual bot trigger to automate recurring workflows.")
 		}
 	})
 }
@@ -592,7 +616,7 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 				}
 			})
 
-			ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(16).AlignItems(ui.Center).Wrap().Children(func() {
 				enabled := orchCfg.Enabled
 				if ui.Checkbox(c, &enabled, "Enable Multi-Agent Orchestration").FontSize(12).Clicked() {
 					orchCfg.Enabled = enabled
@@ -623,7 +647,7 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 					{"Reviewer", rakitagent.RoleReviewer},
 					{"Testing", rakitagent.RoleTesting},
 				}
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
 					for _, lr := range leadRoles {
 						active := orchCfg.DefaultRole == lr.role || (orchCfg.DefaultRole == "" && lr.role == rakitagent.RoleOrchestrator)
 						if renderOrchOptionPill(c, tc, "lead-"+string(lr.role), lr.label, active).Clicked() {
@@ -634,7 +658,7 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 				})
 			})
 
-			ui.Row(c).Gap(18).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(18).AlignItems(ui.Center).Wrap().Children(func() {
 				ui.Column(c).Gap(4).Children(func() {
 					ui.Text(c, "Sub-Agent Model Tiering").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
 					ui.Row(c).Gap(5).Children(func() {
@@ -681,13 +705,14 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 
 	defs := a.Engine.AgentMgr.ListAgentDefinitions()
 
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		addLabel := "+ Create Persona"
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		addLabel := "Create Persona"
+		addIc := icons.TablerPlus
 		if sm.RoleFormOpen {
 			addLabel = "Close Form"
+			addIc = icons.TablerX
 		}
-		addBtn := ui.Button(c, addLabel)
-		if addBtn.Clicked() {
+		if settingsActionPill(c, tc, "role-add-btn", addLabel, addIc, !sm.RoleFormOpen).Clicked() {
 			if sm.RoleFormOpen {
 				clearRoleForm(sm)
 				sm.RoleFormOpen = false
@@ -850,8 +875,8 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 						botColor = tc.Accent
 					}
 					ui.Icon(c, icons.TablerBot).Width(16).Height(16).TextColor(botColor)
-					ui.Column(c).Grow(1).Gap(3).Children(func() {
-						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+					ui.Column(c).Grow(1).Gap(4).Children(func() {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Wrap().Children(func() {
 							ui.Text(c, thisD.Name).FontSize(13).FontWeight(600)
 							if isLead {
 								Badge(c, tc, "Default Lead", tc.Success)
@@ -932,9 +957,7 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 			})
 		}
 		if len(defs) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Text(c, "No personas defined").FontSize(12).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerUser, "No personas defined", "Create a specialist persona to delegate research, coding, review, or testing.")
 		}
 	})
 }
@@ -958,13 +981,18 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 		{"/git", "Open git changes and diff review"},
 	}
 
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		addBtn := ui.Button(c, "+ Add Command")
-		if addBtn.Clicked() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		addLbl := "Add Command"
+		addIc := icons.TablerPlus
+		if sm.CmdFormOpen {
+			addLbl = "Close Form"
+			addIc = icons.TablerX
+		}
+		if settingsActionPill(c, tc, "cmd-add-btn", addLbl, addIc, !sm.CmdFormOpen).Clicked() {
 			sm.CmdFormOpen = !sm.CmdFormOpen
 		}
 		ui.Box(c).Grow(1)
-		ui.Text(c, fmt.Sprintf("%d commands", len(defaultCmds)+len(sm.CustomCommands))).FontSize(11).TextColor(tc.TextMuted)
+		ui.Text(c, fmt.Sprintf("%d custom · %d built-in", len(sm.CustomCommands), len(defaultCmds))).FontSize(11).TextColor(tc.TextMuted)
 	})
 
 	if sm.CmdFormOpen {
@@ -1007,6 +1035,9 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 	}
 
 	ui.Column(c).Gap(8).Children(func() {
+		if len(sm.CustomCommands) > 0 {
+			ui.Text(c, "CUSTOM COMMANDS").FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted).Padding(4, 2, 0, 2)
+		}
 		for _, custom := range sm.CustomCommands {
 			cmd := custom
 			settingsCard(c, tc, func() {
@@ -1024,21 +1055,26 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 					})
 					del := IconButton(c, tc, icons.TablerTrash, 13)
 					if del.Clicked() {
-						var updated []settings.CustomSlashCommand
-						for _, it := range sm.CustomCommands {
-							if it.Name != cmd.Name {
-								updated = append(updated, it)
+						targetName := cmd.Name
+						a.confirmDialogLabeled("Delete Slash Command?", fmt.Sprintf("“%s” will be removed from your custom commands and command palette.", targetName), "Delete", func() {
+							var updated []settings.CustomSlashCommand
+							for _, it := range sm.CustomCommands {
+								if it.Name != targetName {
+									updated = append(updated, it)
+								}
 							}
-						}
-						sm.SetCustomCommands(updated)
-						if a.Palette != nil {
-							a.Palette.SetCommands(a.paletteCommands())
-						}
+							sm.SetCustomCommands(updated)
+							if a.Palette != nil {
+								a.Palette.SetCommands(a.paletteCommands())
+							}
+							a.queueToast(ui.Toast{Title: "Command Deleted", Description: targetName, Type: "info"})
+						}, nil)
 					}
 				})
 			})
 		}
 
+		ui.Text(c, "BUILT-IN COMMANDS").FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted).Padding(6, 2, 0, 2)
 		for _, d := range defaultCmds {
 			cmd := d
 			settingsCard(c, tc, func() {
@@ -1063,10 +1099,8 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 	settingsSectionHeader(c, tc, "Browser Use", "Headless browser, web automation, search providers, and page preview controls.")
 
 	// Honesty: these preferences are not read by any browser automation yet.
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		Badge(c, tc, "Not wired up yet", tc.Warning)
-		ui.Box(c).Grow(1)
-	})
+	settingsNoticeBanner(c, tc, icons.TablerInfoCircle, "Preview Only — Not Wired Up Yet",
+		"Browser automation controls are shown for reference and are currently disabled until runtime integration is enabled.", tc.Warning)
 
 	if sm.BrowserEngine == "" {
 		sm.BrowserEngine = "DuckDuckGo"
@@ -1085,7 +1119,7 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 				ui.Switch(c, &sm.BrowserHeadless).Disabled(true).DimDisabled(true)
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
@@ -1095,17 +1129,17 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 				ui.Switch(c, &sm.BrowserAllowJS).Disabled(true).DimDisabled(true)
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "Default Search Engine").FontSize(12).FontWeight(600)
 				ui.Text(c, "Fallback search provider used for unqualified queries in the URL bar.").FontSize(11).TextColor(tc.TextMuted)
 				providers := []string{"DuckDuckGo", "Google", "Bing", "Brave"}
-				ui.Row(c).Gap(6).Children(func() {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for _, p := range providers {
 						prov := p
 						isSel := sm.BrowserEngine == prov
-						btn := ui.Row(c.Key("search-eng-"+prov)).Height(24).Radius(4).Padding(0, 10).
+						btn := ui.Row(c.Key("search-eng-"+prov)).Height(24).Radius(6).Padding(0, 10).
 							BorderWidth(1).AlignItems(ui.Center)
 						if isSel {
 							btn.Background(tc.Accent.Alpha(0.15)).BorderColor(tc.Accent)
@@ -1124,17 +1158,17 @@ func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm
 				})
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "Default Viewport Size").FontSize(12).FontWeight(600)
 				ui.Text(c, "Emulated browser window dimensions for page layout and screenshots.").FontSize(11).TextColor(tc.TextMuted)
 				viewports := []string{"1280x800", "1440x900", "1920x1080", "390x844 (Mobile)"}
-				ui.Row(c).Gap(6).Children(func() {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for _, vp := range viewports {
 						viewport := vp
 						isSel := sm.BrowserViewport == viewport
-						btn := ui.Row(c.Key("viewport-"+viewport)).Height(24).Radius(4).Padding(0, 10).
+						btn := ui.Row(c.Key("viewport-"+viewport)).Height(24).Radius(6).Padding(0, 10).
 							BorderWidth(1).AlignItems(ui.Center)
 						if isSel {
 							btn.Background(tc.Accent.Alpha(0.15)).BorderColor(tc.Accent)
@@ -1166,14 +1200,12 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 	}
 
 	// Honesty: no desktop automation reads these preferences yet.
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		Badge(c, tc, "Not wired up yet", tc.Warning)
-		ui.Box(c).Grow(1)
-	})
+	settingsNoticeBanner(c, tc, icons.TablerAlertTriangle, "Preview Only — Not Wired Up Yet",
+		"Desktop GUI control settings are currently read-only until computer use automation is enabled.", tc.Warning)
 
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(12).Children(func() {
-			ui.Column(c).Gap(4).Children(func() {
+			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "Desktop Autonomy Level").FontSize(12).FontWeight(600)
 				ui.Text(c, "Controls confirmation prompts required before desktop keyboard or mouse actions.").FontSize(11).TextColor(tc.TextMuted)
 
@@ -1191,12 +1223,12 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 					isSel := sm.ComputerPermissionMode == mode.name
 					// Selection display only — control disabled until computer
 					// use is actually wired up.
-					card := ui.Row(c.Key("comp-mode-"+mode.name)).Radius(6).Padding(8, 12).Gap(8).
+					card := ui.Row(c.Key("comp-mode-"+mode.name)).Radius(8).Padding(9, 12).Gap(10).
 						BorderWidth(1).AlignItems(ui.Center)
 					if isSel {
 						card.Background(tc.Accent.Alpha(0.1)).BorderColor(tc.Accent)
 					} else {
-						card.Background(tc.SurfaceRaised).BorderColor(tc.Border.Alpha(0.5))
+						card.Background(tc.Canvas).BorderColor(tc.Border.Alpha(0.6))
 					}
 					card.Children(func() {
 						dot := ui.Box(c).Size(8, 8).Radius(4)
@@ -1207,13 +1239,13 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 						}
 						ui.Column(c).Grow(1).Gap(1).Children(func() {
 							ui.Text(c, mode.name).FontSize(12).FontWeight(600)
-							ui.Text(c, mode.desc).FontSize(10).TextColor(tc.TextMuted)
+							ui.Text(c, mode.desc).FontSize(10.5).TextColor(tc.TextMuted)
 						})
 					})
 				}
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
@@ -1223,7 +1255,7 @@ func (a *AppUI) renderSettingsTabComputer(c *ui.Context, tc theme.ThemeColors, s
 				Badge(c, tc, "Unavailable", tc.TextMuted)
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
 			ui.Row(c).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Grow(1).Gap(2).Children(func() {
@@ -1243,14 +1275,17 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 
 	// Honesty: hooks are saved and reloaded today, but nothing executes them
 	// yet — say so instead of implying they run.
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		Badge(c, tc, "Saved — execution not wired yet", tc.Warning)
-		ui.Box(c).Grow(1)
-	})
+	settingsNoticeBanner(c, tc, icons.TablerInfoCircle, "Saved Locally — Execution Not Wired Yet",
+		"Hooks configured here persist to disk and will activate automatically once lifecycle hook execution is enabled.", tc.Warning)
 
-	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		addBtn := ui.Button(c, "+ Add Hook")
-		if addBtn.Clicked() {
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		addLbl := "Add Hook"
+		addIc := icons.TablerPlus
+		if sm.HookFormOpen {
+			addLbl = "Close Form"
+			addIc = icons.TablerX
+		}
+		if settingsActionPill(c, tc, "hook-add-btn", addLbl, addIc, !sm.HookFormOpen).Clicked() {
 			sm.HookFormOpen = !sm.HookFormOpen
 		}
 		ui.Box(c).Grow(1)
@@ -1258,15 +1293,26 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 	})
 
 	if sm.HookFormOpen {
+		if sm.HookEvent == "" {
+			sm.HookEvent = "PreToolUse"
+		}
 		settingsCard(c, tc, func() {
-			ui.Column(c).Gap(8).Children(func() {
-				ui.Text(c, "New Lifecycle Hook").FontSize(12).FontWeight(600)
-				ui.Row(c).Gap(6).Children(func() {
-					ui.TextInput(c, &sm.HookEvent).Placeholder("Event (e.g. PreToolUse)").Width(160)
-					ui.TextInput(c, &sm.HookMatcher).Placeholder("Matcher regex (e.g. Bash|Edit)").Grow(1)
+			ui.Column(c).Gap(10).Children(func() {
+				ui.Text(c, "New Lifecycle Hook").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
+					ui.Text(c, "Event:").FontSize(11).TextColor(tc.TextMuted)
+					for _, ev := range []string{"PreToolUse", "PostToolUse", "Stop", "SessionStart"} {
+						e := ev
+						if renderOrchOptionPill(c, tc, "hook-ev-"+e, e, sm.HookEvent == e).Clicked() {
+							sm.HookEvent = e
+						}
+					}
 				})
-				ui.TextInput(c, &sm.HookCommand).Placeholder("Command to execute (e.g. .rakit/hooks/guard.sh)").Grow(1)
-				ui.Row(c).Justify(ui.End).Gap(6).Children(func() {
+				ui.Row(c).Gap(8).Children(func() {
+					ui.TextInput(c, &sm.HookMatcher).Placeholder("Matcher regex (e.g. Bash|Edit)").Grow(1)
+					ui.TextInput(c, &sm.HookCommand).Placeholder("Command to execute (e.g. .rakit/hooks/guard.sh)").Grow(2)
+				})
+				ui.Row(c).Justify(ui.End).Gap(8).Children(func() {
 					if ui.Button(c, "Cancel").Clicked() {
 						sm.HookFormOpen = false
 					}
@@ -1300,33 +1346,35 @@ func (a *AppUI) renderSettingsTabHooks(c *ui.Context, tc theme.ThemeColors, sm *
 				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerGitFork).Width(16).Height(16).TextColor(tc.Accent)
 					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Wrap().Children(func() {
 							ui.Text(c, thisH.Event).FontSize(13).FontWeight(600)
 							if thisH.Matcher != "" {
 								Badge(c, tc, thisH.Matcher, tc.Info)
 							}
 							Badge(c, tc, "not executed", tc.TextMuted)
 						})
-						ui.Text(c, thisH.Command).FontSize(11).TextColor(tc.TextMuted)
+						ui.Text(c, thisH.Command).FontSize(11).Font("monospace").TextColor(tc.TextMuted)
 					})
 					del := IconButton(c, tc, icons.TablerTrash, 13)
 					if del.Clicked() {
-						var updated []settings.HookEntry
-						for _, item := range sm.HooksList {
-							if item.ID != thisH.ID {
-								updated = append(updated, item)
+						targetID := thisH.ID
+						targetEvent := thisH.Event
+						a.confirmDialogLabeled("Delete Lifecycle Hook?", fmt.Sprintf("Remove the %s hook?", targetEvent), "Delete", func() {
+							var updated []settings.HookEntry
+							for _, item := range sm.HooksList {
+								if item.ID != targetID {
+									updated = append(updated, item)
+								}
 							}
-						}
-						sm.SetHooks(updated)
+							sm.SetHooks(updated)
+							a.queueToast(ui.Toast{Title: "Hook Deleted", Description: targetEvent, Type: "info"})
+						}, nil)
 					}
 				})
 			})
 		}
 		if len(sm.HooksList) == 0 {
-			ui.Column(c).Center().Padding(20).Gap(4).Children(func() {
-				ui.Text(c, "No lifecycle hooks configured").FontSize(12).TextColor(tc.TextMuted)
-				ui.Text(c, "Hooks allow you to run automated validation scripts before tools run or after sessions start.").FontSize(11).TextColor(tc.TextMuted)
-			})
+			settingsEmptyState(c, tc, icons.TablerGitFork, "No lifecycle hooks configured", "Hooks let you attach automated validation scripts to agent lifecycle events.")
 		}
 	})
 }
@@ -1387,26 +1435,26 @@ func (a *AppUI) renderSettingsTabIndexing(c *ui.Context, tc theme.ThemeColors, s
 				}
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
-			ui.Row(c).Gap(16).Children(func() {
-				ui.Column(c).Radius(6).Padding(10).Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Grow(1).Children(func() {
-					ui.Text(c, "Indexed Files").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Text(c, fmt.Sprintf("%d", fileCount)).FontSize(18).FontWeight(700).TextColor(tc.Accent)
+			ui.Row(c).Gap(14).Children(func() {
+				ui.Column(c).Radius(10).Padding(12, 14).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Grow(1).Gap(2).Children(func() {
+					ui.Text(c, "INDEXED FILES").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+					ui.Text(c, fmt.Sprintf("%d", fileCount)).FontSize(20).FontWeight(700).TextColor(tc.Accent)
 				})
-				ui.Column(c).Radius(6).Padding(10).Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.4)).Grow(1).Children(func() {
-					ui.Text(c, "Index Size").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Text(c, formatBytes(totalBytes)).FontSize(18).FontWeight(700)
+				ui.Column(c).Radius(10).Padding(12, 14).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Grow(1).Gap(2).Children(func() {
+					ui.Text(c, "INDEX SIZE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+					ui.Text(c, formatBytes(totalBytes)).FontSize(20).FontWeight(700).TextColor(tc.Text)
 				})
 			})
 
-			ui.Box(c).Height(1).Background(tc.Border.Alpha(0.4))
+			settingsDivider(c, tc)
 
 			ui.Column(c).Gap(6).Children(func() {
 				ui.Text(c, "Exclusion Patterns").FontSize(12).FontWeight(600)
 				ui.Text(c, "Directories and paths ignored during indexing and symbol scans.").FontSize(11).TextColor(tc.TextMuted)
 				patterns := []string{".git", "node_modules", "dist", "build", "vendor", ".forge"}
-				ui.Row(c).Gap(6).Children(func() {
+				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for _, pat := range patterns {
 						Badge(c, tc, pat, tc.TextMuted)
 					}

@@ -62,7 +62,7 @@ func (a *AppUI) renderSettingsTabUsage(c *ui.Context, tc theme.ThemeColors, sm *
 			"Monitor token consumption, prompt inputs, completions, cache reads, and cache hit efficiency across models and providers.")
 
 		refreshBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 		refreshBtn.Children(func() {
 			ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
 			ui.Text(c, "Refresh Stats").FontSize(12).FontWeight(500).TextColor(tc.Text)
@@ -101,7 +101,7 @@ func (a *AppUI) renderSettingsTabUsage(c *ui.Context, tc theme.ThemeColors, sm *
 					thisP := p
 					isSelected := (sm.UsageTimeRange == thisP.ID)
 					btn := ui.Row(c.Key("range-btn-"+thisP.ID)).Height(28).Radius(6).Padding(0, 12).
-						AlignItems(ui.Center).Justify(ui.Center)
+						AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 					if isSelected {
 						btn.Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
 					} else {
@@ -187,7 +187,7 @@ func (a *AppUI) renderSettingsTabUsage(c *ui.Context, tc theme.ThemeColors, sm *
 					// Reset filters button if any filter is active
 					if sm.UsageFilterProv != "" || sm.UsageFilterModel != "" {
 						clearBtn := ui.Row(c).Height(26).Radius(4).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 						clearBtn.Children(func() {
 							ui.Icon(c, icons.TablerX).Width(12).Height(12).TextColor(tc.IconMuted)
 							ui.Text(c, "Clear Filters").FontSize(11).TextColor(tc.TextMuted)
@@ -203,25 +203,43 @@ func (a *AppUI) renderSettingsTabUsage(c *ui.Context, tc theme.ThemeColors, sm *
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "Group By:").FontSize(12).FontWeight(600).TextColor(tc.TextMuted)
 
-					modelGrpBtn := ui.Row(c).Height(26).Radius(4).Padding(0, 10).AlignItems(ui.Center)
-					if sm.UsageGroupBy == "model" {
+					isModelGrp := sm.UsageGroupBy == "model"
+					modelGrpBtn := ui.Row(c.Key("usage-grp-model")).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					if isModelGrp {
 						modelGrpBtn.Background(tc.Accent)
-						ui.Text(c, "Model").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 					} else {
 						modelGrpBtn.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-						ui.Text(c, "Model").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					}
+					modelGrpBtn.Children(func() {
+						if isModelGrp {
+							ui.Text(c, "Model").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
+						} else {
+							ui.Text(c, "Model").FontSize(11).FontWeight(500).TextColor(tc.Text)
+						}
+					})
+					if !isModelGrp && modelGrpBtn.Hovered() {
+						modelGrpBtn.Background(tc.SurfaceRaised)
 					}
 					if modelGrpBtn.Clicked() {
 						sm.UsageGroupBy = "model"
 					}
 
-					provGrpBtn := ui.Row(c).Height(26).Radius(4).Padding(0, 10).AlignItems(ui.Center)
-					if sm.UsageGroupBy == "provider" {
+					isProvGrp := sm.UsageGroupBy == "provider"
+					provGrpBtn := ui.Row(c.Key("usage-grp-provider")).Height(26).Radius(6).Padding(0, 10).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					if isProvGrp {
 						provGrpBtn.Background(tc.Accent)
-						ui.Text(c, "Provider").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 					} else {
 						provGrpBtn.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-						ui.Text(c, "Provider").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					}
+					provGrpBtn.Children(func() {
+						if isProvGrp {
+							ui.Text(c, "Provider").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
+						} else {
+							ui.Text(c, "Provider").FontSize(11).FontWeight(500).TextColor(tc.Text)
+						}
+					})
+					if !isProvGrp && provGrpBtn.Hovered() {
+						provGrpBtn.Background(tc.SurfaceRaised)
 					}
 					if provGrpBtn.Clicked() {
 						sm.UsageGroupBy = "provider"
@@ -272,7 +290,7 @@ func (a *AppUI) renderSettingsTabUsage(c *ui.Context, tc theme.ThemeColors, sm *
 
 // renderUsageKpiCard renders a single metric summary card.
 func renderUsageKpiCard(c *ui.Context, tc theme.ThemeColors, title, value, subtitle string, icon *ui.SVG, valColor ui.Color) {
-	ui.Column(c).Grow(1).Padding(12, 14).Radius(8).Background(tc.Surface).
+	ui.Column(c).Grow(1).Padding(14, 16).Radius(12).Background(tc.Surface).
 		BorderWidth(1).BorderColor(tc.Border).Gap(4).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 			ui.Text(c, strings.ToUpper(title)).FontSize(10).FontWeight(700).LetterSpacing(0.5).

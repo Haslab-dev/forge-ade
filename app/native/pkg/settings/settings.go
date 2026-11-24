@@ -87,14 +87,15 @@ type SettingsManager struct {
 	DefaultShell string
 
 	// Integration form state (MCP / Memory / Automations sections).
-	MCPFormOpen bool
-	MCPName     string
-	MCPCommand  string
-	MCPType     string
-	MemoryNew   string
-	AutoName    string
-	AutoCron    string
-	AutoPrompt  string
+	MCPFormOpen  bool
+	MCPName      string
+	MCPCommand   string
+	MCPType      string
+	MemoryNew    string
+	AutoFormOpen bool
+	AutoName     string
+	AutoCron     string
+	AutoPrompt   string
 
 	// Skills form state
 	SkillFormOpen    bool

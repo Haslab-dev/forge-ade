@@ -17,7 +17,6 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
-	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	internalgit "github.com/hasdev/forge-ade/core/git"
 )
@@ -59,15 +58,10 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 
 	ui.Column(c).Width(drawerWidth).Shrink(0).FillHeight().Background(tc.Canvas).
 		BorderWidth(0, 0, 0, 1).BorderColor(tc.Border).Children(func() {
-		// ZCode Right Sidebar Header Bar (42px, aligned with WorkspaceTopBarHeight)
+		// Right Sidebar Header Bar (42px, aligned with WorkspaceTopBarHeight)
 		ui.Row(c).Height(WorkspaceTopBarHeight).Padding(0, rightPad, 0, 8).Gap(6).AlignItems(ui.Center).
 			Background(tc.Chrome).BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).DragWindow().Children(func() {
-			if IconButton(c, tc, icons.TablerChevronsDownUp, 13).Shrink(0).Clicked() {
-				a.openNewLauncherTab()
-			}
-
-			// Open pane tabs (ZCode-style: several panes co-exist) + the
-			// "+" launcher shortcut inside a horizontal strip.
+			// Open pane tabs (several panes co-exist) + the "+" launcher shortcut inside a horizontal strip.
 			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					for ti := range a.DrawerTabs {
@@ -144,6 +138,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					}
 
 					plusBtn := ui.Row(c.Key("rtab-plus")).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+					plusBtn.Tooltip("New tab")
 					plusBtn.Children(func() {
 						ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.IconMuted)
 					})
@@ -151,15 +146,14 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 						plusBtn.Background(tc.Text.Alpha(0.06))
 					}
 					if plusBtn.Clicked() {
-						// ZCode: "+" opens a NEW LAUNCHER TAB — multiple "New tab"
-						// tabs co-exist in the bar; picking a pane REPLACES the
+						// "+" opens a NEW LAUNCHER TAB; picking a pane REPLACES the
 						// launcher tab with that pane.
 						a.openNewLauncherTab()
 					}
 
-					// Close-scope menu for the ACTIVE tab (guaranteed reachable:
-					// left-click menu button, same pattern as the bottom dock).
+					// Close-scope menu for the ACTIVE tab.
 					moreBtn := ui.Row(c.Key("rtab-more")).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+					moreBtn.Tooltip("Tab actions")
 					moreBtn.Children(func() {
 						ui.Icon(c, icons.TablerDots).Width(13).Height(13).TextColor(tc.IconMuted)
 					})
@@ -192,10 +186,12 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 			})
 
 			expandIcon := icons.TablerMaximize2
+			expandTip := "Expand drawer"
 			if a.RightDrawerWidth > 420 {
 				expandIcon = icons.TablerMinimize2
+				expandTip = "Default drawer width"
 			}
-			if IconButton(c, tc, expandIcon, 13).Shrink(0).Clicked() {
+			if IconButton(c, tc, expandIcon, 13).Shrink(0).Tooltip(expandTip).Clicked() {
 				if a.RightDrawerWidth > 420 {
 					a.RightDrawerWidth = RightDrawerDefault
 				} else {
@@ -203,7 +199,7 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 				}
 			}
 
-			if IconButton(c, tc, icons.TablerPanelRight, 14).Shrink(0).Clicked() {
+			if IconButton(c, tc, icons.TablerPanelRight, 14).Shrink(0).Tooltip("Close Right Drawer (⌘J)").Clicked() {
 				a.ShowRightDrawer = false
 			}
 		})
@@ -236,21 +232,27 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					ui.Row(c).Height(32).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 						BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 						askBtn := ui.Row(c.Key("drawer-term-ask")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
-							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+							Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35)).Cursor(ui.CursorPointer)
 						askBtn.Children(func() {
 							ui.Icon(c, icons.TablerSparkles).Width(10).Height(10).TextColor(tc.Accent)
 							ui.Text(c, "Ask Agent").FontSize(10).FontWeight(600).TextColor(tc.Accent)
 						})
+						if askBtn.Hovered() {
+							askBtn.Background(tc.Accent.Alpha(0.2))
+						}
 						if askBtn.Clicked() {
 							a.askAgentFromTerminal()
 						}
 
 						snipBtn := ui.Row(c.Key("drawer-term-snip")).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Shrink(0).
-							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+							Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 						snipBtn.Children(func() {
 							ui.Icon(c, icons.TablerBook).Width(10).Height(10).TextColor(tc.IconMuted)
 							ui.Text(c, "Snippets").FontSize(10).TextColor(tc.Text)
 						})
+						if snipBtn.Hovered() {
+							snipBtn.Background(tc.SurfaceRaised)
+						}
 						if snipBtn.Clicked() {
 							a.OpenTerminalSnippetsModal(ts.ActiveSessionID, "", "")
 						}
@@ -261,10 +263,10 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 						if IconButton(c, tc, icons.TablerArrowDownToLine, 11).Tooltip("Scroll to Bottom").Clicked() && ts != nil {
 							ts.ScrollToBottom()
 						}
-						if IconButton(c, tc, icons.TablerEraser, 11).Clicked() {
+						if IconButton(c, tc, icons.TablerEraser, 11).Tooltip("Clear Terminal").Clicked() {
 							ts.SendInput("\x0c")
 						}
-						if IconButton(c, tc, icons.TablerRefresh, 11).Clicked() {
+						if IconButton(c, tc, icons.TablerRefresh, 11).Tooltip("Restart Terminal").Clicked() {
 							_ = ts.Restart()
 						}
 						ui.Box(c).Grow(1)
@@ -798,6 +800,8 @@ func drawerTabIcon(kind int) *ui.SVG {
 	switch kind {
 	case RightTabChanges:
 		return icons.TablerFileDiff
+	case RightTabGit:
+		return icons.TablerGitBranch
 	case RightTabTerminal:
 		return icons.TablerTerminal
 	case RightTabFiles:
@@ -836,6 +840,8 @@ func (a *AppUI) drawerTabTitle(kind int) string {
 	switch kind {
 	case RightTabChanges:
 		return "Review"
+	case RightTabGit:
+		return "Source Control"
 	case RightTabTerminal:
 		return "Terminal"
 	case RightTabFiles:
@@ -861,104 +867,81 @@ func (a *AppUI) drawerTabTitle(kind int) string {
 }
 
 func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
-	ui.Scroll(c).Grow(1).Padding(16, 18).Children(func() {
-		ui.Column(c).Gap(14).Children(func() {
-			ui.Text(c, "New tab").FontSize(15).FontWeight(600)
+	ui.Scroll(c).Grow(1).Padding(16, 16).Children(func() {
+		ui.Column(c).Gap(16).Children(func() {
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, "Open Tool").FontSize(15).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Launch a workspace or agent pane in this drawer.").FontSize(11).TextColor(tc.TextMuted)
+			})
 
-			launcherCard := func(key, title, desc string, icon *ui.SVG, tileBg, tileFg ui.Color, bordered bool, onOpen func()) {
-				row := ui.Row(c.Key("rlaunch-"+key)).Padding(6, 6).Radius(10).Gap(12).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+			launcherCard := func(key, title, desc string, icon *ui.SVG, tint ui.Color, tinted bool, onOpen func()) {
+				row := ui.Row(c.Key("rlaunch-"+key)).Padding(8, 10).Radius(10).Gap(10).AlignItems(ui.Center).
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.65)).Cursor(ui.CursorPointer)
 				if row.Hovered() {
-					row.Background(tc.Text.Alpha(0.04))
+					row.Background(tc.SurfaceRaised).BorderColor(tc.Border)
 				}
-				openClicked := false
 				row.Children(func() {
-					tile := ui.Row(c).Size(36, 36).Radius(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).Background(tileBg)
-					if bordered {
-						tile.BorderWidth(1).BorderColor(tc.Border)
+					tileBg := tc.Canvas
+					tileFg := tc.IconMuted
+					tileBorder := tc.Border
+					if tinted {
+						tileBg = tint.Alpha(0.14)
+						tileFg = tint
+						tileBorder = tint.Alpha(0.28)
 					}
-					tile.Children(func() {
-						ui.Icon(c, icon).Width(17).Height(17).TextColor(tileFg)
+					ui.Row(c).Size(32, 32).Radius(8).AlignItems(ui.Center).Justify(ui.Center).Shrink(0).
+						Background(tileBg).BorderWidth(1).BorderColor(tileBorder).Children(func() {
+						ui.Icon(c, icon).Width(15).Height(15).TextColor(tileFg)
 					})
-					ui.Column(c).Gap(2).Grow(1).MinWidth(0).Children(func() {
-						ui.Text(c, title).FontSize(13).FontWeight(600).SingleLine()
+					ui.Column(c).Gap(1).Grow(1).MinWidth(0).Children(func() {
+						ui.Text(c, title).FontSize(12.5).FontWeight(600).TextColor(tc.Text).SingleLine()
 						ui.Text(c, desc).FontSize(11).TextColor(tc.TextMuted).SingleLine()
 					})
-					openBtn := ui.Row(c.Key("rlaunch-open-"+key)).Height(26).Radius(999).Padding(0, 12).
-						AlignItems(ui.Center).Justify(ui.Center).Shrink(0).
-						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
-					openBtn.Children(func() {
-						ui.Text(c, "Open").FontSize(11).FontWeight(500).TextColor(tc.Text)
-					})
-					if openBtn.Hovered() {
-						openBtn.Background(tc.Text.Alpha(0.08))
-					}
-					if openBtn.Clicked() {
-						openClicked = true
-						onOpen()
-					}
+					ui.Icon(c, icons.TablerChevronRight).Width(13).Height(13).TextColor(tc.IconMuted).Shrink(0)
 				})
-				if !openClicked && row.Clicked() {
+				if row.Clicked() {
 					onOpen()
 				}
 			}
 
-			ui.Column(c).Gap(4).Children(func() {
-				launcherCard("files", "Files", "Select a file from the navigation", icons.TablerFolder, tc.SurfaceRaised, tc.IconMuted, true, func() {
+			launcherGroup := func(label string, items func()) {
+				ui.Column(c).Gap(6).Children(func() {
+					ui.Text(c, label).FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted).Padding(0, 2)
+					ui.Column(c).Gap(6).Children(items)
+				})
+			}
+
+			launcherGroup("WORKSPACE TOOLS", func() {
+				launcherCard("files", "Files", "Browse and preview workspace files, images, and PDFs.", icons.TablerFolder, tc.Accent, false, func() {
 					a.pickDrawerPaneSingleton(RightTabFiles, "Files")
 				})
-				launcherCard("browser", "Browser", "Browse websites and preview apps.", icons.TablerWorld, tc.SurfaceRaised, tc.IconMuted, true, func() {
+				launcherCard("git", "Source Control", "Review diffs, stage changes, commit, and switch branches.", icons.TablerGitBranch, tc.Accent, false, func() {
+					a.pickDrawerPaneSingleton(RightTabGit, "Source Control")
+				})
+				launcherCard("terminal", "Terminal", "Run shell commands and inspect output.", icons.TablerTerminal, tc.Accent, false, func() {
+					a.pickDrawerPaneTerminal()
+				})
+				launcherCard("browser", "Browser", "Preview local apps and browse web pages.", icons.TablerWorld, tc.Accent, false, func() {
 					a.pickDrawerPaneSingleton(RightTabBrowser, "Browser")
 					a.openBrowserTab("")
 				})
-				launcherCard("terminal", "Terminal", "Run commands and view output.", icons.TablerTerminal, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.pickDrawerPaneTerminal()
+				launcherCard("database", "Database", "Inspect SQLite & DuckDB tables and run queries.", icons.TablerDatabase, tc.Info, true, func() {
+					a.pickDrawerPaneSingleton(RightTabDatabase, "Database")
 				})
-				launcherCard("review", "Review", "Review code changes and diffs.", icons.TablerFileDiff, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.pickDrawerPaneSingleton(RightTabChanges, "Review")
-				})
-				launcherCard("plans", "Plans & Progress", "View active plans, tasks, and sub-agents.", icons.TablerChecklist, tc.SurfaceRaised, tc.IconMuted, true, func() {
-					a.pickDrawerPaneSingleton(RightTabTasks, "Plans")
-				})
-				launcherCard("sidechat", "Side conversation", "Continue a conversation in the side pane.", icons.TablerMessage, tc.SurfaceRaised, tc.IconMuted, true, func() {
+			})
+
+			launcherGroup("AGENT & SESSION", func() {
+				launcherCard("sidechat", "Side Conversation", "Ask quick questions without interrupting your main task.", icons.TablerMessage, tc.Accent, true, func() {
 					a.pickDrawerPaneSideChat()
 				})
-				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.SurfaceRaised, tc.IconMuted, true, func() {
+				launcherCard("plans", "Plans & Progress", "Track active plans, checklists, and task progress.", icons.TablerChecklist, tc.Success, true, func() {
+					a.pickDrawerPaneSingleton(RightTabTasks, "Plans")
+				})
+				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.Warning, true, func() {
 					a.pickDrawerPaneSingleton(RightTabSubagent, "Child Agents")
 				})
-				launcherCard("ssh", "Remote SSH / SFTP", "Connect to remote server, manage remote files, and open remote terminal.", icons.TablerServer, tc.Accent.Alpha(0.12), tc.Accent, false, func() {
-					a.OpenSSHModal()
-				})
-			})
-
-			ui.Box(c).FillWidth().Height(1).Background(tc.Border.Alpha(0.6))
-
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "App plugins").FontSize(13).FontWeight(600).Grow(1)
-				viewAll := ui.Row(c.Key("rlaunch-plugins-all")).Gap(3).Radius(6).Padding(3, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-				viewAll.Children(func() {
-					ui.Text(c, "View all plugins").FontSize(11).TextColor(tc.TextMuted)
-					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.TextMuted)
-				})
-				if viewAll.Hovered() {
-					viewAll.Background(tc.Text.Alpha(0.05))
-				}
-				if viewAll.Clicked() {
-					a.openSettings(settings.SettingsTabPlugins)
-				}
-			})
-
-			ui.Column(c).Gap(4).Children(func() {
-				launcherCard("pdf", "PDF", "PDF", icons.TablerFileText, tc.Error.Alpha(0.14), tc.Error, false, func() {
-					a.pickDrawerPaneSingleton(RightTabFiles, "PDF")
-				})
-				launcherCard("artifacts", "Artifacts", "Agent-generated slides, scenes, and media.", icons.TablerFolderOpen, tc.Accent.Alpha(0.14), tc.Accent, false, func() {
+				launcherCard("artifacts", "Artifacts", "Browse generated slides, scenes, and media.", icons.TablerFolderOpen, tc.Accent, true, func() {
 					a.pickDrawerPaneSingleton(RightTabArtifacts, "Artifacts")
-				})
-				launcherCard("presentations", "Presentations", "Presentations", icons.TablerPresentation, tc.Warning.Alpha(0.14), tc.Warning, false, func() {
-					a.pickDrawerPaneSingleton(RightTabDeck, "Deck")
-				})
-				launcherCard("database", "Database", "SQLite & DuckDB inspector", icons.TablerDatabase, tc.Info.Alpha(0.14), tc.Info, false, func() {
-					a.pickDrawerPaneSingleton(RightTabDatabase, "Database")
 				})
 			})
 		})
@@ -1255,7 +1238,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 				ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
 					// AI commit button
 					aiBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 					aiBtn.Children(func() {
 						ui.Icon(c, icons.TablerSparkles).Width(12).Height(12).TextColor(tc.Accent)
 						ui.Text(c, "AI Message").FontSize(10).FontWeight(500).TextColor(tc.Text)
@@ -1287,7 +1270,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 							ui.Spinner(c).Size(11, 11).Label("Committing…")
 						})
 					case canCommit:
-						commitBtn.Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
+						commitBtn.Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent).Cursor(ui.CursorPointer)
 						commitBtn.Children(func() {
 							ui.Icon(c, icons.TablerCheck).Width(11).Height(11).TextColor(tc.AccentForeground)
 							ui.Text(c, btnText).FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
@@ -1450,7 +1433,7 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 				} {
 					qp := qp
 					chip := ui.Row(c.Key("scq-"+qp)).Height(26).Radius(6).Padding(0, 9).AlignItems(ui.Center).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 					chip.Children(func() {
 						ui.Text(c, qp).FontSize(11)
 					})
@@ -1508,7 +1491,7 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 			return false
 		})
 		sendBtn := ui.Row(c).Size(28, 28).Radius(999).AlignItems(ui.Center).Justify(ui.Center).
-			Background(tc.MessageAction)
+			Background(tc.MessageAction).Cursor(ui.CursorPointer)
 		sendBtn.Children(func() {
 			ui.Icon(c, icons.TablerSend).Width(13).Height(13).TextColor(tc.MessageActionForeground)
 		})
@@ -1609,7 +1592,7 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 
 			if snap.Branch != "" {
 				branchPill := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-					Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
+					Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3)).Cursor(ui.CursorPointer)
 				branchPill.Children(func() {
 					ui.Icon(c, icons.TablerGitBranch).Width(11).Height(11).TextColor(tc.Accent)
 					ui.Text(c, snap.Branch).FontSize(11).FontWeight(600).TextColor(tc.Accent)
@@ -1624,7 +1607,7 @@ func (a *AppUI) renderGitPane(c *ui.Context) {
 			// Remote op buttons: spinner while their goroutine is running.
 			remoteBtn := func(label string, icon *ui.SVG, busy bool, run func() error, doneTitle, doneType string) {
 				b := ui.Row(c).Height(24).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
-					Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+					Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Cursor(ui.CursorPointer)
 				b.Children(func() {
 					if busy {
 						ui.Spinner(c).Size(10, 10).Label(label)
@@ -1818,60 +1801,64 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 	if dm == nil {
 		return
 	}
-	t := c.Theme()
+	tc := a.ThemeMgr.Colors()
 	snap := dm.Snapshot()
 
 	ui.Column(c).Fill().Children(func() {
-		ui.Row(c).Gap(12).Padding(8, 16).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+		ui.Row(c).Height(40).Gap(8).Padding(0, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				TablerIcon(c, icons.TablerDatabase, 15)
-				ui.Text(c, "Database Viewer").Bold().FontSize(14)
+				ui.Icon(c, icons.TablerDatabase).Width(14).Height(14).TextColor(tc.Accent)
+				ui.Text(c, "Database").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
 			})
 			if snap.Info != nil {
-				ui.Text(c, fmt.Sprintf("%s (%s)", snap.Info.FileName, snap.Info.Type)).FontSize(12).TextColor(t.Accent)
+				ui.Text(c, fmt.Sprintf("%s (%s)", snap.Info.FileName, snap.Info.Type)).FontSize(11).TextColor(tc.Accent).SingleLine()
 			}
 			ui.Box(c).Grow(1)
-			rescanBtn := ui.Button(c, "")
+			rescanBtn := ui.Row(c.Key("db-rescan")).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 			rescanBtn.Children(func() {
-				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-					TablerIcon(c, icons.TablerRefresh, 13)
-					ui.Text(c, "Rescan").FontSize(11)
-				})
+				ui.Icon(c, icons.TablerRefresh).Width(11).Height(11).TextColor(tc.IconMuted)
+				ui.Text(c, "Rescan").FontSize(11).TextColor(tc.Text)
 			})
+			if rescanBtn.Hovered() {
+				rescanBtn.Background(tc.SurfaceRaised)
+			}
 			if rescanBtn.Clicked() {
 				go dm.ScanDatabases()
 			}
 		})
 
 		if len(snap.Databases) == 0 {
-			ui.Column(c).Grow(1).Center().Children(func() {
-				TablerIcon(c, icons.TablerDatabase, 28)
-				ui.Text(c, "No SQLite / DuckDB databases detected").FontSize(15).Bold().TextColor(t.TextMuted).Padding(6, 0, 0, 0)
-				ui.Text(c, "Add a .sqlite, .sqlite3, .db, or .duckdb file to your workspace.").TextColor(t.TextMuted)
+			ui.Column(c).Grow(1).Center().Padding(20).Gap(8).Children(func() {
+				ui.Icon(c, icons.TablerDatabase).Width(28).Height(28).TextColor(tc.IconMuted)
+				ui.Text(c, "No SQLite / DuckDB databases detected").FontSize(13).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Add a .sqlite, .sqlite3, .db, or .duckdb file to your workspace.").FontSize(11.5).TextColor(tc.TextMuted)
 			})
 			return
 		}
 
 		// Database file switcher strip when workspace contains database files.
 		ui.Row(c).Height(32).Padding(0, 12).Gap(6).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-			ui.Text(c, "DB:").FontSize(10).Bold().TextColor(t.TextMuted)
+			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Background(tc.Surface).Children(func() {
+			ui.Text(c, "DB:").FontSize(10).FontWeight(700).TextColor(tc.TextMuted)
 			ui.ScrollHorizontal(c).Grow(1).Scrollbars(false).Children(func() {
 				ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 					for _, dbPath := range snap.Databases {
 						p := dbPath
 						isSel := (p == snap.ActiveDBPath)
-						pill := ui.Row(c.Key("db-switch-"+p)).Height(22).Radius(4).Padding(0, 8).AlignItems(ui.Center)
+						pill := ui.Row(c.Key("db-switch-"+p)).Height(22).Radius(4).Padding(0, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 						pill.Children(func() {
 							txt := ui.Text(c, filepath.Base(p)).FontSize(11)
 							if isSel {
-								txt.Bold().TextColor(a.ThemeMgr.Colors().AccentForeground)
+								txt.FontWeight(600).TextColor(tc.AccentForeground)
+							} else {
+								txt.TextColor(tc.Text)
 							}
 						})
 						if isSel {
-							pill.Background(t.Accent)
+							pill.Background(tc.Accent)
 						} else if pill.Hovered() {
-							pill.Background(t.Border)
+							pill.Background(tc.SurfaceRaised)
 						}
 						pill.Tooltip(p)
 						if pill.Clicked() && !isSel {
@@ -1888,7 +1875,7 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 			// goroutine's locked read of dm.SQLQuery stays race-free.
 			sqlQuery := snap.SQLQuery
 			ui.Column(c).Grow(1).FillHeight().Children(func() {
-				ui.Column(c).Padding(8, 12).Gap(6).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+				ui.Column(c).Padding(8, 12).Gap(6).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 					in := ui.TextInput(c, &sqlQuery).Placeholder("SELECT * FROM table LIMIT 25;").Grow(1)
 					if in.Submitted() && !snap.IsExecuting {
 						dm.SetSQLQuery(sqlQuery)
@@ -1896,29 +1883,31 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 					}
 
 					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-						runBtn := ui.PrimaryButton(c, "")
+						runBtn := ui.Row(c.Key("db-exec")).Height(26).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
+							Background(tc.Accent).Cursor(ui.CursorPointer)
 						runBtn.Children(func() {
-							ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-								TablerIcon(c, icons.TablerPlayerPlay, 12)
-								ui.Text(c, "Execute").FontSize(11).Bold()
-							})
+							ui.Icon(c, icons.TablerPlayerPlay).Width(11).Height(11).TextColor(tc.AccentForeground)
+							ui.Text(c, "Execute").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 						})
+						if runBtn.Hovered() {
+							runBtn.Background(tc.Accent.Alpha(0.85))
+						}
 						if runBtn.Clicked() {
 							dm.SetSQLQuery(sqlQuery)
 							go dm.ExecuteQuery()
 						}
 						ui.Box(c).Grow(1)
 						if snap.StatusMsg != "" {
-							ui.Text(c, snap.StatusMsg).FontSize(11).TextColor(t.TextMuted)
+							ui.Text(c, snap.StatusMsg).FontSize(11).TextColor(tc.TextMuted)
 						}
 					})
 				})
 
 				if qr := snap.QueryResult; qr != nil && len(qr.Columns) > 0 {
 					ui.ScrollBoth(c).Grow(1).Padding(6, 10).Children(func() {
-						ui.Row(c).Padding(4, 6).Background(t.Surface).Radius(4).Children(func() {
+						ui.Row(c).Padding(4, 6).Background(tc.Surface).Radius(4).Children(func() {
 							for _, col := range qr.Columns {
-								ui.Text(c, col).Bold().FontSize(11).Width(100)
+								ui.Text(c, col).FontWeight(600).FontSize(11).TextColor(tc.Text).Width(100)
 							}
 						})
 
@@ -1926,13 +1915,13 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 							if r == nil {
 								continue
 							}
-							ui.Row(c.Key(fmt.Sprintf("dbrow-%d", i))).Padding(3, 6).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
+							ui.Row(c.Key(fmt.Sprintf("dbrow-%d", i))).Padding(3, 6).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
 								for _, col := range qr.Columns {
 									valStr := fmt.Sprintf("%v", r[col])
 									if len(valStr) > 40 {
 										valStr = valStr[:37] + "…"
 									}
-									ui.Text(c, valStr).FontSize(11).Width(100)
+									ui.Text(c, valStr).FontSize(11).TextColor(tc.Text).Width(100)
 								}
 							})
 						}
@@ -1949,21 +1938,28 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 			// Stacked: table pills at top + SQL console below
 			if snap.Info != nil && len(snap.Info.Tables) > 0 {
 				ui.Row(c).Height(32).Padding(0, 8).AlignItems(ui.Center).Gap(6).
-					BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Background(t.Surface).Children(func() {
-					ui.Text(c, "TABLE:").FontSize(9).Bold().TextColor(t.TextMuted)
+					BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Background(tc.Surface).Children(func() {
+					ui.Text(c, "TABLE:").FontSize(9).FontWeight(700).TextColor(tc.TextMuted)
 					ui.ScrollHorizontal(c).Grow(1).Gap(3).AlignItems(ui.Center).Children(func() {
 						for _, tb := range snap.Info.Tables {
 							tName := tb.Name
 							isSel := (tName == snap.ActiveTable)
-							pill := ui.Row(c.Key("db-pill-"+tName)).Height(22).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center)
+							pill := ui.Row(c.Key("db-pill-"+tName)).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 							pill.Children(func() {
-								ui.Text(c, tName).FontSize(11)
-								ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(9).TextColor(t.TextMuted)
+								txt := ui.Text(c, tName).FontSize(11)
+								cnt := ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(9)
+								if isSel {
+									txt.FontWeight(600).TextColor(tc.AccentForeground)
+									cnt.TextColor(tc.AccentForeground.Alpha(0.85))
+								} else {
+									txt.TextColor(tc.Text)
+									cnt.TextColor(tc.TextMuted)
+								}
 							})
 							if isSel {
-								pill.Background(t.Accent)
+								pill.Background(tc.Accent)
 							} else if pill.Hovered() {
-								pill.Background(t.Border)
+								pill.Background(tc.SurfaceRaised)
 							}
 							if pill.Clicked() {
 								go dm.SelectTable(tName)
@@ -1974,27 +1970,39 @@ func (a *AppUI) renderDatabasePane(c *ui.Context) {
 			}
 			renderSQLConsole()
 		} else {
-			// Side by side with compact tables column (130px)
+			// Side by side with compact tables column (136px)
 			ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-				ui.Column(c).Width(130).Background(t.Surface).BorderWidth(0, 1, 0, 0).BorderColor(t.Border).Children(func() {
+				ui.Column(c).Width(136).Background(tc.Surface).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
 					ui.Row(c).Padding(8, 10).Children(func() {
-						ui.Text(c, "TABLES").FontSize(10).Bold().TextColor(t.TextMuted)
+						ui.Text(c, "TABLES").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
 					})
 
 					if snap.Info != nil {
 						ui.Scroll(c).Grow(1).Padding(2, 6).Children(func() {
 							for _, tb := range snap.Info.Tables {
 								tName := tb.Name
-								row := ui.Row(c.Key("db-table-"+tName)).Padding(4, 6).Radius(4).Gap(4).AlignItems(ui.Center)
+								isSel := tName == snap.ActiveTable
+								row := ui.Row(c.Key("db-table-"+tName)).Padding(4, 6).Radius(5).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 								row.Children(func() {
-									TablerIcon(c, icons.TablerTable, 12)
-									ui.Text(c, tName).FontSize(11).Grow(1).SingleLine()
-									ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(10).TextColor(t.TextMuted)
+									icColor := tc.IconMuted
+									if isSel {
+										icColor = tc.AccentForeground
+									}
+									ui.Icon(c, icons.TablerTable).Width(12).Height(12).TextColor(icColor)
+									txt := ui.Text(c, tName).FontSize(11).Grow(1).SingleLine()
+									cnt := ui.Text(c, fmt.Sprintf("%d", tb.RowCount)).FontSize(10)
+									if isSel {
+										txt.FontWeight(600).TextColor(tc.AccentForeground)
+										cnt.TextColor(tc.AccentForeground.Alpha(0.85))
+									} else {
+										txt.TextColor(tc.Text)
+										cnt.TextColor(tc.TextMuted)
+									}
 								})
-								if tName == snap.ActiveTable {
-									row.Background(t.Accent)
+								if isSel {
+									row.Background(tc.Accent)
 								} else if row.Hovered() {
-									row.Background(t.Border)
+									row.Background(tc.SurfaceRaised)
 								}
 								if row.Clicked() {
 									go dm.SelectTable(tName)
@@ -2082,7 +2090,7 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		for _, p := range a.SideFileTabs {
 			thisPath := p
 			active := a.ActiveSideFile == thisPath
-			tab := ui.Row(c.Key("sidefile-"+thisPath)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center)
+			tab := ui.Row(c.Key("sidefile-"+thisPath)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			tab.Children(func() {
 				ui.Icon(c, icons.FileIconSVG(thisPath)).Width(12).Height(12).TextColor(tc.IconMuted)
 				txt := ui.Text(c, filepath.Base(thisPath)).FontSize(11).SingleLine()
@@ -2230,16 +2238,16 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 			BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 			ui.Text(c, a.ActiveSideFile).FontSize(10).TextColor(tc.TextMuted).SingleLine()
 			ui.Box(c).Grow(1)
-			diffToggle := ui.Text(c, "Diff")
+			diffToggle := ui.Text(c, "Diff").FontSize(10).Cursor(ui.CursorPointer)
 			if diffMode {
 				diffToggle.FontWeight(600).TextColor(tc.Accent)
 			} else {
-				diffToggle.FontSize(10).TextColor(tc.TextMuted)
+				diffToggle.TextColor(tc.TextMuted)
 			}
 			if diffToggle.Clicked() {
 				a.SideFileDiffMode[a.ActiveSideFile] = !diffMode
 			}
-			if ui.Text(c, "Open in Editor").FontSize(10).TextColor(tc.Accent).Padding(0, 0, 0, 10).Clicked() {
+			if ui.Text(c, "Open in Editor").FontSize(10).TextColor(tc.Accent).Padding(0, 0, 0, 10).Cursor(ui.CursorPointer).Clicked() {
 				_, _ = a.Editor.OpenFile(full, a.ActiveSideFile)
 				a.Mode = ModeEditor
 			}

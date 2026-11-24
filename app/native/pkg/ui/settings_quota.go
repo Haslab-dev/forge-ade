@@ -27,7 +27,7 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			// Refresh All button with refresh icon
 			refreshAllBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 			refreshAllBtn.Children(func() {
 				ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
 				if sm.IsRefreshingQuota {
@@ -46,7 +46,7 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 
 			// Import Local Account button
 			importBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 			importBtn.Children(func() {
 				ui.Icon(c, icons.TablerUser).Width(13).Height(13).TextColor(tc.IconMuted)
 				ui.Text(c, "Import Local").FontSize(12).FontWeight(500).TextColor(tc.Text)
@@ -60,10 +60,10 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 
 			// Add Account button
 			addBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-				Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent)
+				Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent).Cursor(ui.CursorPointer)
 			addBtn.Children(func() {
-				ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(ui.RGB(255, 255, 255))
-				ui.Text(c, "Add Account").FontSize(12).FontWeight(600).TextColor(ui.RGB(255, 255, 255))
+				ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.AccentForeground)
+				ui.Text(c, "Add Account").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 			})
 			if addBtn.Hovered() {
 				addBtn.Background(tc.Accent.Alpha(0.85))
@@ -161,10 +161,10 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 							ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
 								// Sign in with Google Button
 								loginBtn := ui.Row(c).Height(34).Radius(8).Padding(0, 16).Gap(8).AlignItems(ui.Center).Justify(ui.Center).
-									Background(tc.Accent)
+									Background(tc.Accent).Cursor(ui.CursorPointer)
 								loginBtn.Children(func() {
 									icons.RenderProviderIcon(c, "antigravity", 16)
-									ui.Text(c, "Sign in with Google (OAuth)").FontSize(12).FontWeight(600).TextColor(ui.RGB(255, 255, 255))
+									ui.Text(c, "Sign in with Google (OAuth)").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 								})
 								if loginBtn.Hovered() {
 									loginBtn.Background(tc.Accent.Alpha(0.85))
@@ -258,9 +258,9 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 							}
 
 							saveBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 14).AlignItems(ui.Center).Justify(ui.Center).
-								Background(tc.Accent)
+								Background(tc.Accent).Cursor(ui.CursorPointer)
 							saveBtn.Children(func() {
-								ui.Text(c, "Save & Track Quota").FontSize(12).FontWeight(600).TextColor(ui.RGB(255, 255, 255))
+								ui.Text(c, "Save & Track Quota").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 							})
 							if saveBtn.Hovered() {
 								saveBtn.Background(tc.Accent.Alpha(0.85))
@@ -302,10 +302,10 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 
 				ui.Row(c).Padding(8, 0, 0, 0).Gap(10).Children(func() {
 					loginNowBtn := ui.Row(c).Height(32).Radius(6).Padding(0, 14).Gap(6).AlignItems(ui.Center).
-						Background(tc.Accent)
+						Background(tc.Accent).Cursor(ui.CursorPointer)
 					loginNowBtn.Children(func() {
 						icons.RenderProviderIcon(c, "antigravity", 14)
-						ui.Text(c, "Sign in with Google (OAuth)").FontSize(12).FontWeight(600).TextColor(ui.RGB(255, 255, 255))
+						ui.Text(c, "Sign in with Google (OAuth)").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 					})
 					if loginNowBtn.Hovered() {
 						loginNowBtn.Background(tc.Accent.Alpha(0.85))

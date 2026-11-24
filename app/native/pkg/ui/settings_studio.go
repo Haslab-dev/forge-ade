@@ -27,6 +27,7 @@ type StudioSettingsDraft struct {
 	TTSVoiceID  string
 
 	SavedNotice bool
+	ShowKeys    bool
 }
 
 var studioDraft StudioSettingsDraft
@@ -85,8 +86,28 @@ func (a *AppUI) renderSettingsTabStudio(c *ui.Context, tc theme.ThemeColors, sm 
 
 				// API Key
 				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, "API Key (Optional for local endpoints)").FontSize(11).FontWeight(600).TextColor(tc.Text)
-					ui.TextInput(c, &studioDraft.ImageAPIKey).Placeholder("sk-...").Grow(1)
+					ui.Row(c).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "API Key (Optional for local endpoints)").FontSize(11).FontWeight(600).TextColor(tc.Text)
+						ui.Box(c).Grow(1)
+						tog := ui.Row(c.Key("studio-toggle-keys")).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+						tog.Children(func() {
+							ic := icons.TablerEye
+							lbl := "Show keys"
+							if studioDraft.ShowKeys {
+								ic = icons.TablerEyeOff
+								lbl = "Hide keys"
+							}
+							ui.Icon(c, ic).Width(11).Height(11).TextColor(tc.IconMuted)
+							ui.Text(c, lbl).FontSize(10).TextColor(tc.TextMuted)
+						})
+						if tog.Clicked() {
+							studioDraft.ShowKeys = !studioDraft.ShowKeys
+						}
+					})
+					imgKey := ui.TextInput(c, &studioDraft.ImageAPIKey).Placeholder("sk-...").Grow(1)
+					if !studioDraft.ShowKeys {
+						imgKey.Password()
+					}
 				})
 			})
 		})
@@ -112,7 +133,10 @@ func (a *AppUI) renderSettingsTabStudio(c *ui.Context, tc theme.ThemeColors, sm 
 
 				ui.Column(c).Gap(4).Children(func() {
 					ui.Text(c, "API Key").FontSize(11).FontWeight(600).TextColor(tc.Text)
-					ui.TextInput(c, &studioDraft.VideoAPIKey).Placeholder("Bearer token or API Key").Grow(1)
+					vidKey := ui.TextInput(c, &studioDraft.VideoAPIKey).Placeholder("Bearer token or API Key").Grow(1)
+					if !studioDraft.ShowKeys {
+						vidKey.Password()
+					}
 				})
 			})
 		})
@@ -133,14 +157,17 @@ func (a *AppUI) renderSettingsTabStudio(c *ui.Context, tc theme.ThemeColors, sm 
 
 				ui.Column(c).Gap(4).Children(func() {
 					ui.Text(c, "ElevenLabs / TTS API Key").FontSize(11).FontWeight(600).TextColor(tc.Text)
-					ui.TextInput(c, &studioDraft.TTSAPIKey).Placeholder("xi-api-key-...").Grow(1)
+					ttsKey := ui.TextInput(c, &studioDraft.TTSAPIKey).Placeholder("xi-api-key-...").Grow(1)
+					if !studioDraft.ShowKeys {
+						ttsKey.Password()
+					}
 				})
 			})
 		})
 
 		// Save Action Row
 		ui.Row(c.Key("studio-settings-actions")).AlignItems(ui.Center).Gap(12).Children(func() {
-			saveBtn := ui.Row(c.Key("btn-save-studio-settings")).Height(32).Padding(0, 16).Radius(6).
+			saveBtn := ui.Row(c.Key("btn-save-studio-settings")).Height(32).Padding(0, 16).Radius(7).
 				Background(tc.Accent).AlignItems(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 			saveBtn.Children(func() {
 				ui.Icon(c, icons.TablerCheck).Width(13).Height(13).TextColor(tc.AccentForeground)
@@ -163,12 +190,13 @@ func (a *AppUI) renderSettingsTabStudio(c *ui.Context, tc theme.ThemeColors, sm 
 				}
 				_ = corestudio.SaveStudioConfig(cfg)
 				studioDraft.SavedNotice = true
+				c.AddToast(ui.Toast{Title: "Saved", Description: "Studio API settings saved", Type: "success"})
 			}
 
 			if studioDraft.SavedNotice {
-				ui.Row(c).Padding(4, 10).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Padding(4, 10).Radius(5).Background(tc.Success.Alpha(0.15)).Gap(5).AlignItems(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerCircleCheck).Width(12).Height(12).TextColor(tc.Success)
-					ui.Text(c, "Studio API settings saved successfully").FontSize(11).FontWeight(500).TextColor(tc.Success)
+					ui.Text(c, "Studio API settings saved").FontSize(11).FontWeight(500).TextColor(tc.Success)
 				})
 			}
 		})
@@ -176,13 +204,13 @@ func (a *AppUI) renderSettingsTabStudio(c *ui.Context, tc theme.ThemeColors, sm 
 }
 
 func renderSettingSectionCard(c *ui.Context, tc theme.ThemeColors, title string, icon *ui.SVG, content func()) {
-	ui.Column(c.Key("card-"+title)).Radius(10).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
+	ui.Column(c.Key("card-"+title)).Radius(12).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
 		Padding(16, 18).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+		ui.Row(c).AlignItems(ui.Center).Gap(7).Children(func() {
 			ui.Icon(c, icon).Width(14).Height(14).TextColor(tc.Accent)
-			ui.Text(c, title).FontSize(11).FontWeight(700).LetterSpacing(0.5).TextColor(tc.Text)
+			ui.Text(c, title).FontSize(11).FontWeight(700).LetterSpacing(0.6).TextColor(tc.Text)
 		})
-		ui.Box(c).Size(1, 1).Background(tc.Border)
+		ui.Box(c).Height(1).FillWidth().Background(tc.Border.Alpha(0.7))
 		content()
 	})
 }
