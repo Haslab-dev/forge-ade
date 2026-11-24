@@ -2,7 +2,6 @@ package icons
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -226,37 +225,10 @@ func RenderProviderIcon(c *ui.Context, providerOrModel string, size float32) ui.
 	return ui.Icon(c, svg).Width(size).Height(size).TextColor(color)
 }
 
-// FileIconSVG returns the appropriate Tabler SVG icon for a given file name or path.
+// FileIconSVG returns the colored language/file SVG icon for a given file name or path.
 func FileIconSVG(path string) *ui.SVG {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".go":
-		return TablerBrandGolang
-	case ".ts", ".tsx":
-		return TablerBrandTypescript
-	case ".js", ".jsx":
-		return TablerBrandJavascript
-	case ".py":
-		return TablerBrandPython
-	case ".json":
-		return TablerJson
-	case ".md":
-		return TablerMarkdown
-	case ".html", ".htm":
-		return TablerBrandHtml5
-	case ".css", ".scss", ".sass", ".less":
-		return TablerBrandCss3
-	case ".sql", ".db", ".sqlite", ".sqlite3", ".duckdb":
-		return TablerDatabase
-	case ".sh", ".bash", ".zsh":
-		return TablerTerminal
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".svg":
-		return TablerPhoto
-	case ".yml", ".yaml", ".toml":
-		return TablerSettings
-	default:
-		return TablerFile
-	}
+	svg, _ := FileIcon(path, ui.Color{})
+	return svg
 }
 
 // Browser viewer icons (right-drawer browser tab).

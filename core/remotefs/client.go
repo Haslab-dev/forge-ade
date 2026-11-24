@@ -431,10 +431,11 @@ func (c *Client) SSHCommand(remotePath string) (string, []string, []string) {
 		args = append(args, "-i", cfg.KeyPath)
 	}
 	sessName := remoteTmuxSessionName(cfg.ID, remotePath)
+	qPath := shellQuote(remotePath)
+	qSess := shellQuote(sessName)
 	remoteCmd := fmt.Sprintf(
-		"cd %s && if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s %s; else exec $SHELL -l; fi",
-		shellQuote(remotePath),
-		shellQuote(sessName),
+		"cd %s && if command -v tmux >/dev/null 2>&1; then tmux has-session -t %s 2>/dev/null || tmux new-session -d -s %s -c %s; tmux set-option -t %s mouse on >/dev/null 2>&1; tmux set-option -t %s history-limit 50000 >/dev/null 2>&1; exec tmux attach-session -t %s; else exec $SHELL -l; fi",
+		qPath, qSess, qSess, qPath, qSess, qSess, qSess,
 	)
 	args = append(args, cfg.User+"@"+cfg.Host, "-t", remoteCmd)
 

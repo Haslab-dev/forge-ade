@@ -659,18 +659,30 @@ func (em *EditorManager) OpenPatchDiff(relPath, patch string, tm *theme.ThemeMan
 
 // GetOrCreateBufferDiff builds or returns the cached diff between old and new text buffers.
 func (em *EditorManager) GetOrCreateBufferDiff(key, oldStr, newStr string, tm *theme.ThemeManager) *mygoeditor.DiffState {
+	return em.GetOrCreateBufferDiffWithLang(key, "", oldStr, newStr, tm)
+}
+
+// GetOrCreateBufferDiffWithLang builds or returns the cached diff between old
+// and new text buffers with syntax highlighting inferred from filePath.
+func (em *EditorManager) GetOrCreateBufferDiffWithLang(key, filePath, oldStr, newStr string, tm *theme.ThemeManager) *mygoeditor.DiffState {
 	em.mu.Lock()
 	defer em.mu.Unlock()
 	if tm != nil {
 		em.Theme = tm
 	}
-	sig := fnv64a(oldStr, newStr)
+	sig := fnv64a(filePath+"\x00"+oldStr, newStr)
 	if d, ok := em.patchDiffs[key]; ok && em.patchHashes[key] == sig {
 		em.ApplyDiffTheme(d)
 		return d
 	}
 	oldBuf := mygoeditor.NewBuffer(oldStr)
 	newBuf := mygoeditor.NewBuffer(newStr)
+	if filePath != "" {
+		if lang := mygoeditor.LanguageFor(filepath.Base(filePath)); lang != nil {
+			oldBuf.SetLanguage(lang)
+			newBuf.SetLanguage(lang)
+		}
+	}
 	d := &mygoeditor.DiffState{
 		Old:             oldBuf,
 		New:             newBuf,

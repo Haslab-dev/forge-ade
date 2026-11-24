@@ -328,10 +328,9 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 		if a.termFocusWasFocused == nil {
 			a.termFocusWasFocused = make(map[*terminal.TerminalState]bool)
 		}
-		// Key by active session: without a per-session key MyGo may reuse the
-		// previous GPU surface element, so switching tabs would keep showing
-		// the old shell ("switching doesn't work").
-		termView := termplugin.View(c, term).Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
+		// Key by active session on the Context BEFORE View() builds the box so
+		// wheel/pointer/keyboard handlers bind stably to the keyed element.
+		termView := termplugin.View(c.Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)), term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
 			// No "Copy" item: the terminal copies on select (copy-on-select)
 			// and ⌘C is handled by the terminal itself; mygo exposes no API to
 			// read back the terminal selection to copy it manually.
@@ -346,6 +345,9 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 			m.Separator()
 			if m.Item("Scroll Up (Page)").Shortcut(ui.Shift, ui.KeyPageUp).Chosen() {
 				ts.ScrollPageUp()
+			}
+			if m.Item("Scroll Down (Page)").Shortcut(ui.Shift, ui.KeyPageDown).Chosen() {
+				ts.ScrollPageDown()
 			}
 			if m.Item("Scroll to Bottom").Shortcut(ui.Cmd, ui.KeyEnd).Chosen() {
 				ts.ScrollToBottom()

@@ -150,7 +150,7 @@ func (a *AppUI) renderExplorerTree(c *ui.Context, tc theme.ThemeColors) {
 					row := ui.Row(c.Key("ffile-"+node.RelativePath)).Height(FileTreeRowHeight).Radius(4).
 						Padding(0, 6, 0, indent+15).Gap(6).AlignItems(ui.Center)
 					row.Children(func() {
-						ui.Icon(c, icons.FileIconSVG(node.RelativePath)).Width(14).Height(14).TextColor(tc.IconMuted)
+						icons.RenderFileIcon(c, node.RelativePath, 14, tc.IconMuted)
 						ui.Text(c, node.Name).FontSize(12).Grow(1).SingleLine()
 						if dirty {
 							ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
@@ -521,7 +521,7 @@ func (a *AppUI) renderFilesPane(c *ui.Context) {
 					active := a.Editor.ActivePath == path
 					row := ui.Row(c.Key("drawer-open-"+path)).Height(26).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center)
 					row.Children(func() {
-						ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(12).Height(12).TextColor(tc.IconMuted)
+						icons.RenderFileIcon(c, doc.RelativePath, 12, tc.IconMuted)
 						ui.Text(c, filepath.Base(doc.RelativePath)).FontSize(11).Grow(1).SingleLine()
 						if doc.Editor.Buffer.Modified() {
 							ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)

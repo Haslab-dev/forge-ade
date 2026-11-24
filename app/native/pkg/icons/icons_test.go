@@ -32,3 +32,70 @@ func TestMenuIcons(t *testing.T) {
 		t.Fatalf("failed to create menu icon for TablerSparkles: %v", err)
 	}
 }
+
+func TestLanguageFileIcons(t *testing.T) {
+	fallback := ui.Hex("#888888")
+	cases := []struct {
+		path string
+		want *ui.SVG
+	}{
+		{"src/index.ts", LangTypeScript},
+		{"src/App.tsx", LangReactTS},
+		{"src/App.jsx", LangReactJS},
+		{"src/main.js", LangJavaScript},
+		{"cmd/main.go", LangGo},
+		{"go.mod", LangGo},
+		{"scripts/run.py", LangPython},
+		{"src/lib.rs", LangRust},
+		{"Cargo.toml", LangRust},
+		{"App.swift", LangSwift},
+		{"Main.kt", LangKotlin},
+		{"main.dart", LangDart},
+		{"index.html", LangHTML},
+		{"styles.css", LangCSS},
+		{"theme.scss", LangSCSS},
+		{"App.vue", LangVue},
+		{"App.svelte", LangSvelte},
+		{"package.json", LangJSON},
+		{"README.md", LangMarkdown},
+		{"config.yaml", LangYAML},
+		{"pyproject.toml", LangTOML},
+		{"deploy.sh", LangShell},
+		{"Makefile", LangShell},
+		{"Dockerfile", LangDocker},
+		{"docker-compose.yml", LangDocker},
+		{"schema.sql", LangSQL},
+		{"Gemfile", LangRuby},
+		{"index.php", LangPHP},
+		{"Main.java", LangJava},
+		{"main.c", LangC},
+		{"engine.cpp", LangCPP},
+		{"Program.cs", LangCSharp},
+		{"build.zig", LangZig},
+		{"init.lua", LangLua},
+		{"schema.graphql", LangGraphQL},
+		{".gitignore", LangGit},
+		{".env.local", LangEnv},
+		{"yarn.lock", LangEnv},
+		{"logo.svg", LangSVG},
+		{"banner.png", LangImage},
+		{"spec.pdf", LangPDF},
+		{"Info.plist", LangXML},
+		{"unknown.xyz", TablerFile},
+	}
+	for _, tc := range cases {
+		svg, col := FileIcon(tc.path, fallback)
+		if svg != tc.want {
+			t.Errorf("FileIcon(%q) returned unexpected SVG", tc.path)
+		}
+		if svg == nil {
+			t.Errorf("FileIcon(%q) returned nil SVG", tc.path)
+		}
+		if tc.want == TablerFile && col != fallback {
+			t.Errorf("FileIcon(%q) expected fallback color", tc.path)
+		}
+		if FileIconSVG(tc.path) != tc.want {
+			t.Errorf("FileIconSVG(%q) mismatch", tc.path)
+		}
+	}
+}

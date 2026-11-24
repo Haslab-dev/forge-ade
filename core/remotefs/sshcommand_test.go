@@ -24,7 +24,10 @@ func TestSSHCommand(t *testing.T) {
 		"deploy@example.com",
 		"-t",
 		"cd '/var/www/my project'",
-		"tmux new-session -A -s 'forge-c1-",
+		"tmux new-session -d -s 'forge-c1-",
+		"mouse on",
+		"history-limit 50000",
+		"tmux attach-session -t 'forge-c1-",
 		"exec $SHELL -l",
 	} {
 		if !strings.Contains(joined, want) {

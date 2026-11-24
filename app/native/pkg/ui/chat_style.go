@@ -49,6 +49,43 @@ func shimmerTextColor(tc theme.ThemeColors) ui.Color {
 	return tc.TextMuted.Mix(tc.Accent, 0.25+0.75*t)
 }
 
+var streamingWaitWords = []string{
+	"Forging",
+	"Pondering",
+	"Synthesizing",
+	"Brewing code",
+	"Untangling logic",
+	"Tracing call paths",
+	"Connecting the dots",
+	"Crunching AST",
+	"Orchestrating",
+	"Percolating",
+	"Crafting changes",
+	"Polishing edge cases",
+	"Deliberating",
+	"Assembling pieces",
+	"Spinning gears",
+	"Reading the runes",
+	"Channeling bits",
+	"Weaving context",
+}
+
+var streamingGlyphFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// streamingProgressPhrase picks a rotating playful wait/progress verb (Claude Code /
+// ZCode style) seeded per session so it feels randomized without flickering each frame.
+func streamingProgressPhrase(sessionID string, now time.Time) (glyph, phrase string) {
+	ms := now.UnixMilli()
+	glyph = streamingGlyphFrames[(ms/120)%int64(len(streamingGlyphFrames))]
+
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sessionID))
+	slot := uint64(ms/3600) + uint64(h.Sum32())
+	// Mix slot with golden ratio prime for pseudo-random non-sequential rotation.
+	idx := ((slot * 2654435761) >> 16) % uint64(len(streamingWaitWords))
+	return glyph, streamingWaitWords[idx] + "…"
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Durations: ZCode's two-unit format — "2m 10s", "42s", "1h 04m".
 // ──────────────────────────────────────────────────────────────────────────
@@ -199,16 +236,15 @@ func classifyTool(t *agent.ToolExecution) toolVisual {
 	nl := strings.ToLower(t.ToolName)
 	isSkill := strings.Contains(nl, "skill")
 	isMCPLoad := strings.Contains(nl, "mcp_load") || strings.Contains(nl, "load_mcp") || strings.Contains(nl, "mcp_connect") || strings.Contains(nl, "connect_mcp") || strings.Contains(nl, "mcp_server") || strings.Contains(nl, "list_mcp")
-	isMCPTool := strings.HasPrefix(nl, "mcp__") || strings.HasPrefix(nl, "mcp_") || strings.Contains(nl, "mcp_tool") || strings.Contains(nl, "mcptool")
+	isMCPTool := strings.HasPrefix(nl, "mcp__") || strings.HasPrefix(nl, "mcp_") || strings.Contains(nl, "mcp_tool") || strings.Contains(nl, "mcptool") || nl == "list_resources" || nl == "read_resource"
 	isDesignTool := strings.Contains(nl, "deck") || strings.Contains(nl, "motion") || strings.Contains(nl, "opendesign") || strings.Contains(nl, "open-design") || strings.Contains(nl, "forge-design") || strings.Contains(nl, "hyperframe") || isDeckOrMotionFile(args.Path)
 	isBash := strings.Contains(nl, "bash") || strings.Contains(nl, "shell") || strings.Contains(nl, "exec") || strings.Contains(nl, "terminal") || strings.Contains(nl, "run_command")
 	isRead := strings.Contains(nl, "read") || strings.Contains(nl, "view") || strings.Contains(nl, "cat")
 	isEdit := strings.Contains(nl, "edit") || strings.Contains(nl, "write") || strings.Contains(nl, "patch") || strings.Contains(nl, "create") || strings.Contains(nl, "delete") || strings.Contains(nl, "remove")
 	isSearch := strings.Contains(nl, "search") || strings.Contains(nl, "grep") || strings.Contains(nl, "find") || strings.Contains(nl, "glob") || strings.Contains(nl, "list") || strings.Contains(nl, "fetch") || strings.Contains(nl, "web")
 	isSubagent := strings.Contains(nl, "invoke_subagent") || strings.Contains(nl, "subagent") || nl == "task" || strings.Contains(nl, "spawn_subagent")
-	// Task-list tools (manage_task, update_task, todo_write…) drive the
-	// checklist rather than touching the world.
-	isTaskTool := !isSubagent && (strings.Contains(nl, "task") || strings.Contains(nl, "todo"))
+	// Task-list / plan-checklist tools (update_steps, manage_task, update_task, todo_write…)
+	isTaskTool := !isSubagent && (strings.Contains(nl, "task") || strings.Contains(nl, "todo") || nl == "update_steps")
 
 	switch {
 	case isSkill:
@@ -227,25 +263,49 @@ func classifyTool(t *agent.ToolExecution) toolVisual {
 	case isMCPTool:
 		v.Family = tfMCP
 		v.Icon = icons.TablerCpu
-		server, tool := extractMCPToolParts(t.ToolName)
-		if server != "" {
-			v.Badge = "MCP: " + server
-		} else {
-			v.Badge = "MCP"
-		}
+		server, tool := extractMCPToolParts(t.ToolName, t.Command)
 		v.KindLabel = "MCP"
+		v.Badge = server
 		v.Label = tool
 	case isTaskTool:
 		v.Family = tfOther
 		v.Icon = icons.TablerChecklist
-		v.KindLabel = "Updated tasks"
-		// Prefer the affected task title from the args.
+		if nl == "update_steps" {
+			v.KindLabel = "Updated plan"
+		} else {
+			v.KindLabel = "Updated tasks"
+		}
+		v.Label = ""
+		// Prefer the affected task/step title from the args.
 		var rawArgs map[string]interface{}
-		_ = json.Unmarshal([]byte(t.Command), &rawArgs)
-		for _, key := range []string{"title", "Title", "task", "Task", "name", "Name"} {
-			if s, ok := rawArgs[key].(string); ok && strings.TrimSpace(s) != "" {
-				v.Label = clampRunes(s, 64)
-				break
+		if json.Unmarshal([]byte(t.Command), &rawArgs) == nil {
+			for _, key := range []string{"title", "Title", "task", "Task", "name", "Name"} {
+				if s, ok := rawArgs[key].(string); ok && strings.TrimSpace(s) != "" {
+					v.Label = clampRunes(s, 64)
+					break
+				}
+			}
+			if v.Label == "" {
+				if steps, ok := rawArgs["steps"].([]interface{}); ok && len(steps) > 0 {
+					doneCount := 0
+					activeTitle := ""
+					for _, st := range steps {
+						if sm, ok := st.(map[string]interface{}); ok {
+							status, _ := sm["status"].(string)
+							title, _ := sm["title"].(string)
+							if status == "done" {
+								doneCount++
+							} else if status == "in_progress" && activeTitle == "" {
+								activeTitle = title
+							}
+						}
+					}
+					if activeTitle != "" {
+						v.Label = fmt.Sprintf("%s (%d/%d)", clampRunes(activeTitle, 48), doneCount, len(steps))
+					} else {
+						v.Label = fmt.Sprintf("%d/%d completed", doneCount, len(steps))
+					}
+				}
 			}
 		}
 	case isDesignTool:

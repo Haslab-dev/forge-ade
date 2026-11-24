@@ -114,7 +114,7 @@ func (a *AppUI) renderMarkdownCodeBlock(c *ui.Context, tc theme.ThemeColors, b *
 				fileTitle := strings.TrimSpace(strings.TrimPrefix(b.Info, b.Language))
 				if fileTitle != "" {
 					ui.Row(c).Gap(4).Padding(0, 0, 0, 8).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.FileIconSVG(fileTitle)).Width(12).Height(12).TextColor(tc.IconMuted)
+						icons.RenderFileIcon(c, fileTitle, 13, tc.IconMuted)
 						ui.Text(c, fileTitle).FontSize(11).FontWeight(500).TextColor(tc.Text)
 					})
 				}
@@ -1007,7 +1007,7 @@ func (a *AppUI) renderToolMCPLoadBlock(c *ui.Context, tc theme.ThemeColors, t *a
 
 // renderToolMCPCallBlock renders the specialized MCP Tool Calling UI Card.
 func (a *AppUI) renderToolMCPCallBlock(c *ui.Context, tc theme.ThemeColors, t *agent.ToolExecution, cleanOut string, failed bool) {
-	server, tool := extractMCPToolParts(t.ToolName)
+	server, tool := extractMCPToolParts(t.ToolName, t.Command)
 	statusText := "Completed"
 	statusColor := tc.Success
 	if t.Status == "running" {
@@ -1027,7 +1027,7 @@ func (a *AppUI) renderToolMCPCallBlock(c *ui.Context, tc theme.ThemeColors, t *a
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Grow(1).Children(func() {
 				if server != "" {
 					ui.Box(c).Radius(3).Padding(1, 5).Background(tc.Info.Alpha(0.15)).Children(func() {
-						ui.Text(c, strings.ToUpper(server)).FontSize(9).FontWeight(700).TextColor(tc.Info)
+						ui.Text(c, server).FontSize(10).FontWeight(700).TextColor(tc.Info)
 					})
 				}
 				ui.Text(c, tool).FontSize(12).Font("monospace").FontWeight(600).TextColor(tc.Text)
@@ -1201,22 +1201,58 @@ func extractMCPServerLabel(command string, toolName string) string {
 	return clean
 }
 
-func extractMCPToolParts(toolName string) (server, tool string) {
+func extractMCPToolParts(toolName, rawArgs string) (server, tool string) {
+	// 1. Prefer explicit ServerName / ToolName from JSON arguments (e.g. call_mcp_tool,
+	//    list_resources, read_resource).
+	if trimmedArgs := strings.TrimSpace(rawArgs); strings.HasPrefix(trimmedArgs, "{") {
+		var m map[string]interface{}
+		if json.Unmarshal([]byte(trimmedArgs), &m) == nil {
+			for _, k := range []string{"ServerName", "server_name", "serverName", "server", "Server", "mcp_server"} {
+				if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+					server = strings.TrimSpace(s)
+					break
+				}
+			}
+			for _, k := range []string{"ToolName", "tool_name", "toolName", "tool", "Tool", "method", "Method"} {
+				if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+					tool = strings.TrimSpace(s)
+					break
+				}
+			}
+		}
+	}
+
+	// 2. Fall back to tool name prefix conventions (mcp__server__tool / mcp_server_tool).
 	if strings.HasPrefix(toolName, "mcp__") {
 		trimmed := strings.TrimPrefix(toolName, "mcp__")
 		parts := strings.SplitN(trimmed, "__", 2)
 		if len(parts) == 2 {
-			return parts[0], parts[1]
+			if server == "" {
+				server = parts[0]
+			}
+			if tool == "" {
+				tool = parts[1]
+			}
+		} else if tool == "" {
+			tool = trimmed
 		}
-		return "", trimmed
-	}
-	if strings.HasPrefix(toolName, "mcp_") {
+	} else if strings.HasPrefix(toolName, "mcp_") {
 		trimmed := strings.TrimPrefix(toolName, "mcp_")
 		parts := strings.SplitN(trimmed, "_", 2)
 		if len(parts) == 2 {
-			return parts[0], parts[1]
+			if server == "" {
+				server = parts[0]
+			}
+			if tool == "" {
+				tool = parts[1]
+			}
+		} else if tool == "" {
+			tool = trimmed
 		}
-		return "mcp", trimmed
 	}
-	return "mcp", toolName
+
+	if tool == "" {
+		tool = toolName
+	}
+	return server, tool
 }

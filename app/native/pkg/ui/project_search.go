@@ -140,7 +140,7 @@ func (a *AppUI) renderProjectSearchModal(c *ui.Context) {
 						hits := grouped[p]
 						ui.Row(c.Key("ps-h-"+p)).Height(26).Radius(6).Padding(0, 6).Gap(6).
 							AlignItems(ui.Center).Children(func() {
-							ui.Icon(c, icons.FileIconSVG(p)).Width(13).Height(13).TextColor(tc.IconMuted)
+							icons.RenderFileIcon(c, p, 13, tc.IconMuted)
 							ui.Text(c, filepath.Base(p)).FontSize(12).FontWeight(600).Grow(1).SingleLine()
 							ui.Text(c, filepath.Dir(p)).FontSize(10).TextColor(tc.TextMuted).SingleLine()
 							ui.Text(c, fmt.Sprintf("%d", len(hits))).FontSize(10).TextColor(tc.TextMuted)

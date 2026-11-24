@@ -240,7 +240,7 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						if isTerm {
 							ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
 						} else {
-							ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+							icons.RenderFileIcon(c, doc.RelativePath, 13, tc.IconMuted)
 						}
 						if isPinned {
 							ui.Icon(c, icons.TablerPinFilled).Width(9).Height(9).TextColor(tc.Accent)
@@ -911,7 +911,7 @@ func (a *AppUI) renderBreadcrumbs(c *ui.Context, doc *editor.OpenDocument) {
 			}
 			isLast := (i == len(parts)-1)
 			if isLast {
-				ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
+				icons.RenderFileIcon(c, doc.RelativePath, 13, tc.IconMuted)
 				ui.Text(c, part).FontSize(12).FontWeight(500).TextColor(tc.Text)
 			} else {
 				ui.Text(c, part).FontSize(12).TextColor(tc.TextMuted)
@@ -1085,7 +1085,7 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 
 		if curPath != "" {
 			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-				ui.Icon(c, icons.FileIconSVG(curPath)).Width(12).Height(12).TextColor(tc.IconMuted)
+				icons.RenderFileIcon(c, curPath, 12, tc.IconMuted)
 				statusText(truncRunes(curPath, 54))
 			})
 		}

@@ -611,7 +611,7 @@ func (a *AppUI) renderGitChangesSurface(c *ui.Context, tc theme.ThemeColors, gm 
 							acted := false
 							row := ui.Row(c.Key("gc-staged-"+f.Path)).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 							row.Children(func() {
-								ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+								icons.RenderFileIcon(c, f.Path, 13, tc.IconMuted)
 								ui.Text(c, filepath.Base(f.Path)).FontSize(11.5).Grow(1).SingleLine()
 								DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
 								Badge(c, tc, "S", tc.Success)
@@ -660,7 +660,7 @@ func (a *AppUI) renderGitChangesSurface(c *ui.Context, tc theme.ThemeColors, gm 
 							acted := false
 							row := ui.Row(c.Key("gc-unstaged-"+f.Path)).Height(28).Radius(6).Padding(0, 8).Gap(6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 							row.Children(func() {
-								ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+								icons.RenderFileIcon(c, f.Path, 13, tc.IconMuted)
 								ui.Text(c, filepath.Base(f.Path)).FontSize(11.5).Grow(1).SingleLine()
 								DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
 								stLbl := string(f.Status)
@@ -1097,7 +1097,7 @@ func (a *AppUI) renderGitHistorySurface(c *ui.Context, tc theme.ThemeColors, gm 
 									chev = icons.TablerChevronDown
 								}
 								ui.Icon(c, chev).Width(12).Height(12).TextColor(tc.IconMuted)
-								ui.Icon(c, icons.FileIconSVG(f.Path)).Width(13).Height(13).TextColor(tc.IconMuted)
+								icons.RenderFileIcon(c, f.Path, 13, tc.IconMuted)
 								ui.Text(c, filepath.Base(f.Path)).FontSize(12).FontWeight(600).Grow(1).SingleLine()
 								dir := filepath.Dir(f.Path)
 								if dir != "." {

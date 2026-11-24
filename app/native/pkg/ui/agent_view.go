@@ -228,7 +228,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 											chip := ui.Row(c.Key("uatt-"+att)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).
 												Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
 											chip.Children(func() {
-												ui.Icon(c, icons.FileIconSVG(att)).Width(12).Height(12).TextColor(tc.Accent)
+												icons.RenderFileIcon(c, att, 12, tc.Accent)
 												ui.Text(c, filepath.Base(att)).FontSize(11).FontWeight(500)
 											})
 											if chip.Clicked() {
@@ -728,9 +728,14 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 	}
 
 	ui.Column(c.Key("think-" + expandKey)).FillWidth().Gap(2).Children(func() {
-		header := ui.Row(c).Radius(6).Padding(3, 8).Gap(8).AlignItems(ui.Center).MinHeight(30)
+		header := ui.Row(c).Radius(6).Padding(3, 8).Gap(8).AlignItems(ui.Center).MinHeight(30).Cursor(ui.CursorPointer)
+		copyClicked := false
 		header.Children(func() {
-			ui.Icon(c, icons.TablerBrain).Width(15).Height(15).TextColor(tc.IconMuted)
+			if isThinking {
+				ui.Spinner(c).Size(12, 12).Label("")
+			} else {
+				ui.Icon(c, icons.TablerBrain).Width(15).Height(15).TextColor(tc.IconMuted)
+			}
 			labelColor := tc.SecondaryLabel
 			if isThinking {
 				labelColor = shimmerTextColor(tc)
@@ -750,7 +755,8 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 			if text != "" {
 				// Copy affordance appears on hover only, like ZCode's
 				// hover-revealed header actions.
-				copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				copyBtn := ui.Row(c.Key("think-copy-"+expandKey)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center).
+					Cursor(ui.CursorPointer).Tooltip("Copy reasoning")
 				copyBtn.Children(func() {
 					copyColor := ui.RGBA(0, 0, 0, 0)
 					if header.Hovered() {
@@ -762,6 +768,7 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 					copyBtn.Background(tc.Text.Alpha(0.06))
 				}
 				if copyBtn.Clicked() {
+					copyClicked = true
 					mygo.Clipboard.WriteText(text)
 					c.AddToast(ui.Toast{Title: "Copied Reasoning", Description: "Chain of thought copied to clipboard", Type: "success"})
 				}
@@ -780,7 +787,7 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 		if header.Hovered() {
 			header.Background(tc.Text.Alpha(0.04))
 		}
-		if header.Clicked() {
+		if !copyClicked && header.Clicked() {
 			if blockIdx >= 0 {
 				if a.ThinkingBlockExpanded == nil {
 					a.ThinkingBlockExpanded = make(map[string]bool)
@@ -956,11 +963,15 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 		// ZCode ToolSummaryRow: family icon, kind label, content (filename
 		// bright + directory muted / mono command), diffstat, then the
 		// chevron trailing at the row's right edge, hidden until hover.
-		row := ui.Row(c).Height(rowHeight).Radius(6).Padding(0, 8).Gap(8).AlignItems(ui.Center)
+		row := ui.Row(c).Height(rowHeight).Radius(6).Padding(0, 8).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 		labelClicked := false
 		row.Children(func() {
 			if !nested {
-				ui.Icon(c, v.Icon).Width(15).Height(15).TextColor(tc.IconMuted)
+				if running {
+					ui.Spinner(c).Size(12, 12).Label("")
+				} else {
+					ui.Icon(c, v.Icon).Width(15).Height(15).TextColor(tc.IconMuted)
+				}
 			}
 			kindColor := tc.SecondaryLabel
 			if running {
@@ -988,7 +999,7 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 				fileChip := ui.Row(c.Key("tfile-"+thisTool.ID)).Gap(5).AlignItems(ui.Center).
 					Radius(4).Padding(1, 4).MinWidth(0).Cursor(ui.CursorPointer)
 				fileChip.Children(func() {
-					ui.Icon(c, icons.FileIconSVG(leaf)).Width(14).Height(14).TextColor(tc.IconMuted)
+					icons.RenderFileIcon(c, leaf, 14, tc.IconMuted)
 					ui.Text(c, leaf).FontSize(13).FontWeight(500).TextColor(tc.Text).SingleLine()
 					if dir != "" {
 						ui.Text(c, dir).FontSize(12).TextColor(tc.TextMuted).SingleLine()
@@ -1063,6 +1074,7 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 						cleanOut = strings.TrimSpace(cleanOut)
 					}
 
+					parsedPatch := extractDiffFromToolOutput(cleanOut, args.Path)
 					switch {
 					case v.Family == tfSkill:
 						a.renderToolSkillBlock(c, tc, thisTool, cleanOut, failed)
@@ -1082,12 +1094,12 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 					case isRead && args.Path != "":
 						a.renderToolReadBlock(c, tc, args.Path, cleanOut)
 					case isEdit && (args.OldString != "" || args.NewString != ""):
-						a.renderToolEditDiff(c, tc, thisTool.ID, args.OldString, args.NewString)
+						a.renderToolEditDiff(c, tc, thisTool.ID, args.Path, args.OldString, args.NewString)
 					case isEdit && args.Content != "" && args.Path != "":
 						a.renderToolReadBlock(c, tc, args.Path, args.Content)
-					case isEdit && len(args.Edits) > 0 && extractDiffFromToolOutput(cleanOut, args.Path) == "":
+					case isEdit && len(args.Edits) > 0 && parsedPatch == "":
 						for ei, ep := range args.Edits {
-							a.renderToolEditDiff(c, tc, fmt.Sprintf("%s-%d", thisTool.ID, ei), ep.OldString, ep.NewString)
+							a.renderToolEditDiff(c, tc, fmt.Sprintf("%s-%d", thisTool.ID, ei), args.Path, ep.OldString, ep.NewString)
 						}
 					case isSearch && cleanOut != "":
 						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -1102,10 +1114,9 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 							ui.Text(c, searchLbl).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).SingleLine()
 						})
 						renderToolOutputBox(c, tc, cleanOut, failed)
-					case extractDiffFromToolOutput(cleanOut, args.Path) != "":
+					case parsedPatch != "":
 						// Unified patch output (raw or inside JSON diff payload): parse into MyGo DiffView
-						patchStr := extractDiffFromToolOutput(cleanOut, args.Path)
-						d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, patchStr, a.ThemeMgr)
+						d := a.Editor.OpenPatchDiffKeyed("tool-patch-"+thisTool.ID, parsedPatch, a.ThemeMgr)
 						if d != nil {
 							d.FitContent = true
 							d.Layout = mygoeditor.DiffUnified
@@ -1125,7 +1136,8 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 							ui.Text(c, "$").FontSize(11).FontWeight(700).TextColor(tc.Accent)
 							ui.Text(c, cmdStr).FontSize(11).Font("monospace").TextColor(tc.Text).Grow(1).Selectable()
 							if cleanOut != "" {
-								copyBtn := ui.Row(c).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+								copyBtn := ui.Row(c.Key("tbash-copy-"+thisTool.ID)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center).
+									Cursor(ui.CursorPointer).Tooltip("Copy output")
 								copyBtn.Children(func() {
 									ui.Icon(c, icons.TablerCopy).Width(11).Height(11).TextColor(tc.IconMuted)
 								})
@@ -1561,17 +1573,17 @@ func (a *AppUI) renderToolReadBlock(c *ui.Context, tc theme.ThemeColors, path, o
 	if extRaw != "" {
 		subLabel = "Document · " + extRaw
 	}
-	badgeColor := fileExtBadgeColor(path, tc)
+	_, badgeColor := icons.FileIcon(path, tc.IconMuted)
 
 	ui.Column(c).Radius(10).Background(tc.Surface).
 		BorderWidth(1).BorderColor(tc.Border).Clip().Children(func() {
-		// ZCode Document Header Card: 32x32 ext badge + bold title + subtitle + [Open ▾]
+		// ZCode Document Header Card: 32x32 language icon badge + bold title + subtitle + [Open ▾]
 		ui.Row(c).Padding(10, 12).Gap(10).AlignItems(ui.Center).
 			Background(tc.SurfaceRaised.Alpha(0.35)).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5)).Children(func() {
 			ui.Row(c).Size(32, 32).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
 				Background(badgeColor.Alpha(0.14)).BorderWidth(1).BorderColor(badgeColor.Alpha(0.28)).Children(func() {
-				ui.Text(c, fileExtBadgeLabel(path)).FontSize(10).FontWeight(700).TextColor(badgeColor)
+				icons.RenderFileIcon(c, path, 18, tc.IconMuted)
 			})
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 				ui.Text(c, fileName).FontSize(13).FontWeight(600).TextColor(tc.Text).SingleLine()
@@ -1747,11 +1759,9 @@ func (a *AppUI) renderTurnChangesCard(c *ui.Context, tc theme.ThemeColors, sessi
 					if dir == "." {
 						dir = ""
 					}
-					extColor := fileExtBadgeColor(chPath, tc)
-
 					chRow := ui.Row(c.Key("tchg-"+chPath)).Radius(6).Padding(5, 8).Gap(8).AlignItems(ui.Center)
 					chRow.Children(func() {
-						ui.Text(c, fileExtBadgeLabel(chPath)).FontSize(10).FontWeight(700).TextColor(extColor).Width(24)
+						icons.RenderFileIcon(c, chPath, 15, tc.IconMuted)
 						ui.Text(c, base).FontSize(12).FontWeight(500).TextColor(tc.Text).SingleLine()
 						if dir != "" {
 							ui.Text(c, dir+"/").FontSize(11).TextColor(tc.TextMuted).SingleLine()
@@ -2020,12 +2030,74 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 		rightPad = maxF(inset, 324)
 	}
 
-	// ZCode layout: the composer card only — workspace/branch context lives
-	// in the sidebar and status surfaces, not below the composer.
+	// Composer area: animated wait/progress strip above the composer when streaming.
 	ui.Column(c).Padding(0, rightPad, 12, rightInset).Gap(6).Children(func() {
+		a.renderStreamingLoaderStrip(c, tc, sess)
 		a.renderComposerCard(c, tc, false)
 	})
-	_ = sess
+}
+
+// renderStreamingLoaderStrip renders a compact Claude Code / ZCode-style animated
+// progress loader above the composer with rotating playful status verbs, live
+// elapsed timer, step counter, and current active tool hint.
+func (a *AppUI) renderStreamingLoaderStrip(c *ui.Context, tc theme.ThemeColors, sess *agent.AgentSession) {
+	if a.Agent == nil || !a.Agent.StreamingSnapshot() {
+		return
+	}
+	sessID := a.Agent.ActiveSessionID
+	glyph, phrase := streamingProgressPhrase(sessID, time.Now())
+
+	var elapsedText, detailText string
+	var stepCount int
+	if sess != nil && len(sess.Messages) > 0 {
+		for i := len(sess.Messages) - 1; i >= 0; i-- {
+			m := sess.Messages[i]
+			if m == nil || m.Role != "assistant" {
+				continue
+			}
+			if !m.TurnStartedAt.IsZero() {
+				elapsedText = formatWorkDuration(time.Since(m.TurnStartedAt))
+			}
+			stepCount = len(m.Tools)
+			for j := len(m.Tools) - 1; j >= 0; j-- {
+				t := m.Tools[j]
+				if t != nil && t.Status == "running" {
+					v := classifyTool(t)
+					if v.Badge != "" && v.Label != "" {
+						detailText = v.Badge + " · " + clampRunes(v.Label, 36)
+					} else if v.Label != "" {
+						detailText = v.KindLabel + " " + clampRunes(v.Label, 40)
+					} else {
+						detailText = v.KindLabel
+					}
+					break
+				}
+			}
+			break
+		}
+	}
+
+	ui.Row(c.Key("composer-stream-loader")).Height(26).Padding(0, 12).Gap(8).AlignItems(ui.Center).
+		Radius(8).Background(tc.Surface.Alpha(0.75)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.55)).Children(func() {
+		ui.Text(c, glyph).FontSize(13).Font("monospace").FontWeight(700).TextColor(tc.Accent)
+		ui.Text(c, phrase).FontSize(12).FontWeight(600).TextColor(shimmerTextColor(tc))
+		if detailText != "" {
+			ui.Text(c, "·").FontSize(11).TextColor(tc.TextMuted)
+			ui.Text(c, detailText).FontSize(11).Font("monospace").TextColor(tc.TextMuted).Grow(1).SingleLine()
+		} else {
+			ui.Box(c).Grow(1)
+		}
+		if stepCount > 0 {
+			lbl := fmt.Sprintf("%d step", stepCount)
+			if stepCount > 1 {
+				lbl = fmt.Sprintf("%d steps", stepCount)
+			}
+			ui.Text(c, lbl).FontSize(10.5).FontWeight(500).TextColor(tc.TextMuted)
+		}
+		if elapsedText != "" {
+			ui.Text(c, elapsedText).FontSize(10.5).Font("monospace").FontWeight(600).TextColor(tc.TextMuted)
+		}
+	})
 }
 
 func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome bool) {
@@ -2074,7 +2146,7 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 					chip := ui.Row(c.Key("att-"+filePath)).Height(26).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).
 						Background(tc.Accent.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.3))
 					chip.Children(func() {
-						ui.Icon(c, icons.FileIconSVG(filePath)).Width(12).Height(12).TextColor(tc.Accent)
+						icons.RenderFileIcon(c, filePath, 12, tc.Accent)
 						ui.Text(c, fileName).FontSize(11).FontWeight(500)
 						delBtn := ui.Row(c.Key("att-del-"+filePath)).Size(14, 14).Radius(7).AlignItems(ui.Center).Justify(ui.Center)
 						delBtn.Children(func() {
@@ -3935,17 +4007,50 @@ func extractDiffFromToolOutput(out, filePath string) string {
 }
 
 // renderToolEditDiff draws the old/new strings of an edit tool call as a
-// native MyGo DiffView with syntax coloring, line numbers, and word-level diff highlights.
-func (a *AppUI) renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, key, oldStr, newStr string) {
+// native MyGo DiffView with syntax coloring, line numbers, word-level diff highlights,
+// and quick Copy / Open in Editor actions.
+func (a *AppUI) renderToolEditDiff(c *ui.Context, tc theme.ThemeColors, key, filePath, oldStr, newStr string) {
 	if oldStr == "" && newStr == "" {
 		return
 	}
-	d := a.Editor.GetOrCreateBufferDiff("tool-edit-"+key, oldStr, newStr, a.ThemeMgr)
+	d := a.Editor.GetOrCreateBufferDiffWithLang("tool-edit-"+key, filePath, oldStr, newStr, a.ThemeMgr)
 	if d == nil {
 		return
 	}
 	box := ui.Column(c).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).Clip()
 	box.Children(func() {
+		if filePath != "" {
+			ui.Row(c).Height(26).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+				Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.45)).Children(func() {
+				icons.RenderFileIcon(c, filePath, 13, tc.IconMuted)
+				ui.Text(c, filepath.Base(filePath)).FontSize(11).FontWeight(600).TextColor(tc.Text).Grow(1).SingleLine()
+				copyBtn := ui.Row(c.Key("tdiff-copy-"+key)).Height(18).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
+					Cursor(ui.CursorPointer).Tooltip("Copy new content")
+				copyBtn.Children(func() {
+					ui.Icon(c, icons.TablerCopy).Width(10).Height(10).TextColor(tc.IconMuted)
+					ui.Text(c, "Copy").FontSize(10).TextColor(tc.TextMuted)
+				})
+				if copyBtn.Hovered() {
+					copyBtn.Background(tc.Text.Alpha(0.06))
+				}
+				if copyBtn.Clicked() {
+					mygo.Clipboard.WriteText(newStr)
+					c.AddToast(ui.Toast{Title: "Copied Diff Content", Type: "success"})
+				}
+				openBtn := ui.Row(c.Key("tdiff-open-"+key)).Height(18).Radius(4).Padding(0, 6).Gap(3).AlignItems(ui.Center).
+					Cursor(ui.CursorPointer).Tooltip("Open in Editor")
+				openBtn.Children(func() {
+					ui.Icon(c, icons.TablerCode).Width(10).Height(10).TextColor(tc.IconMuted)
+					ui.Text(c, "Open").FontSize(10).TextColor(tc.TextMuted)
+				})
+				if openBtn.Hovered() {
+					openBtn.Background(tc.Text.Alpha(0.06))
+				}
+				if openBtn.Clicked() {
+					a.openTranscriptFileInSidePane(filePath)
+				}
+			})
+		}
 		mygoeditor.DiffView(c, d).FillWidth()
 	})
 }

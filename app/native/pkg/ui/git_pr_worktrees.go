@@ -546,7 +546,7 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 				for _, f := range d.Files {
 					f := f
 					ui.Row(c.Key("prf-"+f.Path)).Gap(6).AlignItems(ui.Center).Padding(2, 0).Children(func() {
-						ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+						icons.RenderFileIcon(c, f.Path, 13, tc.IconMuted)
 						ui.Text(c, f.Path).FontSize(11).Font("monospace").Grow(1)
 						DiffStatText(c, tc, f.Additions, f.Deletions)
 					})
@@ -589,7 +589,7 @@ func (a *AppUI) renderPRDetail(c *ui.Context, tc theme.ThemeColors, gm *git.GitM
 						diffState := a.Editor.GetOrCreatePatchDiff(key, fp, a.ThemeMgr)
 						ui.Column(c.Key("prdiff-"+key)).Radius(6).BorderWidth(1).BorderColor(tc.Border).Clip().Margin(0, 0, 8, 0).Children(func() {
 							ui.Row(c).Padding(6, 10).Background(tc.SurfaceRaised).AlignItems(ui.Center).Children(func() {
-								ui.Icon(c, icons.FileIconSVG(fileName)).Width(12).Height(12).TextColor(tc.IconMuted)
+								icons.RenderFileIcon(c, fileName, 13, tc.IconMuted)
 								ui.Text(c, fileName).FontSize(11).Font("monospace").FontWeight(600).Margin(0, 0, 0, 6)
 							})
 							mygoeditor.DiffView(c, diffState).FillWidth()

@@ -1103,7 +1103,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 						isSel := a.SelectedDiffPath == f.Path
 						row := ui.Row(c.Key("staged-"+f.Path)).Height(26).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
 						row.Children(func() {
-							ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+							icons.RenderFileIcon(c, f.Path, 13, tc.IconMuted)
 							ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
 							DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
 							Badge(c, tc, "S", tc.Success)
@@ -1157,7 +1157,7 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 						acted := false
 						row := ui.Row(c.Key("unstaged-"+f.Path)).Height(26).Radius(6).Padding(0, 6).Gap(4).AlignItems(ui.Center)
 						row.Children(func() {
-							ui.Icon(c, icons.FileIconSVG(f.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+							icons.RenderFileIcon(c, f.Path, 13, tc.IconMuted)
 							ui.Text(c, filepath.Base(f.Path)).FontSize(11).Grow(1).SingleLine()
 							DiffStatText(c, tc, int(f.Additions), int(f.Deletions))
 							statusLabel := string(f.Status)
@@ -2114,7 +2114,7 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 			active := a.ActiveSideFile == thisPath
 			tab := ui.Row(c.Key("sidefile-"+thisPath)).Height(24).Radius(6).Padding(0, 8).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			tab.Children(func() {
-				ui.Icon(c, icons.FileIconSVG(thisPath)).Width(12).Height(12).TextColor(tc.IconMuted)
+				icons.RenderFileIcon(c, thisPath, 13, tc.IconMuted)
 				txt := ui.Text(c, filepath.Base(thisPath)).FontSize(11).SingleLine()
 				if active {
 					txt.FontWeight(600).TextColor(tc.Text)

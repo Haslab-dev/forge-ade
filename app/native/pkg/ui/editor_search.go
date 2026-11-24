@@ -167,7 +167,7 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 					lastPath = hit.Path
 					ui.Row(c.Key("fsh-h-"+hit.Path)).Height(24).Radius(4).Padding(0, 6).Gap(6).
 						AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.FileIconSVG(hit.Path)).Width(12).Height(12).TextColor(tc.IconMuted)
+						icons.RenderFileIcon(c, hit.Path, 13, tc.IconMuted)
 						ui.Text(c, filepath.Base(hit.Path)).FontSize(11).FontWeight(600).Grow(1).SingleLine()
 						ui.Text(c, filepath.Dir(hit.Path)).FontSize(10).TextColor(tc.TextMuted).SingleLine()
 					})
@@ -582,7 +582,7 @@ func (a *AppUI) renderContentSearchResults(c *ui.Context, tc theme.ThemeColors) 
 				hits := grouped[p]
 				ui.Row(c.Key("cs-h-"+p)).Height(24).Radius(4).Padding(0, 6).Gap(6).
 					AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.FileIconSVG(p)).Width(12).Height(12).TextColor(tc.IconMuted)
+					icons.RenderFileIcon(c, p, 13, tc.IconMuted)
 					ui.Text(c, filepath.Base(p)).FontSize(11).FontWeight(600).Grow(1).SingleLine()
 					ui.Text(c, fmt.Sprintf("%d", len(hits))).FontSize(10).TextColor(tc.TextMuted)
 				})

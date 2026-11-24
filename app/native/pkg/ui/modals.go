@@ -328,7 +328,7 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 							selected := (i == pm.SelectedIndex)
 							row := ui.Row(c.Key("pal-"+path)).Radius(10).Padding(8, 12).Gap(8).AlignItems(ui.Center)
 							row.Children(func() {
-								ui.Icon(c, icons.FileIconSVG(path)).Width(13).Height(13).TextColor(tc.IconMuted)
+								icons.RenderFileIcon(c, path, 13, tc.IconMuted)
 								ui.Text(c, path).FontSize(13).Grow(1)
 								if selected {
 									ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.Accent)

@@ -1490,7 +1490,7 @@ func (a *AppUI) renderRemoteFileUploaderModal(c *ui.Context) {
 								row := ui.Row(c.Key("upq-"+it.ID)).Height(32).Padding(0, 8).Radius(6).
 									Background(tc.Canvas.Alpha(0.6)).AlignItems(ui.Center).Gap(8)
 								row.Children(func() {
-									ui.Icon(c, icons.FileIconSVG(it.Name)).Width(14).Height(14).TextColor(tc.IconMuted)
+									icons.RenderFileIcon(c, it.Name, 14, tc.IconMuted)
 									ui.Text(c, it.Name).FontSize(11).Font("monospace").TextColor(tc.Text).SingleLine().Grow(1)
 									if it.Size > 0 {
 										ui.Text(c, formatBytes(it.Size)).FontSize(10).TextColor(tc.TextMuted)
