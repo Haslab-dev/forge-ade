@@ -3,6 +3,7 @@ package icons
 import (
 	"testing"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -15,4 +16,19 @@ func TestGradientIcons(t *testing.T) {
 
 	ompStr := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none"><defs><linearGradient id="omp-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ec4899" /><stop offset=".5" stop-color="#a855f7" /><stop offset="1" stop-color="#06b6d4" /></linearGradient></defs><path fill="url(#omp-grad)" d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z" /></svg>`
 	_ = ui.MustParseSVG([]byte(ompStr))
+}
+
+func TestMenuIcons(t *testing.T) {
+	icBot, err := mygo.NewMenuIconSVG(TablerBot, true)
+	if err != nil || icBot == nil {
+		t.Fatalf("failed to create menu icon for TablerBot: %v", err)
+	}
+	icCode, err := mygo.NewMenuIconSVG(TablerCode, true)
+	if err != nil || icCode == nil {
+		t.Fatalf("failed to create menu icon for TablerCode: %v", err)
+	}
+	icSparkles, err := mygo.NewMenuIconSVG(TablerSparkles, true)
+	if err != nil || icSparkles == nil {
+		t.Fatalf("failed to create menu icon for TablerSparkles: %v", err)
+	}
 }

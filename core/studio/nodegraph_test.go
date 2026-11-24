@@ -46,4 +46,16 @@ func TestGenerateNodeWorkflowHTML(t *testing.T) {
 	if !strings.Contains(htmlVid, "Drone shot over alpine mountains") {
 		t.Fatal("expected video prompt embedded in HTML")
 	}
+	if !strings.Contains(htmlVid, "Storyboard & Shot Plan") {
+		t.Fatal("expected storyboard/plan node in video flow HTML")
+	}
+	if !strings.Contains(htmlVid, "Reference Media") {
+		t.Fatal("expected reference media node in video flow HTML")
+	}
+	if !strings.Contains(htmlVid, "Flow Assistant") {
+		t.Fatal("expected Google Flow assistant sidebar in HTML")
+	}
+	if !strings.Contains(htmlVid, "Media Board") {
+		t.Fatal("expected Media Board gallery switcher in HTML")
+	}
 }

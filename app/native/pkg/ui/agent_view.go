@@ -198,24 +198,27 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 					}
 					m := msgs[i]
 					if m.Role == "user" {
-						ui.Row(c.Key("urow")).Padding(8, rightInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center).Children(func() {
-							copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Height(24).Radius(6).Padding(0, 7).Gap(4).AlignItems(ui.Center)
-							copyBtn.Children(func() {
-								ui.Icon(c, icons.TablerCopy).Width(12).Height(12).TextColor(tc.TextMuted)
-								ui.Text(c, "Copy").FontSize(11).TextColor(tc.TextMuted)
-							})
-							if copyBtn.Hovered() {
-								copyBtn.Background(tc.Text.Alpha(0.06))
+						uRow := ui.Row(c.Key("urow")).Padding(10, rightInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center)
+						uRow.Children(func() {
+							if uRow.Hovered() {
+								copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+								copyBtn.Tooltip("Copy prompt")
+								copyBtn.Children(func() {
+									ui.Icon(c, icons.TablerCopy).Width(12).Height(12).TextColor(tc.TextMuted)
+								})
+								if copyBtn.Hovered() {
+									copyBtn.Background(tc.Text.Alpha(0.06))
+								}
+								if copyBtn.Clicked() {
+									mygo.Clipboard.WriteText(m.Text)
+									c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
+								}
 							}
-							if copyBtn.Clicked() {
-								mygo.Clipboard.WriteText(m.Text)
-								c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
-							}
-							bubble := ui.Column(c).Padding(10, 14).Radius(18, 4, 18, 18).
-								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.5)).
-								MaxWidth(600)
+							bubble := ui.Column(c).Padding(11, 15).Radius(16, 4, 16, 16).
+								Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.65)).
+								MaxWidth(620)
 							bubble.Children(func() {
-								ui.Text(c, m.Text).Selectable().FontSize(14).TextColor(tc.MessageForeground)
+								ui.Text(c, m.Text).Selectable().FontSize(13.5).LineHeight(1.45).TextColor(tc.MessageForeground)
 								atts := userMessageAttachments(m.Text)
 								if len(atts) > 0 {
 									chipRow := ui.Row(c).Gap(5).Wrap().Padding(6, 0, 0, 0)
@@ -235,7 +238,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 									})
 								}
 							})
-							bubble.Shadow(0, 1, 2, 0, ui.RGBA(0, 0, 0, 0.06))
+							bubble.Shadow(0, 2, 8, -2, ui.RGBA(0, 0, 0, 0.14))
 						})
 					} else {
 						// Agent message: ZCode lane with work traces -> markdown ->
@@ -635,34 +638,42 @@ func (a *AppUI) renderWorkPill(c *ui.Context, tc theme.ThemeColors, sessionID st
 	}
 
 	open := m.ShowTools || running
-	// ZCode AssistantHistoryStatus: a full-width borderless row with a
-	// bottom hairline; the running label shimmers, done shows the green
-	// check disc. No boxed pill, no spinner.
-	header := ui.Row(c).Height(32).Padding(0, 2, 6, 2).Gap(8).AlignItems(ui.Center).
-		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border.Alpha(0.5))
+	// Clean compact timeline header pill with step count badge
+	header := ui.Row(c).Height(32).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
+		Background(tc.Surface.Alpha(0.75)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6)).Cursor(ui.CursorPointer)
 	header.Children(func() {
 		if running {
-			ui.Text(c, label).FontSize(13).FontWeight(600).TextColor(shimmerTextColor(tc))
+			ui.Spinner(c).Size(12, 12).Label("")
+			ui.Text(c, label).FontSize(12.5).FontWeight(600).TextColor(shimmerTextColor(tc))
 		} else {
-			ui.Box(c).Size(15, 15).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Success.Alpha(0.15)).Children(func() {
+			ui.Box(c).Size(16, 16).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Success.Alpha(0.16)).Children(func() {
 				ui.Icon(c, icons.TablerCheck).Width(10).Height(10).TextColor(tc.Success)
 			})
-			ui.Text(c, label).FontSize(13).FontWeight(500).TextColor(tc.Text)
+			ui.Text(c, label).FontSize(12.5).FontWeight(500).TextColor(tc.Text)
+		}
+		if len(m.Tools) > 0 {
+			stepText := fmt.Sprintf("%d step", len(m.Tools))
+			if len(m.Tools) > 1 {
+				stepText = fmt.Sprintf("%d steps", len(m.Tools))
+			}
+			ui.Row(c).Padding(1, 6).Radius(4).Background(tc.ToolbarControl).Children(func() {
+				ui.Text(c, stepText).FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+			})
 		}
 		ui.Box(c).Grow(1)
 		chev := icons.TablerChevronRight
 		if open {
 			chev = icons.TablerChevronDown
 		}
-		chevColor := tc.IconMuted.Alpha(0.55)
+		chevColor := tc.IconMuted.Alpha(0.65)
 		if header.Hovered() {
-			chevColor = tc.IconMuted
+			chevColor = tc.Text
 		}
 		ui.Icon(c, chev).Width(13).Height(13).TextColor(chevColor)
 	})
 	if header.Hovered() {
-		header.Background(tc.Text.Alpha(0.03))
+		header.Background(tc.SurfaceRaised).BorderColor(tc.ToolbarBorder)
 	}
 	if header.Clicked() {
 		// m is a frame snapshot; flip the live message under the lock.
@@ -2023,9 +2034,9 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		return
 	}
 
-	card := ui.Column(c).Radius(16).Background(tc.Surface).
-		BorderWidth(1).BorderColor(tc.Border).
-		Shadow(0, 12, 28, -18, ui.RGBA(0, 0, 0, 0.4)).
+	card := ui.Column(c).Radius(16).Background(tc.SurfaceRaised).
+		BorderWidth(1).BorderColor(tc.ToolbarBorder).
+		Shadow(0, 14, 32, -16, ui.RGBA(0, 0, 0, 0.45)).
 		InsetShadow(0, 1, 0, 0, ui.RGBA(255, 255, 255, 0.08))
 	if isHome {
 		// Landing card: the tray above owns the top corners; this card owns
@@ -2852,59 +2863,79 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 	}
 	projectName := resolveProjectName(as.WorkspacePath())
 
-	ui.Column(c).Grow(1).Fill().Center().Gap(28).Padding(24, 32).Background(tc.Canvas).Children(func() {
-		ui.Column(c).AlignItems(ui.Center).Gap(16).Children(func() {
-			ui.Icon(c, icons.ForgeSparkSVG).Width(52).Height(52).TextColor(tc.Text)
-			// Heading: the workspace name is a dotted-underline button that
-			// opens the workspace switcher, as AgentHomeView's h2 does.
+	ui.Column(c).Grow(1).Fill().Center().Gap(24).Padding(24, 32).Background(tc.Canvas).Children(func() {
+		ui.Column(c).AlignItems(ui.Center).Gap(12).Children(func() {
+			ui.Box(c).Size(54, 54).Radius(16).AlignItems(ui.Center).Justify(ui.Center).
+				Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.28)).
+				Children(func() {
+					ui.Icon(c, icons.ForgeSparkSVG).Width(30).Height(30).TextColor(tc.Accent)
+				})
+			// Heading: workspace name opens the workspace switcher
 			ui.Row(c).Gap(0).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "What should we do in").FontSize(27).FontWeight(600).LetterSpacing(-0.8)
+				ui.Text(c, "What should we do in").FontSize(26).FontWeight(600).LetterSpacing(-0.7)
 				ui.Box(c).Width(8)
 				wsBtn := ui.Row(c).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				wsBtn.Children(func() {
-					ui.Text(c, projectName).FontSize(27).FontWeight(600).LetterSpacing(-0.8).
-						DottedUnderline().DecorationColor(tc.TextMuted.Alpha(0.55)).UnderlineOffset(6)
+					ui.Text(c, projectName).FontSize(26).FontWeight(600).LetterSpacing(-0.7).
+						DottedUnderline().DecorationColor(tc.Accent.Alpha(0.6)).UnderlineOffset(6)
 				})
 				wsBtn.Menu(func(m *ui.Menu) {
 					a.workspaceMenuItems(m)
 				})
-				ui.Text(c, "?").FontSize(27).FontWeight(600).LetterSpacing(-0.8)
+				ui.Text(c, "?").FontSize(26).FontWeight(600).LetterSpacing(-0.7)
 			})
+			ui.Text(c, "Explore code, edit files, run tools, or plan multi-step tasks.").
+				FontSize(12.5).TextColor(tc.TextMuted)
 		})
 
-		// ZCode/webview landing unit: suggestion chips ABOVE the composer,
-		// with the context tray fused to the card's top (same width, shared
-		// border — one visual card, not floating boxes).
-		ui.Column(c).MaxWidth(768).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
-			ui.Row(c).FillWidth().Gap(8).Wrap().Justify(ui.Center).AlignItems(ui.Center).Children(func() {
-				suggestions := []struct {
-					icon   *ui.SVG
-					label  string
-					prompt string
-				}{
-					{icons.TablerCompass, "Explore architecture", "Summarize the architecture of this repository, key packages, and entry points."},
-					{icons.TablerBug, "Find & fix a bug", "Help me diagnose and fix an issue in the codebase: "},
-					{icons.TablerFlask, "Run & improve tests", "Run the test suite, identify any failing or missing unit tests, and propose improvements."},
-					{icons.TablerGitPullRequest, "Review working tree", "Review uncommitted git changes in this workspace for bugs, edge cases, and style."},
-				}
-				for _, s := range suggestions {
-					thisS := s
-					chip := ui.Row(c.Key("sugg-"+thisS.label)).Radius(999).Padding(6, 12).Gap(6).AlignItems(ui.Center).
-						Background(tc.Surface.Alpha(0.6)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.7))
-					chip.Children(func() {
-						ui.Icon(c, thisS.icon).Width(14).Height(14).TextColor(tc.IconMuted)
-						ui.Text(c, thisS.label).FontSize(12).FontWeight(500)
-					})
-					if chip.Hovered() {
-						chip.Background(tc.Text.Alpha(0.06))
-					}
-					if chip.Clicked() {
-						as.InputText = thisS.prompt
-						if as.Invalidate != nil {
-							as.Invalidate()
+		// Landing unit: 2x2 starter prompt cards + fused context tray & composer
+		ui.Column(c).MaxWidth(768).FillWidth().Gap(16).AlignItems(ui.Center).Children(func() {
+			type starterItem struct {
+				icon   *ui.SVG
+				label  string
+				desc   string
+				prompt string
+			}
+			row1 := []starterItem{
+				{icons.TablerCompass, "Explore architecture", "Map key packages, entry points & data flow", "Summarize the architecture of this repository, key packages, and entry points."},
+				{icons.TablerBug, "Find & fix a bug", "Diagnose root cause and implement a clean fix", "Help me diagnose and fix an issue in the codebase: "},
+			}
+			row2 := []starterItem{
+				{icons.TablerFlask, "Run & improve tests", "Execute suite, fix failures & expand coverage", "Run the test suite, identify any failing or missing unit tests, and propose improvements."},
+				{icons.TablerGitPullRequest, "Review working tree", "Audit uncommitted git changes for edge cases", "Review uncommitted git changes in this workspace for bugs, edge cases, and style."},
+			}
+			renderStarterRow := func(items []starterItem) {
+				ui.Row(c).FillWidth().Gap(10).Children(func() {
+					for _, s := range items {
+						thisS := s
+						card := ui.Row(c.Key("sugg-"+thisS.label)).Grow(1).MinWidth(0).Radius(12).Padding(11, 13).Gap(10).
+							AlignItems(ui.Center).Cursor(ui.CursorPointer).
+							Background(tc.Surface.Alpha(0.75)).BorderWidth(1).BorderColor(tc.Border.Alpha(0.75))
+						card.Children(func() {
+							ui.Box(c).Size(32, 32).Radius(8).Shrink(0).AlignItems(ui.Center).Justify(ui.Center).
+								Background(tc.ToolbarControl).Children(func() {
+								ui.Icon(c, thisS.icon).Width(15).Height(15).TextColor(tc.Accent)
+							})
+							ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+								ui.Text(c, thisS.label).FontSize(12.5).FontWeight(600).TextColor(tc.Text).SingleLine()
+								ui.Text(c, thisS.desc).FontSize(11).TextColor(tc.TextMuted).SingleLine()
+							})
+						})
+						if card.Hovered() {
+							card.Background(tc.SurfaceRaised).BorderColor(tc.Accent.Alpha(0.45))
+						}
+						if card.Clicked() {
+							as.InputText = thisS.prompt
+							if as.Invalidate != nil {
+								as.Invalidate()
+							}
 						}
 					}
-				}
+				})
+			}
+			ui.Column(c).FillWidth().Gap(10).Children(func() {
+				renderStarterRow(row1)
+				renderStarterRow(row2)
 			})
 
 			// Tray fused to the card with zero gap: same width, shared borders.

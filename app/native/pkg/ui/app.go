@@ -152,6 +152,7 @@ type AppUI struct {
 	StudioWebViewURL               string
 	StudioNodeWebView              *mygo.WebView
 	StudioNodeWebViewURL           string
+	studioNodeThemeKey             string
 	StudioPositivePrompt           string
 	StudioNegativePrompt           string
 	StudioModel                    string
@@ -1134,6 +1135,16 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 		{ID: "appearance", Label: "Toggle Appearance", Detail: "Dark / light", Shortcut: "⌘/", Run: a.toggleAppearance},
 		{ID: "theme", Label: "Pick Theme Palette", Run: func() { a.ThemeMgr.Toggle() }},
 		{ID: "open-folder", Label: "Open Workspace Folder", Run: a.openWorkspaceFolder},
+		{ID: "open-finder", Label: "Open in Finder", Detail: "Reveal workspace folder in Finder", Shortcut: "⌥⌘R", Run: func() {
+			path := ""
+			if a.Mode == ModeEditor && a.Editor != nil && a.Editor.ActiveDoc() != nil {
+				path = a.Editor.ActiveDoc().FullPath
+			}
+			a.openInFinder(path)
+		}},
+		{ID: "open-external-terminal", Label: "Open External Terminal", Detail: "Launch workspace in external terminal emulator", Shortcut: "⌥⌘T", Run: func() {
+			a.openExternalTerminal("")
+		}},
 		{ID: "switch-project", Label: "Switch Workspace / Project (Zed style)...", Detail: "Switch active window workspace or open recent project", Shortcut: "⌥⌘O", Run: func() {
 			a.OpenProjectSwitcherModal()
 		}},
@@ -1492,6 +1503,16 @@ func (a *AppUI) View(c *ui.Context) {
 			sessID = ts.ActiveSessionID
 		}
 		a.OpenTerminalSnippetsModal(sessID, "", "")
+	}
+	if c.Shortcut(ui.Cmd|ui.Alt, ui.KeyR) || c.Shortcut(ui.Ctrl|ui.Alt, ui.KeyR) {
+		path := ""
+		if a.Mode == ModeEditor && a.Editor != nil && a.Editor.ActiveDoc() != nil {
+			path = a.Editor.ActiveDoc().FullPath
+		}
+		a.openInFinder(path)
+	}
+	if c.Shortcut(ui.Cmd|ui.Alt, ui.KeyT) || c.Shortcut(ui.Ctrl|ui.Alt, ui.KeyT) || cmdOrCtrlShift(ui.KeyC) {
+		a.openExternalTerminal("")
 	}
 	if c.Shortcut(ui.Ctrl, ui.KeyTab) {
 		a.Editor.CycleTab(1)

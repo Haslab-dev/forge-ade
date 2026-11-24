@@ -52,36 +52,29 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		if a.LeftSidebarView == "files" {
 			a.renderSidebarFileExplorer(c, tc)
 		} else {
-			// Primary action rows: New task, Automations, Plugin Marketplace — ZCode stack.
-			ui.Column(c).Padding(10, 12, 6, 12).Gap(2).Children(func() {
+			// Primary CTA: clean, prominent "+ New task" button
+			ui.Column(c).Padding(10, 12, 6, 12).Gap(6).Children(func() {
 				isNewTaskActive := (a.Mode == ModeAgent && a.ActiveTaskKind == "agent" && (a.Agent == nil || a.Agent.ActiveSessionID == ""))
-				newTask := SidebarActionButton(c, tc, icons.TablerCirclePlus, "New task", "⌘N", isNewTaskActive)
-				if newTask.Clicked() {
+				newBtn := ui.Row(c.Key("sb-new-task-cta")).Height(34).Radius(9).Padding(0, 10).Gap(8).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer).
+					BorderWidth(1).BorderColor(tc.Border)
+				if isNewTaskActive {
+					newBtn.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.45))
+				} else {
+					newBtn.Background(tc.SurfaceRaised)
+				}
+				if newBtn.Hovered() && !isNewTaskActive {
+					newBtn.Background(tc.ToolbarControlHover).BorderColor(tc.ToolbarBorder)
+				}
+				newBtn.Children(func() {
+					ui.Icon(c, icons.TablerPlus).Width(14).Height(14).TextColor(tc.Accent)
+					ui.Text(c, "New task").FontSize(12.5).FontWeight(600).TextColor(tc.Text).Grow(1)
+					ui.Row(c).Padding(1, 5).Radius(4).Background(tc.ToolbarControl).Children(func() {
+						ui.Text(c, "⌘N").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					})
+				})
+				if newBtn.Clicked() {
 					a.handleNewTask()
-				}
-				autos := SidebarActionButton(c, tc, icons.TablerClock, "Automations", "", false)
-				if autos.Clicked() {
-					a.openSettings(settings.SettingsTabAutos)
-				}
-				plugins := SidebarActionButton(c, tc, icons.TablerPuzzle, "Plugin Marketplace", "", false)
-				if plugins.Clicked() {
-					a.openSettings(settings.SettingsTabPlugins)
-				}
-			})
-
-			// "Task list" section header with trailing search + filter icons
-			// (ZCode header); the search icon toggles the filter input.
-			ui.Row(c).Padding(10, 14, 4, 14).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "Task list").FontSize(13).FontWeight(700)
-				ui.Box(c).Grow(1)
-				if IconButton(c, tc, icons.TablerSearch, 13).Clicked() {
-					a.SidebarSearchOpen = !a.SidebarSearchOpen
-					if !a.SidebarSearchOpen {
-						a.Agent.SearchQuery = ""
-					}
-				}
-				if IconButton(c, tc, icons.TablerFilter, 13).Clicked() {
-					a.Palette.Toggle()
 				}
 			})
 
@@ -90,18 +83,20 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				activeWsPath = a.Workspace.RootDir
 			}
 
-			// Project selector dropdown + quick actions, as forge-ade's
-			// "All projects ⌄" row: project filter + sort menu on the left,
-			// open-folder / new-task / archive / collapse-others on the right.
+			// Unified Projects & Controls Header Row
 			activeProject := resolveProjectName(activeWsPath)
-			ui.Row(c).Padding(6, 14, 2, 14).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Padding(4, 12, 4, 12).Gap(4).AlignItems(ui.Center).Children(func() {
 				filterLabel := "All projects"
 				if a.ProjectFilter != "" && a.ProjectFilter != "all" {
 					filterLabel = a.ProjectFilter
 				}
-				filterBtn := ui.Row(c).Gap(5).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				filterBtn := ui.Row(c.Key("sb-proj-filter")).Height(24).Radius(6).Padding(0, 6).Gap(5).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				if filterBtn.Hovered() {
+					filterBtn.Background(tc.Text.Alpha(0.06))
+				}
 				filterBtn.Children(func() {
-					ui.Text(c, filterLabel).FontSize(12).FontWeight(600).SingleLine()
+					ui.Text(c, filterLabel).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
 					ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.SidebarMutedForeground)
 				})
 				filterBtn.Menu(func(m *ui.Menu) {
@@ -133,28 +128,34 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				})
 				ui.Box(c).Grow(1)
 
-				smallAction := func(key string, icon *ui.SVG, active bool, onPick func()) {
-					btn := ui.Row(c.Key("hdract-"+key)).Size(20, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
+				smallAction := func(key, tip string, icon *ui.SVG, active bool, onPick func()) {
+					btn := ui.Row(c.Key("hdract-"+key)).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+					btn.Tooltip(tip)
 					btn.Children(func() {
-						ic := ui.Icon(c, icon).Width(14).Height(14)
+						ic := ui.Icon(c, icon).Width(13).Height(13)
 						if active {
-							ic.TextColor(tc.Text)
+							ic.TextColor(tc.Accent)
 						} else {
 							ic.TextColor(tc.SidebarMutedForeground)
 						}
 					})
 					if active {
-						btn.Background(tc.Text.Alpha(0.1))
+						btn.Background(tc.Accent.Alpha(0.14))
 					} else if btn.Hovered() {
-						btn.Background(tc.Text.Alpha(0.05))
+						btn.Background(tc.Text.Alpha(0.06))
 					}
 					if btn.Clicked() {
 						onPick()
 					}
 				}
-				smallAction("open", icons.TablerArrowDownToLine, false, func() { a.openWorkspaceFolder() })
-				smallAction("new", icons.TablerPlus, false, func() { a.NewAgentTask("") })
-				smallAction("archive", icons.TablerArchive, a.Agent.ActiveFilterTab == "archived", func() {
+				smallAction("search", "Search tasks", icons.TablerSearch, a.SidebarSearchOpen, func() {
+					a.SidebarSearchOpen = !a.SidebarSearchOpen
+					if !a.SidebarSearchOpen {
+						a.Agent.SearchQuery = ""
+					}
+				})
+				smallAction("open", "Open workspace folder", icons.TablerFolderPlus, false, func() { a.openWorkspaceFolder() })
+				smallAction("archive", "Toggle archived", icons.TablerArchive, a.Agent.ActiveFilterTab == "archived", func() {
 					if a.Agent.ActiveFilterTab == "archived" {
 						a.Agent.ActiveFilterTab = "active"
 					} else {
@@ -163,15 +164,15 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				})
 				collapsedOthers := a.otherProjectsCollapsed(activeProject)
 				if collapsedOthers {
-					smallAction("expand", icons.TablerMaximize2, false, func() { a.expandAllProjects() })
+					smallAction("expand", "Expand all projects", icons.TablerMaximize2, false, func() { a.expandAllProjects() })
 				} else {
-					smallAction("collapse", icons.TablerMinimize2, false, func() { a.collapseOtherProjects(activeProject) })
+					smallAction("collapse", "Collapse other projects", icons.TablerMinimize2, false, func() { a.collapseOtherProjects(activeProject) })
 				}
 			})
 
-			// Search Input Filter — toggled from the Task list header icon.
+			// Search Input Filter — toggled from the search icon.
 			if a.SidebarSearchOpen {
-				ui.Row(c).Padding(2, 10, 4, 10).Children(func() {
+				ui.Row(c).Padding(2, 12, 4, 12).Children(func() {
 					in := ui.TextInput(c, &a.Agent.SearchQuery).Placeholder("Search tasks...").Grow(1)
 					if in.Submitted() {
 						a.SidebarSearchOpen = false
@@ -180,9 +181,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				})
 			}
 
-			// Filter segmented tabs: Active, Pinned, Snoozed, Archived — the
-			// selected tab is a foreground/15 pill; counts render as an
-			// "(N)" suffix (Active never shows one), as forge-ade does.
+			// Streamlined Filter Tabs: Active, Pinned, Archived (+ Snoozed only if present)
 			_, pinnedCount, snoozedCount, archivedCount := a.Agent.TabCounts()
 			tabCounts := map[string]int{
 				"active":   0,
@@ -190,31 +189,37 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 				"snoozed":  snoozedCount,
 				"archived": archivedCount,
 			}
-			ui.Row(c).Gap(4).Padding(4, 10).AlignItems(ui.Center).Children(func() {
+			tabs := []string{"active", "pinned"}
+			if snoozedCount > 0 || a.Agent.ActiveFilterTab == "snoozed" {
+				tabs = append(tabs, "snoozed")
+			}
+			tabs = append(tabs, "archived")
+
+			ui.Row(c).Gap(3).Padding(2, 12, 6, 12).AlignItems(ui.Center).Children(func() {
 				capitalize := func(s string) string {
 					if s == "" {
 						return s
 					}
 					return strings.ToUpper(s[:1]) + s[1:]
 				}
-				for _, tab := range []string{"active", "pinned", "snoozed", "archived"} {
+				for _, tab := range tabs {
 					thisTab := tab
 					active := a.Agent.ActiveFilterTab == thisTab
 					label := capitalize(thisTab)
 					if n := tabCounts[thisTab]; n > 0 {
 						label += fmt.Sprintf(" (%d)", n)
 					}
-					pill := ui.Row(c.Key("ftab-"+thisTab)).Radius(999).Padding(2, 8).AlignItems(ui.Center)
+					pill := ui.Row(c.Key("ftab-"+thisTab)).Height(22).Radius(6).Padding(0, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					pill.Children(func() {
-						txt := ui.Text(c, label).FontSize(12)
+						txt := ui.Text(c, label).FontSize(11)
 						if active {
-							txt.FontWeight(500)
+							txt.FontWeight(600).TextColor(tc.Text)
 						} else {
-							txt.TextColor(tc.SidebarMutedForeground)
+							txt.FontWeight(500).TextColor(tc.SidebarMutedForeground)
 						}
 					})
 					if active {
-						pill.Background(tc.Text.Alpha(0.15))
+						pill.Background(tc.Text.Alpha(0.12))
 					} else if pill.Hovered() {
 						pill.Background(tc.Text.Alpha(0.05))
 					}
@@ -675,25 +680,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			})
 		}
 
-		// Bots / Automations Section
-		ui.Column(c).BorderWidth(1, 0, 0, 0).BorderColor(tc.SidebarBorder).Padding(6, 10).Gap(2).Children(func() {
-			ui.Row(c).Padding(2, 4).AlignItems(ui.Center).Children(func() {
-				SectionLabel(c, tc, "BOTS")
-				ui.Box(c).Grow(1)
-				if IconButton(c, tc, icons.TablerPlus, 12).Clicked() {
-					a.openSettings(settings.SettingsTabAutos)
-				}
-			})
-			botRow := SidebarActionButton(c, tc, icons.TablerBot, "Add a bot or schedule", "", false)
-			if botRow.Clicked() {
-				// Automations manager, as forge-ade's AutomationsModal entry.
-				a.openSettings(settings.SettingsTabAutos)
-			}
-		})
-
-		// Bottom Utility Dock
-		dockBtn := func(icon *ui.SVG, active bool, onPick func()) {
-			btn := ui.Row(c).Size(28, 28).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+		// Bottom Utility Dock (Automations, Plugins, Usage, Rules, Settings, Theme)
+		dockBtn := func(key, tip string, icon *ui.SVG, active bool, onPick func()) {
+			btn := ui.Row(c.Key("dock-"+key)).Size(28, 28).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+			btn.Tooltip(tip)
 			btn.Children(func() {
 				ic := ui.Icon(c, icon).Width(15).Height(15)
 				if active {
@@ -705,7 +695,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			if active {
 				btn.Background(tc.Text.Alpha(0.1))
 			} else if btn.Hovered() {
-				btn.Background(tc.Text.Alpha(0.05))
+				btn.Background(tc.Text.Alpha(0.06))
 			}
 			if btn.Clicked() {
 				onPick()
@@ -713,19 +703,20 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 		}
 		ui.Row(c).Padding(6, 10).Gap(2).AlignItems(ui.Center).
 			BorderWidth(1, 0, 0, 0).BorderColor(tc.SidebarBorder).
-			Background(tc.Chrome.Alpha(0.4)).
+			Background(tc.Chrome.Alpha(0.5)).
 			Children(func() {
-				dockBtn(icons.TablerHelp, false, func() { mygo.Shell.OpenExternal("https://github.com/hasdev/forge-ade") })
-				dockBtn(icons.TablerChartBar, a.ShowUsageModal, func() { a.openUsageModal() })
-				dockBtn(icons.TablerBook, false, func() { a.OpenRulesModal() })
-				dockBtn(icons.TablerSettings, a.Mode == ModeSettings, func() {
+				dockBtn("autos", "Automations & Schedules", icons.TablerClock, false, func() { a.openSettings(settings.SettingsTabAutos) })
+				dockBtn("plugins", "Plugin Marketplace", icons.TablerPuzzle, false, func() { a.openSettings(settings.SettingsTabPlugins) })
+				dockBtn("usage", "Usage & Quota", icons.TablerChartBar, a.ShowUsageModal, func() { a.openUsageModal() })
+				dockBtn("rules", "Rules & Instructions", icons.TablerBook, false, func() { a.OpenRulesModal() })
+				dockBtn("settings", "Settings (⌘,)", icons.TablerSettings, a.Mode == ModeSettings, func() {
 					a.openSettings()
 				})
 				ui.Box(c).Grow(1)
 				if a.ThemeMgr.Appearance == "dark" {
-					dockBtn(icons.TablerMoon, false, a.toggleAppearance)
+					dockBtn("theme", "Switch to Light Mode (⌘/)", icons.TablerMoon, false, a.toggleAppearance)
 				} else {
-					dockBtn(icons.TablerSun, false, a.toggleAppearance)
+					dockBtn("theme", "Switch to Dark Mode (⌘/)", icons.TablerSun, false, a.toggleAppearance)
 				}
 			})
 		_ = t

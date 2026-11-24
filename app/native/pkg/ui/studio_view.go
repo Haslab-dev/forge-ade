@@ -497,9 +497,9 @@ func (a *AppUI) renderStudioAgentHome(c *ui.Context) {
 			}
 
 			if proj != nil && proj.Type == corestudio.ArtifactTypeSlides {
+				chip("Landing Page HTML", "Create a modern responsive landing page in HTML with hero, features, and pricing")
 				chip("+ Add Architecture Slide", "Create a new slide detailing system architecture and data flow")
 				chip("Apply Swiss Minimalist", "Refactor slide typography to follow Swiss Minimalist tokens")
-				chip("2-Column Comparison", "Change active slide layout to 2-column comparison format")
 			} else if proj != nil && proj.Type == corestudio.ArtifactTypeMotion {
 				chip("Kinetic Spring Headline", "Animate main title with spring bounce kinetics")
 				chip("ElevenLabs Voice Sync", "Align speech timestamps to kinetic word highlights")
@@ -600,6 +600,8 @@ func detectStudioFlavor(project *corestudio.StudioProject, data corestudio.Artif
 		return "3d"
 	case strings.Contains(entry, "slide") || strings.Contains(entry, "deck"):
 		return "slides"
+	case strings.HasSuffix(entry, ".html") || strings.HasSuffix(entry, ".htm"):
+		return "html"
 	}
 	if project != nil {
 		switch project.Type {
@@ -625,7 +627,7 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 		assetPath = a.ensureStudioAssetFile(project)
 	}
 	if assetPath != "" && mygo.WebViewAvailable() {
-		bg := "#090a0f"
+		bg := colorToCSS(tc.Canvas)
 		if flavor == "3d" {
 			bg = "#0a0c14"
 		}
@@ -737,6 +739,18 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 				})
 				ui.Box(c).Grow(1)
 
+			case "html":
+				ui.Icon(c, icons.TablerBrowser).Width(14).Height(14).TextColor(tc.Accent)
+				title := "HTML / Web Preview"
+				if data.EntryHTML != "" {
+					title = filepath.Base(data.EntryHTML)
+				}
+				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
+					ui.Text(c, "HTML / WEB").FontSize(9).FontWeight(700).TextColor(tc.Accent)
+				})
+				ui.Box(c).Grow(1)
+
 			default: // slides
 				ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Accent)
 				if data.EntryHTML != "" {
@@ -767,6 +781,50 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 					}
 					ui.Box(c).Size(1, 14).Background(tc.Border)
 				}
+			}
+
+			// Download / Export Menu (PDF, PPTX for slides, MP4 for motion, HTML)
+			if assetPath != "" {
+				dlBtn := ui.Row(c.Key("studio-canvas-download")).Height(26).Padding(0, 8).Gap(5).Radius(6).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				dlBtn.Children(func() {
+					ui.Icon(c, icons.TablerDownload).Width(12).Height(12).TextColor(tc.Accent)
+					ui.Text(c, "Download").FontSize(11).FontWeight(600).TextColor(tc.Text)
+					ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+				})
+				if dlBtn.Hovered() {
+					dlBtn.Background(tc.ToolbarControlHover)
+				}
+				dlBtn.Menu(func(m *ui.Menu) {
+					if m.Item("Download as PDF (.pdf)").Chosen() {
+						go a.studioDownloadCanvasPDF(assetPath, project)
+					}
+					if flavor == "slides" || flavor == "pptx" || len(slides) > 0 {
+						if m.Item("Download as PowerPoint (.pptx)").Chosen() {
+							go a.studioDownloadCanvasPPTX(project, slides, assetPath)
+						}
+					}
+					if flavor == "motion" {
+						if m.Item("Download as MP4 Video (.mp4)").Chosen() {
+							go a.studioDownloadCanvasMP4(project, data, assetPath)
+						}
+					}
+					m.Separator()
+					if m.Item("Download Source File (" + strings.ToUpper(strings.TrimPrefix(filepath.Ext(assetPath), ".")) + ")").Chosen() {
+						go a.studioDownloadMediaFile(assetPath, filepath.Base(assetPath))
+					}
+					if m.Item("Reveal in Finder").Chosen() {
+						mygo.Shell.ShowItemInFolder(assetPath)
+					}
+				})
+			}
+
+			// Open local HTML file into Canvas Viewer
+			openHTMLBtn := IconButton(c, tc, icons.TablerFileCode, 12)
+			openHTMLBtn.Tooltip("Open HTML file in Canvas")
+			if openHTMLBtn.Clicked() {
+				go a.studioOpenLocalHTMLFile()
 			}
 
 			// Reload button
@@ -831,6 +889,19 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 					scene.Children(func() {
 						ui.Text(c, "WebGL 3D Scene Viewport").FontSize(18).FontWeight(700).TextColor(tc.Text)
 						ui.Text(c, "OrbitControls active • Three.js canvas initialized").FontSize(12).TextColor(tc.TextMuted)
+					})
+
+				case "html":
+					webCard := ui.Column(c.Key("live-html-stage")).Width(stageW).Height(stageH).Radius(12).Padding(24, 32).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center).Gap(8)
+					webCard.Children(func() {
+						ui.Icon(c, icons.TablerBrowser).Width(28).Height(28).TextColor(tc.Accent)
+						title := "HTML / Web Content"
+						if data.EntryHTML != "" {
+							title = filepath.Base(data.EntryHTML)
+						}
+						ui.Text(c, title).FontSize(16).FontWeight(700).TextColor(tc.Text)
+						ui.Text(c, "Interactive HTML & Web preview active in WebView runtime").FontSize(11).TextColor(tc.TextMuted)
 					})
 
 				default: // slides
@@ -973,7 +1044,7 @@ func (a *AppUI) renderStudioNodeGraph(c *ui.Context, tc theme.ThemeColors, proje
 				Background(tc.ToolbarControl).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 			settingsBtn.Children(func() {
 				ui.Icon(c, icons.TablerSettings).Width(11).Height(11).TextColor(tc.IconMuted)
-				ui.Text(c, "API Settings ⚙").FontSize(11).TextColor(tc.TextMuted)
+				ui.Text(c, "API Settings").FontSize(11).TextColor(tc.TextMuted)
 			})
 			if settingsBtn.Clicked() {
 				a.openSettings(settings.SettingsTabStudio)
@@ -1133,7 +1204,7 @@ func (a *AppUI) renderStudioNodeFallbackStage(c *ui.Context, tc theme.ThemeColor
 					randBtn := ui.Row(c.Key("btn-rand-seed")).Height(18).Padding(0, 5).Radius(3).
 						Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					randBtn.Children(func() {
-						ui.Text(c, "🎲").FontSize(9)
+						ui.Icon(c, icons.TablerRefresh).Width(10).Height(10).TextColor(tc.IconMuted)
 					})
 					if randBtn.Clicked() {
 						a.StudioSeed = time.Now().UnixNano() % 10000000
@@ -1213,7 +1284,7 @@ func (a *AppUI) renderStudioNodeFallbackStage(c *ui.Context, tc theme.ThemeColor
 					Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 				cfgLink.Children(func() {
 					ui.Icon(c, icons.TablerSettings).Width(11).Height(11).TextColor(tc.IconMuted)
-					ui.Text(c, "Edit API in Settings ⚙").FontSize(10).TextColor(tc.TextMuted)
+					ui.Text(c, "Edit API in Settings").FontSize(10).TextColor(tc.TextMuted)
 				})
 				if cfgLink.Clicked() {
 					a.openSettings(settings.SettingsTabStudio)
@@ -1451,6 +1522,47 @@ func (a *AppUI) studioQueuePrompt() {
 	}()
 }
 
+func colorToCSS(col ui.Color) string {
+	if col.A == 255 {
+		return fmt.Sprintf("#%02x%02x%02x", col.R, col.G, col.B)
+	}
+	return fmt.Sprintf("rgba(%d, %d, %d, %.3f)", col.R, col.G, col.B, float32(col.A)/255.0)
+}
+
+func (a *AppUI) buildStudioNodeTheme() (*corestudio.NodeWorkflowTheme, string) {
+	if a.ThemeMgr == nil {
+		return nil, ""
+	}
+	tc := a.ThemeMgr.Colors()
+	key := a.ThemeMgr.Appearance + ":" + a.ThemeMgr.PaletteID
+	return &corestudio.NodeWorkflowTheme{
+		IsDark:              a.ThemeMgr.IsDark(),
+		BgApp:               colorToCSS(tc.Canvas),
+		BgSidebar:           colorToCSS(tc.Chrome),
+		BgPanel:             colorToCSS(tc.Surface),
+		BgCard:              colorToCSS(tc.SurfaceRaised),
+		BgInput:             colorToCSS(tc.Input),
+		HudBg:               colorToCSS(tc.Surface.Alpha(0.92)),
+		Border:              colorToCSS(tc.Border),
+		BorderStrong:        colorToCSS(tc.ToolbarBorder),
+		GridDot:             colorToCSS(tc.Text.Alpha(0.10)),
+		TextPrimary:         colorToCSS(tc.Text),
+		TextSecondary:       colorToCSS(tc.SecondaryLabel),
+		TextMuted:           colorToCSS(tc.TextMuted),
+		Accent:              colorToCSS(tc.Accent),
+		AccentFg:            colorToCSS(tc.AccentForeground),
+		AccentSoft:          colorToCSS(tc.Accent.Alpha(0.15)),
+		AccentGlow:          colorToCSS(tc.Accent.Alpha(0.35)),
+		ToolbarControl:      colorToCSS(tc.ToolbarControl),
+		ToolbarControlHover: colorToCSS(tc.ToolbarControlHover),
+		Success:             colorToCSS(tc.Success),
+		Warning:             colorToCSS(tc.Warning),
+		Error:               colorToCSS(tc.Error),
+		Info:                colorToCSS(tc.Info),
+		Secondary:           colorToCSS(tc.Secondary),
+	}, key
+}
+
 // ensureStudioNodeWebView initializes and attaches the interactive Visual Node Graph WebView.
 func (a *AppUI) ensureStudioNodeWebView(project *corestudio.StudioProject) {
 	if a.Window == nil || !mygo.WebViewAvailable() {
@@ -1460,28 +1572,43 @@ func (a *AppUI) ensureStudioNodeWebView(project *corestudio.StudioProject) {
 	if project != nil && project.Type == corestudio.ArtifactTypeVideo {
 		pipeline = "video"
 	}
+	nodeTheme, themeKey := a.buildStudioNodeTheme()
+	if a.StudioNodeWebView != nil && !a.StudioNodeWebView.IsDestroyed() {
+		if !strings.HasSuffix(a.StudioNodeWebViewURL, "#"+pipeline) {
+			baseURL := a.StudioNodeWebViewURL
+			if idx := strings.Index(baseURL, "#"); idx >= 0 {
+				baseURL = baseURL[:idx]
+			}
+			a.StudioNodeWebView.Page().Eval(fmt.Sprintf("if (typeof setPipeline === 'function') { setPipeline('%s'); }", pipeline))
+			a.StudioNodeWebViewURL = baseURL + "#" + pipeline
+		}
+		if themeKey != "" && a.studioNodeThemeKey != themeKey && nodeTheme != nil {
+			if b, err := json.Marshal(nodeTheme); err == nil {
+				a.StudioNodeWebView.Page().Eval(fmt.Sprintf("if (typeof applyTheme === 'function') { applyTheme(%s); }", string(b)))
+				a.studioNodeThemeKey = themeKey
+			}
+		}
+		return
+	}
+
 	htmlPath := a.ensureStudioNodeAssetFile(project, pipeline)
 	if htmlPath == "" {
 		return
 	}
-	url := "file://" + htmlPath
-	if a.StudioNodeWebView != nil && !a.StudioNodeWebView.IsDestroyed() {
-		if a.StudioNodeWebViewURL == url {
-			return
-		}
-		// If already initialized, update pipeline via JS
-		a.StudioNodeWebView.Page().Eval(fmt.Sprintf("if (typeof setPipeline === 'function') { setPipeline('%s'); }", pipeline))
-		a.StudioNodeWebViewURL = url
-		return
-	}
+	url := "file://" + htmlPath + "#" + pipeline
 
+	bgHex := "#0c0d11"
+	if nodeTheme != nil && nodeTheme.BgApp != "" {
+		bgHex = nodeTheme.BgApp
+	}
 	wv, err := a.Window.NewWebView(mygo.WebViewOptions{
 		URL:             url,
-		BackgroundColor: "#0b0d13",
+		BackgroundColor: bgHex,
 	})
 	if err == nil {
 		a.StudioNodeWebView = wv
 		a.StudioNodeWebViewURL = url
+		a.studioNodeThemeKey = themeKey
 
 		// Listen for IPC messages from webview via title changes
 		wv.Page().OnPageTitleUpdated(func(e *mygo.TitleEvent) {
@@ -1502,6 +1629,7 @@ func (a *AppUI) ensureStudioNodeWebView(project *corestudio.StudioProject) {
 }
 
 func (a *AppUI) handleNodeWebViewMessage(action, payloadRaw string) {
+	var filePath, fileName string
 	if payloadRaw != "" {
 		var payload struct {
 			PositivePrompt string  `json:"positivePrompt"`
@@ -1511,6 +1639,8 @@ func (a *AppUI) handleNodeWebViewMessage(action, payloadRaw string) {
 			Steps          int     `json:"steps"`
 			CFGScale       float32 `json:"cfgScale"`
 			Seed           int64   `json:"seed"`
+			FilePath       string  `json:"filePath"`
+			FileName       string  `json:"fileName"`
 		}
 		if err := json.Unmarshal([]byte(payloadRaw), &payload); err == nil {
 			if payload.PositivePrompt != "" {
@@ -1534,6 +1664,8 @@ func (a *AppUI) handleNodeWebViewMessage(action, payloadRaw string) {
 			if payload.Seed != 0 {
 				a.StudioSeed = payload.Seed
 			}
+			filePath = payload.FilePath
+			fileName = payload.FileName
 		}
 	}
 	switch action {
@@ -1541,7 +1673,319 @@ func (a *AppUI) handleNodeWebViewMessage(action, payloadRaw string) {
 		a.studioQueuePrompt()
 	case "open_settings":
 		a.openSettings(settings.SettingsTabStudio)
+	case "export_editor":
+		a.studioExportActive()
+	case "open_finder", "open_media_folder":
+		target := filePath
+		if target == "" {
+			target = a.StudioGeneratedImagePath
+		}
+		if target == "" {
+			target = a.studioOutputsDir()
+			_ = os.MkdirAll(target, 0755)
+		}
+		mygo.Shell.ShowItemInFolder(target)
+	case "download_media":
+		src := filePath
+		if src == "" {
+			src = a.StudioGeneratedImagePath
+		}
+		if src == "" {
+			return
+		}
+		go a.studioDownloadMediaFile(src, fileName)
 	}
+}
+
+func (a *AppUI) studioOutputsDir() string {
+	if a.Workspace != nil && a.Workspace.RootDir != "" {
+		return filepath.Join(a.Workspace.RootDir, ".forge", "studio", "outputs")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".forge-ade", "studio_outputs")
+}
+
+func (a *AppUI) studioDownloadMediaFile(srcPath, suggestedName string) {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return
+	}
+	if suggestedName == "" {
+		suggestedName = filepath.Base(srcPath)
+	}
+	home, _ := os.UserHomeDir()
+	defaultPath := filepath.Join(home, "Downloads", suggestedName)
+	destPath, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent:      a.Window,
+		Title:       "Download Studio Media",
+		DefaultPath: defaultPath,
+		ButtonLabel: "Save",
+	})
+	if err != nil || destPath == "" {
+		return
+	}
+	if err := os.WriteFile(destPath, data, 0644); err == nil {
+		mygo.Shell.ShowItemInFolder(destPath)
+	}
+}
+
+func studioSafeStem(project *corestudio.StudioProject, assetPath string) string {
+	name := ""
+	if assetPath != "" {
+		base := filepath.Base(assetPath)
+		name = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	if name == "" && project != nil {
+		name = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(project.Name), " ", "-"))
+	}
+	if name == "" {
+		name = "studio-canvas"
+	}
+	return name
+}
+
+func (a *AppUI) studioDownloadCanvasPDF(assetPath string, project *corestudio.StudioProject) {
+	home, _ := os.UserHomeDir()
+	defaultPath := filepath.Join(home, "Downloads", studioSafeStem(project, assetPath)+".pdf")
+	destPath, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent:      a.Window,
+		Title:       "Export Canvas as PDF",
+		DefaultPath: defaultPath,
+		ButtonLabel: "Export PDF",
+	})
+	if err != nil || destPath == "" {
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(destPath), ".pdf") {
+		destPath += ".pdf"
+	}
+	if err := corestudio.ExportHTMLToPDF(context.Background(), assetPath, destPath); err != nil {
+		// Graceful fallback: invoke native WebView print dialog (Save as PDF)
+		a.runOnUI(func() {
+			a.studioWebViewRun("window.print()")
+			a.queueToast(ui.Toast{
+				Title:       "PDF Export",
+				Description: "Opened print dialog (Save as PDF) — " + err.Error(),
+				Type:        "info",
+			})
+			a.invalidateUI()
+		})
+		return
+	}
+	mygo.Shell.ShowItemInFolder(destPath)
+	a.runOnUI(func() {
+		a.queueToast(ui.Toast{
+			Title:       "Exported PDF",
+			Description: filepath.Base(destPath),
+			Type:        "success",
+		})
+		a.invalidateUI()
+	})
+}
+
+func (a *AppUI) studioDownloadCanvasPPTX(project *corestudio.StudioProject, slides []corestudio.SlideItem, assetPath string) {
+	home, _ := os.UserHomeDir()
+	defaultPath := filepath.Join(home, "Downloads", studioSafeStem(project, assetPath)+".pptx")
+	destPath, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent:      a.Window,
+		Title:       "Export Slides as PowerPoint (.pptx)",
+		DefaultPath: defaultPath,
+		ButtonLabel: "Export PPTX",
+	})
+	if err != nil || destPath == "" {
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(destPath), ".pptx") {
+		destPath += ".pptx"
+	}
+	title := "Presentation"
+	if project != nil {
+		title = project.Name
+	}
+	if err := corestudio.ExportSlidesToPPTX(title, slides, assetPath, destPath); err != nil {
+		a.runOnUI(func() {
+			a.queueToast(ui.Toast{
+				Title:       "PPTX Export Failed",
+				Description: err.Error(),
+				Type:        "error",
+			})
+			a.invalidateUI()
+		})
+		return
+	}
+	mygo.Shell.ShowItemInFolder(destPath)
+	a.runOnUI(func() {
+		a.queueToast(ui.Toast{
+			Title:       "Exported PowerPoint",
+			Description: filepath.Base(destPath),
+			Type:        "success",
+		})
+		a.invalidateUI()
+	})
+}
+
+func (a *AppUI) studioDownloadCanvasMP4(project *corestudio.StudioProject, data corestudio.ArtifactData, assetPath string) {
+	home, _ := os.UserHomeDir()
+	defaultPath := filepath.Join(home, "Downloads", studioSafeStem(project, assetPath)+".mp4")
+	destPath, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+		Parent:      a.Window,
+		Title:       "Export Motion Video (.mp4)",
+		DefaultPath: defaultPath,
+		ButtonLabel: "Export MP4",
+	})
+	if err != nil || destPath == "" {
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(destPath), ".mp4") {
+		destPath += ".mp4"
+	}
+	a.runOnUI(func() {
+		a.queueToast(ui.Toast{
+			Title:       "Rendering MP4...",
+			Description: "Encoding motion stage to " + filepath.Base(destPath),
+			Type:        "info",
+		})
+		a.invalidateUI()
+	})
+	if err := corestudio.ExportMotionToMP4(context.Background(), assetPath, destPath, data.DurationSec, data.FPS); err != nil {
+		a.runOnUI(func() {
+			a.queueToast(ui.Toast{
+				Title:       "MP4 Export Failed",
+				Description: err.Error(),
+				Type:        "error",
+			})
+			a.invalidateUI()
+		})
+		return
+	}
+	mygo.Shell.ShowItemInFolder(destPath)
+	a.runOnUI(func() {
+		a.queueToast(ui.Toast{
+			Title:       "Exported MP4 Video",
+			Description: filepath.Base(destPath),
+			Type:        "success",
+		})
+		a.invalidateUI()
+	})
+}
+
+func (a *AppUI) studioOpenLocalHTMLFile() {
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent: a.Window,
+		Title:  "Open HTML / Web Content in Canvas Studio",
+		Filters: []mygo.FileFilter{
+			{Name: "Web / Studio Files", Extensions: []string{"html", "htm", "md", "pdf", "pptx"}},
+		},
+	})
+	if err != nil || len(paths) == 0 {
+		return
+	}
+	p := paths[0]
+	a.runOnUI(func() {
+		a.studioImportArtifactFile(p)
+	})
+}
+
+func (a *AppUI) scanStudioMediaLibrary() []corestudio.MediaAsset {
+	type foundFile struct {
+		asset   corestudio.MediaAsset
+		modTime int64
+	}
+	var dirs []struct {
+		dir      string
+		forceRef bool
+	}
+	if a.Workspace != nil && a.Workspace.RootDir != "" {
+		dirs = append(dirs,
+			struct {
+				dir      string
+				forceRef bool
+			}{filepath.Join(a.Workspace.RootDir, ".forge", "studio", "outputs"), false},
+			struct {
+				dir      string
+				forceRef bool
+			}{filepath.Join(a.Workspace.RootDir, ".forge", "studio", "references"), true},
+		)
+	}
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		dirs = append(dirs, struct {
+			dir      string
+			forceRef bool
+		}{filepath.Join(home, ".forge-ade", "studio_outputs"), false})
+	}
+
+	seenPath := map[string]bool{}
+	pngStems := map[string]bool{}
+	var collected []foundFile
+
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d.dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(e.Name()))
+			if ext == ".png" {
+				stem := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
+				pngStems[filepath.Join(d.dir, stem)] = true
+			}
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			ext := strings.ToLower(filepath.Ext(name))
+			var kind string
+			switch ext {
+			case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg":
+				if ext == ".svg" && pngStems[filepath.Join(d.dir, strings.TrimSuffix(name, filepath.Ext(name)))] {
+					continue
+				}
+				kind = "image"
+			case ".mp4", ".mov", ".webm", ".m4v":
+				kind = "video"
+			default:
+				continue
+			}
+			if d.forceRef {
+				kind = "reference"
+			}
+			fullPath := filepath.Join(d.dir, name)
+			if seenPath[fullPath] {
+				continue
+			}
+			seenPath[fullPath] = true
+			var mod int64
+			if info, err := e.Info(); err == nil {
+				mod = info.ModTime().UnixNano()
+			}
+			collected = append(collected, foundFile{
+				asset: corestudio.MediaAsset{
+					ID:       fmt.Sprintf("disk-%d-%s", len(collected), name),
+					Type:     kind,
+					Title:    name,
+					URL:      "file://" + fullPath,
+					FilePath: fullPath,
+				},
+				modTime: mod,
+			})
+		}
+	}
+
+	sort.Slice(collected, func(i, j int) bool {
+		return collected[i].modTime > collected[j].modTime
+	})
+
+	out := make([]corestudio.MediaAsset, 0, len(collected))
+	for _, item := range collected {
+		out = append(out, item.asset)
+	}
+	return out
 }
 
 func (a *AppUI) ensureStudioNodeAssetFile(project *corestudio.StudioProject, pipeline string) string {
@@ -1555,6 +1999,7 @@ func (a *AppUI) ensureStudioNodeAssetFile(project *corestudio.StudioProject, pip
 	_ = os.MkdirAll(outDir, 0755)
 	filePath := filepath.Join(outDir, "nodegraph.html")
 
+	nodeTheme, _ := a.buildStudioNodeTheme()
 	state := corestudio.NodeWorkflowInitialState{
 		PipelineType:   pipeline,
 		PositivePrompt: a.StudioPositivePrompt,
@@ -1564,6 +2009,8 @@ func (a *AppUI) ensureStudioNodeAssetFile(project *corestudio.StudioProject, pip
 		CFGScale:       a.StudioCFGScale,
 		AspectRatio:    a.StudioAspectRatio,
 		ResultURL:      "",
+		MediaLibrary:   a.scanStudioMediaLibrary(),
+		Theme:          nodeTheme,
 	}
 	if a.StudioGeneratedImagePath != "" {
 		state.ResultURL = "file://" + a.StudioGeneratedImagePath
@@ -1581,8 +2028,8 @@ func (a *AppUI) syncNodeWorkflowProgress(isGen bool, status string, progress flo
 	if resultPath != "" {
 		resURL = "file://" + resultPath
 	}
-	js := fmt.Sprintf("if (typeof setGenerationProgress === 'function') { setGenerationProgress(%t, %q, %f, %q); }",
-		isGen, status, progress, resURL)
+	js := fmt.Sprintf("if (typeof setGenerationProgress === 'function') { setGenerationProgress(%t, %q, %f, %q, %q); }",
+		isGen, status, progress, resURL, resultPath)
 	a.StudioNodeWebView.Page().Eval(js)
 }
 
@@ -1592,6 +2039,7 @@ func (a *AppUI) closeStudioNodeWebView() {
 	}
 	a.StudioNodeWebView = nil
 	a.StudioNodeWebViewURL = ""
+	a.studioNodeThemeKey = ""
 }
 
 // renderStudioTimelineDock renders the contextual timeline dock for Video & Motion projects.

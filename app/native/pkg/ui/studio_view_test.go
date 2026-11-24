@@ -242,17 +242,15 @@ func TestStudioHeaderLabelsInsideWideWindow(t *testing.T) {
 		t.Fatal("expected 'Send to Editor' to be removed from header")
 	}
 
-	rect, ok := tw.Find("Studio")
-	if !ok {
-		t.Fatal("expected 'Studio' mode label at 1024px width")
-	}
-	if rect.X+rect.W > winW {
-		t.Fatalf("studio button clipped: ends at %.0f > window %.0f", rect.X+rect.W, winW)
-	}
-
-	// Surface tabs: unified Canvas tab should be rendered; separate Slides/Motion/3D tabs are removed
-	if _, ok := tw.Find("Canvas"); !ok {
-		t.Fatal("expected 'Canvas' surface tab at 1024px width")
+	// Surface tabs: unified Canvas, Image, and Video tabs should be rendered cleanly without overflow
+	for _, tab := range []string{"Canvas", "Image", "Video"} {
+		rect, ok := tw.Find(tab)
+		if !ok {
+			t.Fatalf("expected %q surface tab at 1024px width", tab)
+		}
+		if rect.X+rect.W > winW {
+			t.Fatalf("%q tab clipped: ends at %.0f > window %.0f", tab, rect.X+rect.W, winW)
+		}
 	}
 	if _, ok := tw.Find("Slides"); ok {
 		t.Fatal("expected 'Slides' tab to be unified into 'Canvas'")
@@ -266,7 +264,7 @@ func TestStudioHeaderLabelsInsideWideWindow(t *testing.T) {
 }
 
 // TestStudioHeaderCollapsesToIconsWhenNarrow pins narrow behavior:
-// "Send to Editor" is absent, and mode switcher labels survive.
+// "Send to Editor" is absent, and surface tabs survive.
 func TestStudioHeaderCollapsesToIconsWhenNarrow(t *testing.T) {
 	app := newStudioSlidesApp(t)
 	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 940, 700, ui.TesterOptions{Dark: true})
@@ -274,8 +272,8 @@ func TestStudioHeaderCollapsesToIconsWhenNarrow(t *testing.T) {
 	if _, ok := tw.Find("Send to Editor"); ok {
 		t.Fatal("expected 'Send to Editor' to be removed from header")
 	}
-	if _, ok := tw.Find("Studio"); !ok {
-		t.Fatal("expected mode switcher labels to survive at 940px width")
+	if _, ok := tw.Find("Canvas"); !ok {
+		t.Fatal("expected Canvas surface tab to survive at 940px width")
 	}
 }
 
@@ -682,11 +680,8 @@ func TestStudioSessionHistoryAndAgentBadges(t *testing.T) {
 		t.Fatal("expected 'ACP Studio Task' in session history sidebar")
 	}
 
-	// 3. Badges for ForgeADE and ACP are present
-	if _, ok := tw.Find("Forge"); !ok {
-		t.Fatal("expected 'Forge' badge on internal session row")
-	}
-	if _, ok := tw.Find("ACP"); !ok {
-		t.Fatal("expected 'ACP' badge on acp session row")
+	// 3. Sidebar rows use icon-only agent indicators (no redundant 'Forge' text pill)
+	if _, ok := tw.Find("Forge"); ok {
+		t.Fatal("expected 'Forge' text pill to be removed from sidebar session row (icon-only)")
 	}
 }

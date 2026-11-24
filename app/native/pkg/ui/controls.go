@@ -253,7 +253,7 @@ func relativeTime(t time.Time) string {
 // CLI sessions display agent brand icon + terminal icon group,
 // single-line title with inline pin, relative time, hover-only actions.
 func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
-	row := ui.Row(c.Key(d.Key)).Height(28).Radius(8).Padding(0, 8, 0, 10).Gap(8).AlignItems(ui.Center)
+	row := ui.Row(c.Key(d.Key)).Height(32).Radius(8).Padding(0, 8, 0, 8).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
 	isRunning := d.Status == "running" || d.Status == "working"
 	isAwaiting := d.Status == "awaiting-approval" || d.Status == "waiting"
 	actionClicked := false
@@ -271,6 +271,12 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 	}
 
 	row.Children(func() {
+		// Subtle active left accent bar
+		if d.Active {
+			ui.Box(c).Size(3, 14).Radius(2).Background(tc.Accent).Shrink(0)
+		} else {
+			ui.Box(c).Size(3, 14).Shrink(0)
+		}
 		// Dynamic agent brand icon group:
 		// ACP: agent brand icon + status dot overlay
 		// Internal (ForgeADE): official ForgeADE brand icon + status dot overlay
@@ -326,16 +332,6 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			if d.ProjectName != "" {
 				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.Border.Alpha(0.6)).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, d.ProjectName).FontSize(8).FontWeight(600).TextColor(tc.TextMuted)
-				})
-			}
-			// Agent type badge: ForgeADE vs ACP
-			if d.AgentType == "internal" || strings.Contains(strings.ToLower(d.AgentID), "internal") {
-				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "Forge").FontSize(8).FontWeight(700).TextColor(tc.Accent)
-				})
-			} else if d.AgentType == "acp" || d.AgentID == "agent-agy" || strings.Contains(strings.ToLower(d.AgentID), "acp") {
-				ui.Row(c).Height(14).Radius(3).Padding(0, 4).Background(tc.ToolbarControl).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "ACP").FontSize(8).FontWeight(700).TextColor(tc.TextMuted)
 				})
 			}
 			title := ui.Text(c, d.Title).FontSize(13).SingleLine()

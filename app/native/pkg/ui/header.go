@@ -17,6 +17,22 @@ import (
 	corestudio "github.com/hasdev/forge-ade/core/studio"
 )
 
+var (
+	menuIconAgent    *mygo.MenuIcon
+	menuIconEditor   *mygo.MenuIcon
+	menuIconStudio   *mygo.MenuIcon
+	menuIconFinder   *mygo.MenuIcon
+	menuIconTerminal *mygo.MenuIcon
+)
+
+func init() {
+	menuIconAgent, _ = mygo.NewMenuIconSVG(icons.TablerBot, true)
+	menuIconEditor, _ = mygo.NewMenuIconSVG(icons.TablerCode, true)
+	menuIconStudio, _ = mygo.NewMenuIconSVG(icons.TablerSparkles, true)
+	menuIconFinder, _ = mygo.NewMenuIconSVG(icons.TablerFolder, true)
+	menuIconTerminal, _ = mygo.NewMenuIconSVG(icons.TablerTerminal, true)
+}
+
 func (a *AppUI) resolveExternalTargetDir(targetPath string) string {
 	dir := targetPath
 	if dir == "" && a.Workspace != nil {
@@ -208,11 +224,6 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		Children(func() {
 			// Left cluster (ZCode navigation & context controls)
 			ui.Row(c).Grow(1).MinWidth(0).Gap(5).AlignItems(ui.Center).Clip().Children(func() {
-				var activeSess *agent.AgentSession
-				if a.Agent != nil {
-					activeSess = a.Agent.ActiveSession()
-				}
-
 				if showToggleInHeader {
 					if IconButton(c, tc, icons.TablerPanelLeft, 15).Shrink(0).Clicked() {
 						a.ShowLeftSidebar = !a.ShowLeftSidebar
@@ -223,100 +234,28 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 					if IconButton(c, tc, icons.TablerArrowRight, 14).Shrink(0).Clicked() {
 						a.cycleAgentSession(1)
 					}
-					if a.Mode != ModeStudio {
-						if IconButton(c, tc, icons.TablerCirclePlus, 15).Shrink(0).Clicked() {
-							a.handleNewTask()
-						}
-
-						// Compact agent/turn status circle badge
-						isStreaming := a.Agent != nil && a.Agent.IsStreaming
-						needsApproval := a.sessionNeedsApproval(activeSess)
-						badgeBg := tc.Success.Alpha(0.18)
-						badgeColor := tc.Success
-						if needsApproval {
-							badgeBg = tc.Warning.Alpha(0.18)
-							badgeColor = tc.Warning
-						} else if isStreaming {
-							badgeBg = tc.Accent.Alpha(0.18)
-							badgeColor = tc.Accent
-						}
-						statusCircle := ui.Row(c.Key("hdr-status-circle")).Size(18, 18).Radius(9).
-							Shrink(0).AlignItems(ui.Center).Justify(ui.Center).Background(badgeBg).Cursor(ui.CursorPointer)
-						statusCircle.Children(func() {
-							if isStreaming {
-								ui.Spinner(c).Size(10, 10).Label("running")
-							} else if needsApproval {
-								ui.Icon(c, icons.TablerAlertTriangle).Width(10).Height(10).TextColor(badgeColor)
-							} else {
-								ui.Icon(c, icons.TablerArrowDown).Width(10).Height(10).TextColor(badgeColor)
-							}
-						})
-						if statusCircle.Clicked() {
-							a.setMode(ModeAgent)
-							a.IsGitClientOpen = false
-							a.AgentViewMode = AgentViewChat
-						}
-					}
 				}
 
-				// Project switcher button + active title (Zed style)
-				projectBtn := ui.Row(c.Key("hdr-project")).Height(24).Radius(6).Padding(0, 6).Gap(5).
-					AlignItems(ui.Center).Shrink(0).Cursor(ui.CursorPointer)
-				projectBtn.Children(func() {
-					icon := icons.TablerFolder
-					if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
-						icon = icons.TablerServer
-					}
-					ui.Icon(c, icon).Width(14).Height(14).TextColor(tc.IconMuted)
-					if a.Mode != ModeAgent {
+				// Project switcher button + active title (Zed style) - hidden in Agent mode
+				if a.Mode != ModeAgent {
+					projectBtn := ui.Row(c.Key("hdr-project")).Height(24).Radius(6).Padding(0, 6).Gap(5).
+						AlignItems(ui.Center).Shrink(0).Cursor(ui.CursorPointer)
+					projectBtn.Children(func() {
+						icon := icons.TablerFolder
+						if a.Workspace != nil && strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
+							icon = icons.TablerServer
+						}
+						ui.Icon(c, icon).Width(14).Height(14).TextColor(tc.IconMuted)
 						ui.Text(c, projectName).FontSize(12).FontWeight(500).MaxWidth(110).SingleLine()
-					}
-				})
-				if projectBtn.Hovered() {
-					projectBtn.Background(tc.ToolbarControlHover)
-				}
-				if projectBtn.Clicked() {
-					a.OpenProjectSwitcherModal()
-				}
-
-				ui.Text(c, title).FontSize(13).FontWeight(600).MaxWidth(260).MinWidth(0).SingleLine()
-
-				// Title "…" context menu (Task Actions, Git Branch, Board, Git, Editor)
-				if a.Mode == ModeAgent {
-					moreBtn := ui.Row(c.Key("hdr-more")).Size(24, 24).Radius(6).Shrink(0).
-						AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-					moreBtn.Children(func() {
-						ui.Icon(c, icons.TablerDots).Width(14).Height(14).TextColor(tc.IconMuted)
 					})
-					if moreBtn.Hovered() {
-						moreBtn.Background(tc.ToolbarControlHover)
+					if projectBtn.Hovered() {
+						projectBtn.Background(tc.ToolbarControlHover)
 					}
-					moreBtn.Menu(func(m *ui.Menu) {
-						if a.Agent != nil && activeSess != nil {
-							if m.Item("Task Actions (Rename, Archive, Delete)...").Chosen() {
-								a.ShowTaskMenuModal = true
-							}
-							m.Separator()
-						}
-						if m.Item("Switch Git Branch...").Chosen() {
-							a.ShowBranchModal = true
-							a.BranchSearchQuery = ""
-							if a.Git != nil {
-								a.Git.RefreshAsync()
-							}
-						}
-						if m.Item("Open Workflow Board").Chosen() {
-							a.openBoardSurface()
-						}
-						if m.Item("Open Git Client").Chosen() {
-							a.openGitClientSurface()
-						}
-						m.Separator()
-						if m.Item("Switch to Editor Mode").Shortcut(ui.Cmd, ui.Key2).Chosen() {
-							a.setMode(ModeEditor)
-							a.IsGitClientOpen = false
-						}
-					})
+					if projectBtn.Clicked() {
+						a.OpenProjectSwitcherModal()
+					}
+
+					ui.Text(c, title).FontSize(13).FontWeight(600).MaxWidth(260).MinWidth(0).SingleLine()
 				}
 
 				// One-click return pill when viewing Editor, Board, or Git Client
@@ -429,104 +368,54 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			winW, _ := c.Size()
 			_ = winW
 
-			// ZCode Split Quick-Action Pill: [ Mode / Target | ▾ ]
-			target := a.ExternalOpenTarget
-			if target == "" {
-				target = "editor"
-			}
-			targetIcon := icons.TablerCode
-			if a.Mode == ModeStudio {
-				targetIcon = icons.TablerSparkles
-			} else if a.Mode == ModeAgent {
-				targetIcon = icons.TablerBot
-			} else {
-				switch target {
-				case "finder":
-					targetIcon = icons.TablerFolder
-				case "terminal":
-					targetIcon = icons.TablerTerminal
-				default:
-					targetIcon = icons.TablerCode
-				}
+			// Mode switcher dropdown: icon only for Agent, Editor, Studio
+			modeIcon := icons.TablerBot
+			switch a.Mode {
+			case ModeEditor:
+				modeIcon = icons.TablerCode
+			case ModeStudio:
+				modeIcon = icons.TablerSparkles
+			default:
+				modeIcon = icons.TablerBot
 			}
 
-			splitPill := ui.Row(c.Key("hdr-split-term")).Height(26).Radius(7).Shrink(0).AlignItems(ui.Center).
+			modeBtn := ui.Row(c.Key("hdr-mode-dropdown")).Height(26).Radius(7).Padding(0, 7).Gap(4).Shrink(0).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).
 				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder)
-			splitPill.Children(func() {
-				modeName := "Agent"
-				if a.Mode == ModeEditor {
-					modeName = "Editor"
-				} else if a.Mode == ModeStudio {
-					modeName = "Studio"
+			modeBtn.Children(func() {
+				ui.Icon(c, modeIcon).Width(13).Height(13).TextColor(tc.ToolbarControlForeground)
+				ui.Icon(c, icons.TablerChevronDown).Width(10).Height(10).TextColor(tc.IconMuted)
+			})
+			if modeBtn.Hovered() {
+				modeBtn.Background(tc.ToolbarControlHover)
+			}
+			modeBtn.Menu(func(m *ui.Menu) {
+				// Mode Switcher in Header Dropdown
+				if m.Item(menuChecked(a.Mode == ModeAgent, "Agent Chat Mode")).Shortcut(ui.Cmd, ui.Key1).Icon(menuIconAgent).Chosen() {
+					a.setMode(ModeAgent)
+					a.IsGitClientOpen = false
+					a.AgentViewMode = AgentViewChat
+					a.ActiveTaskKind = "agent"
 				}
-
-				termHalf := ui.Row(c.Key("hdr-split-left")).Height(24).Padding(0, 7).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-				termHalf.Children(func() {
-					ui.Icon(c, targetIcon).Width(13).Height(13).TextColor(tc.ToolbarControlForeground)
-					ui.Text(c, modeName).FontSize(11).FontWeight(500).TextColor(tc.ToolbarControlForeground)
-				})
-				if termHalf.Hovered() {
-					termHalf.Background(tc.ToolbarControlHover)
+				if m.Item(menuChecked(a.Mode == ModeEditor, "Editor Mode")).Shortcut(ui.Cmd, ui.Key2).Icon(menuIconEditor).Chosen() {
+					a.setMode(ModeEditor)
+					a.IsGitClientOpen = false
 				}
-				if termHalf.Clicked() {
-					if a.Mode == ModeStudio {
-						a.setMode(ModeEditor)
-						a.IsGitClientOpen = false
-					} else {
-						switch target {
-						case "finder":
-							a.openInFinder("")
-						case "terminal":
-							a.openExternalTerminal("")
-						default:
-							a.setMode(ModeEditor)
-							a.IsGitClientOpen = false
-						}
-					}
+				if m.Item(menuChecked(a.Mode == ModeStudio, "Studio Mode")).Shortcut(ui.Cmd, ui.Key3).Icon(menuIconStudio).Chosen() {
+					a.setMode(ModeStudio)
+					a.IsGitClientOpen = false
 				}
+				m.Separator()
 
-				ui.Box(c).Size(1, 14).Background(tc.ToolbarBorder)
-
-				dropHalf := ui.Row(c.Key("hdr-split-drop")).Height(24).Padding(0, 6).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-				dropHalf.Children(func() {
-					ui.Icon(c, icons.TablerChevronDown).Width(11).Height(11).TextColor(tc.IconMuted)
-				})
-				if dropHalf.Hovered() {
-					dropHalf.Background(tc.ToolbarControlHover)
+				// External Tools / Quick Launchers
+				if m.Item("Finder").Shortcut(ui.Cmd|ui.Alt, ui.KeyR).Icon(menuIconFinder).Chosen() {
+					a.ExternalOpenTarget = "finder"
+					a.openInFinder("")
 				}
-				dropHalf.Menu(func(m *ui.Menu) {
-					// Mode Switcher in Header Dropdown
-					if m.Item(menuChecked(a.Mode == ModeAgent, "Agent Chat Mode")).Shortcut(ui.Cmd, ui.Key1).Chosen() {
-						a.setMode(ModeAgent)
-						a.IsGitClientOpen = false
-						a.AgentViewMode = AgentViewChat
-						a.ActiveTaskKind = "agent"
-					}
-					if m.Item(menuChecked(a.Mode == ModeEditor, "Editor Mode")).Shortcut(ui.Cmd, ui.Key2).Chosen() {
-						a.setMode(ModeEditor)
-						a.IsGitClientOpen = false
-					}
-					if m.Item(menuChecked(a.Mode == ModeStudio, "Studio Mode")).Shortcut(ui.Cmd, ui.Key3).Chosen() {
-						a.setMode(ModeStudio)
-						a.IsGitClientOpen = false
-					}
-					m.Separator()
-
-					// Quick Target Selectors / Launchers
-					if m.Item(menuChecked(target == "editor", "Editor Mode")).Chosen() {
-						a.ExternalOpenTarget = "editor"
-						a.setMode(ModeEditor)
-						a.IsGitClientOpen = false
-					}
-					if m.Item(menuChecked(target == "finder", "Finder")).Chosen() {
-						a.ExternalOpenTarget = "finder"
-						a.openInFinder("")
-					}
-					if m.Item(menuChecked(target == "terminal", "Terminal (External)")).Chosen() {
-						a.ExternalOpenTarget = "terminal"
-						a.openExternalTerminal("")
-					}
-				})
+				if m.Item("Terminal (External)").Shortcut(ui.Cmd|ui.Alt, ui.KeyT).Icon(menuIconTerminal).Chosen() {
+					a.ExternalOpenTarget = "terminal"
+					a.openExternalTerminal("")
+				}
 			})
 
 			// Trailing utility icons: Settings, Terminal (internal bottom drawer), and Right Sidebar toggle
