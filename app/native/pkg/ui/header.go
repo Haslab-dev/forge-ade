@@ -419,18 +419,18 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 			})
 
 			// Trailing utility icons: Settings, Terminal (internal bottom drawer), and Right Sidebar toggle
-			if IconButton(c, tc, icons.TablerSettings, 14).Shrink(0).Clicked() {
+			if IconButton(c, tc, icons.TablerSettings, 14).Shrink(0).Tooltip("Settings (⌘,)").Clicked() {
 				if a.Mode == ModeStudio {
 					a.openSettings(settings.SettingsTabStudio)
 				} else {
 					a.openSettings(settings.SettingsTabGeneral)
 				}
 			}
-			if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.isBottomTerminalVisible()).Shrink(0).Clicked() {
+			if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.isBottomTerminalVisible()).Shrink(0).Tooltip("Toggle Bottom Terminal (⌘`)").Clicked() {
 				a.toggleBottomTerminal()
 			}
-			if !((a.Mode == ModeAgent || a.Mode == ModeStudio) && a.ShowRightDrawer) {
-				if ToggleIconButton(c, tc, icons.TablerPanelRight, 14, a.ShowRightDrawer).Shrink(0).Clicked() {
+			if !a.ShowRightDrawer && a.Mode != ModeEditor {
+				if ToggleIconButton(c, tc, icons.TablerPanelRight, 14, a.ShowRightDrawer).Shrink(0).Tooltip("Toggle Right Drawer (⌘J)").Clicked() {
 					a.ShowRightDrawer = !a.ShowRightDrawer
 				}
 			}

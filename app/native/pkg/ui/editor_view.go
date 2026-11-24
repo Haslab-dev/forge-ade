@@ -19,30 +19,27 @@ import (
 func (a *AppUI) renderEditorSurface(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
-	// 1. Left Activity Bar + Sidebar
+	// 1. Left Activity Bar + Resizable Sidebar
 	if a.ShowLeftSidebar {
-		activityButton := func(icon *ui.SVG, tab int, badgeCount int, onPick func()) {
+		activityButton := func(icon *ui.SVG, tooltip string, tab int, badgeCount int, onPick func()) {
 			active := false
 			if tab == ActivityGit {
 				active = a.IsGitClientOpen
 			} else if tab >= 0 {
 				active = (!a.IsGitClientOpen && a.EditorActivity == tab)
-			} else if tab == -1 && a.Settings != nil && a.Settings.IsOpen {
-				active = true
 			}
-			btn := ui.Row(c).Size(ActivityBarWidth-8, 40).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+			btn := ui.Row(c).Size(ActivityBarWidth-8, 38).Radius(8).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+			if tooltip != "" {
+				btn.Tooltip(tooltip)
+			}
 			btn.Children(func() {
 				if active {
-					// Active indicator INSIDE the button's children: MyGo
-					// absolute insets resolve against the parent's padding
-					// box, so creating this after the closure attached it to
-					// the full-height activity column instead — a white 2px
-					// line down the whole window's left edge.
-					ui.Box(c).Absolute().Left(0).Width(2).Top(8).Bottom(8).Background(tc.Text).Radius(0, 1, 1, 0)
+					// Active indicator INSIDE the button's children so it anchors to the button.
+					ui.Box(c).Absolute().Left(0).Width(2.5).Top(8).Bottom(8).Background(tc.Accent).Radius(0, 2, 2, 0)
 				}
-				ic := ui.Icon(c, icon).Width(20).Height(20)
+				ic := ui.Icon(c, icon).Width(19).Height(19)
 				if active {
-					ic.TextColor(tc.Text)
+					ic.TextColor(tc.Accent)
 				} else {
 					ic.TextColor(tc.IconMuted)
 				}
@@ -53,14 +50,14 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 					}
 					ui.Row(c).Absolute().Top(3).Right(3).Height(14).Radius(7).
 						Padding(0, 4).Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-						ui.Text(c, badgeText).FontSize(9).FontWeight(700).TextColor(tc.Canvas)
+						ui.Text(c, badgeText).FontSize(9).FontWeight(700).TextColor(tc.AccentForeground)
 					})
 				}
 			})
 			if active {
-				btn.Background(tc.Text.Alpha(0.06))
+				btn.Background(tc.SidebarRowSelected)
 			} else if btn.Hovered() {
-				btn.Background(tc.Text.Alpha(0.04))
+				btn.Background(tc.SidebarRowHover)
 			}
 			if btn.Clicked() {
 				if onPick != nil {
@@ -78,17 +75,17 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			gitChanges = len(gm.Staged) + len(gm.Unstaged) + len(gm.Untracked)
 		}
 
-		ui.Column(c).Width(ActivityBarWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).
+		ui.Column(c).Width(ActivityBarWidth).Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
 			Padding(8, 0).AlignItems(ui.Center).Gap(4).Children(func() {
-			activityButton(icons.TablerFiles, ActivityExplorer, 0, func() {
+			activityButton(icons.TablerFiles, "Explorer", ActivityExplorer, 0, func() {
 				a.IsGitClientOpen = false
 				a.EditorActivity = ActivityExplorer
 			})
-			activityButton(icons.TablerSearch, ActivitySearch, len(a.FileSearchHits), func() {
+			activityButton(icons.TablerSearch, "Search in Files (⇧⌘F)", ActivitySearch, len(a.FileSearchHits), func() {
 				a.IsGitClientOpen = false
 				a.EditorActivity = ActivitySearch
 			})
-			activityButton(icons.TablerGitBranch, ActivityGit, gitChanges, func() {
+			activityButton(icons.TablerGitBranch, "Git Client (⇧⌘G)", ActivityGit, gitChanges, func() {
 				if a.IsGitClientOpen {
 					a.IsGitClientOpen = false
 				} else {
@@ -99,7 +96,7 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 					a.loadGitRemoteURL()
 				}
 			})
-			activityButton(icons.TablerDatabase, ActivityDatabase, 0, func() {
+			activityButton(icons.TablerDatabase, "Database Inspector", ActivityDatabase, 0, func() {
 				a.IsGitClientOpen = false
 				a.EditorActivity = ActivityDatabase
 			})
@@ -107,9 +104,14 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 
 			// Remote SSH Button on ActivityBar
 			isSSH := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
-			sshBtn := ui.Row(c).Size(ActivityBarWidth-8, 40).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+			sshTip := "Connect via Remote SSH / SFTP"
+			if isSSH {
+				sshTip = "Remote SSH Connected — Manage Connection"
+			}
+			sshBtn := ui.Row(c).Size(ActivityBarWidth-8, 38).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+				Cursor(ui.CursorPointer).Tooltip(sshTip)
 			sshBtn.Children(func() {
-				ic := ui.Icon(c, icons.TablerServer).Width(20).Height(20)
+				ic := ui.Icon(c, icons.TablerServer).Width(19).Height(19)
 				if isSSH {
 					ic.TextColor(tc.Accent)
 					ui.Box(c).Absolute().Top(4).Right(4).Size(6, 6).Radius(3).Background(tc.Success)
@@ -118,9 +120,9 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 				}
 			})
 			if isSSH {
-				sshBtn.Background(tc.Accent.Alpha(0.12))
+				sshBtn.Background(tc.Accent.Alpha(0.14))
 			} else if sshBtn.Hovered() {
-				sshBtn.Background(tc.Text.Alpha(0.04))
+				sshBtn.Background(tc.SidebarRowHover)
 			}
 			if sshBtn.Clicked() {
 				if isSSH {
@@ -129,14 +131,17 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 					a.OpenSSHModal()
 				}
 			}
-
-			activityButton(icons.TablerSettings, -1, 0, func() {
-				a.openSettings()
-			})
 		})
 
 		if !a.IsGitClientOpen {
-			ui.Column(c).Width(FileTreeDefaultWidth).Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
+			sidebarW := a.LeftSidebarWidth
+			if sidebarW < 200 {
+				sidebarW = FileTreeDefaultWidth
+			}
+			if sidebarW > 480 {
+				sidebarW = 480
+			}
+			ui.Column(c).Width(sidebarW).Shrink(0).Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
 				switch a.EditorActivity {
 				case ActivityExplorer:
 					a.renderFileTree(c)
@@ -148,6 +153,7 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 					a.renderDatabasePane(c)
 				}
 			})
+			RightResizeHandle(c, &a.LeftSidebarWidth, 200, 480, FileTreeDefaultWidth)
 		}
 	}
 
@@ -225,8 +231,12 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 					closedThisTab := false
 
 					tab := ui.Row(c.Key("tab-"+path)).Height(EditorTabBarHeight).Padding(0, 10).Gap(6).
-						AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border)
+						AlignItems(ui.Center).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+					tabHovered := tab.Hovered()
 					tab.Children(func() {
+						if isActive {
+							ui.Box(c).Absolute().Left(0).Right(0).Bottom(0).Height(2).Background(tc.Accent)
+						}
 						if isTerm {
 							ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
 						} else {
@@ -237,17 +247,19 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						}
 						label := ui.Text(c, baseName).FontSize(12)
 						if isActive {
-							label.FontWeight(500)
+							label.FontWeight(600).TextColor(tc.Text)
+						} else {
+							label.TextColor(tc.TextMuted)
 						}
 						if isReadOnly {
-							// Read-only tabs render an italic title, as forge-ade does.
+							// Read-only tabs render an italic title.
 							label.Italic().TextColor(tc.TextMuted)
 						}
-						closeBtn := ui.Row(c.Key("tab-close-"+path)).Size(16, 16).Radius(3).AlignItems(ui.Center).Justify(ui.Center)
+						closeBtn := ui.Row(c.Key("tab-close-"+path)).Size(16, 16).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 						closeBtn.Children(func() {
-							if isModified && !tab.Hovered() {
+							if isModified && !tabHovered {
 								ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning)
-							} else {
+							} else if isActive || tabHovered {
 								ui.Icon(c, icons.TablerX).Width(10).Height(10).TextColor(tc.IconMuted)
 							}
 						})
@@ -260,8 +272,8 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						}
 					})
 					if isActive {
-						tab.Background(tc.SurfaceOverlay)
-					} else if tab.Hovered() {
+						tab.Background(tc.Canvas)
+					} else if tabHovered {
 						tab.Background(tc.Text.Alpha(0.04))
 					}
 					if !closedThisTab && tab.Clicked() {
@@ -419,59 +431,74 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 			})
 		})
 
-		actionBtn := func(icon *ui.SVG, label string, active bool, onPick func()) {
-			btn := ui.Row(c).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center)
+		iconActionBtn := func(key string, icon *ui.SVG, tip string, active bool, onPick func()) {
+			btn := ui.Row(c.Key("ed-act-"+key)).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+				Cursor(ui.CursorPointer).Shrink(0)
+			if tip != "" {
+				btn.Tooltip(tip)
+			}
 			btn.Children(func() {
 				ic := ui.Icon(c, icon).Width(13).Height(13).TextColor(tc.IconMuted)
 				if active {
 					ic.TextColor(tc.Accent)
 				}
-				if label != "" {
-					ui.Text(c, label).FontSize(12).TextColor(tc.TextMuted)
-				}
 			})
 			if active {
-				btn.Background(tc.Accent.Alpha(0.1))
+				btn.Background(tc.Accent.Alpha(0.14))
 			} else if btn.Hovered() {
-				btn.Background(tc.Text.Alpha(0.05))
+				btn.Background(tc.ToolbarControlHover)
 			}
 			if btn.Clicked() {
 				onPick()
 			}
 		}
 
-		actionBtn(icons.TablerTerminal, "Shell", strings.HasPrefix(em.ActivePath, "terminal://"), func() {
-			a.openEditorTerminalTab("")
-		})
-
-		actionBtn(icons.TablerBook, "Snippets", false, func() {
-			sessID := ""
-			if ts := a.snippetDefaultTerminal(); ts != nil {
-				sessID = ts.ActiveSessionID
-			}
-			a.OpenTerminalSnippetsModal(sessID, "", "")
-		})
-
-		splitLabel := "Split"
-		if len(em.Panes) > 1 {
-			splitLabel = "Single"
-		}
-		actionBtn(icons.TablerColumns, splitLabel, false, func() {
+		ui.Row(c).Gap(3).AlignItems(ui.Center).Shrink(0).Padding(0, 0, 0, 6).Children(func() {
+			iconActionBtn("shell", icons.TablerTerminal, "New Shell Tab", strings.HasPrefix(em.ActivePath, "terminal://"), func() {
+				a.openEditorTerminalTab("")
+			})
+			splitTip := "Split Editor Right"
 			if len(em.Panes) > 1 {
-				em.Panes = nil
-				em.PaneWeights = nil
-				em.IsSplit = false
-			} else {
-				em.SplitRight()
+				splitTip = "Single Pane"
 			}
-		})
-		actionBtn(icons.TablerGitCompare, "Diff", em.IsDiffView, func() { em.IsDiffView = !em.IsDiffView })
-		actionBtn(icons.TablerRefresh, "Wrap", em.SoftWrap, func() { em.SoftWrap = !em.SoftWrap })
-		actionBtn(icons.TablerWand, "Format", false, func() { a.formatActiveDocument(c) })
-		actionBtn(icons.TablerSparkles, "Edit with AI", a.InlineAI != nil && a.InlineAI.Open, func() { a.openInlineAI() })
-		actionBtn(icons.TablerDeviceFloppy, "Save", false, func() {
-			if err := em.SaveActiveFile(); err != nil {
-				a.queueToast(ui.Toast{Title: "Save failed", Description: err.Error(), Type: "error"})
+			iconActionBtn("split", icons.TablerColumns, splitTip, len(em.Panes) > 1, func() {
+				if len(em.Panes) > 1 {
+					em.Panes = nil
+					em.PaneWeights = nil
+					em.IsSplit = false
+				} else {
+					em.SplitRight()
+				}
+			})
+			iconActionBtn("diff", icons.TablerGitCompare, "Toggle Diff View", em.IsDiffView, func() { em.IsDiffView = !em.IsDiffView })
+			iconActionBtn("wrap", icons.TablerRefresh, "Toggle Soft Wrap", em.SoftWrap, func() { em.SoftWrap = !em.SoftWrap })
+			iconActionBtn("format", icons.TablerWand, "Format Document (⌥⇧F)", false, func() { a.formatActiveDocument(c) })
+			iconActionBtn("save", icons.TablerDeviceFloppy, "Save File (⌘S)", false, func() {
+				if err := em.SaveActiveFile(); err != nil {
+					a.queueToast(ui.Toast{Title: "Save failed", Description: err.Error(), Type: "error"})
+				}
+			})
+
+			ui.Box(c).Width(1).Height(14).Background(tc.Border.Alpha(0.7)).Margin(0, 3)
+
+			// Compact AI Inline Edit pill
+			aiActive := a.InlineAI != nil && a.InlineAI.Open
+			aiBtn := ui.Row(c.Key("ed-act-ai")).Height(24).Radius(6).Padding(0, 8).Gap(4).AlignItems(ui.Center).
+				Cursor(ui.CursorPointer).Shrink(0).Tooltip("Inline AI Edit (⌘I)")
+			if aiActive {
+				aiBtn.Background(tc.Accent.Alpha(0.18)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.4))
+			} else {
+				aiBtn.Background(tc.Accent.Alpha(0.10))
+			}
+			aiBtn.Children(func() {
+				ui.Icon(c, icons.TablerSparkles).Width(12).Height(12).TextColor(tc.Accent)
+				ui.Text(c, "AI Edit").FontSize(11).FontWeight(600).TextColor(tc.Accent)
+			})
+			if !aiActive && aiBtn.Hovered() {
+				aiBtn.Background(tc.Accent.Alpha(0.18))
+			}
+			if aiBtn.Clicked() {
+				a.openInlineAI()
 			}
 		})
 	})
@@ -496,8 +523,112 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 	if em == nil {
 		return
 	}
-	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
+
+	// Multi-pane layout: N weighted panes with draggable dividers.
+	// Checked before single-pane viewers so splitting keeps all panes intact.
+	em.EnsurePanes()
+	if panes := em.PaneDocs(); len(panes) > 1 {
+		winW, _ := c.Size()
+		resizeScale := maxF(360, winW)
+		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+			for i, panePath := range panes {
+				panePath, paneIdx := panePath, i
+				if i > 0 {
+					handle := ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(4).FillHeight().Cursor(ui.CursorResizeEW)
+					dx, _, held := handle.Dragged()
+					if handle.DoubleClicked() {
+						eq := 1.0 / float32(len(panes))
+						for k := range panes {
+							em.SetPaneWeight(k, eq)
+						}
+					} else if held && dx != 0 {
+						delta := dx / resizeScale
+						em.SetPaneWeight(paneIdx-1, em.PaneWeight(paneIdx-1)+delta)
+						em.SetPaneWeight(paneIdx, em.PaneWeight(paneIdx)-delta)
+					}
+					if held || handle.Hovered() {
+						handle.Background(tc.Accent)
+					} else {
+						handle.Background(tc.Border)
+					}
+				}
+				isActivePane := panePath == em.ActivePath
+				paneCol := ui.Column(c.Key(fmt.Sprintf("pane-col-%d", paneIdx))).Grow(em.PaneWeight(paneIdx)).FillHeight().Clip()
+				paneCol.Children(func() {
+					if strings.HasPrefix(panePath, "terminal://") {
+						a.renderEditorMainTerminal(c, tc, panePath)
+						return
+					}
+					paneDoc := em.GetDoc(panePath)
+					if paneDoc == nil {
+						ui.Column(c).Grow(1).Center().Children(func() {
+							ui.Text(c, "No file").FontSize(12).TextColor(tc.TextMuted)
+						})
+						return
+					}
+					paneDoc.Editor.SoftWrap = em.SoftWrap
+					em.ApplyTheme(paneDoc.Editor)
+					closedPane := false
+					hdrBg := tc.Surface
+					if isActivePane {
+						hdrBg = tc.Canvas
+					}
+					paneHdr := ui.Row(c.Key(fmt.Sprintf("pane-hdr-%d", paneIdx))).Height(28).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+						Background(hdrBg).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+					paneHdr.Children(func() {
+						if isActivePane {
+							ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+						}
+						txt := ui.Text(c, paneDoc.RelativePath).FontSize(11.5).Grow(1).SingleLine()
+						if isActivePane {
+							txt.FontWeight(600).TextColor(tc.Text)
+						} else {
+							txt.FontWeight(400).TextColor(tc.TextMuted)
+						}
+						if IconButton(c, tc, icons.TablerX, 11).Tooltip("Close Pane").Clicked() {
+							closedPane = true
+							em.ClosePane(paneIdx)
+						}
+					})
+					if !closedPane && paneHdr.Clicked() {
+						em.ActivePane = paneIdx
+						em.ActivePath = panePath
+					}
+
+					switch {
+					case strings.HasSuffix(strings.ToLower(panePath), ".pdf"):
+						a.renderPdfViewerPane(c, tc, paneDoc.FullPath, filepath.Base(panePath))
+					case isDeckOrMotionFile(panePath):
+						a.renderDeckPane(c)
+					case isImageOrSVG(paneDoc.RelativePath) && a.SVGViewMode[paneDoc.FullPath] != "code":
+						a.renderImageViewer(c, tc, paneDoc.FullPath, paneDoc.RelativePath, paneDoc, false)
+					case isActivePane && em.IsDiffView:
+						a.renderEditorDiff(c)
+					default:
+						ui.Row(c).Grow(1).FillWidth().Children(func() {
+							ui.Column(c).Grow(1).FillHeight().Children(func() {
+								edView := mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
+								if isActivePane {
+									edView.AutoFocus()
+								}
+								a.attachEditorContextMenu(c, edView, paneDoc)
+								if isActivePane {
+									a.renderInlineAiBar(c, tc)
+								}
+							})
+							a.renderMinimap(c, tc, paneDoc)
+						})
+					}
+				})
+				if !isActivePane && paneCol.Clicked() {
+					em.ActivePane = paneIdx
+					em.ActivePath = panePath
+				}
+			}
+		})
+		return
+	}
 
 	if strings.HasPrefix(em.ActivePath, "terminal://") {
 		a.renderEditorMainTerminal(c, tc, em.ActivePath)
@@ -538,82 +669,6 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 
 	if em.IsDiffView {
 		a.renderEditorDiff(c)
-		return
-	}
-
-	// Multi-pane layout (EditorPaneState parity): N weighted panes with
-	// 3px drag handles between them; the active pane keeps breadcrumbs,
-	// minimap and the inline AI bar.
-	em.EnsurePanes()
-	if panes := em.PaneDocs(); panes != nil {
-		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-			for i, panePath := range panes {
-				panePath, paneIdx := panePath, i
-				if i > 0 {
-					handle := ui.Box(c.Key(fmt.Sprintf("pane-handle-%d", i))).Width(4).FillHeight().Cursor(ui.CursorResizeEW)
-					dx, _, held := handle.Dragged()
-					if handle.DoubleClicked() {
-						eq := 1.0 / float32(len(panes))
-						for k := range panes {
-							em.SetPaneWeight(k, eq)
-						}
-					} else if held && dx != 0 {
-						delta := dx / 600.0
-						em.SetPaneWeight(paneIdx-1, em.PaneWeight(paneIdx-1)+delta)
-						em.SetPaneWeight(paneIdx, em.PaneWeight(paneIdx)-delta)
-					}
-					if held || handle.Hovered() {
-						handle.Background(tc.Accent)
-					} else {
-						handle.Background(t.Border)
-					}
-				}
-				ui.Column(c).Grow(em.PaneWeight(paneIdx)).FillHeight().Children(func() {
-					if strings.HasPrefix(panePath, "terminal://") {
-						a.renderEditorMainTerminal(c, tc, panePath)
-						return
-					}
-					paneDoc := em.GetDoc(panePath)
-					if paneDoc == nil {
-						ui.Column(c).Grow(1).Center().Children(func() {
-							ui.Text(c, "No file").FontSize(12).TextColor(tc.TextMuted)
-						})
-						return
-					}
-					paneDoc.Editor.SoftWrap = em.SoftWrap
-					em.ApplyTheme(paneDoc.Editor)
-					closedPane := false
-					paneHdr := ui.Row(c.Key(fmt.Sprintf("pane-hdr-%d", paneIdx))).Height(28).Padding(0, 12).Gap(6).AlignItems(ui.Center).
-						BorderWidth(0, 0, 1, 0).BorderColor(t.Border)
-					paneHdr.Children(func() {
-						if panePath == em.ActivePath {
-							ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
-						}
-						ui.Text(c, paneDoc.RelativePath).FontSize(12).FontWeight(500).Grow(1).SingleLine()
-						if IconButton(c, tc, icons.TablerX, 11).Clicked() {
-							closedPane = true
-							em.ClosePane(paneIdx)
-						}
-					})
-					if !closedPane && paneHdr.Clicked() {
-						em.ActivePane = paneIdx
-						em.ActivePath = panePath
-					}
-					if panePath == em.ActivePath {
-						a.renderEditorSingle(c)
-					} else {
-						if paneDoc != nil && isImageOrSVG(paneDoc.RelativePath) && a.SVGViewMode[paneDoc.FullPath] != "code" {
-							a.renderImageViewer(c, tc, paneDoc.FullPath, paneDoc.RelativePath, paneDoc, false)
-						} else {
-							ui.Column(c).Grow(1).FillWidth().Children(func() {
-								edView := mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
-								a.attachEditorContextMenu(c, edView, paneDoc)
-							})
-						}
-					}
-				})
-			}
-		})
 		return
 	}
 
@@ -812,7 +867,6 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 }
 
 func (a *AppUI) renderBreadcrumbs(c *ui.Context, doc *editor.OpenDocument) {
-	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
 
 	ui.Row(c).Height(28).Gap(6).Padding(0, 12).AlignItems(ui.Center).
@@ -826,15 +880,15 @@ func (a *AppUI) renderBreadcrumbs(c *ui.Context, doc *editor.OpenDocument) {
 			isLast := (i == len(parts)-1)
 			if isLast {
 				ui.Icon(c, icons.FileIconSVG(doc.RelativePath)).Width(13).Height(13).TextColor(tc.IconMuted)
-				ui.Text(c, part).FontSize(12).FontWeight(500)
+				ui.Text(c, part).FontSize(12).FontWeight(500).TextColor(tc.Text)
 			} else {
-				ui.Text(c, part).FontSize(12).TextColor(t.TextMuted)
+				ui.Text(c, part).FontSize(12).TextColor(tc.TextMuted)
 			}
 		}
 		ui.Box(c).Grow(1)
 		if isSVG(doc.RelativePath) {
 			svgToggle := ui.Row(c.Key("bc-svg-toggle")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 			svgToggle.Children(func() {
 				ui.Icon(c, icons.TablerEye).Width(11).Height(11).TextColor(tc.Accent)
 				ui.Text(c, "Preview Vector").FontSize(10).FontWeight(600).TextColor(tc.Accent)
@@ -850,7 +904,7 @@ func (a *AppUI) renderBreadcrumbs(c *ui.Context, doc *editor.OpenDocument) {
 		if l := doc.Editor.Buffer.Language(); l != nil {
 			langName = l.Name
 		}
-		ui.Text(c, langName).FontSize(10).FontWeight(500).TextColor(t.TextMuted)
+		ui.Text(c, langName).FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
 	})
 }
 
@@ -859,12 +913,11 @@ func (a *AppUI) renderEditorDiff(c *ui.Context) {
 	if em == nil {
 		return
 	}
-	t := c.Theme()
 	tc := a.ThemeMgr.Colors()
 	doc := em.ActiveDoc()
 	if doc == nil {
 		ui.Column(c).Grow(1).Center().Children(func() {
-			ui.Text(c, "No file open").FontSize(17).FontWeight(600).TextColor(t.TextMuted)
+			ui.Text(c, "No file open").FontSize(17).FontWeight(600).TextColor(tc.TextMuted)
 		})
 		return
 	}
@@ -884,8 +937,9 @@ func (a *AppUI) renderEditorDiff(c *ui.Context) {
 	em.ApplyDiffTheme(d)
 
 	// Diff Controls Subheader
-	ui.Row(c).Gap(12).Padding(6, 12).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.Text(c, fmt.Sprintf("Diff: %s", doc.RelativePath)).FontSize(13).FontWeight(500)
+	ui.Row(c).Gap(12).Padding(6, 12).AlignItems(ui.Center).Background(tc.Surface).
+		BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		ui.Text(c, fmt.Sprintf("Diff: %s", doc.RelativePath)).FontSize(12.5).FontWeight(600).TextColor(tc.Text)
 		ui.Segmented(c, &em.DiffLayout, "Split", "Unified")
 		ui.Select(c, &em.DiffInline, []string{"Words", "Characters", "Off"})
 		ui.Box(c).Grow(1)
@@ -900,14 +954,14 @@ func (a *AppUI) renderEditorDiff(c *ui.Context) {
 				}
 			})
 		}
-		ui.Text(c, "Wrap").FontSize(12).TextColor(t.TextMuted)
+		ui.Text(c, "Wrap").FontSize(11.5).TextColor(tc.TextMuted)
 		ui.Switch(c, &em.SoftWrap).Label("Soft wrap")
 	})
 
 	if len(d.Hunks()) == 0 {
 		ui.Column(c).Grow(1).Center().Gap(4).Children(func() {
-			ui.Text(c, "No uncommitted changes").FontSize(16).FontWeight(600).TextColor(t.TextMuted)
-			ui.Text(c, "Buffer matches the saved disk baseline.").FontSize(13).TextColor(t.TextMuted)
+			ui.Text(c, "No uncommitted changes").FontSize(16).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Text(c, "Buffer matches the saved disk baseline.").FontSize(13).TextColor(tc.TextMuted)
 		})
 		return
 	}
@@ -982,46 +1036,32 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 				}
 			}
 		} else {
-			folderChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
+			folderChip := ui.Row(c.Key("ed-st-folder")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+				Cursor(ui.CursorPointer).Tooltip("Toggle Workspace Explorer (⌘B)")
 			folderChip.Children(func() {
 				ui.Icon(c, icons.TablerFolder).Width(12).Height(12).TextColor(tc.IconMuted)
 				statusText(projectName)
 			})
 			if folderChip.Hovered() {
-				folderChip.Background(tc.Text.Alpha(0.06))
+				folderChip.Background(tc.ToolbarControlHover)
 			}
 			if folderChip.Clicked() {
-				a.ShowLeftSidebar = true
+				a.ShowLeftSidebar = !a.ShowLeftSidebar
 				a.EditorActivity = ActivityExplorer
-				if a.Workspace != nil && a.Workspace.RootDir != "" {
-					_ = mygo.Shell.OpenExternal("file://" + a.Workspace.RootDir)
-				}
-			}
-
-			sshChip := ui.Row(c).Height(20).Radius(4).Padding(0, 5).Gap(4).AlignItems(ui.Center)
-			sshChip.Children(func() {
-				ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.IconMuted)
-				statusText("SSH")
-			})
-			if sshChip.Hovered() {
-				sshChip.Background(tc.Text.Alpha(0.06))
-			}
-			if sshChip.Clicked() {
-				a.OpenSSHModal()
 			}
 		}
 
 		if curPath != "" {
 			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 				ui.Icon(c, icons.FileIconSVG(curPath)).Width(12).Height(12).TextColor(tc.IconMuted)
-				statusText(truncRunes(curPath, 60))
+				statusText(truncRunes(curPath, 54))
 			})
 		}
 		ui.Box(c).Grow(1)
 
 		// Ask Agent bridge: attach active file context and pivot straight to Agent Mode.
-		askChip := ui.Row(c.Key("ed-ask-agent")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).Cursor(ui.CursorPointer).
-			Background(tc.Accent.Alpha(0.12))
+		askChip := ui.Row(c.Key("ed-ask-agent")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+			Cursor(ui.CursorPointer).Background(tc.Accent.Alpha(0.12)).Tooltip("Attach current file and switch to Agent Mode")
 		askChip.Children(func() {
 			ui.Icon(c, icons.TablerSparkles).Width(11).Height(11).TextColor(tc.Accent)
 			ui.Text(c, "Ask Agent").FontSize(11).FontWeight(500).TextColor(tc.Accent)
@@ -1039,11 +1079,13 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 			a.ActiveTaskKind = "agent"
 		}
 
-		// Follow Agent toggle: auto-jump the editor to the files the agent
-		// edits during a turn (layoutStore.isFollowAgentMode parity).
-		followChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center)
+		// Follow Agent toggle: auto-jump the editor to files edited by the agent.
+		followChip := ui.Row(c.Key("ed-st-follow")).Height(20).Radius(4).Padding(0, 6).Gap(5).AlignItems(ui.Center).
+			Cursor(ui.CursorPointer).Tooltip("Auto-follow files edited by the agent")
 		if a.FollowAgent {
 			followChip.Background(tc.Accent.Alpha(0.14))
+		} else if followChip.Hovered() {
+			followChip.Background(tc.ToolbarControlHover)
 		}
 		followChip.Children(func() {
 			eyeColor := tc.TextMuted
@@ -1053,7 +1095,7 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 				labelColor = tc.Accent
 			}
 			ui.Icon(c, icons.TablerEye).Width(12).Height(12).TextColor(eyeColor)
-			ui.Text(c, "Follow Agent").FontSize(11).TextColor(labelColor)
+			ui.Text(c, "Follow").FontSize(11).TextColor(labelColor)
 		})
 		if followChip.Clicked() {
 			a.FollowAgent = !a.FollowAgent
@@ -1061,12 +1103,12 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 
 		statusText(lineCol)
 		statusText(fmt.Sprintf("%d lines · %s", lineCount, langLabel))
-		statusText("UTF-8")
 
 		if a.Git != nil {
 			branch := a.Git.Snapshot().Branch
 			if branch != "" {
-				branchChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+				branchChip := ui.Row(c.Key("ed-st-branch")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+					Cursor(ui.CursorPointer).Tooltip("Switch Git Branch")
 				branchChip.Children(func() {
 					ui.Icon(c, icons.TablerGitBranch).Width(12).Height(12).TextColor(tc.Accent)
 					ui.Text(c, branch).FontSize(11).FontWeight(500).TextColor(tc.Accent)
@@ -1087,20 +1129,70 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 			if modelLabel == "" {
 				modelLabel = "No model"
 			}
-			modelChip := ui.Row(c).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center)
+			modelChip := ui.Row(c.Key("ed-st-model")).Height(20).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
+				Cursor(ui.CursorPointer).Tooltip("Select AI Model (⌘M)")
 			modelChip.Children(func() {
 				ui.Icon(c, icons.TablerCpu).Width(12).Height(12).TextColor(tc.IconMuted)
 				statusText(modelLabel)
 			})
 			if modelChip.Hovered() {
-				modelChip.Background(tc.Text.Alpha(0.06))
+				modelChip.Background(tc.ToolbarControlHover)
 			}
 			if modelChip.Clicked() {
 				a.ShowModelPalette = true
 				a.ModelSearchQuery = ""
 			}
 		}
-		statusText("⌘S Save · ⌘P Open · ⌘B Sidebar · ⌘1 Agent · ⌘2 Editor")
+
+		// Zed-style footer dock icon actions (Bottom Terminal, Side Conversation, Browser Preview)
+		ui.Box(c).Width(1).Height(13).Background(tc.Border)
+		footerDockBtn := func(key string, icon *ui.SVG, tip string, active bool, onClick func()) {
+			btn := ui.Row(c.Key("ed-dock-"+key)).Size(22, 20).Radius(4).AlignItems(ui.Center).Justify(ui.Center).
+				Cursor(ui.CursorPointer).Tooltip(tip)
+			btn.Children(func() {
+				ic := ui.Icon(c, icon).Width(13).Height(13)
+				if active {
+					ic.TextColor(tc.Accent)
+				} else {
+					ic.TextColor(tc.IconMuted)
+				}
+			})
+			if active {
+				btn.Background(tc.Accent.Alpha(0.15))
+			} else if btn.Hovered() {
+				btn.Background(tc.ToolbarControlHover)
+			}
+			if btn.Clicked() {
+				onClick()
+			}
+		}
+
+		ui.Row(c).Gap(2).AlignItems(ui.Center).Children(func() {
+			footerDockBtn("term", icons.TablerTerminal, "Bottom Terminal (⌘`)", a.isBottomTerminalVisible(), func() {
+				a.toggleBottomTerminal()
+			})
+
+			sideChatOpen := a.ShowRightDrawer && a.RightDrawerTab == RightTabChat
+			footerDockBtn("chat", icons.TablerMessage, "Side Conversation (AI Chat)", sideChatOpen, func() {
+				if sideChatOpen {
+					a.ShowRightDrawer = false
+				} else {
+					a.ShowRightDrawer = true
+					a.RightDrawerTab = RightTabChat
+				}
+			})
+
+			browserOpen := a.ShowRightDrawer && a.RightDrawerTab == RightTabBrowser
+			footerDockBtn("browser", icons.TablerWorld, "Browser Preview", browserOpen, func() {
+				if browserOpen {
+					a.ShowRightDrawer = false
+				} else {
+					a.ShowRightDrawer = true
+					a.pickDrawerPaneSingleton(RightTabBrowser, "Browser")
+					a.openBrowserTab("")
+				}
+			})
+		})
 	})
 }
 
