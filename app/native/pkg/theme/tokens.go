@@ -703,9 +703,15 @@ func MapTheme(tc ThemeColors, dark bool) *ui.Theme {
 	// ::selection { color-mix(in oklab, var(--focus) 82%, white 18%) }
 	t.Selection = tc.Focus.MixOklab(ui.RGB(255, 255, 255), 0.18)
 	t.Focus = tc.Focus
-	// Tooltips and toasts are the theme turned over.
-	t.Inverse = tc.Text
-	t.InverseText = tc.Canvas
+	// Tooltips and toasts use an elevated dark surface with crisp light text in
+	// dark mode, and a dark inverse surface with opaque light text in light mode.
+	if dark {
+		t.Inverse = tc.SurfaceOverlay.Alpha(0.96)
+		t.InverseText = tc.Text.Alpha(1)
+	} else {
+		t.Inverse = tc.Text.Alpha(0.94)
+		t.InverseText = tc.SurfaceOverlay.Alpha(1)
+	}
 	t.Scrollbar = tc.TerminalScrollbar
 	t.Radius = 10 // --radius: 0.625rem
 	t.Font = FontSans

@@ -118,6 +118,16 @@ func TestGlassAndBackgroundTheme(t *testing.T) {
 		t.Fatalf("expected denser glass opacity to increase Canvas alpha (%d <= %d)", denser.Canvas.A, translucent.Canvas.A)
 	}
 
+	// Dark theme tooltips/toasts (Inverse / InverseText) must stay dark & opaque-text even in glass mode.
+	tm.GlassOpacity = 0.00
+	activeDark := tm.ActiveTheme()
+	if activeDark.Inverse.R > 128 && activeDark.Inverse.G > 128 && activeDark.Inverse.B > 128 {
+		t.Fatalf("expected dark Inverse background for dark theme tooltips/toasts, got %+v", activeDark.Inverse)
+	}
+	if activeDark.InverseText.A != 255 {
+		t.Fatalf("expected opaque InverseText in glass mode, got alpha %d", activeDark.InverseText.A)
+	}
+
 	// Background presets validate cleanly.
 	presets := AvailableBackgroundPresets()
 	if len(presets) < 4 {
