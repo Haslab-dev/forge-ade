@@ -1,12 +1,10 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
@@ -14,59 +12,60 @@ import (
 	"github.com/hasdev/forge-ade/core/quota"
 )
 
-// renderSettingsTabAntigravityQuota renders the multi-account Antigravity Quota Tracker in Settings.
+// renderSettingsTabAntigravityQuota renders local Antigravity profile switching
+// and active-account quota checking via the official `agy` CLI.
 func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
 	mgr := sm.AntigravityAccountMgr()
 	accounts := mgr.Accounts()
 
 	// 1. Top Section Header with Title & Action Buttons
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
-		settingsSectionHeader(c, tc, "Antigravity Quota Tracker",
-			"Monitor 5-hour and weekly quotas, subscription tiers, and switch accounts across Google Antigravity profiles.")
+		settingsSectionHeader(c, tc, "Antigravity Profiles & Quota",
+			"Switch between saved local `agy` profiles manually and check the active account's quota directly via the official `agy` CLI.")
 
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			// Refresh All button with refresh icon
-			refreshAllBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+			// Check Active Quota button (queries ONLY the active account via `agy`)
+			refreshBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
-			refreshAllBtn.Children(func() {
+			refreshBtn.Children(func() {
 				ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
 				if sm.IsRefreshingQuota {
-					ui.Text(c, "Refreshing...").FontSize(12).FontWeight(500).TextColor(tc.TextMuted)
+					ui.Text(c, "Checking...").FontSize(12).FontWeight(500).TextColor(tc.TextMuted).NoWrap()
 				} else {
-					ui.Text(c, "Refresh All").FontSize(12).FontWeight(500).TextColor(tc.Text)
+					ui.Text(c, "Check Quota").FontSize(12).FontWeight(500).TextColor(tc.Text).NoWrap()
 				}
 			})
-			if refreshAllBtn.Hovered() {
-				refreshAllBtn.Background(tc.SurfaceRaised)
+			if refreshBtn.Hovered() {
+				refreshBtn.Background(tc.SurfaceRaised)
 			}
-			if refreshAllBtn.Clicked() && !sm.IsRefreshingQuota {
+			if refreshBtn.Clicked() && !sm.IsRefreshingQuota {
 				a.refreshAllAntigravityAccountsAsync()
-				c.AddToast(ui.Toast{Title: "Refreshing Quotas", Description: "Synchronizing all Antigravity accounts...", Type: "info"})
+				c.AddToast(ui.Toast{Title: "Checking Quota", Description: "Querying active account via official `agy` CLI...", Type: "info"})
 			}
 
-			// Import Local Account button
+			// Save Current `agy` Login button
 			importBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+				Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent).Cursor(ui.CursorPointer)
 			importBtn.Children(func() {
-				ui.Icon(c, icons.TablerUser).Width(13).Height(13).TextColor(tc.IconMuted)
-				ui.Text(c, "Import Local").FontSize(12).FontWeight(500).TextColor(tc.Text)
+				ui.Icon(c, icons.TablerUser).Width(13).Height(13).TextColor(tc.AccentForeground)
+				ui.Text(c, "Save Login").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground).NoWrap()
 			})
 			if importBtn.Hovered() {
-				importBtn.Background(tc.SurfaceRaised)
+				importBtn.Background(tc.Accent.Alpha(0.85))
 			}
 			if importBtn.Clicked() {
 				a.importLocalAntigravityAccountAsync()
 			}
 
-			// Add Account button
+			// Manual Paste Profile button
 			addBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 10).Gap(6).AlignItems(ui.Center).
-				Background(tc.Accent).BorderWidth(1).BorderColor(tc.Accent).Cursor(ui.CursorPointer)
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 			addBtn.Children(func() {
-				ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.AccentForeground)
-				ui.Text(c, "Add Account").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
+				ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.IconMuted)
+				ui.Text(c, "Add").FontSize(12).FontWeight(500).TextColor(tc.Text).NoWrap()
 			})
 			if addBtn.Hovered() {
-				addBtn.Background(tc.Accent.Alpha(0.85))
+				addBtn.Background(tc.SurfaceRaised)
 			}
 			if addBtn.Clicked() {
 				sm.IsAddingAccount = !sm.IsAddingAccount
@@ -75,210 +74,68 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 		})
 	})
 
-	// 2. Expandable Add Account Form
+	// 2. Expandable Manual Profile Form (no third-party OAuth spoofing)
 	if sm.IsAddingAccount {
 		settingsCard(c, tc, func() {
-			ui.Column(c).Gap(14).Children(func() {
-				// Header
+			ui.Column(c).Gap(12).Children(func() {
 				ui.Row(c).AlignItems(ui.Center).Justify(ui.SpaceBetween).Children(func() {
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Icon(c, icons.TablerPlus).Width(15).Height(15).TextColor(tc.Accent)
-						ui.Text(c, "Add Antigravity Account").FontSize(14).FontWeight(600).TextColor(tc.Text)
+						ui.Icon(c, icons.TablerKey).Width(15).Height(15).TextColor(tc.Accent)
+						ui.Text(c, "Save Local Antigravity Profile").FontSize(14).FontWeight(600).TextColor(tc.Text)
 					})
 					closeFormBtn := ui.Row(c).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center)
 					closeFormBtn.Children(func() {
 						ui.Icon(c, icons.TablerX).Width(12).Height(12).TextColor(tc.IconMuted)
 					})
 					if closeFormBtn.Clicked() {
-						a.cancelAntigravityOAuth()
 						sm.IsAddingAccount = false
 						sm.AccountStatusMessage = ""
 					}
 				})
 
-				// Mode Switcher Tabs (OAuth vs Manual)
-				ui.Row(c).Gap(8).Children(func() {
-					// Tab 1: Automatic OAuth
-					isOAuth := (sm.AddAccountMode == settings.AddAccountModeOAuth)
-					tabOAuth := ui.Row(c).Height(30).Radius(6).Padding(0, 12).Gap(6).AlignItems(ui.Center)
-					if isOAuth {
-						tabOAuth.Background(tc.Accent.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.4))
-					} else {
-						tabOAuth.Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border)
-					}
-					tabOAuth.Children(func() {
-						icons.RenderProviderIcon(c, "antigravity", 14)
-						txt := ui.Text(c, "Automatic (Google OAuth)").FontSize(12).FontWeight(500)
-						if isOAuth {
-							txt.TextColor(tc.Accent).FontWeight(600)
-						} else {
-							txt.TextColor(tc.TextMuted)
-						}
+				ui.Text(c, "Recommended: sign in using the official `agy` CLI or Antigravity IDE, then click \"Save Current Login\" above. Or paste local credentials JSON from ~/.gemini/oauth_creds.json below.").
+					FontSize(11).TextColor(tc.TextMuted)
+
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Credentials JSON or Token").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					ui.Row(c).Height(32).Radius(6).Padding(0, 8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+						ui.TextInput(c, &sm.NewAccountInput).Placeholder("Paste JSON from ~/.gemini/oauth_creds.json").Grow(1)
 					})
-					if tabOAuth.Clicked() {
-						sm.AddAccountMode = settings.AddAccountModeOAuth
+				})
+
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Profile Label (Optional)").FontSize(11).FontWeight(500).TextColor(tc.Text)
+					ui.Row(c).Height(32).Radius(6).Padding(0, 8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+						ui.TextInput(c, &sm.NewAccountLabel).Placeholder("e.g. Work, Personal Pro").Grow(1)
+					})
+				})
+
+				ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+					cancelBtn := ui.Button(c, "Cancel")
+					if cancelBtn.Clicked() {
+						sm.IsAddingAccount = false
 						sm.AccountStatusMessage = ""
 					}
 
-					// Tab 2: Manual
-					isManual := (sm.AddAccountMode == settings.AddAccountModeManual)
-					tabManual := ui.Row(c).Height(30).Radius(6).Padding(0, 12).Gap(6).AlignItems(ui.Center)
-					if isManual {
-						tabManual.Background(tc.Accent.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.4))
-					} else {
-						tabManual.Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border)
-					}
-					tabManual.Children(func() {
-						ui.Icon(c, icons.TablerKey).Width(13).Height(13).TextColor(tc.IconMuted)
-						txt := ui.Text(c, "Manual (Token / JSON)").FontSize(12).FontWeight(500)
-						if isManual {
-							txt.TextColor(tc.Accent).FontWeight(600)
-						} else {
-							txt.TextColor(tc.TextMuted)
-						}
+					saveBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 14).AlignItems(ui.Center).Justify(ui.Center).
+						Background(tc.Accent).Cursor(ui.CursorPointer)
+					saveBtn.Children(func() {
+						ui.Text(c, "Save Profile").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 					})
-					if tabManual.Clicked() {
-						sm.AddAccountMode = settings.AddAccountModeManual
-						sm.AccountStatusMessage = ""
+					if saveBtn.Hovered() {
+						saveBtn.Background(tc.Accent.Alpha(0.85))
+					}
+					if saveBtn.Clicked() {
+						input := strings.TrimSpace(sm.NewAccountInput)
+						if input == "" {
+							sm.AccountStatusMessage = "Please enter a credentials JSON or token"
+						} else {
+							label := strings.TrimSpace(sm.NewAccountLabel)
+							a.addAntigravityAccountAsync(input, label)
+						}
 					}
 				})
 
-				// Content for Tab 1: Automatic OAuth
-				if sm.AddAccountMode == settings.AddAccountModeOAuth {
-					ui.Column(c).Gap(10).Children(func() {
-						ui.Text(c, "Authorize directly with Google in your web browser. ForgeADE automatically receives the credentials and tracks your quotas without any manual token copying.").
-							FontSize(11).TextColor(tc.TextMuted)
-
-						// Optional Nickname
-						ui.Column(c).Gap(4).Children(func() {
-							ui.Text(c, "Account Nickname (Optional)").FontSize(11).FontWeight(500).TextColor(tc.Text)
-							ui.Row(c).Height(32).Radius(6).Padding(0, 8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-								ui.TextInput(c, &sm.NewAccountLabel).Placeholder("e.g. Work, Personal Pro, Backup").Grow(1)
-							})
-						})
-
-						if !sm.IsOAuthFlowActive {
-							ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-								// Sign in with Google Button
-								loginBtn := ui.Row(c).Height(34).Radius(8).Padding(0, 16).Gap(8).AlignItems(ui.Center).Justify(ui.Center).
-									Background(tc.Accent).Cursor(ui.CursorPointer)
-								loginBtn.Children(func() {
-									icons.RenderProviderIcon(c, "antigravity", 16)
-									ui.Text(c, "Sign in with Google (OAuth)").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
-								})
-								if loginBtn.Hovered() {
-									loginBtn.Background(tc.Accent.Alpha(0.85))
-								}
-								if loginBtn.Clicked() {
-									a.startAntigravityOAuthAsync(sm.NewAccountLabel)
-								}
-
-								cancelBtn := ui.Button(c, "Cancel")
-								if cancelBtn.Clicked() {
-									sm.IsAddingAccount = false
-									sm.AccountStatusMessage = ""
-								}
-							})
-						} else {
-							// Active OAuth waiting state
-							ui.Column(c).Padding(14, 16).Radius(8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.4)).Gap(10).Children(func() {
-								ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-									ui.Icon(c, icons.TablerRefresh).Width(15).Height(15).TextColor(tc.Accent)
-									ui.Text(c, "Waiting for Google authorization in browser...").FontSize(13).FontWeight(600).TextColor(tc.Accent)
-								})
-								ui.Text(c, "A browser tab has opened for Google OAuth sign-in. Grant permissions to complete setup. Once authorized, the account will be added automatically.").
-									FontSize(11).TextColor(tc.TextMuted)
-
-								ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-									if sm.OAuthFlowURL != "" {
-										reopenBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
-											Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-										reopenBtn.Children(func() {
-											ui.Icon(c, icons.TablerExternalLink).Width(12).Height(12).TextColor(tc.IconMuted)
-											ui.Text(c, "Reopen Browser").FontSize(11).FontWeight(500).TextColor(tc.Text)
-										})
-										if reopenBtn.Hovered() {
-											reopenBtn.Background(tc.SurfaceRaised)
-										}
-										if reopenBtn.Clicked() {
-											_ = quota.OpenSystemBrowser(sm.OAuthFlowURL)
-										}
-
-										copyBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
-											Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
-										copyBtn.Children(func() {
-											ui.Icon(c, icons.TablerFiles).Width(12).Height(12).TextColor(tc.IconMuted)
-											ui.Text(c, "Copy Link").FontSize(11).FontWeight(500).TextColor(tc.Text)
-										})
-										if copyBtn.Hovered() {
-											copyBtn.Background(tc.SurfaceRaised)
-										}
-										if copyBtn.Clicked() {
-											mygo.Clipboard.WriteText(sm.OAuthFlowURL)
-											c.AddToast(ui.Toast{Title: "Copied Link", Description: "Authorization link copied to clipboard", Type: "info"})
-										}
-									}
-
-									abortBtn := ui.Button(c, "Cancel")
-									if abortBtn.Clicked() {
-										a.cancelAntigravityOAuth()
-									}
-								})
-							})
-						}
-					})
-				} else {
-					// Content for Tab 2: Manual
-					ui.Column(c).Gap(10).Children(func() {
-						ui.Text(c, "Paste a Google OAuth refresh token (starts with 1//...) or JSON credentials from ~/.gemini/oauth_creds.json").
-							FontSize(11).TextColor(tc.TextMuted)
-
-						// Token or JSON input
-						ui.Column(c).Gap(4).Children(func() {
-							ui.Text(c, "Refresh Token or Credentials JSON").FontSize(11).FontWeight(500).TextColor(tc.Text)
-							ui.Row(c).Height(32).Radius(6).Padding(0, 8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-								ui.TextInput(c, &sm.NewAccountInput).Placeholder("Paste refresh token (1//...) or JSON object").Grow(1)
-							})
-						})
-
-						// Nickname / Label input
-						ui.Column(c).Gap(4).Children(func() {
-							ui.Text(c, "Account Nickname (Optional)").FontSize(11).FontWeight(500).TextColor(tc.Text)
-							ui.Row(c).Height(32).Radius(6).Padding(0, 8).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-								ui.TextInput(c, &sm.NewAccountLabel).Placeholder("e.g. Work, Personal Pro, Backup").Grow(1)
-							})
-						})
-
-						// Form action buttons
-						ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-							cancelBtn := ui.Button(c, "Cancel")
-							if cancelBtn.Clicked() {
-								sm.IsAddingAccount = false
-								sm.AccountStatusMessage = ""
-							}
-
-							saveBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 14).AlignItems(ui.Center).Justify(ui.Center).
-								Background(tc.Accent).Cursor(ui.CursorPointer)
-							saveBtn.Children(func() {
-								ui.Text(c, "Save & Track Quota").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
-							})
-							if saveBtn.Hovered() {
-								saveBtn.Background(tc.Accent.Alpha(0.85))
-							}
-							if saveBtn.Clicked() {
-								input := strings.TrimSpace(sm.NewAccountInput)
-								if input == "" {
-									sm.AccountStatusMessage = "Please enter a refresh token or JSON credential"
-								} else {
-									label := strings.TrimSpace(sm.NewAccountLabel)
-									a.addAntigravityAccountAsync(input, label)
-								}
-							}
-						})
-					})
-				}
-
-				// Error / Status Message
 				if sm.AccountStatusMessage != "" {
 					ui.Row(c).Padding(6, 10).Radius(6).Background(tc.Error.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.25)).Children(func() {
 						ui.Text(c, sm.AccountStatusMessage).FontSize(11).TextColor(tc.Error)
@@ -296,34 +153,19 @@ func (a *AppUI) renderSettingsTabAntigravityQuota(c *ui.Context, tc theme.ThemeC
 					Background(tc.Accent.Alpha(0.12)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.25)).Children(func() {
 					icons.RenderProviderIcon(c, "antigravity", 24)
 				})
-				ui.Text(c, "No Antigravity Accounts Tracked Yet").FontSize(14).FontWeight(600).TextColor(tc.Text)
-				ui.Text(c, "Sign in with Google using OAuth or import your local Antigravity credentials to monitor quotas.").
+				ui.Text(c, "No Antigravity Profiles Saved Yet").FontSize(14).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Log in with the official `agy` CLI first, then save your local profile here to switch manually and check quota via `agy`.").
 					FontSize(12).TextColor(tc.TextMuted)
 
 				ui.Row(c).Padding(8, 0, 0, 0).Gap(10).Children(func() {
-					loginNowBtn := ui.Row(c).Height(32).Radius(6).Padding(0, 14).Gap(6).AlignItems(ui.Center).
-						Background(tc.Accent).Cursor(ui.CursorPointer)
-					loginNowBtn.Children(func() {
-						icons.RenderProviderIcon(c, "antigravity", 14)
-						ui.Text(c, "Sign in with Google (OAuth)").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
-					})
-					if loginNowBtn.Hovered() {
-						loginNowBtn.Background(tc.Accent.Alpha(0.85))
-					}
-					if loginNowBtn.Clicked() {
-						sm.IsAddingAccount = true
-						sm.AddAccountMode = settings.AddAccountModeOAuth
-						a.startAntigravityOAuthAsync("")
-					}
-
 					importNowBtn := ui.Row(c).Height(32).Radius(6).Padding(0, 14).Gap(6).AlignItems(ui.Center).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+						Background(tc.Accent).Cursor(ui.CursorPointer)
 					importNowBtn.Children(func() {
-						ui.Icon(c, icons.TablerUser).Width(13).Height(13).TextColor(tc.Text)
-						ui.Text(c, "Import Local Account").FontSize(12).FontWeight(500).TextColor(tc.Text)
+						ui.Icon(c, icons.TablerUser).Width(13).Height(13).TextColor(tc.AccentForeground)
+						ui.Text(c, "Save Current `agy` Login").FontSize(12).FontWeight(600).TextColor(tc.AccentForeground)
 					})
 					if importNowBtn.Hovered() {
-						importNowBtn.Background(tc.SurfaceRaised)
+						importNowBtn.Background(tc.Accent.Alpha(0.85))
 					}
 					if importNowBtn.Clicked() {
 						a.importLocalAntigravityAccountAsync()
@@ -367,9 +209,11 @@ func (a *AppUI) renderAccountQuotaCard(c *ui.Context, tc theme.ThemeColors, sm *
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, acc.Email).FontSize(13).FontWeight(600).TextColor(tc.Text)
 
-						// Active Badge
+						// Active / Cached Badge
 						if acc.IsActive {
 							Badge(c, tc, "ACTIVE", tc.Accent)
+						} else if acc.Quota != nil && acc.Quota.QuotaKnown {
+							Badge(c, tc, "CACHED", tc.TextMuted)
 						}
 
 						// Tier Badge (FREE, PRO, ULTRA, ENTERPRISE)
@@ -410,20 +254,22 @@ func (a *AppUI) renderAccountQuotaCard(c *ui.Context, tc theme.ThemeColors, sm *
 				})
 			})
 
-			// Right side action buttons: Refresh Icon, Set Active, Delete
+			// Right side action buttons: Refresh (active only), Set Active, Delete
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				// Refresh Icon Button
-				refBtn := ui.Row(c).Size(28, 28).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
-					Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
-				refBtn.Children(func() {
-					ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
-				})
-				if refBtn.Hovered() {
-					refBtn.Background(tc.Text.Alpha(0.08))
-				}
-				if refBtn.Clicked() {
-					a.refreshSingleAntigravityAccountAsync(acc.ID)
-					c.AddToast(ui.Toast{Title: "Refreshing Quota", Description: fmt.Sprintf("Updating %s...", acc.Email), Type: "info"})
+				// Refresh Icon Button (only for the currently active account via `agy` CLI)
+				if acc.IsActive {
+					refBtn := ui.Row(c).Size(28, 28).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
+						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+					refBtn.Children(func() {
+						ui.Icon(c, icons.TablerRefresh).Width(13).Height(13).TextColor(tc.IconMuted)
+					})
+					if refBtn.Hovered() {
+						refBtn.Background(tc.Text.Alpha(0.08))
+					}
+					if refBtn.Clicked() {
+						a.refreshSingleAntigravityAccountAsync(acc.ID)
+						c.AddToast(ui.Toast{Title: "Checking Quota", Description: fmt.Sprintf("Querying %s via `agy` CLI...", acc.Email), Type: "info"})
+					}
 				}
 
 				// Switch / Set Active Button
@@ -458,7 +304,8 @@ func (a *AppUI) renderAccountQuotaCard(c *ui.Context, tc theme.ThemeColors, sm *
 			})
 		})
 
-		// Quotas Body: Gemini & Claude/GPT Window Gauges
+		// Quotas Body: Gemini & Claude/GPT Window Gauges (live for active
+		// account via `agy` CLI, last cached snapshot for inactive profiles).
 		q := acc.Quota
 		hasQuota := (q != nil && q.QuotaKnown)
 
@@ -697,6 +544,7 @@ func (a *AppUI) switchAntigravityAccountAsync(accountID string) {
 
 	go func() {
 		_ = mgr.SetActive(accountID)
+		_, _ = mgr.RefreshAccount(accountID)
 		a.runOnUI(func() {
 			a.syncAntigravityModelsToACP()
 			a.restartActiveAntigravitySession()
@@ -762,21 +610,6 @@ func (a *AppUI) restartActiveAntigravitySession() {
 	}
 }
 
-// isQuotaExhaustedError checks if an error message represents a rate limit / quota exhaustion error.
-func isQuotaExhaustedError(errStr string) bool {
-	if errStr == "" {
-		return false
-	}
-	lower := strings.ToLower(errStr)
-	return strings.Contains(lower, "429") ||
-		strings.Contains(lower, "resource_exhausted") ||
-		strings.Contains(lower, "quota") ||
-		strings.Contains(lower, "rate limit") ||
-		strings.Contains(lower, "rate_limit") ||
-		strings.Contains(lower, "insufficient_quota") ||
-		strings.Contains(lower, "quotaresetdelay")
-}
-
 func (a *AppUI) removeAntigravityAccount(accountID string) {
 	if a.Settings == nil {
 		return
@@ -801,7 +634,7 @@ func (a *AppUI) addAntigravityAccountAsync(input, label string) {
 		a.runOnUI(func() {
 			sm.IsRefreshingQuota = false
 			if err != nil {
-				sm.AccountStatusMessage = fmt.Sprintf("Failed to add account: %v", err)
+				sm.AccountStatusMessage = fmt.Sprintf("Failed to add profile: %v", err)
 			} else {
 				sm.NewAccountInput = ""
 				sm.NewAccountLabel = ""
@@ -814,66 +647,4 @@ func (a *AppUI) addAntigravityAccountAsync(input, label string) {
 			a.invalidateUI()
 		})
 	}()
-}
-
-func (a *AppUI) startAntigravityOAuthAsync(label string) {
-	if a.Settings == nil {
-		return
-	}
-	sm := a.Settings
-	mgr := sm.AntigravityAccountMgr()
-	if mgr == nil {
-		return
-	}
-
-	sm.IsOAuthFlowActive = true
-	sm.OAuthFlowURL = ""
-	sm.OAuthFlowStatus = "Starting browser sign-in..."
-	sm.AccountStatusMessage = ""
-	a.invalidateUI()
-
-	ctx := context.Background()
-	go func() {
-		acc, err := mgr.StartOAuthLogin(ctx, label, func(authURL string) {
-			a.runOnUI(func() {
-				sm.OAuthFlowURL = authURL
-				sm.OAuthFlowStatus = "Waiting for authorization in browser..."
-				a.invalidateUI()
-			})
-		})
-
-		a.runOnUI(func() {
-			sm.IsOAuthFlowActive = false
-			sm.OAuthFlowURL = ""
-			sm.OAuthFlowStatus = ""
-			if err != nil {
-				if err != context.Canceled {
-					sm.AccountStatusMessage = fmt.Sprintf("OAuth error: %v", err)
-				}
-			} else if acc != nil {
-				sm.IsAddingAccount = false
-				sm.NewAccountLabel = ""
-				sm.AccountStatusMessage = ""
-				if acc.IsActive {
-					a.refreshQuotaAsync()
-				}
-			}
-			a.invalidateUI()
-		})
-	}()
-}
-
-func (a *AppUI) cancelAntigravityOAuth() {
-	if a.Settings == nil {
-		return
-	}
-	sm := a.Settings
-	mgr := sm.AntigravityAccountMgr()
-	if mgr != nil {
-		mgr.CancelOAuth()
-	}
-	sm.IsOAuthFlowActive = false
-	sm.OAuthFlowURL = ""
-	sm.OAuthFlowStatus = ""
-	a.invalidateUI()
 }

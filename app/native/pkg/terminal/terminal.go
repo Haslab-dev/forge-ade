@@ -251,7 +251,8 @@ func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) (*termplugin.Terminal,
 		tab.Title = defaultTabTitle(tab.Cwd)
 	}
 	opts := termplugin.Options{
-		Dir: sanitizeCwd(tab.Cwd),
+		Dir:         sanitizeCwd(tab.Cwd),
+		Transparent: true,
 		OnTitle: func(title string) {
 			ts.mu.Lock()
 			if tab.gen == gen {
@@ -705,4 +706,3 @@ func (ts *TerminalState) ScrollToBottom() {
 		scrollTerminal(term, "to_bottom")
 	}
 }
-

@@ -1,7 +1,6 @@
 package quota
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 )
@@ -205,53 +204,23 @@ func TestAntigravityQuotaPayloads(t *testing.T) {
 	}
 }
 
-func TestRegisterOAuthAccount(t *testing.T) {
+func TestRefreshAccountSkipsInactiveWithoutNetwork(t *testing.T) {
 	tmpDir := t.TempDir()
 	mgr := NewAccountManager(tmpDir)
 
-	tokenResp := &OAuthTokenResponse{
-		AccessToken:  "mock-access-token",
-		RefreshToken: "mock-refresh-token",
-		ExpiresIn:    3600,
-		TokenType:    "Bearer",
+	mgr.mu.Lock()
+	mgr.accounts = []*AntigravityAccount{
+		{ID: "inactive@example.com", Email: "inactive@example.com", IsActive: false, Status: "ok"},
 	}
+	_ = mgr.saveLocked()
+	mgr.mu.Unlock()
 
-	acc, err := mgr.RegisterOAuthAccount(tokenResp, "Test Work Profile")
+	acc, err := mgr.RefreshAccount("inactive@example.com")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error refreshing inactive account: %v", err)
 	}
-
-	if acc.RefreshToken != "mock-refresh-token" {
-		t.Errorf("expected refresh token mock-refresh-token, got %s", acc.RefreshToken)
-	}
-	if acc.Label != "Test Work Profile" {
-		t.Errorf("expected label Test Work Profile, got %s", acc.Label)
-	}
-	if acc.Status != "ok" {
-		t.Errorf("expected status ok, got %s", acc.Status)
-	}
-
-	// Verify persistence
-	mgr2 := NewAccountManager(tmpDir)
-	accounts := mgr2.Accounts()
-	if len(accounts) != 1 {
-		t.Fatalf("expected 1 account persisted, got %d", len(accounts))
-	}
-	if accounts[0].RefreshToken != "mock-refresh-token" {
-		t.Errorf("persisted token mismatch: %s", accounts[0].RefreshToken)
-	}
-}
-
-func TestOAuthLoginCancellation(t *testing.T) {
-	tmpDir := t.TempDir()
-	mgr := NewAccountManager(tmpDir)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	_, err := mgr.StartOAuthLogin(ctx, "Test", nil)
-	if err == nil {
-		t.Fatalf("expected error on canceled context, got nil")
+	if acc.Quota != nil {
+		t.Errorf("expected inactive account refresh to skip network/CLI probe, got quota=%+v", acc.Quota)
 	}
 }
 

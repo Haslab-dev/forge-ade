@@ -567,6 +567,11 @@ type AppUI struct {
 	localLLMOnlineFlag bool      // last probe result for Ollama / LM Studio
 	localLLMCheckedAt  time.Time // when localLLMOnlineFlag was last refreshed
 
+	// Cached window background image state (avoids per-frame os.Stat syscalls).
+	bgImagePath      string
+	bgImageCheckedAt time.Time
+	bgImageCached    *cachedImage
+
 	// pendingToasts queues toasts raised from background goroutines; Context.AddToast
 	// silently drops calls made outside a frame, so View drains the queue in-frame.
 	toastMu       sync.Mutex
@@ -644,7 +649,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 
 	appUI := &AppUI{
 		Engine:                         engine,
-		Workspace:                      workspace.NewWorkspaceState(rootDir),
+		Workspace:                      workspace.NewWorkspaceStateLazy(rootDir),
 		Editor:                         editor.NewEditorManager(),
 		Terminal:                       terminal.NewTerminalStateDeferred(terminalDir),
 		WorkspaceTerminals:             make(map[string]*terminal.TerminalState),
@@ -795,7 +800,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 
 	appUI.loadUIPrefs()
 
-	appUI.Agent = agent.NewAgentState(engine, rootDir, func() {
+	appUI.Agent = agent.NewAgentStateLazy(engine, rootDir, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
 		}
@@ -820,7 +825,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		return prompt
 	}
 
-	appUI.ACPMgr = agent.NewACPManager(engine, func() {
+	appUI.ACPMgr = agent.NewACPManagerLazy(engine, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
 		}
@@ -905,31 +910,6 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		// on the ACPManager event-consumer goroutine (P1-2).
 		nativeID := appUI.Agent.MapInternalSession(sessionID)
 
-		// Autonomous Failover: If the turn failed due to quota exhaustion / 429,
-		// automatically rotate to the next healthy account and resume the turn in-place.
-		if isQuotaExhaustedError(info.Error) && appUI.Settings != nil {
-			if mgr := appUI.Settings.AntigravityAccountMgr(); mgr != nil {
-				if nextAcc := mgr.NextAvailableAccount(); nextAcc != nil {
-					_ = mgr.SetActive(nextAcc.ID)
-					appUI.refreshQuotaAsync()
-					lastPrompt := appUI.Agent.GetLastUserPrompt(nativeID)
-					if lastPrompt != "" {
-						_ = appUI.Agent.RestartACPSession(nativeID)
-						go appUI.Agent.TriggerTurnForSession(nativeID, lastPrompt)
-						appUI.queueToast(ui.Toast{
-							Title:       "Quota Failover",
-							Description: fmt.Sprintf("Auto-switched to %s and resumed turn", nextAcc.Email),
-							Type:        "info",
-						})
-						if appUI.Window != nil {
-							appUI.Window.Invalidate()
-						}
-						return
-					}
-				}
-			}
-		}
-
 		if next := appUI.Agent.HandleTurnDone(nativeID, info); next != "" {
 			go appUI.Agent.TriggerTurnForSession(nativeID, next)
 		}
@@ -962,7 +942,7 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		})
 	}
 
-	appUI.CLIMgr = agent.NewAgentCLIManager(rootDir, func() {
+	appUI.CLIMgr = agent.NewAgentCLIManagerLazy(rootDir, func() {
 		if appUI.Window != nil {
 			appUI.Window.Invalidate()
 		}
@@ -1058,9 +1038,22 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		return out, nil
 	})
 
-	if first, ok := appUI.Workspace.FirstFile(); ok {
-		appUI.SelectedFile = first.RelativePath
-		_, _ = appUI.Editor.OpenFile(first.FullPath, first.RelativePath)
+	if rootDir != "" && !strings.HasPrefix(rootDir, "ssh://") {
+		initWS := appUI.Workspace
+		go func() {
+			initWS.Refresh()
+			if first, ok := initWS.FirstFile(); ok {
+				appUI.runOnUI(func() {
+					if appUI.SelectedFile == "" && appUI.Editor != nil && appUI.Editor.ActiveDoc() == nil {
+						appUI.SelectedFile = first.RelativePath
+						_, _ = appUI.Editor.OpenFile(first.FullPath, first.RelativePath)
+					}
+					appUI.invalidateUI()
+				})
+			} else if appUI.Window != nil {
+				appUI.Window.Invalidate()
+			}
+		}()
 	}
 
 	if appUI.Git != nil {
@@ -1368,12 +1361,13 @@ func (a *AppUI) View(c *ui.Context) {
 		c.SetTheme(a.ThemeMgr.ActiveTheme())
 	}
 	// SetTheme re-paints the root with the theme's background, which would
-	// hide the OS material behind the window. When the Glass palette is
+	// hide the OS material behind the window. When semi-transparent glass is
 	// active the root stays transparent so its translucent chrome shows the
-	// blurred desktop (mygo vibrancy); opaque palettes keep the solid root.
-	if a.ThemeMgr != nil && a.ThemeMgr.PaletteID == theme.ThemePaletteGlass && c.Vibrancy() {
+	// blurred desktop (mygo vibrancy) and/or custom window background.
+	if a.ThemeMgr != nil && a.ThemeMgr.IsGlassActive() && c.Vibrancy() {
 		c.Root().Background(ui.Transparent)
 	}
+	a.renderWindowBackground(c)
 	a.drainToasts(c)
 
 	// Global Keyboard Shortcuts
@@ -1720,6 +1714,146 @@ func (a *AppUI) toggleAppearance() {
 	} else {
 		a.ThemeMgr.Appearance = "dark"
 	}
+}
+
+// resolveBackgroundImage returns the decoded background image for path using a
+// short TTL stat cache so rendering never hits the filesystem every frame.
+func (a *AppUI) resolveBackgroundImage(path string) *cachedImage {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if a.bgImagePath == path && a.bgImageCached != nil &&
+		(a.bgImageCached.src != nil || a.bgImageCached.err != nil) &&
+		time.Since(a.bgImageCheckedAt) < 2*time.Second {
+		return a.bgImageCached
+	}
+	ci := a.getImage(path)
+	if ci != nil && !ci.loading {
+		a.bgImagePath = path
+		a.bgImageCheckedAt = time.Now()
+		a.bgImageCached = ci
+	}
+	return ci
+}
+
+// pickBackgroundImageFile opens a native file dialog to pick a custom window
+// background image and enables semi-transparent glass so it shows through.
+func (a *AppUI) pickBackgroundImageFile() {
+	if a.Window == nil || a.ThemeMgr == nil {
+		return
+	}
+	win := a.Window
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent: win,
+			Title:  "Choose Background Image",
+			Filters: []mygo.FileFilter{
+				{
+					Name:       "Images",
+					Extensions: []string{"png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif", "avif", "svg"},
+					MIMETypes:  []string{"image/*"},
+				},
+			},
+		})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		a.runOnUI(func() {
+			a.ThemeMgr.BackgroundKind = theme.BackgroundKindImage
+			a.ThemeMgr.BackgroundImage = paths[0]
+			if !a.ThemeMgr.IsGlassActive() {
+				a.ThemeMgr.GlassEnabled = true
+			}
+			a.bgImagePath = ""
+			a.bgImageCached = nil
+			a.SaveUIPrefs()
+			a.invalidateUI()
+		})
+	}()
+}
+
+// renderWindowBackground draws the configured ambient gradient preset or custom
+// image behind all workspace chrome.
+func (a *AppUI) glassBlurActive() bool {
+	return a != nil && a.ThemeMgr != nil && a.ThemeMgr.IsGlassActive() && a.ThemeMgr.HasBackground()
+}
+
+func (a *AppUI) renderWindowBackground(c *ui.Context) {
+	if a.ThemeMgr == nil || !a.ThemeMgr.HasBackground() {
+		return
+	}
+	tm := a.ThemeMgr
+	dark := tm.IsDark()
+	opacity := tm.EffectiveBackgroundOpacity()
+	blur := tm.EffectiveBackgroundBlur()
+	pad := blur * 3
+
+	backdrop := ui.Box(c.Key("window-bg-backdrop")).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+		ZIndex(-1).IgnoreInput(true).PassThrough().Clip()
+	if !tm.SupportsVibrancy || !tm.IsGlassActive() {
+		// Provide an opaque theme base behind partially transparent backgrounds
+		// when OS vibrancy is not underneath.
+		base := theme.BasePaletteColors(tm.PaletteID, dark)
+		backdrop.Background(base.Canvas)
+	}
+
+	backdrop.Children(func() {
+		switch tm.BackgroundKind {
+		case theme.BackgroundKindPreset:
+			preset, ok := theme.LookupBackgroundPreset(tm.BackgroundPreset)
+			if !ok {
+				return
+			}
+			stops := preset.DarkStops
+			glowA, glowB := preset.DarkGlowA, preset.DarkGlowB
+			if !dark {
+				stops = preset.LightStops
+				glowA, glowB = preset.LightGlowA, preset.LightGlowB
+			}
+			layer := ui.Box(c.Key("window-bg-preset-" + preset.ID)).Absolute().
+				Top(-pad).Left(-pad).Right(-pad).Bottom(-pad).
+				LinearGradient(ui.LinearGradient{
+					Angle: preset.Angle,
+					Stops: stops,
+					Oklab: true,
+				}).Opacity(opacity)
+			if blur > 0 {
+				layer.Blur(blur)
+			}
+			layer.Children(func() {
+				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+					RadialGradient(ui.RadialGradient{
+						Center: ui.Point{X: 0.2, Y: 0.18},
+						Stops: []ui.GradientStop{
+							{Color: glowA, At: 0},
+							{Color: glowA.Alpha(0), At: 0.7},
+						},
+						Oklab: true,
+					})
+				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).
+					RadialGradient(ui.RadialGradient{
+						Center: ui.Point{X: 0.82, Y: 0.8},
+						Stops: []ui.GradientStop{
+							{Color: glowB, At: 0},
+							{Color: glowB.Alpha(0), At: 0.75},
+						},
+						Oklab: true,
+					})
+			})
+		case theme.BackgroundKindImage:
+			ci := a.resolveBackgroundImage(tm.BackgroundImage)
+			if ci == nil || ci.src == nil {
+				return
+			}
+			img := ui.Image(c.Key("window-bg-img"), ci.src).Absolute().
+				Top(-pad).Left(-pad).Right(-pad).Bottom(-pad).
+				Fit(ui.Cover).Opacity(opacity)
+			if blur > 0 {
+				img.Blur(blur)
+			}
+		}
+	})
 }
 
 // confirmDialog stages the reusable confirmation dialog. Escape and outside

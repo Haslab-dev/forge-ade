@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/llm"
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
@@ -30,8 +32,10 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 	}
 
 	// ForgeADE's settings is a full-screen surface with its own nav.
+	// Leave the outer container transparent so Sidebar + Canvas do not double-tint
+	// in semi-transparent glass mode.
 	{
-		ui.Column(c).Fill().Background(tc.SurfaceOverlay).Children(func() {
+		ui.Column(c).Fill().Children(func() {
 
 			bar := c.TitleBar()
 			leftPad := float32(16)
@@ -106,49 +110,55 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 			// 2. Main Body: Split Scrollable Sidebar & Centered Content Area
 			ui.Row(c).Grow(1).FillWidth().Children(func() {
 				// Left Navigation Sidebar (228px, scrollable so all 19 sections fit any viewport)
-				ui.Column(c).Width(228).FillHeight().Background(tc.Sidebar).
-					BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
-					ui.Scroll(c.Key("settings-nav-scroll")).Grow(1).Children(func() {
-						ui.Column(c).Padding(14, 10, 20, 10).Gap(14).Children(func() {
-							navGroup := func(title string, items func()) {
-								ui.Column(c).Gap(2).Children(func() {
-									ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
-										ui.Text(c, title).FontSize(10).FontWeight(700).LetterSpacing(0.6).
-											TextColor(tc.SidebarMutedForeground)
+				navOuter := ui.Box(c).Width(228).FillHeight()
+				if a.glassBlurActive() {
+					navOuter.Material(glass.Blur{Radius: 18})
+				}
+				navOuter.Children(func() {
+					ui.Column(c).Fill().Background(tc.Sidebar).
+						BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
+						ui.Scroll(c.Key("settings-nav-scroll")).Grow(1).Children(func() {
+							ui.Column(c).Padding(14, 10, 20, 10).Gap(14).Children(func() {
+								navGroup := func(title string, items func()) {
+									ui.Column(c).Gap(2).Children(func() {
+										ui.Row(c).Padding(2, 8, 4, 8).Children(func() {
+											ui.Text(c, title).FontSize(10).FontWeight(700).LetterSpacing(0.6).
+												TextColor(tc.SidebarMutedForeground)
+										})
+										items()
 									})
-									items()
+								}
+
+								navGroup("MODELS & AGENTS", func() {
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabStudio, "Studio & Generative APIs", icons.TablerSparkles, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerUser, "")
 								})
-							}
 
-							navGroup("MODELS & AGENTS", func() {
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabStudio, "Studio & Generative APIs", icons.TablerSparkles, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerUser, "")
-							})
+								navGroup("ANALYTICS & QUOTA", func() {
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabUsage, "Usage Stats", icons.TablerChartBar, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAntigravityQuota, "Antigravity Quota", icons.TablerActivity, "")
+								})
 
-							navGroup("ANALYTICS & QUOTA", func() {
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabUsage, "Usage Stats", icons.TablerChartBar, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAntigravityQuota, "Antigravity Quota", icons.TablerActivity, "")
-							})
+								navGroup("EXTENSIONS & TOOLS", func() {
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabCommands, "Slash Commands", icons.TablerCode, "")
+								})
 
-							navGroup("EXTENSIONS & TOOLS", func() {
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMCP, "MCP Servers", icons.TablerPlug, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSkills, "Skills", icons.TablerWand, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabPlugins, "Plugins", icons.TablerPuzzle, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabCommands, "Slash Commands", icons.TablerCode, "")
-							})
-
-							navGroup("WORKSPACE & AUTOMATION", func() {
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabGeneral, "General", icons.TablerSettings, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAppearance, "Appearance", icons.TablerPalette, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabShortcuts, "Shortcuts & Keys", icons.TablerKeyboard, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMemory, "Memory", icons.TablerBrain, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabBrowser, "Browser Use", icons.TablerWorld, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabComputer, "Computer Use", icons.TablerCpu, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabIndexing, "Codebase Indexing", icons.TablerDatabase, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAutos, "Automations", icons.TablerClock, "")
-								a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabHooks, "Lifecycle Hooks", icons.TablerGitFork, "")
+								navGroup("WORKSPACE & AUTOMATION", func() {
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabGeneral, "General", icons.TablerSettings, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAppearance, "Appearance", icons.TablerPalette, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabShortcuts, "Shortcuts & Keys", icons.TablerKeyboard, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMemory, "Memory", icons.TablerBrain, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabBrowser, "Browser Use", icons.TablerWorld, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabComputer, "Computer Use", icons.TablerCpu, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabIndexing, "Codebase Indexing", icons.TablerDatabase, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAutos, "Automations", icons.TablerClock, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabHooks, "Lifecycle Hooks", icons.TablerGitFork, "")
+								})
 							})
 						})
 					})
@@ -1148,7 +1158,7 @@ func (a *AppUI) renderSettingsTabGeneral(c *ui.Context, tc theme.ThemeColors, sm
 }
 
 func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Appearance & Themes", "Customize UI color palettes, dark/light theme, layout lane width, and diff colors.")
+	settingsSectionHeader(c, tc, "Appearance & Themes", "Customize UI color palettes, semi-transparent glass, custom backgrounds, dark/light mode, and layout options.")
 	tm := a.ThemeMgr
 
 	// 1. Dark / Light Toggle
@@ -1231,7 +1241,262 @@ func (a *AppUI) renderSettingsTabAppearance(c *ui.Context, tc theme.ThemeColors,
 		})
 	})
 
-	// 3. Chat Lane Width & Diff Color Scheme
+	// 3. Semi-Transparent Glass Controls (works with ANY palette)
+	settingsCard(c, tc, func() {
+		glassActive := tm.IsGlassActive()
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+				ui.Box(c).Size(30, 30).Radius(8).Background(tc.Accent.Alpha(0.12)).
+					AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerSparkles).Width(15).Height(15).TextColor(tc.Accent)
+				})
+				ui.Column(c).Grow(1).Gap(2).Children(func() {
+					ui.Text(c, "Semi-Transparent Glass").FontSize(13).FontWeight(600)
+					ui.Text(c, "Make chrome, sidebars, editor, and terminal translucent over OS vibrancy or your custom background.").FontSize(11).TextColor(tc.TextMuted)
+				})
+				toggleLbl := "Off"
+				if glassActive {
+					toggleLbl = "Enabled"
+				}
+				toggleBtn := func() ui.Element {
+					if glassActive {
+						return ui.PrimaryButton(c.Key("glass-toggle-btn"), toggleLbl).FontSize(11.5)
+					}
+					return ui.Button(c.Key("glass-toggle-btn"), toggleLbl).FontSize(11.5)
+				}()
+				if toggleBtn.Clicked() {
+					if glassActive {
+						tm.GlassEnabled = false
+						if tm.PaletteID == theme.ThemePaletteGlass {
+							tm.PaletteID = theme.ThemePaletteDefault
+						}
+					} else {
+						tm.GlassEnabled = true
+					}
+					a.SaveUIPrefs()
+				}
+			})
+
+			if glassActive && !tm.SupportsVibrancy && !tm.HasBackground() {
+				settingsNoticeBanner(c, tc, icons.TablerSparkles,
+					"Select a window background below",
+					"OS window vibrancy is unavailable on this platform — add a gradient preset or custom image to show through the glass.",
+					tc.Info)
+			}
+
+			if glassActive {
+				ui.Column(c).Gap(8).Padding(10, 12).Radius(9).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+					opVal := float64(tm.EffectiveGlassOpacity())
+					prevOp := opVal
+					ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+						ui.Text(c, "Glass Opacity").FontSize(12).FontWeight(500).Width(110)
+						ui.Slider(c.Key("glass-opacity-slider"), &opVal, float64(theme.MinGlassOpacity), float64(theme.MaxGlassOpacity)).Grow(1)
+						ui.Text(c, fmt.Sprintf("%d%%", int(opVal*100+0.5))).FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted).Width(38)
+					})
+					if opVal != prevOp {
+						tm.GlassOpacity = float32(opVal)
+						tm.GlassOpacitySet = true
+					}
+					ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "Presets:").FontSize(11).TextColor(tc.TextMuted)
+						for _, gp := range []struct {
+							Label string
+							Val   float32
+						}{
+							{"Clear (0%)", 0.00},
+							{"Light (22%)", 0.22},
+							{"Balanced (42%)", theme.DefaultGlassOpacity},
+							{"Frosted (75%)", 0.75},
+						} {
+							thisGP := gp
+							isCur := tm.EffectiveGlassOpacity() >= thisGP.Val-0.02 && tm.EffectiveGlassOpacity() <= thisGP.Val+0.02
+							chip := ui.Row(c.Key("glass-pre-"+thisGP.Label)).Height(24).Radius(6).Padding(0, 9).
+								AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
+							if isCur {
+								chip.Background(tc.Accent.Alpha(0.15)).BorderColor(tc.Accent.Alpha(0.5))
+							} else {
+								chip.Background(tc.Surface).BorderColor(tc.Border)
+								if chip.Hovered() {
+									chip.Background(tc.ToolbarControlHover)
+								}
+							}
+							chip.Children(func() {
+								ui.Text(c, thisGP.Label).FontSize(11).FontWeight(500)
+							})
+							if chip.Clicked() {
+								tm.GlassOpacity = thisGP.Val
+								tm.GlassOpacitySet = true
+								a.SaveUIPrefs()
+							}
+						}
+					})
+				})
+			}
+		})
+	})
+
+	// 4. Window Background (None / Ambient Gradient Preset / Custom Image)
+	settingsCard(c, tc, func() {
+		ui.Column(c).Gap(12).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+				ui.Box(c).Size(30, 30).Radius(8).Background(tc.Accent.Alpha(0.12)).
+					AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+					ui.Icon(c, icons.TablerPhoto).Width(15).Height(15).TextColor(tc.Accent)
+				})
+				ui.Column(c).Grow(1).Gap(2).Children(func() {
+					ui.Text(c, "Window Background").FontSize(13).FontWeight(600)
+					ui.Text(c, "Layer an ambient gradient or custom wallpaper image behind semi-transparent glass panels.").FontSize(11).TextColor(tc.TextMuted)
+				})
+			})
+
+			// Source mode pills
+			ui.Row(c).Gap(6).Children(func() {
+				for _, srcOpt := range []struct{ ID, Label string }{
+					{theme.BackgroundKindNone, "None"},
+					{theme.BackgroundKindPreset, "Gradient Preset"},
+					{theme.BackgroundKindImage, "Custom Image"},
+				} {
+					thisOpt := srcOpt
+					active := tm.BackgroundKind == thisOpt.ID
+					btn := func() ui.Element {
+						if active {
+							return ui.PrimaryButton(c.Key("bg-kind-"+thisOpt.ID), thisOpt.Label).FontSize(11.5)
+						}
+						return ui.Button(c.Key("bg-kind-"+thisOpt.ID), thisOpt.Label).FontSize(11.5)
+					}()
+					if btn.Clicked() {
+						tm.BackgroundKind = thisOpt.ID
+						if thisOpt.ID == theme.BackgroundKindPreset {
+							if tm.BackgroundPreset == "" {
+								tm.BackgroundPreset = theme.BackgroundPresetAurora
+							}
+							if !tm.IsGlassActive() {
+								tm.GlassEnabled = true
+							}
+						} else if thisOpt.ID == theme.BackgroundKindImage {
+							if !tm.IsGlassActive() {
+								tm.GlassEnabled = true
+							}
+							if strings.TrimSpace(tm.BackgroundImage) == "" {
+								a.pickBackgroundImageFile()
+							}
+						}
+						a.SaveUIPrefs()
+					}
+				}
+			})
+
+			// Preset grid
+			if tm.BackgroundKind == theme.BackgroundKindPreset {
+				ui.Row(c).Gap(8).Wrap().Children(func() {
+					for _, pr := range theme.AvailableBackgroundPresets() {
+						thisPr := pr
+						isSel := tm.BackgroundPreset == thisPr.ID
+						stops := thisPr.DarkStops
+						if !tm.IsDark() {
+							stops = thisPr.LightStops
+						}
+						card := ui.Row(c.Key("bg-preset-"+thisPr.ID)).Radius(8).Padding(7, 11).Gap(8).
+							AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
+						card.Children(func() {
+							ui.Box(c).Size(22, 16).Radius(4).BorderWidth(1).BorderColor(tc.Border).
+								LinearGradient(ui.LinearGradient{Angle: thisPr.Angle, Stops: stops, Oklab: true})
+							ui.Text(c, thisPr.Name).FontSize(12).FontWeight(func() int {
+								if isSel {
+									return 600
+								}
+								return 400
+							}())
+							if isSel {
+								ui.Icon(c, icons.TablerCheck).Width(13).Height(13).TextColor(tc.Accent)
+							}
+						})
+						if isSel {
+							card.Background(tc.Accent.Alpha(0.14)).BorderColor(tc.Accent.Alpha(0.45))
+						} else {
+							card.Background(tc.Canvas).BorderColor(tc.Border)
+							if card.Hovered() {
+								card.Background(tc.ToolbarControlHover)
+							}
+						}
+						if card.Clicked() {
+							tm.BackgroundKind = theme.BackgroundKindPreset
+							tm.BackgroundPreset = thisPr.ID
+							if !tm.IsGlassActive() {
+								tm.GlassEnabled = true
+							}
+							a.SaveUIPrefs()
+						}
+					}
+				})
+			}
+
+			// Custom image picker
+			if tm.BackgroundKind == theme.BackgroundKindImage {
+				ui.Column(c).Gap(8).Padding(10, 12).Radius(9).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						if ci := a.resolveBackgroundImage(tm.BackgroundImage); ci != nil && ci.src != nil {
+							ui.Box(c).Size(44, 30).Radius(6).BorderWidth(1).BorderColor(tc.Border).Clip().Children(func() {
+								ui.Image(c, ci.src).Fill().Fit(ui.Cover)
+							})
+						}
+						ui.Column(c).Grow(1).Gap(2).Children(func() {
+							label := "No image selected"
+							if strings.TrimSpace(tm.BackgroundImage) != "" {
+								label = filepath.Base(tm.BackgroundImage)
+							}
+							ui.Text(c, label).FontSize(12).FontWeight(600).SingleLine()
+							if strings.TrimSpace(tm.BackgroundImage) != "" {
+								ui.Text(c, tm.BackgroundImage).FontSize(10.5).TextColor(tc.TextMuted).SingleLine()
+							}
+						})
+						if settingsActionPill(c, tc, "bg-choose-img", "Choose Image...", icons.TablerFolderOpen, true).Clicked() {
+							a.pickBackgroundImageFile()
+						}
+						if strings.TrimSpace(tm.BackgroundImage) != "" {
+							if settingsActionPill(c, tc, "bg-clear-img", "Clear", icons.TablerTrash, false).Clicked() {
+								tm.BackgroundImage = ""
+								tm.BackgroundKind = theme.BackgroundKindNone
+								a.bgImagePath = ""
+								a.bgImageCached = nil
+								a.SaveUIPrefs()
+							}
+						}
+					})
+				})
+			}
+
+			// Background opacity & blur sliders
+			if tm.HasBackground() {
+				ui.Column(c).Gap(8).Padding(10, 12).Radius(9).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+					bgOp := float64(tm.EffectiveBackgroundOpacity())
+					prevBgOp := bgOp
+					ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+						ui.Text(c, "Background Opacity").FontSize(12).FontWeight(500).Width(130)
+						ui.Slider(c.Key("bg-opacity-slider"), &bgOp, float64(theme.MinBackgroundOpacity), float64(theme.MaxBackgroundOpacity)).Grow(1)
+						ui.Text(c, fmt.Sprintf("%d%%", int(bgOp*100+0.5))).FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted).Width(38)
+					})
+					if bgOp != prevBgOp {
+						tm.BackgroundOpacity = float32(bgOp)
+						tm.BackgroundOpacitySet = true
+					}
+
+					bgBlur := float64(tm.EffectiveBackgroundBlur())
+					prevBgBlur := bgBlur
+					ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
+						ui.Text(c, "Background Blur").FontSize(12).FontWeight(500).Width(130)
+						ui.Slider(c.Key("bg-blur-slider"), &bgBlur, 0, float64(theme.MaxBackgroundBlur)).Grow(1)
+						ui.Text(c, fmt.Sprintf("%d px", int(bgBlur+0.5))).FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted).Width(38)
+					})
+					if bgBlur != prevBgBlur {
+						tm.BackgroundBlur = float32(bgBlur)
+					}
+				})
+			}
+		})
+	})
+
+	// 5. Chat Lane Width & Diff Color Scheme
 	settingsCard(c, tc, func() {
 		ui.Row(c).Gap(24).Children(func() {
 			ui.Column(c).Grow(1).Gap(8).Children(func() {

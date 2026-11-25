@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Haslab-dev/RakitKode/agentclirc"
@@ -22,24 +23,46 @@ func EnrichAllAgentRuntimeConfigs(configs []agentclirc.RuntimeConfig) []agentcli
 	}
 
 	hasCmd := false
+	var wg sync.WaitGroup
 	for i := range configs {
 		c := &configs[i]
 		switch c.ID {
 		case "opencode":
-			enrichOpencode(c, home)
+			wg.Add(1)
+			go func(cfg *agentclirc.RuntimeConfig) {
+				defer wg.Done()
+				enrichOpencode(cfg, home)
+			}(c)
 		case "pi":
-			enrichPi(c, home)
+			wg.Add(1)
+			go func(cfg *agentclirc.RuntimeConfig) {
+				defer wg.Done()
+				enrichPi(cfg, home)
+			}(c)
 		case "ohmypi", "omp":
-			enrichOmp(c, home)
+			wg.Add(1)
+			go func(cfg *agentclirc.RuntimeConfig) {
+				defer wg.Done()
+				enrichOmp(cfg, home)
+			}(c)
 		case "commandcode", "cmd":
 			hasCmd = true
 		}
 	}
 
+	var cmdCfg *agentclirc.RuntimeConfig
 	if !hasCmd {
-		if cmdCfg := CommandCodeRuntimeConfig(); cmdCfg != nil {
-			configs = append(configs, *cmdCfg)
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cmdCfg = CommandCodeRuntimeConfig()
+		}()
+	}
+
+	wg.Wait()
+
+	if cmdCfg != nil {
+		configs = append(configs, *cmdCfg)
 	}
 
 	return configs

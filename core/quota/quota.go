@@ -461,7 +461,19 @@ var (
 	agyQuotaCacheTime time.Time
 )
 
-// FetchAntigravityQuota retrieves real-time quotas for Google Antigravity.
+// InvalidateAntigravityQuotaCache clears the short-lived quota cache (e.g.
+// after the user manually switches the active Antigravity profile).
+func InvalidateAntigravityQuotaCache() {
+	agyQuotaCacheMu.Lock()
+	agyQuotaCacheVal = nil
+	agyQuotaCacheTime = time.Time{}
+	agyQuotaCacheMu.Unlock()
+}
+
+// FetchAntigravityQuota retrieves real-time quotas for Google Antigravity
+// using only official local surfaces (`agy -p "/usage"` CLI print mode, with
+// local Language Server RPC fallback). It never calls private Google Cloud
+// Code `v1internal:*` APIs directly.
 func FetchAntigravityQuota() (map[string]interface{}, error) {
 	agyQuotaCacheMu.RLock()
 	if agyQuotaCacheVal != nil && time.Since(agyQuotaCacheTime) < 15*time.Second {
@@ -474,7 +486,7 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 	}
 	agyQuotaCacheMu.RUnlock()
 
-	accessToken, accountEmail, authErr := getAntigravityCredentials()
+	_, accountEmail, _ := getAntigravityCredentials()
 
 	weeklyRemaining := 100.0
 	weeklyReset := "Quota available"
@@ -618,100 +630,6 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 		}
 	}
 
-	// 3. Direct CloudCode PA API queries (only if CLI and Language Server were unavailable)
-	if !gotQuota && authErr == nil && accessToken != "" {
-		client := &http.Client{Timeout: 8 * time.Second}
-
-		endpoints := []string{
-			"https://daily-cloudcode-pa.googleapis.com",
-			"https://cloudcode-pa.googleapis.com",
-		}
-
-		for _, base := range endpoints {
-			success := false
-
-			// 2a. fetchAvailableModels for weekly quotas
-			reqModels, err := http.NewRequest("POST", base+"/v1internal:fetchAvailableModels", bytes.NewBuffer([]byte("{}")))
-			if err == nil {
-				reqModels.Header.Set("Authorization", "Bearer "+accessToken)
-				reqModels.Header.Set("Content-Type", "application/json")
-				reqModels.Header.Set("User-Agent", AntigravityHubUserAgent)
-
-				respModels, doErr := client.Do(reqModels)
-				if doErr == nil {
-					defer respModels.Body.Close()
-					if respModels.StatusCode == http.StatusOK {
-						success = true
-						var modelsResp struct {
-							Models map[string]struct {
-								DisplayName string `json:"displayName"`
-								QuotaInfo   *struct {
-									RemainingFraction float64 `json:"remainingFraction"`
-									ResetTime         string  `json:"resetTime"`
-								} `json:"quotaInfo"`
-							} `json:"models"`
-						}
-						if json.NewDecoder(respModels.Body).Decode(&modelsResp) == nil {
-							for id, m := range modelsResp.Models {
-								if strings.Contains(id, "gemini") && m.QuotaInfo != nil && m.QuotaInfo.RemainingFraction > 0 {
-									weeklyRemaining = math.Round(m.QuotaInfo.RemainingFraction*10000) / 100
-									weeklyReset = FormatAntigravityResetDuration(m.QuotaInfo.RemainingFraction, m.QuotaInfo.ResetTime)
-									break
-								}
-							}
-							for id, m := range modelsResp.Models {
-								if (strings.Contains(id, "claude") || strings.Contains(id, "gpt")) && m.QuotaInfo != nil {
-									claudeWeeklyRemaining = math.Round(m.QuotaInfo.RemainingFraction*10000) / 100
-									claudeWeeklyReset = FormatAntigravityResetDuration(m.QuotaInfo.RemainingFraction, m.QuotaInfo.ResetTime)
-									break
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// 2b. retrieveUserQuota for 5-hour limit
-			reqQuota, err := http.NewRequest("POST", base+"/v1internal:retrieveUserQuota", bytes.NewBuffer([]byte("{}")))
-			if err == nil {
-				reqQuota.Header.Set("Authorization", "Bearer "+accessToken)
-				reqQuota.Header.Set("Content-Type", "application/json")
-				reqQuota.Header.Set("User-Agent", AntigravityHubUserAgent)
-
-				respQuota, doErr := client.Do(reqQuota)
-				if doErr == nil {
-					defer respQuota.Body.Close()
-					if respQuota.StatusCode == http.StatusOK {
-						var quotaResp struct {
-							Buckets []struct {
-								ModelId           string  `json:"modelId"`
-								RemainingFraction float64 `json:"remainingFraction"`
-								ResetTime         string  `json:"resetTime"`
-							} `json:"buckets"`
-						}
-						if json.NewDecoder(respQuota.Body).Decode(&quotaResp) == nil {
-							for _, b := range quotaResp.Buckets {
-								if strings.Contains(b.ModelId, "gemini") && b.RemainingFraction < 1.0 && b.ResetTime != "" {
-									t, err := time.Parse(time.RFC3339, b.ResetTime)
-									if err == nil && time.Until(t) < 6*time.Hour {
-										fiveHourRemaining = math.Round(b.RemainingFraction*10000) / 100
-										fiveHourReset = FormatAntigravityResetDuration(b.RemainingFraction, b.ResetTime)
-										break
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// If the daily endpoint succeeded, do NOT overwrite with subsequent fallback endpoint!
-			if success {
-				break
-			}
-		}
-	}
-
 	// Ensure any 100% states reflect "Quota available"
 	if weeklyRemaining >= 100.0 {
 		weeklyReset = "Quota available"
@@ -727,8 +645,8 @@ func FetchAntigravityQuota() (map[string]interface{}, error) {
 	}
 
 	// quotaKnown is the honesty contract with the host UI: false means none
-	// of the quota sources (CLI, Local Storage, CloudCode API) answered, and
-	// the remaining* values are placeholders — hosts must render
+	// of the local quota sources (official agy CLI or local Language Server)
+	// answered, and the remaining* values are placeholders — hosts must render
 	// "Unavailable" instead of fabricated green bars.
 	result := map[string]interface{}{
 		"agentId":    "agent-agy",

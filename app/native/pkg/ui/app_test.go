@@ -12,6 +12,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
+	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/core/agentsession"
 )
 
@@ -1294,25 +1295,98 @@ func TestOpenLocalFileURLAndBinaryGuard(t *testing.T) {
 	}
 }
 
-func TestIsQuotaExhaustedError(t *testing.T) {
-	cases := []struct {
-		errStr   string
-		expected bool
-	}{
-		{"", false},
-		{"normal network timeout", false},
-		{"syntax error in input", false},
-		{"HTTP 429 Too Many Requests", true},
-		{"error: resource_exhausted: quota exceeded for model gemini-pro", true},
-		{"Google Generative AI: Rate limit exceeded", true},
-		{"Rate_Limit hit, please wait", true},
-		{"insufficient_quota for project", true},
-		{"QuotaResetDelay reached", true},
-	}
+func TestGlassAndBackgroundPrefsRoundTrip(t *testing.T) {
+	dataDir := t.TempDir()
+	wsDir := t.TempDir()
 
-	for _, tc := range cases {
-		if got := isQuotaExhaustedError(tc.errStr); got != tc.expected {
-			t.Errorf("isQuotaExhaustedError(%q) = %v; want %v", tc.errStr, got, tc.expected)
-		}
+	eng := engine.NewEngine(dataDir)
+	app1 := NewAppUI(eng, wsDir)
+	app1.ThemeMgr.PaletteID = theme.ThemePaletteObsidian
+	app1.ThemeMgr.GlassEnabled = true
+	app1.ThemeMgr.GlassOpacity = 0.00
+	app1.ThemeMgr.GlassOpacitySet = true
+	app1.ThemeMgr.BackgroundKind = theme.BackgroundKindPreset
+	app1.ThemeMgr.BackgroundPreset = theme.BackgroundPresetAurora
+	app1.ThemeMgr.BackgroundOpacity = 0.72
+	app1.ThemeMgr.BackgroundOpacitySet = true
+	app1.ThemeMgr.BackgroundBlur = 14
+	app1.SaveUIPrefs()
+	app1.Close()
+
+	eng2 := engine.NewEngine(dataDir)
+	app2 := NewAppUI(eng2, wsDir)
+	defer app2.Close()
+
+	tm := app2.ThemeMgr
+	if tm.PaletteID != theme.ThemePaletteObsidian {
+		t.Fatalf("expected PaletteID obsidian, got %q", tm.PaletteID)
+	}
+	if !tm.GlassEnabled || !tm.IsGlassActive() {
+		t.Fatalf("expected GlassEnabled to persist across reload")
+	}
+	if !tm.GlassOpacitySet || tm.EffectiveGlassOpacity() != 0.00 {
+		t.Fatalf("expected GlassOpacity 0.00 to persist, got %v (set=%v)", tm.EffectiveGlassOpacity(), tm.GlassOpacitySet)
+	}
+	if tm.BackgroundKind != theme.BackgroundKindPreset || tm.BackgroundPreset != theme.BackgroundPresetAurora {
+		t.Fatalf("expected aurora preset, got kind=%q preset=%q", tm.BackgroundKind, tm.BackgroundPreset)
+	}
+	if tm.BackgroundOpacity != 0.72 || tm.BackgroundBlur != 14 {
+		t.Fatalf("expected bg opacity=0.72 blur=14, got opacity=%v blur=%v", tm.BackgroundOpacity, tm.BackgroundBlur)
+	}
+	if tc := tm.Colors(); tc.Canvas.A != 0 {
+		t.Fatalf("expected Canvas alpha 0 at 0%% glass opacity, got %d", tc.Canvas.A)
+	}
+}
+
+func TestWindowBackgroundDoesNotBlockInput(t *testing.T) {
+	dataDir := t.TempDir()
+	wsDir := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, wsDir)
+	defer app.Close()
+
+	app.ThemeMgr.SupportsVibrancy = true
+	app.ThemeMgr.GlassEnabled = true
+	app.ThemeMgr.BackgroundKind = theme.BackgroundKindPreset
+	app.ThemeMgr.BackgroundPreset = theme.BackgroundPresetAurora
+
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	// Clicking UI controls must succeed even with the full-window background active.
+	if err := tw.Click("Explore architecture"); err != nil {
+		t.Fatalf("expected click on Explore architecture to succeed behind window background, got: %v", err)
+	}
+	if app.Agent.InputText == "" {
+		t.Fatalf("expected Explore architecture prompt to populate InputText")
+	}
+	if err := tw.Click("Usage & Quota"); err != nil {
+		t.Fatalf("expected click on Usage & Quota to succeed behind window background, got: %v", err)
+	}
+	if !app.ShowUsageModal {
+		t.Fatalf("expected ShowUsageModal to open after clicking Usage & Quota")
+	}
+}
+
+func TestUserPromptCopyAlwaysVisibleWithoutHover(t *testing.T) {
+	dataDir := t.TempDir()
+	wsDir := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, wsDir)
+	defer app.Close()
+
+	sess := app.Agent.NewSession("Copy Check")
+	sess.Messages = append(sess.Messages,
+		&agent.ChatMessage{ID: 1, Role: "user", Text: "hello world prompt"},
+		&agent.ChatMessage{ID: 2, Role: "assistant", Text: "Here is a card response.", Done: true},
+	)
+
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	// Copy prompt button must be hittable and clickable without hovering first.
+	if err := tw.Click("Copy prompt"); err != nil {
+		t.Fatalf("expected Copy prompt button to be visible and clickable without hover: %v", err)
+	}
+	if got := tw.Clipboard(); got != "hello world prompt" {
+		t.Fatalf("expected clipboard 'hello world prompt', got %q", got)
 	}
 }

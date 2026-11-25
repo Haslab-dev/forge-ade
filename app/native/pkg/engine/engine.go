@@ -78,7 +78,8 @@ const automationFireEvent events.EventType = "automations:fire"
 
 // NewEngine creates and initializes the native backend subsystems.
 func NewEngine(dataDir string) *Engine {
-	if dataDir == "" {
+	useDefaultDataDir := dataDir == ""
+	if useDefaultDataDir {
 		home, _ := os.UserHomeDir()
 		// ForgeADE data directory holds sessions, profiles, providers, and settings.
 		dataDir = filepath.Join(home, ".forge-ade")
@@ -137,7 +138,7 @@ func NewEngine(dataDir string) *Engine {
 		AntigravityAccounts: quota.NewAccountManager(dataDir),
 	}
 
-	if len(e.AntigravityAccounts.Accounts()) == 0 {
+	if useDefaultDataDir && len(e.AntigravityAccounts.Accounts()) == 0 {
 		go func() {
 			_, _ = e.AntigravityAccounts.ImportLocalAccount()
 		}()

@@ -213,28 +213,6 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 		return models
 	}
 
-	if a.SelectedHarnessID == "agent-agy" && a.Settings != nil && !a.isFetchingAntigravityModels {
-		if acctMgr := a.Settings.AntigravityAccountMgr(); acctMgr != nil {
-			if activeAcc := acctMgr.ActiveAccount(); activeAcc != nil && activeAcc.AccessToken != "" && len(activeAcc.AvailableModels) == 0 {
-				a.isFetchingAntigravityModels = true
-				go func() {
-					mList, err := acctMgr.FetchAccountAvailableModels(activeAcc.AccessToken)
-					a.runOnUI(func() {
-						a.isFetchingAntigravityModels = false
-						if err == nil && len(mList) > 0 {
-							activeAcc.AvailableModels = mList
-							_ = acctMgr.Save()
-							if a.ACPMgr != nil {
-								a.ACPMgr.UpdateAgentSupportedModels("agent-agy", mList)
-							}
-							a.invalidateUI()
-						}
-					})
-				}()
-			}
-		}
-	}
-
 	if isSearching {
 		for _, m := range internalModels {
 			if strings.Contains(strings.ToLower(m.DisplayName), search) ||

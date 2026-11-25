@@ -530,14 +530,15 @@ func (a *AppUI) renderSplitSessionPane(c *ui.Context, tc theme.ThemeColors, sess
 					}
 					m := msg
 					if m.Role == "user" {
-						ui.Row(c.Key(fmt.Sprintf("sp-u-%d", m.ID))).Padding(8, 0, 4, 0).Children(func() {
+						ui.Column(c.Key(fmt.Sprintf("sp-u-%d", m.ID))).Padding(8, 0, 4, 0).Gap(4).AlignItems(ui.End).Children(func() {
 							a.renderUserMessageBubble(c, tc, sess.ID, m, 520)
+							renderUserPromptCopyRow(c, tc, "sp-ucopy-"+fmt.Sprint(m.ID), m)
 						})
 						continue
 					}
 
-					ui.Column(c.Key(fmt.Sprintf("sp-a-%d", m.ID))).Padding(6, 0, 8, 0).Gap(8).Children(func() {
-						a.renderAssistantMessageBody(c, tc, sess.ID, lastAssistantID, m)
+					ui.Column(c.Key(fmt.Sprintf("sp-a-%d", m.ID))).Padding(6, 0, 8, 0).Gap(6).Children(func() {
+						a.renderAssistantResponseCard(c, tc, sess.ID, lastAssistantID, m)
 
 						if m.Done && (m.Text != "" || len(m.Tools) > 0) {
 							ui.Row(c).Gap(6).Padding(2, 0, 0, 0).AlignItems(ui.Center).Children(func() {

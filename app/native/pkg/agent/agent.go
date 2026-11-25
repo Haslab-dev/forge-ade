@@ -432,6 +432,33 @@ type AgentState struct {
 
 // NewAgentState initializes the native agent chat state by loading persistent sessions from disk.
 func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func()) *AgentState {
+	as, normWs := newAgentStateBase(engine, workspacePath, invalidate)
+	// Load real sessions from ~/.forge/sessions/ and ~/.forge-ade/sessions/
+	as.LoadSessionsFromDisk(normWs)
+	as.LoadPromptHistory()
+	as.LoadPromptStash()
+	as.LoadSteerQueues()
+	return as
+}
+
+// NewAgentStateLazy constructs the native agent chat state immediately and
+// hydrates historical sessions and prompt metadata in a background goroutine
+// so app startup never blocks on parsing large session histories from disk.
+func NewAgentStateLazy(engine *engine.Engine, workspacePath string, invalidate func()) *AgentState {
+	as, normWs := newAgentStateBase(engine, workspacePath, invalidate)
+	go func() {
+		as.LoadSessionsFromDisk(normWs)
+		as.LoadPromptHistory()
+		as.LoadPromptStash()
+		as.LoadSteerQueues()
+		if as.Invalidate != nil {
+			as.Invalidate()
+		}
+	}()
+	return as
+}
+
+func newAgentStateBase(engine *engine.Engine, workspacePath string, invalidate func()) (*AgentState, string) {
 	// Detect default agent harness: prefer installed ACP agent (e.g. agy, claude, codex)
 	// when no internal LLM provider keys are configured.
 	defaultAgentID := "agent-agy"
@@ -489,13 +516,7 @@ func NewAgentState(engine *engine.Engine, workspacePath string, invalidate func(
 		},
 	}
 
-	// Load real sessions from ~/.forge/sessions/ and ~/.forge-ade/sessions/
-	as.LoadSessionsFromDisk(normWs)
-	as.LoadPromptHistory()
-	as.LoadPromptStash()
-	as.LoadSteerQueues()
-
-	return as
+	return as, normWs
 }
 
 // streamCancelHandle carries the context.CancelFunc of an in-flight raw-LLM
@@ -2288,16 +2309,30 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 	}
 
 	if len(loaded) > 0 {
-		// Sort by UpdatedAt descending (newest first), tie-broken deterministically by ID.
-		sort.Slice(loaded, func(i, j int) bool {
-			if !loaded[i].UpdatedAt.Equal(loaded[j].UpdatedAt) {
-				return loaded[i].UpdatedAt.After(loaded[j].UpdatedAt)
-			}
-			return loaded[i].ID > loaded[j].ID
-		})
-		as.Sessions = loaded
-		as.ActiveSessionID = ""
 		as.mu.Lock()
+		// Preserve any live sessions created before background disk load finished.
+		merged := make([]*AgentSession, 0, len(loaded)+len(as.Sessions))
+		seen := make(map[string]bool, len(loaded)+len(as.Sessions))
+		for _, s := range as.Sessions {
+			if s != nil && s.ID != "" && !seen[s.ID] {
+				seen[s.ID] = true
+				merged = append(merged, s)
+			}
+		}
+		for _, s := range loaded {
+			if s != nil && s.ID != "" && !seen[s.ID] {
+				seen[s.ID] = true
+				merged = append(merged, s)
+			}
+		}
+		// Sort by UpdatedAt descending (newest first), tie-broken deterministically by ID.
+		sort.Slice(merged, func(i, j int) bool {
+			if !merged[i].UpdatedAt.Equal(merged[j].UpdatedAt) {
+				return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
+			}
+			return merged[i].ID > merged[j].ID
+		})
+		as.Sessions = merged
 		as.syncActiveSession()
 		as.mu.Unlock()
 		as.applyPendingLLMModel()
@@ -3893,17 +3928,34 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 	}
 
 	startTime := time.Now()
-	assistantMsg := &ChatMessage{
-		ID:              nextMessageIDLocked(targetSess),
-		Role:            "assistant",
-		Text:            "",
-		Done:            false,
-		Timestamp:       startTime,
-		TurnStartedAt:   startTime,
-		IsThinking:      true,
-		ThinkingTimeSec: 0,
-		ShowThinking:    false,
-		ShowTools:       false,
+
+	// Finalize any earlier dangling !Done assistant messages so a retry or
+	// failover can never leave multiple stacked "Working for Xs / Thinking"
+	// spinners running in the same session. If the trailing message is already
+	// an empty unfinalized assistant placeholder, reuse it in-place.
+	var assistantMsg *ChatMessage
+	if n := len(targetSess.Messages); n > 0 {
+		last := targetSess.Messages[n-1]
+		if last != nil && last.Role == "assistant" && !last.Done &&
+			last.Text == "" && last.Thinking == "" && len(last.Tools) == 0 && len(last.Blocks) == 0 {
+			last.Timestamp = startTime
+			last.TurnStartedAt = startTime
+			last.IsThinking = true
+			last.ShowThinking = false
+			last.ShowTools = false
+			assistantMsg = last
+		}
+	}
+	for _, m := range targetSess.Messages {
+		if m != nil && m != assistantMsg && m.Role == "assistant" && !m.Done {
+			m.Done = true
+			m.IsThinking = false
+			m.ShowThinking = false
+			m.ShowTools = false
+			if m.ThinkingTimeSec <= 0 && !m.TurnStartedAt.IsZero() {
+				m.ThinkingTimeSec = time.Since(m.TurnStartedAt).Seconds()
+			}
+		}
 	}
 
 	// A stale approval gate from the previous turn must not leak into this one.
@@ -3913,7 +3965,21 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 		}
 	}
 	targetSess.PendingApprovals = nil
-	targetSess.Messages = append(targetSess.Messages, assistantMsg)
+	if assistantMsg == nil {
+		assistantMsg = &ChatMessage{
+			ID:              nextMessageIDLocked(targetSess),
+			Role:            "assistant",
+			Text:            "",
+			Done:            false,
+			Timestamp:       startTime,
+			TurnStartedAt:   startTime,
+			IsThinking:      true,
+			ThinkingTimeSec: 0,
+			ShowThinking:    false,
+			ShowTools:       false,
+		}
+		targetSess.Messages = append(targetSess.Messages, assistantMsg)
+	}
 	targetSess.Status = "running"
 	targetSess.turnStartFiles = turnStartFiles
 	if targetSess.ID == as.ActiveSessionID {

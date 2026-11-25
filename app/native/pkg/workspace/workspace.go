@@ -84,17 +84,24 @@ func (ws *WorkspaceState) FirstFile() (WorkspaceFile, bool) {
 // An empty rootDir means NO workspace: files stay empty until the user opens
 // a folder ("" is also what CWD=/ collapses to for Finder-launched bundles).
 func NewWorkspaceState(rootDir string) *WorkspaceState {
-	if rootDir == "/" {
-		rootDir = ""
-	}
-	ws := &WorkspaceState{
-		RootDir:    rootDir,
-		loadedDirs: map[string]bool{"": true},
-	}
-	if !strings.HasPrefix(rootDir, "ssh://") {
+	ws := NewWorkspaceStateLazy(rootDir)
+	if !strings.HasPrefix(ws.RootDir, "ssh://") {
 		ws.Refresh()
 	}
 	return ws
+}
+
+// NewWorkspaceStateLazy creates a workspace state without running the initial
+// directory scan synchronously, allowing the caller to populate files in the
+// background after the window is shown.
+func NewWorkspaceStateLazy(rootDir string) *WorkspaceState {
+	if rootDir == "/" {
+		rootDir = ""
+	}
+	return &WorkspaceState{
+		RootDir:    rootDir,
+		loadedDirs: map[string]bool{"": true},
+	}
 }
 
 // IsRemote reports whether the workspace is located on a remote SSH server.

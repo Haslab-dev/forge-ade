@@ -124,6 +124,3 @@ func TestTerminalScrollReflect(t *testing.T) {
 	ts.ScrollToTop()
 	ts.ScrollToBottom()
 }
-
-
-

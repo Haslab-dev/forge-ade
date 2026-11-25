@@ -133,6 +133,25 @@ type deltaChunk struct {
 
 // NewACPManager creates and initializes the native ACP integration.
 func NewACPManager(engine *engine.Engine, onRedraw func()) *ACPManager {
+	mgr := newACPManagerBase(engine, onRedraw)
+	mgr.RefreshAvailability()
+	return mgr
+}
+
+// NewACPManagerLazy creates the native ACP integration and probes CLI binary
+// availability asynchronously so UI startup never blocks on filesystem scans.
+func NewACPManagerLazy(engine *engine.Engine, onRedraw func()) *ACPManager {
+	mgr := newACPManagerBase(engine, onRedraw)
+	go func() {
+		mgr.RefreshAvailability()
+		if mgr.OnNeedRedraw != nil {
+			mgr.OnNeedRedraw()
+		}
+	}()
+	return mgr
+}
+
+func newACPManagerBase(engine *engine.Engine, onRedraw func()) *ACPManager {
 	mgr := &ACPManager{
 		manager:      engine.ACPMgr,
 		bus:          engine.Bus,
@@ -142,10 +161,7 @@ func NewACPManager(engine *engine.Engine, onRedraw func()) *ACPManager {
 		eventQueue:   make(chan func(), 4096),
 	}
 	go mgr.processEventQueue()
-
-	mgr.RefreshAvailability()
 	mgr.subscribeToBusEvents()
-
 	return mgr
 }
 
@@ -1186,6 +1202,26 @@ func (mgr *ACPManager) deliverUsage(sessionID string, u map[string]interface{}, 
 	}
 }
 
+var (
+	enrichedDirsOnce sync.Once
+	enrichedDirsList []string
+)
+
+func cachedEnrichedPathDirs() []string {
+	enrichedDirsOnce.Do(func() {
+		dirs := filepath.SplitList(internalgit.EnrichedPath())
+		// Version-manager bins (nvm/volta) that GUI apps never inherit.
+		if home, err := os.UserHomeDir(); err == nil {
+			if matches, _ := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); len(matches) > 0 {
+				dirs = append(dirs, matches...)
+			}
+			dirs = append(dirs, filepath.Join(home, ".volta", "bin"), filepath.Join(home, ".deno", "bin"))
+		}
+		enrichedDirsList = dirs
+	})
+	return enrichedDirsList
+}
+
 // lookPathEnriched finds an executable on the ENRICHED PATH (Homebrew,
 // ~/.local/bin, go/bin, cargo, nix, ...). GUI-launched apps on macOS don't
 // inherit the shell PATH, so a plain exec.LookPath marks installed ACP
@@ -1200,15 +1236,7 @@ func lookPathEnriched(exe string) (string, error) {
 			return exe, nil
 		}
 	}
-	dirs := filepath.SplitList(internalgit.EnrichedPath())
-	// Version-manager bins (nvm/volta) that GUI apps never inherit.
-	if home, err := os.UserHomeDir(); err == nil {
-		if matches, _ := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); len(matches) > 0 {
-			dirs = append(dirs, matches...)
-		}
-		dirs = append(dirs, filepath.Join(home, ".volta", "bin"), filepath.Join(home, ".deno", "bin"))
-	}
-	for _, dir := range dirs {
+	for _, dir := range cachedEnrichedPathDirs() {
 		if dir == "" {
 			continue
 		}

@@ -158,3 +158,47 @@ func TestThinkingAndToolBlockOrdering(t *testing.T) {
 		t.Fatalf("unexpected thinking block texts: %q, %q", msg.Blocks[0].Text, msg.Blocks[2].Text)
 	}
 }
+
+// TestTriggerTurnDoesNotStackUnfinalizedThinking verifies that re-triggering a
+// turn while an earlier assistant placeholder is still !Done reuses an empty
+// placeholder and finalizes any non-empty dangling assistant message so the UI
+// never displays stacked "Working for Xs / Thinking" spinners.
+func TestTriggerTurnDoesNotStackUnfinalizedThinking(t *testing.T) {
+	as := &AgentState{}
+	sess := &AgentSession{
+		ID:        "s1",
+		Title:     "t",
+		AgentID:   "agent-internal",
+		AgentType: "internal",
+		Messages: []*ChatMessage{
+			{ID: 1, Role: "user", Text: "hello", Done: true},
+			{ID: 2, Role: "assistant", Done: false, IsThinking: true},
+		},
+		nextMsgID: 3,
+	}
+	as.Sessions = []*AgentSession{sess}
+	as.ActiveSessionID = "s1"
+
+	// Re-triggering with an empty unfinalized assistant placeholder must reuse
+	// it instead of appending a second spinning message.
+	as.TriggerTurnForSession("s1", "hello")
+
+	as.mu.Lock()
+	var assistantCount, activeSpinners int
+	for _, m := range sess.Messages {
+		if m.Role == "assistant" {
+			assistantCount++
+			if !m.Done {
+				activeSpinners++
+			}
+		}
+	}
+	as.mu.Unlock()
+
+	if assistantCount != 1 {
+		t.Fatalf("expected empty placeholder to be reused (1 assistant message), got %d", assistantCount)
+	}
+	if activeSpinners > 1 {
+		t.Fatalf("expected at most 1 active spinner, got %d", activeSpinners)
+	}
+}

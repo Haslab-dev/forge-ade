@@ -14,6 +14,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/git"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/palette"
+	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
@@ -496,127 +497,256 @@ func (a *AppUI) renderThemePickerModal(c *ui.Context) {
 				}
 			})
 
-			// Appearance (Dark / Light)
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "APPEARANCE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-				ui.Row(c).Gap(6).Children(func() {
-					for _, opt := range []struct{ ID, Label string }{
-						{"dark", "Dark"},
-						{"light", "Light"},
-					} {
-						thisOpt := opt
-						sel := tm.Appearance == thisOpt.ID || (thisOpt.ID == "dark" && tm.Appearance == "")
-						pill := ui.Row(c.Key("th-app-"+thisOpt.ID)).Height(28).Radius(6).Padding(0, 12).Grow(1).
-							AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
-						pill.Children(func() {
-							ui.Text(c, thisOpt.Label).FontSize(12).FontWeight(500)
+			ui.Scroll(c.Key("th-modal-scroll")).MaxHeight(480).Children(func() {
+				ui.Column(c).Gap(12).Children(func() {
+					// Appearance (Dark / Light)
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "APPEARANCE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						ui.Row(c).Gap(6).Children(func() {
+							for _, opt := range []struct{ ID, Label string }{
+								{"dark", "Dark"},
+								{"light", "Light"},
+							} {
+								thisOpt := opt
+								sel := tm.Appearance == thisOpt.ID || (thisOpt.ID == "dark" && tm.Appearance == "")
+								pill := ui.Row(c.Key("th-app-"+thisOpt.ID)).Height(28).Radius(6).Padding(0, 12).Grow(1).
+									AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+								pill.Children(func() {
+									ui.Text(c, thisOpt.Label).FontSize(12).FontWeight(500)
+								})
+								if sel {
+									pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+								} else {
+									pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+									if pill.Hovered() {
+										pill.Background(tc.Text.Alpha(0.05))
+									}
+								}
+								if pill.Clicked() {
+									tm.Appearance = thisOpt.ID
+								}
+							}
 						})
-						if sel {
-							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
-						} else {
-							pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
-							if pill.Hovered() {
-								pill.Background(tc.Text.Alpha(0.05))
+					})
+
+					// Palette list with color swatches
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "COLOR PALETTE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						ui.Column(c).Gap(3).Children(func() {
+							for _, p := range tm.AvailablePalettes() {
+								thisP := p
+								isSel := (tm.PaletteID == thisP.ID)
+								row := ui.Row(c.Key("pal-pick-"+thisP.ID)).Radius(8).Padding(7, 10).Gap(8).
+									AlignItems(ui.Center).Cursor(ui.CursorPointer)
+								row.Children(func() {
+									ui.Box(c).Size(12, 12).Radius(6).Background(theme.SwatchColor(thisP.SwatchHex))
+									ui.Text(c, thisP.Name).FontSize(12).FontWeight(500).Grow(1)
+									if isSel {
+										ui.Icon(c, icons.TablerCheck).Width(14).Height(14).TextColor(tc.Accent)
+									}
+								})
+								if isSel {
+									row.Background(tc.Accent.Alpha(0.12))
+								} else if row.Hovered() {
+									row.Background(tc.Text.Alpha(0.04))
+								}
+								if row.Clicked() {
+									tm.PaletteID = thisP.ID
+									a.SaveUIPrefs()
+								}
+							}
+						})
+					})
+
+					// Semi-Transparent Glass & Background quick controls
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Text(c, "GLASS & BACKGROUND").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						glassActive := tm.IsGlassActive()
+						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+							glassPill := ui.Row(c.Key("th-glass-toggle")).Height(26).Radius(6).Padding(0, 10).Gap(6).
+								AlignItems(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+							glassPill.Children(func() {
+								ui.Icon(c, icons.TablerSparkles).Width(12).Height(12).TextColor(func() ui.Color {
+									if glassActive {
+										return tc.Accent
+									}
+									return tc.IconMuted
+								}())
+								ui.Text(c, "Semi-Transparent Glass").FontSize(11.5).FontWeight(500)
+							})
+							if glassActive {
+								glassPill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+							} else {
+								glassPill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+								if glassPill.Hovered() {
+									glassPill.Background(tc.Text.Alpha(0.05))
+								}
+							}
+							if glassPill.Clicked() {
+								if glassActive {
+									tm.GlassEnabled = false
+									if tm.PaletteID == theme.ThemePaletteGlass {
+										tm.PaletteID = theme.ThemePaletteDefault
+									}
+								} else {
+									tm.GlassEnabled = true
+								}
+								a.SaveUIPrefs()
+							}
+
+							imgBtn := ui.Row(c.Key("th-bg-pick")).Height(26).Radius(6).Padding(0, 10).Gap(5).
+								AlignItems(ui.Center).BorderWidth(1).BorderColor(tc.Border).Background(tc.SurfaceRaised).Cursor(ui.CursorPointer)
+							imgBtn.Children(func() {
+								ui.Icon(c, icons.TablerPhoto).Width(12).Height(12).TextColor(tc.IconMuted)
+								ui.Text(c, "Image...").FontSize(11.5).FontWeight(500)
+							})
+							if imgBtn.Hovered() {
+								imgBtn.Background(tc.Text.Alpha(0.05))
+							}
+							if imgBtn.Clicked() {
+								a.pickBackgroundImageFile()
+							}
+
+							if tm.HasBackground() {
+								clrBtn := ui.Row(c.Key("th-bg-clear")).Height(26).Radius(6).Padding(0, 8).
+									AlignItems(ui.Center).BorderWidth(1).BorderColor(tc.Border).Background(tc.SurfaceRaised).Cursor(ui.CursorPointer)
+								clrBtn.Children(func() {
+									ui.Text(c, "Clear BG").FontSize(11).TextColor(tc.TextMuted)
+								})
+								if clrBtn.Hovered() {
+									clrBtn.Background(tc.Text.Alpha(0.05))
+								}
+								if clrBtn.Clicked() {
+									tm.BackgroundKind = theme.BackgroundKindNone
+									a.SaveUIPrefs()
+								}
+							}
+						})
+
+						if glassActive {
+							opVal := float64(tm.EffectiveGlassOpacity())
+							prevOp := opVal
+							ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+								ui.Text(c, "Glass Opacity").FontSize(11).TextColor(tc.TextMuted).Width(78)
+								ui.Slider(c.Key("th-modal-glass-op"), &opVal, float64(theme.MinGlassOpacity), float64(theme.MaxGlassOpacity)).Grow(1)
+								ui.Text(c, fmt.Sprintf("%d%%", int(opVal*100+0.5))).FontSize(11).FontWeight(600).TextColor(tc.TextMuted).Width(32)
+							})
+							if opVal != prevOp {
+								tm.GlassOpacity = float32(opVal)
+								tm.GlassOpacitySet = true
 							}
 						}
-						if pill.Clicked() {
-							tm.Appearance = thisOpt.ID
-						}
-					}
+
+						ui.Row(c).Gap(4).Wrap().Children(func() {
+							for _, pr := range theme.AvailableBackgroundPresets() {
+								thisPr := pr
+								isSel := tm.BackgroundKind == theme.BackgroundKindPreset && tm.BackgroundPreset == thisPr.ID
+								stops := thisPr.DarkStops
+								if !tm.IsDark() {
+									stops = thisPr.LightStops
+								}
+								chip := ui.Row(c.Key("th-bg-pre-"+thisPr.ID)).Height(24).Radius(6).Padding(0, 7).Gap(5).
+									AlignItems(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+								chip.Children(func() {
+									ui.Box(c).Size(12, 12).Radius(3).
+										LinearGradient(ui.LinearGradient{Angle: thisPr.Angle, Stops: stops, Oklab: true})
+									ui.Text(c, thisPr.Name).FontSize(11).FontWeight(500)
+								})
+								if isSel {
+									chip.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+								} else {
+									chip.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+									if chip.Hovered() {
+										chip.Background(tc.Text.Alpha(0.05))
+									}
+								}
+								if chip.Clicked() {
+									tm.BackgroundKind = theme.BackgroundKindPreset
+									tm.BackgroundPreset = thisPr.ID
+									if !tm.IsGlassActive() {
+										tm.GlassEnabled = true
+									}
+									a.SaveUIPrefs()
+								}
+							}
+						})
+					})
+
+					// Content Width
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "CHAT LANE WIDTH").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						ui.Row(c).Gap(6).Children(func() {
+							for _, opt := range []struct{ ID, Label string }{
+								{"comfortable", "Comfortable"},
+								{"wide", "Wide"},
+								{"full", "Full"},
+							} {
+								thisOpt := opt
+								sel := tm.ChatWidth == thisOpt.ID
+								pill := ui.Row(c.Key("th-w-"+thisOpt.ID)).Height(26).Radius(6).Padding(0, 10).Grow(1).
+									AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+								pill.Children(func() {
+									ui.Text(c, thisOpt.Label).FontSize(11).FontWeight(500)
+								})
+								if sel {
+									pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+								} else {
+									pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+									if pill.Hovered() {
+										pill.Background(tc.Text.Alpha(0.05))
+									}
+								}
+								if pill.Clicked() {
+									tm.ChatWidth = thisOpt.ID
+								}
+							}
+						})
+					})
+
+					// Diff Scheme
+					ui.Column(c).Gap(4).Children(func() {
+						ui.Text(c, "DIFF SCHEME").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
+						ui.Row(c).Gap(6).Children(func() {
+							for _, opt := range []struct{ ID, Label string }{
+								{"classic", "Classic (Green/Red)"},
+								{"modern", "Modern (Blue/Orange)"},
+							} {
+								thisOpt := opt
+								sel := tm.DiffScheme == thisOpt.ID
+								pill := ui.Row(c.Key("th-diff-"+thisOpt.ID)).Height(26).Radius(6).Padding(0, 10).Grow(1).
+									AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
+								pill.Children(func() {
+									ui.Text(c, thisOpt.Label).FontSize(11).FontWeight(500)
+								})
+								if sel {
+									pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
+								} else {
+									pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
+									if pill.Hovered() {
+										pill.Background(tc.Text.Alpha(0.05))
+									}
+								}
+								if pill.Clicked() {
+									tm.DiffScheme = thisOpt.ID
+								}
+							}
+						})
+					})
 				})
 			})
 
-			// Palette list with color swatches
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "COLOR PALETTE").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-				ui.Column(c).Gap(3).Children(func() {
-					for _, p := range tm.AvailablePalettes() {
-						thisP := p
-						isSel := (tm.PaletteID == thisP.ID)
-						row := ui.Row(c.Key("pal-pick-"+thisP.ID)).Radius(8).Padding(7, 10).Gap(8).
-							AlignItems(ui.Center).Cursor(ui.CursorPointer)
-						row.Children(func() {
-							ui.Box(c).Size(12, 12).Radius(6).Background(theme.SwatchColor(thisP.SwatchHex))
-							ui.Text(c, thisP.Name).FontSize(12).FontWeight(500).Grow(1)
-							if isSel {
-								ui.Icon(c, icons.TablerCheck).Width(14).Height(14).TextColor(tc.Accent)
-							}
-						})
-						if isSel {
-							row.Background(tc.Accent.Alpha(0.12))
-						} else if row.Hovered() {
-							row.Background(tc.Text.Alpha(0.04))
-						}
-						if row.Clicked() {
-							tm.PaletteID = thisP.ID
-						}
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				moreBtn := ui.Button(c.Key("th-open-settings"), "More in Settings...").FontSize(11.5)
+				if moreBtn.Clicked() {
+					tm.IsOpen = false
+					if a.Settings != nil {
+						a.Settings.ActiveTab = settings.SettingsTabAppearance
+						a.openSettings()
 					}
-				})
-			})
-
-			// Content Width
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "CHAT LANE WIDTH").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-				ui.Row(c).Gap(6).Children(func() {
-					for _, opt := range []struct{ ID, Label string }{
-						{"comfortable", "Comfortable"},
-						{"wide", "Wide"},
-						{"full", "Full"},
-					} {
-						thisOpt := opt
-						sel := tm.ChatWidth == thisOpt.ID
-						pill := ui.Row(c.Key("th-w-"+thisOpt.ID)).Height(26).Radius(6).Padding(0, 10).Grow(1).
-							AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
-						pill.Children(func() {
-							ui.Text(c, thisOpt.Label).FontSize(11).FontWeight(500)
-						})
-						if sel {
-							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
-						} else {
-							pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
-							if pill.Hovered() {
-								pill.Background(tc.Text.Alpha(0.05))
-							}
-						}
-						if pill.Clicked() {
-							tm.ChatWidth = thisOpt.ID
-						}
-					}
-				})
-			})
-
-			// Diff Scheme
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "DIFF SCHEME").FontSize(10).FontWeight(700).LetterSpacing(0.5).TextColor(tc.TextMuted)
-				ui.Row(c).Gap(6).Children(func() {
-					for _, opt := range []struct{ ID, Label string }{
-						{"classic", "Classic (Green/Red)"},
-						{"modern", "Modern (Blue/Orange)"},
-					} {
-						thisOpt := opt
-						sel := tm.DiffScheme == thisOpt.ID
-						pill := ui.Row(c.Key("th-diff-"+thisOpt.ID)).Height(26).Radius(6).Padding(0, 10).Grow(1).
-							AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1).Cursor(ui.CursorPointer)
-						pill.Children(func() {
-							ui.Text(c, thisOpt.Label).FontSize(11).FontWeight(500)
-						})
-						if sel {
-							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.5))
-						} else {
-							pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
-							if pill.Hovered() {
-								pill.Background(tc.Text.Alpha(0.05))
-							}
-						}
-						if pill.Clicked() {
-							tm.DiffScheme = thisOpt.ID
-						}
-					}
-				})
-			})
-
-			ui.Row(c).Justify(ui.End).Children(func() {
+				}
+				ui.Box(c).Grow(1)
 				if ui.PrimaryButton(c, "Done").FontSize(12).Clicked() {
+					a.SaveUIPrefs()
 					tm.IsOpen = false
 				}
 			})

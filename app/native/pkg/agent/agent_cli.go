@@ -78,6 +78,26 @@ func NewAgentCLIManager(rootDir string, onRedraw func()) *AgentCLIManager {
 	return mgr
 }
 
+// NewAgentCLIManagerLazy constructs the CLI manager without blocking startup
+// on external CLI model probes (opencode, pi, etc.). Saved sessions load
+// immediately from disk while CLI config discovery runs in the background.
+func NewAgentCLIManagerLazy(rootDir string, onRedraw func()) *AgentCLIManager {
+	mgr := &AgentCLIManager{
+		Sessions:     make(map[string]*AgentCLISession),
+		RootDir:      rootDir,
+		OnNeedRedraw: onRedraw,
+	}
+
+	mgr.LoadSessionsFromDisk()
+	go func() {
+		mgr.RefreshConfigs()
+		if mgr.OnNeedRedraw != nil {
+			mgr.OnNeedRedraw()
+		}
+	}()
+	return mgr
+}
+
 // LoadSessionsFromDisk reads persistent terminal CLI sessions from ~/.forge-ade/agentsessions/index.json.
 func (mgr *AgentCLIManager) LoadSessionsFromDisk() {
 	home, err := os.UserHomeDir()

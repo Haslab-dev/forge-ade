@@ -548,9 +548,10 @@ func addSemanticExtras(tc *ThemeColors, dark bool) {
 	}
 }
 
-// PaletteColors returns the full role set of one built-in palette in one
-// appearance. This is ForgeADE's getThemeColorsForAppearance.
-func PaletteColors(paletteID string, dark bool) ThemeColors {
+// BasePaletteColors returns the opaque base role set of one built-in palette
+// in one appearance (for ThemePaletteGlass, this returns the base ForgeADE
+// hues without translucency applied).
+func BasePaletteColors(paletteID string, dark bool) ThemeColors {
 	tc := func() ThemeColors {
 		switch paletteID {
 		case ThemePaletteObsidian:
@@ -583,14 +584,7 @@ func PaletteColors(paletteID string, dark bool) ThemeColors {
 				return irisDark()
 			}
 			return irisLight()
-		case ThemePaletteGlass:
-			// Glass reuses the base palette's hues but lets the OS material
-			// (mygo window Vibrancy) show through the chrome.
-			if dark {
-				return glassChrome(forgeDefaultDark(), true)
-			}
-			return glassChrome(forgeDefaultLight(), false)
-		default: // ThemePaletteDefault
+		default: // ThemePaletteDefault, ThemePaletteGlass
 			if dark {
 				return forgeDefaultDark()
 			}
@@ -601,39 +595,83 @@ func PaletteColors(paletteID string, dark bool) ThemeColors {
 	return tc
 }
 
-// glassChrome returns tc with translucent chrome: canvas and window chrome
-// let the OS's blurred material (mygo window Vibrancy) show through, while
-// text, accents and borders stay opaque so content reads over anything.
-// Needs ThemeManager.SupportsVibrancy — the fallback to opaque colors lives
-// in ThemeManager.Colors.
-func glassChrome(tc ThemeColors, dark bool) ThemeColors {
-	a := func(alpha float32) func(ui.Color) ui.Color {
-		return func(c ui.Color) ui.Color { return c.Alpha(alpha) }
+// PaletteColors returns the full role set of one built-in palette in one
+// appearance. This is ForgeADE's getThemeColorsForAppearance.
+func PaletteColors(paletteID string, dark bool) ThemeColors {
+	tc := BasePaletteColors(paletteID, dark)
+	if paletteID == ThemePaletteGlass {
+		return GlassChrome(tc, dark, DefaultGlassOpacity)
 	}
+	return tc
+}
+
+func lerpFloat32(a, b, t float32) float32 {
+	if t <= 0 {
+		return a
+	}
+	if t >= 1 {
+		return b
+	}
+	return a + (b-a)*t
+}
+
+// glassAlpha maps a default-level alpha (at DefaultGlassOpacity) across the
+// configurable opacity range [MinGlassOpacity, MaxGlassOpacity].
+func glassAlpha(atMin, atDefault, atMax, opacity float32) float32 {
+	if opacity <= DefaultGlassOpacity {
+		t := (opacity - MinGlassOpacity) / (DefaultGlassOpacity - MinGlassOpacity)
+		return lerpFloat32(atMin, atDefault, t)
+	}
+	t := (opacity - DefaultGlassOpacity) / (MaxGlassOpacity - DefaultGlassOpacity)
+	return lerpFloat32(atDefault, atMax, t)
+}
+
+// GlassChrome returns tc with semi-transparent frosted glass chrome scaled by
+// opacity (in [MinGlassOpacity, MaxGlassOpacity]), letting OS vibrancy or a
+// custom window background show through while keeping text, accents and borders
+// legible.
+func GlassChrome(tc ThemeColors, dark bool, opacity float32) ThemeColors {
+	if opacity < MinGlassOpacity {
+		opacity = MinGlassOpacity
+	}
+	if opacity > MaxGlassOpacity {
+		opacity = MaxGlassOpacity
+	}
+
+	setAlpha := func(c ui.Color, atMin, atDefault, atMax float32) ui.Color {
+		return c.Alpha(glassAlpha(atMin, atDefault, atMax, opacity))
+	}
+
 	if dark {
-		tc.Canvas = a(0.18)(tc.Canvas)   // page wash over the material
-		tc.Chrome = a(0.50)(tc.Chrome)   // top bar
-		tc.Toolbar = a(0.50)(tc.Toolbar) // toolbars
-		tc.Sidebar = a(0.45)(tc.Sidebar) // left rail
-		tc.Surface = a(0.65)(tc.Surface) // cards, pills
-		tc.SurfaceRaised = a(0.75)(tc.SurfaceRaised)
-		tc.SurfaceOverlay = a(0.85)(tc.SurfaceOverlay) // popovers stay readable
-		tc.MessageSurface = a(0.70)(tc.MessageSurface)
-		tc.Input = a(0.55)(tc.Input)
-		tc.Secondary = a(0.60)(tc.Secondary)
-		tc.Muted = a(0.60)(tc.Muted)
+		tc.Canvas = setAlpha(tc.Canvas, 0.00, 0.10, 0.85)
+		tc.Chrome = setAlpha(tc.Chrome, 0.38, 0.56, 0.92)
+		tc.Toolbar = setAlpha(tc.Toolbar, 0.38, 0.56, 0.92)
+		tc.Sidebar = setAlpha(tc.Sidebar, 0.45, 0.68, 0.94)
+		tc.SidebarControlSurface = setAlpha(tc.SidebarControlSurface, 0.40, 0.58, 0.92)
+		tc.Surface = setAlpha(tc.Surface, 0.42, 0.62, 0.94)
+		tc.SurfaceRaised = setAlpha(tc.SurfaceRaised, 0.50, 0.70, 0.96)
+		tc.SurfaceOverlay = setAlpha(tc.SurfaceOverlay, 0.65, 0.82, 0.97)
+		tc.MessageSurface = setAlpha(tc.MessageSurface, 0.46, 0.66, 0.94)
+		tc.Input = setAlpha(tc.Input, 0.36, 0.54, 0.92)
+		tc.Secondary = setAlpha(tc.Secondary, 0.36, 0.54, 0.92)
+		tc.Muted = setAlpha(tc.Muted, 0.36, 0.54, 0.92)
+		tc.CodeBackground = setAlpha(tc.CodeBackground, 0.34, 0.52, 0.92)
+		tc.TerminalBackground = setAlpha(tc.TerminalBackground, 0.00, 0.16, 0.88)
 	} else {
-		tc.Canvas = a(0.40)(tc.Canvas)
-		tc.Chrome = a(0.60)(tc.Chrome)
-		tc.Toolbar = a(0.60)(tc.Toolbar)
-		tc.Sidebar = a(0.55)(tc.Sidebar)
-		tc.Surface = a(0.72)(tc.Surface)
-		tc.SurfaceRaised = a(0.80)(tc.SurfaceRaised)
-		tc.SurfaceOverlay = a(0.88)(tc.SurfaceOverlay)
-		tc.MessageSurface = a(0.78)(tc.MessageSurface)
-		tc.Input = a(0.60)(tc.Input)
-		tc.Secondary = a(0.65)(tc.Secondary)
-		tc.Muted = a(0.65)(tc.Muted)
+		tc.Canvas = setAlpha(tc.Canvas, 0.00, 0.18, 0.88)
+		tc.Chrome = setAlpha(tc.Chrome, 0.46, 0.64, 0.93)
+		tc.Toolbar = setAlpha(tc.Toolbar, 0.46, 0.64, 0.93)
+		tc.Sidebar = setAlpha(tc.Sidebar, 0.52, 0.74, 0.95)
+		tc.SidebarControlSurface = setAlpha(tc.SidebarControlSurface, 0.46, 0.66, 0.93)
+		tc.Surface = setAlpha(tc.Surface, 0.50, 0.70, 0.95)
+		tc.SurfaceRaised = setAlpha(tc.SurfaceRaised, 0.58, 0.76, 0.97)
+		tc.SurfaceOverlay = setAlpha(tc.SurfaceOverlay, 0.72, 0.86, 0.98)
+		tc.MessageSurface = setAlpha(tc.MessageSurface, 0.54, 0.72, 0.95)
+		tc.Input = setAlpha(tc.Input, 0.44, 0.62, 0.94)
+		tc.Secondary = setAlpha(tc.Secondary, 0.44, 0.62, 0.94)
+		tc.Muted = setAlpha(tc.Muted, 0.44, 0.62, 0.94)
+		tc.CodeBackground = setAlpha(tc.CodeBackground, 0.42, 0.58, 0.94)
+		tc.TerminalBackground = setAlpha(tc.TerminalBackground, 0.00, 0.24, 0.90)
 	}
 	return tc
 }

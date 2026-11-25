@@ -18,6 +18,13 @@ import (
 type uiPrefs struct {
 	Appearance           string   `json:"appearance"`
 	PaletteID            string   `json:"palette_id"`
+	GlassEnabled         bool     `json:"glass_enabled,omitempty"`
+	GlassOpacity         *float32 `json:"glass_opacity,omitempty"`
+	BackgroundKind       string   `json:"background_kind,omitempty"`
+	BackgroundPreset     string   `json:"background_preset,omitempty"`
+	BackgroundImage      string   `json:"background_image,omitempty"`
+	BackgroundOpacity    *float32 `json:"background_opacity,omitempty"`
+	BackgroundBlur       float32  `json:"background_blur,omitempty"`
 	ChatWidth            string   `json:"chat_width"`
 	DiffScheme           string   `json:"diff_scheme"`
 	ShowLeftSidebar      bool     `json:"show_left_sidebar"`
@@ -67,6 +74,28 @@ func (a *AppUI) loadUIPrefs() {
 		}
 		if theme.IsKnownPalette(p.PaletteID) {
 			a.ThemeMgr.PaletteID = p.PaletteID
+		}
+		a.ThemeMgr.GlassEnabled = p.GlassEnabled
+		if p.GlassOpacity != nil {
+			a.ThemeMgr.GlassOpacity = *p.GlassOpacity
+			a.ThemeMgr.GlassOpacitySet = true
+		}
+		switch p.BackgroundKind {
+		case theme.BackgroundKindNone, theme.BackgroundKindPreset, theme.BackgroundKindImage:
+			a.ThemeMgr.BackgroundKind = p.BackgroundKind
+		}
+		if _, ok := theme.LookupBackgroundPreset(p.BackgroundPreset); ok {
+			a.ThemeMgr.BackgroundPreset = p.BackgroundPreset
+		}
+		if p.BackgroundImage != "" {
+			a.ThemeMgr.BackgroundImage = p.BackgroundImage
+		}
+		if p.BackgroundOpacity != nil {
+			a.ThemeMgr.BackgroundOpacity = *p.BackgroundOpacity
+			a.ThemeMgr.BackgroundOpacitySet = true
+		}
+		if p.BackgroundBlur >= 0 {
+			a.ThemeMgr.BackgroundBlur = p.BackgroundBlur
 		}
 		switch p.ChatWidth {
 		case "comfortable", "wide", "full":
@@ -127,9 +156,18 @@ func (a *AppUI) SaveUIPrefs() {
 	if path == "" {
 		return
 	}
+	glassOp := a.ThemeMgr.EffectiveGlassOpacity()
+	bgOp := a.ThemeMgr.EffectiveBackgroundOpacity()
 	p := uiPrefs{
 		Appearance:           a.ThemeMgr.Appearance,
 		PaletteID:            a.ThemeMgr.PaletteID,
+		GlassEnabled:         a.ThemeMgr.GlassEnabled,
+		GlassOpacity:         &glassOp,
+		BackgroundKind:       a.ThemeMgr.BackgroundKind,
+		BackgroundPreset:     a.ThemeMgr.BackgroundPreset,
+		BackgroundImage:      a.ThemeMgr.BackgroundImage,
+		BackgroundOpacity:    &bgOp,
+		BackgroundBlur:       a.ThemeMgr.EffectiveBackgroundBlur(),
 		ChatWidth:            a.ThemeMgr.ChatWidth,
 		DiffScheme:           a.ThemeMgr.DiffScheme,
 		ShowLeftSidebar:      a.ShowLeftSidebar,
@@ -174,6 +212,9 @@ func (a *AppUI) prefsSnapshot() string {
 	f32 := func(v float32) string { return fmt.Sprintf("%.0f", v) }
 	return prefsSnap{
 		a.ThemeMgr.Appearance, a.ThemeMgr.PaletteID, a.ThemeMgr.ChatWidth, a.ThemeMgr.DiffScheme,
+		f(a.ThemeMgr.GlassEnabled), fmt.Sprintf("%.2f", a.ThemeMgr.EffectiveGlassOpacity()),
+		a.ThemeMgr.BackgroundKind, a.ThemeMgr.BackgroundPreset, a.ThemeMgr.BackgroundImage,
+		fmt.Sprintf("%.2f", a.ThemeMgr.EffectiveBackgroundOpacity()), fmt.Sprintf("%.1f", a.ThemeMgr.EffectiveBackgroundBlur()),
 		f(a.ShowLeftSidebar), f(a.ShowRightDrawer), f(a.ShowBottomTerminal),
 		f32(a.LeftSidebarWidth), f32(a.RightDrawerWidth), f32(a.BottomTerminalHeight),
 		f(a.FollowAgent), a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
@@ -181,7 +222,7 @@ func (a *AppUI) prefsSnapshot() string {
 	}.String()
 }
 
-type prefsSnap [16]string
+type prefsSnap [23]string
 
 func (p prefsSnap) String() string {
 	return strings.Join(p[:], "|")

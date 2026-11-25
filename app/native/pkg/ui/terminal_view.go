@@ -325,55 +325,60 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 		term = ts.Term()
 	}
 	if term != nil {
+		tc := a.ThemeMgr.Colors()
 		if a.termFocusWasFocused == nil {
 			a.termFocusWasFocused = make(map[*terminal.TerminalState]bool)
 		}
-		// Key by active session on the Context BEFORE View() builds the box so
-		// wheel/pointer/keyboard handlers bind stably to the keyed element.
-		termView := termplugin.View(c.Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)), term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
-			// No "Copy" item: the terminal copies on select (copy-on-select)
-			// and ⌘C is handled by the terminal itself; mygo exposes no API to
-			// read back the terminal selection to copy it manually.
-			if m.Item("Paste").Shortcut(ui.Cmd, ui.KeyV).Chosen() {
-				if text := mygo.Clipboard.ReadText(); text != "" {
-					term.Paste(text)
+		// Wrap the transparent terminal view in a box carrying tc.TerminalBackground
+		// so glass translucency and custom backgrounds show through naturally.
+		ui.Box(c).Grow(1).Fill().Background(tc.TerminalBackground).Children(func() {
+			// Key by active session on the Context BEFORE View() builds the box so
+			// wheel/pointer/keyboard handlers bind stably to the keyed element.
+			termView := termplugin.View(c.Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)), term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
+				// No "Copy" item: the terminal copies on select (copy-on-select)
+				// and ⌘C is handled by the terminal itself; mygo exposes no API to
+				// read back the terminal selection to copy it manually.
+				if m.Item("Paste").Shortcut(ui.Cmd, ui.KeyV).Chosen() {
+					if text := mygo.Clipboard.ReadText(); text != "" {
+						term.Paste(text)
+					}
 				}
-			}
-			if m.Item("Clear Terminal").Shortcut(ui.Cmd, ui.KeyK).Chosen() {
-				ts.SendInput("\x0c")
-			}
-			m.Separator()
-			if m.Item("Scroll Up (Page)").Shortcut(ui.Shift, ui.KeyPageUp).Chosen() {
-				ts.ScrollPageUp()
-			}
-			if m.Item("Scroll Down (Page)").Shortcut(ui.Shift, ui.KeyPageDown).Chosen() {
-				ts.ScrollPageDown()
-			}
-			if m.Item("Scroll to Bottom").Shortcut(ui.Cmd, ui.KeyEnd).Chosen() {
-				ts.ScrollToBottom()
-			}
-			m.Separator()
-			if m.Item("Add Snippet...").Chosen() {
-				sessID := ts.ActiveSessionID
-				clipText := mygo.Clipboard.ReadText()
-				a.OpenAddSnippetModal(sessID, clipText)
-			}
-			if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
-				sessID := ts.ActiveSessionID
-				a.OpenTerminalSnippetsModal(sessID, "", "")
-			}
-			if m.Item("Ask Agent Diagnostic").Chosen() {
-				a.askAgentFromTerminal()
-			}
-			m.Separator()
-			if m.Item("New Tab").Shortcut(ui.Cmd, ui.KeyT).Chosen() {
-				_ = ts.NewTab("")
-			}
-			if m.Item("Restart Shell").Chosen() {
-				_ = ts.Restart()
-			}
+				if m.Item("Clear Terminal").Shortcut(ui.Cmd, ui.KeyK).Chosen() {
+					ts.SendInput("\x0c")
+				}
+				m.Separator()
+				if m.Item("Scroll Up (Page)").Shortcut(ui.Shift, ui.KeyPageUp).Chosen() {
+					ts.ScrollPageUp()
+				}
+				if m.Item("Scroll Down (Page)").Shortcut(ui.Shift, ui.KeyPageDown).Chosen() {
+					ts.ScrollPageDown()
+				}
+				if m.Item("Scroll to Bottom").Shortcut(ui.Cmd, ui.KeyEnd).Chosen() {
+					ts.ScrollToBottom()
+				}
+				m.Separator()
+				if m.Item("Add Snippet...").Chosen() {
+					sessID := ts.ActiveSessionID
+					clipText := mygo.Clipboard.ReadText()
+					a.OpenAddSnippetModal(sessID, clipText)
+				}
+				if m.Item("Terminal Snippets...").Shortcut(ui.Alt, ui.KeyS).Chosen() {
+					sessID := ts.ActiveSessionID
+					a.OpenTerminalSnippetsModal(sessID, "", "")
+				}
+				if m.Item("Ask Agent Diagnostic").Chosen() {
+					a.askAgentFromTerminal()
+				}
+				m.Separator()
+				if m.Item("New Tab").Shortcut(ui.Cmd, ui.KeyT).Chosen() {
+					_ = ts.NewTab("")
+				}
+				if m.Item("Restart Shell").Chosen() {
+					_ = ts.Restart()
+				}
+			})
+			a.termFocusWasFocused[ts] = termView.Focused()
 		})
-		a.termFocusWasFocused[ts] = termView.Focused()
 	} else {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Text(c, "Terminal not available").TextColor(t.TextMuted)

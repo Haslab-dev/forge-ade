@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/editor"
@@ -75,62 +76,68 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			gitChanges = len(gm.Staged) + len(gm.Unstaged) + len(gm.Untracked)
 		}
 
-		ui.Column(c).Width(ActivityBarWidth).Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
-			Padding(8, 0).AlignItems(ui.Center).Gap(4).Children(func() {
-			activityButton(icons.TablerFiles, "Explorer", ActivityExplorer, 0, func() {
-				a.IsGitClientOpen = false
-				a.EditorActivity = ActivityExplorer
-			})
-			activityButton(icons.TablerSearch, "Search in Files (⇧⌘F)", ActivitySearch, len(a.FileSearchHits), func() {
-				a.IsGitClientOpen = false
-				a.EditorActivity = ActivitySearch
-			})
-			activityButton(icons.TablerGitBranch, "Git Client (⇧⌘G)", ActivityGit, gitChanges, func() {
-				if a.IsGitClientOpen {
+		actOuter := ui.Box(c).Width(ActivityBarWidth).FillHeight()
+		if a.glassBlurActive() {
+			actOuter.Material(glass.Blur{Radius: 18})
+		}
+		actOuter.Children(func() {
+			ui.Column(c).Fill().Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
+				Padding(8, 0).AlignItems(ui.Center).Gap(4).Children(func() {
+				activityButton(icons.TablerFiles, "Explorer", ActivityExplorer, 0, func() {
 					a.IsGitClientOpen = false
-				} else {
-					a.IsGitClientOpen = true
-					if a.Git != nil {
-						go a.Git.Refresh()
+					a.EditorActivity = ActivityExplorer
+				})
+				activityButton(icons.TablerSearch, "Search in Files (⇧⌘F)", ActivitySearch, len(a.FileSearchHits), func() {
+					a.IsGitClientOpen = false
+					a.EditorActivity = ActivitySearch
+				})
+				activityButton(icons.TablerGitBranch, "Git Client (⇧⌘G)", ActivityGit, gitChanges, func() {
+					if a.IsGitClientOpen {
+						a.IsGitClientOpen = false
+					} else {
+						a.IsGitClientOpen = true
+						if a.Git != nil {
+							go a.Git.Refresh()
+						}
+						a.loadGitRemoteURL()
 					}
-					a.loadGitRemoteURL()
-				}
-			})
-			activityButton(icons.TablerDatabase, "Database Inspector", ActivityDatabase, 0, func() {
-				a.IsGitClientOpen = false
-				a.EditorActivity = ActivityDatabase
-			})
-			ui.Box(c).Grow(1)
+				})
+				activityButton(icons.TablerDatabase, "Database Inspector", ActivityDatabase, 0, func() {
+					a.IsGitClientOpen = false
+					a.EditorActivity = ActivityDatabase
+				})
+				ui.Box(c).Grow(1)
 
-			// Remote SSH Button on ActivityBar
-			isSSH := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
-			sshTip := "Connect via Remote SSH / SFTP"
-			if isSSH {
-				sshTip = "Remote SSH Connected — Manage Connection"
-			}
-			sshBtn := ui.Row(c).Size(ActivityBarWidth-8, 38).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-				Cursor(ui.CursorPointer).Tooltip(sshTip)
-			sshBtn.Children(func() {
-				ic := ui.Icon(c, icons.TablerServer).Width(19).Height(19)
+				// Remote SSH Button on ActivityBar
+				isSSH := strings.HasPrefix(a.Workspace.RootDir, "ssh://")
+				sshTip := "Connect via Remote SSH / SFTP"
 				if isSSH {
-					ic.TextColor(tc.Accent)
-					ui.Box(c).Absolute().Top(4).Right(4).Size(6, 6).Radius(3).Background(tc.Success)
-				} else {
-					ic.TextColor(tc.IconMuted)
+					sshTip = "Remote SSH Connected — Manage Connection"
+				}
+				sshBtn := ui.Row(c).Size(ActivityBarWidth-8, 38).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+					Cursor(ui.CursorPointer).Tooltip(sshTip)
+				sshBtn.Children(func() {
+					ic := ui.Icon(c, icons.TablerServer).Width(19).Height(19)
+					if isSSH {
+						ic.TextColor(tc.Accent)
+						ui.Box(c).Absolute().Top(4).Right(4).Size(6, 6).Radius(3).Background(tc.Success)
+					} else {
+						ic.TextColor(tc.IconMuted)
+					}
+				})
+				if isSSH {
+					sshBtn.Background(tc.Accent.Alpha(0.14))
+				} else if sshBtn.Hovered() {
+					sshBtn.Background(tc.SidebarRowHover)
+				}
+				if sshBtn.Clicked() {
+					if isSSH {
+						a.ShowSSHQuickMenu = true
+					} else {
+						a.OpenSSHModal()
+					}
 				}
 			})
-			if isSSH {
-				sshBtn.Background(tc.Accent.Alpha(0.14))
-			} else if sshBtn.Hovered() {
-				sshBtn.Background(tc.SidebarRowHover)
-			}
-			if sshBtn.Clicked() {
-				if isSSH {
-					a.ShowSSHQuickMenu = true
-				} else {
-					a.OpenSSHModal()
-				}
-			}
 		})
 
 		if !a.IsGitClientOpen {
@@ -141,17 +148,23 @@ func (a *AppUI) renderEditorSurface(c *ui.Context) {
 			if sidebarW > 480 {
 				sidebarW = 480
 			}
-			ui.Column(c).Width(sidebarW).Shrink(0).Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
-				switch a.EditorActivity {
-				case ActivityExplorer:
-					a.renderFileTree(c)
-				case ActivitySearch:
-					a.renderFileSearch(c)
-				case ActivityGit:
-					a.renderGitPane(c)
-				case ActivityDatabase:
-					a.renderDatabasePane(c)
-				}
+			sbOuter := ui.Box(c).Width(sidebarW).Shrink(0).FillHeight()
+			if a.glassBlurActive() {
+				sbOuter.Material(glass.Blur{Radius: 18})
+			}
+			sbOuter.Children(func() {
+				ui.Column(c).Fill().Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).Children(func() {
+					switch a.EditorActivity {
+					case ActivityExplorer:
+						a.renderFileTree(c)
+					case ActivitySearch:
+						a.renderFileSearch(c)
+					case ActivityGit:
+						a.renderGitPane(c)
+					case ActivityDatabase:
+						a.renderDatabasePane(c)
+					}
+				})
 			})
 			RightResizeHandle(c, &a.LeftSidebarWidth, 200, 480, FileTreeDefaultWidth)
 		}
@@ -713,52 +726,70 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 	}
 	doc := em.ActiveDoc()
 	if doc == nil {
+		renderEditorEmptyCard := func(maxW float32, body func()) {
+			ui.Column(c).Grow(1).Fill().Center().Padding(24).Children(func() {
+				outer := ui.Box(c).Radius(16).MaxWidth(maxW).Clip()
+				if a.glassBlurActive() {
+					outer.Material(glass.Blur{Radius: 20})
+				}
+				outer.Children(func() {
+					ui.Column(c).Padding(26, 30).Radius(16).Center().Gap(12).
+						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Children(body)
+				})
+			})
+		}
+
 		// No workspace opened: welcome pane with Open Folder + the recent
 		// folders history (forge-ade's closeWorkspace flow, VS Code style).
 		if a.Workspace.RootDir == "" {
-			ui.Column(c).Grow(1).Center().Gap(14).Children(func() {
-				ui.Icon(c, icons.ForgeSparkSVG).Width(52).Height(52).TextColor(tc.Text)
+			renderEditorEmptyCard(500, func() {
+				ui.Icon(c, icons.ForgeSparkSVG).Width(48).Height(48).TextColor(tc.Text)
 				ui.Text(c, "Welcome to ForgeADE").FontSize(19).FontWeight(600).TextColor(tc.Text)
 				ui.Text(c, "Open a folder to start working, or pick one from your history.").FontSize(13).TextColor(tc.TextMuted)
 
 				openBtn := ui.Row(c).Height(34).Radius(8).Padding(0, 16).Gap(7).AlignItems(ui.Center).Justify(ui.Center).
-					Background(tc.Accent).Margin(6, 0, 0, 0)
+					Background(tc.Accent).Margin(4, 0, 0, 0).Cursor(ui.CursorPointer)
 				openBtn.Children(func() {
-					ui.Icon(c, icons.TablerFolder).Width(15).Height(15).TextColor(tc.Canvas)
-					ui.Text(c, "Open Folder…").FontSize(13).FontWeight(600).TextColor(tc.Canvas)
+					ui.Icon(c, icons.TablerFolder).Width(15).Height(15).TextColor(tc.AccentForeground)
+					ui.Text(c, "Open Folder…").FontSize(13).FontWeight(600).TextColor(tc.AccentForeground)
 				})
 				if openBtn.Clicked() {
 					a.openWorkspaceFolder()
 				}
 
 				if len(a.RecentWorkspaces) > 0 {
-					ui.Text(c, "RECENT FOLDERS").FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted).Margin(10, 0, 0, 0)
-					ui.Column(c).Width(420).Gap(2).Children(func() {
-						for _, ws := range a.RecentWorkspaces {
-							thisPath := ws
-							row := ui.Row(c.Key("recent-ws-"+thisPath)).Height(30).Radius(6).Padding(0, 10).Gap(8).AlignItems(ui.Center)
-							row.Children(func() {
-								ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
-								ui.Text(c, filepath.Base(thisPath)).FontSize(12).FontWeight(500).TextColor(tc.Text)
-								ui.Text(c, thisPath).FontSize(11).TextColor(tc.TextMuted).Grow(1).SingleLine()
-							})
-							if row.Hovered() {
-								row.Background(tc.Text.Alpha(0.05))
+					ui.Text(c, "RECENT FOLDERS").FontSize(10).FontWeight(700).LetterSpacing(0.6).TextColor(tc.TextMuted).Margin(8, 0, 0, 0)
+					ui.Scroll(c.Key("ed-recent-ws-scroll")).MaxHeight(260).Width(430).Children(func() {
+						ui.Column(c).FillWidth().Gap(2).Children(func() {
+							for _, ws := range a.RecentWorkspaces {
+								thisPath := ws
+								row := ui.Row(c.Key("recent-ws-"+thisPath)).Height(30).Radius(6).Padding(0, 10).Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+								row.Children(func() {
+									ui.Icon(c, icons.TablerFolder).Width(14).Height(14).TextColor(tc.IconMuted)
+									ui.Text(c, filepath.Base(thisPath)).FontSize(12).FontWeight(500).TextColor(tc.Text)
+									ui.Text(c, thisPath).FontSize(11).TextColor(tc.TextMuted).Grow(1).SingleLine()
+								})
+								if row.Hovered() {
+									row.Background(tc.ToolbarControlHover)
+								}
+								if row.Clicked() {
+									a.switchWorkspace(thisPath)
+								}
 							}
-							if row.Clicked() {
-								a.switchWorkspace(thisPath)
-							}
-						}
+						})
 					})
 				}
 
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Margin(8, 0, 0, 0).Children(func() {
-					sshBtn := ui.Row(c).Height(26).Radius(6).Padding(0, 10).Gap(5).AlignItems(ui.Center).
-						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Margin(6, 0, 0, 0).Children(func() {
+					sshBtn := ui.Row(c).Height(28).Radius(6).Padding(0, 12).Gap(5).AlignItems(ui.Center).
+						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
 					sshBtn.Children(func() {
 						ui.Icon(c, icons.TablerServer).Width(12).Height(12).TextColor(tc.Accent)
-						ui.Text(c, "Connect via SSH").FontSize(11).TextColor(tc.Text)
+						ui.Text(c, "Connect via SSH").FontSize(11.5).FontWeight(500).TextColor(tc.Text)
 					})
+					if sshBtn.Hovered() {
+						sshBtn.Background(tc.ToolbarControlHover)
+					}
 					if sshBtn.Clicked() {
 						a.OpenSSHModal()
 					}
@@ -768,7 +799,7 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 		}
 		if strings.HasPrefix(a.Workspace.RootDir, "ssh://") {
 			_, remotePath, displayHost, _ := parseSSHWorkspaceURI(a.Workspace.RootDir)
-			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
+			renderEditorEmptyCard(520, func() {
 				ui.Row(c).Size(48, 48).Radius(12).Background(tc.Accent.Alpha(0.12)).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 					ui.Icon(c, icons.TablerServer).Width(24).Height(24).TextColor(tc.Accent)
 				})
@@ -789,28 +820,28 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 					}
 
 					uploadBtn := ui.Row(c.Key("ed-ssh-upload")).Height(30).Radius(6).Padding(0, 12).
-						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+						Background(tc.SurfaceRaised).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
 						AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 					uploadBtn.Children(func() {
 						ui.Icon(c, icons.TablerUpload).Width(13).Height(13).TextColor(tc.Accent)
 						ui.Text(c, "Upload Files (SFTP)").FontSize(11).FontWeight(500).TextColor(tc.Text)
 					})
 					if uploadBtn.Hovered() {
-						uploadBtn.Background(tc.SurfaceRaised)
+						uploadBtn.Background(tc.ToolbarControlHover)
 					}
 					if uploadBtn.Clicked() {
 						a.OpenRemoteFileUploader("")
 					}
 
 					quickBtn := ui.Row(c.Key("ed-ssh-quick")).Height(30).Radius(6).Padding(0, 12).
-						Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+						Background(tc.SurfaceRaised).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
 						AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 					quickBtn.Children(func() {
 						ui.Icon(c, icons.TablerServer).Width(13).Height(13).TextColor(tc.Accent)
 						ui.Text(c, "Remote Actions").FontSize(11).FontWeight(500).TextColor(tc.Text)
 					})
 					if quickBtn.Hovered() {
-						quickBtn.Background(tc.SurfaceRaised)
+						quickBtn.Background(tc.ToolbarControlHover)
 					}
 					if quickBtn.Clicked() {
 						a.ShowSSHQuickMenu = true
@@ -819,16 +850,16 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 			})
 			return
 		}
-		ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
-			ui.Icon(c, icons.TablerFileCode).Width(40).Height(40).TextColor(tc.IconMuted.Alpha(0.6))
+		renderEditorEmptyCard(520, func() {
+			ui.Icon(c, icons.TablerFileCode).Width(40).Height(40).TextColor(tc.IconMuted.Alpha(0.75))
 			ui.Text(c, "No file open").FontSize(16).FontWeight(600).TextColor(tc.Text)
 			ui.Text(c, "Select a file from the workspace sidebar or press ⌘P to open.").FontSize(12).TextColor(tc.TextMuted)
 			ui.Row(c).Gap(8).Margin(6, 0, 0, 0).Children(func() {
 				openFileBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
 					Background(tc.Accent).AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 				openFileBtn.Children(func() {
-					ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.Canvas)
-					ui.Text(c, "Open File (⌘P)").FontSize(11).FontWeight(600).TextColor(tc.Canvas)
+					ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.AccentForeground)
+					ui.Text(c, "Open File (⌘P)").FontSize(11).FontWeight(600).TextColor(tc.AccentForeground)
 				})
 				if openFileBtn.Clicked() {
 					if a.Palette != nil {
@@ -837,28 +868,28 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 				}
 
 				shellBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
-					Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+					Background(tc.SurfaceRaised).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
 					AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 				shellBtn.Children(func() {
 					ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
 					ui.Text(c, "Open Shell in Pane").FontSize(11).FontWeight(500).TextColor(tc.Text)
 				})
 				if shellBtn.Hovered() {
-					shellBtn.Background(tc.Text.Alpha(0.05))
+					shellBtn.Background(tc.ToolbarControlHover)
 				}
 				if shellBtn.Clicked() {
 					a.openEditorTerminalTab("")
 				}
 
 				snipBtn := ui.Row(c).Height(30).Radius(6).Padding(0, 12).
-					Background(tc.Surface).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
+					Background(tc.SurfaceRaised).BorderWidth(1, 1, 1, 1).BorderColor(tc.Border).
 					AlignItems(ui.Center).Justify(ui.Center).Gap(6).Cursor(ui.CursorPointer)
 				snipBtn.Children(func() {
 					ui.Icon(c, icons.TablerBook).Width(13).Height(13).TextColor(tc.IconMuted)
 					ui.Text(c, "Snippets (⌥S)").FontSize(11).FontWeight(500).TextColor(tc.Text)
 				})
 				if snipBtn.Hovered() {
-					snipBtn.Background(tc.Text.Alpha(0.05))
+					snipBtn.Background(tc.ToolbarControlHover)
 				}
 				if snipBtn.Clicked() {
 					sessID := ""

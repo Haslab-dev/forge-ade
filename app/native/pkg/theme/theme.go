@@ -123,18 +123,67 @@ type PaletteDefinition struct {
 	LightTheme  func() *ui.Theme
 }
 
-// ThemeManager tracks theme preferences, appearance, font sizes, and layout options.
+// Built-in glass & background defaults and bounds.
+const (
+	DefaultGlassOpacity      = float32(0.42)
+	MinGlassOpacity          = float32(0.00)
+	MaxGlassOpacity          = float32(0.95)
+	DefaultBackgroundOpacity = float32(0.85)
+	MinBackgroundOpacity     = float32(0.00)
+	MaxBackgroundOpacity     = float32(1.00)
+	MaxBackgroundBlur        = float32(36)
+
+	BackgroundKindNone   = ""
+	BackgroundKindPreset = "preset"
+	BackgroundKindImage  = "image"
+
+	BackgroundPresetAurora   = "aurora"
+	BackgroundPresetMidnight = "midnight"
+	BackgroundPresetSunset   = "sunset"
+	BackgroundPresetOceanic  = "oceanic"
+	BackgroundPresetRose     = "rose"
+	BackgroundPresetEmerald  = "emerald"
+)
+
+// BackgroundPresetMeta describes a built-in ambient gradient background preset.
+type BackgroundPresetMeta struct {
+	ID          string
+	Name        string
+	Description string
+	SwatchHex   string
+	Angle       float32
+	DarkStops   []ui.GradientStop
+	LightStops  []ui.GradientStop
+	DarkGlowA   ui.Color
+	DarkGlowB   ui.Color
+	LightGlowA  ui.Color
+	LightGlowB  ui.Color
+}
+
+// ThemeManager tracks theme preferences, appearance, font sizes, glass translucency,
+// window backgrounds, and layout options.
 type ThemeManager struct {
 	Appearance string  // "dark", "light"
-	PaletteID  string  // "forge-default", "blossom", "grove", "ocean", "ember", "iris", "glass"
+	PaletteID  string  // "obsidian", "forge-default", "blossom", "grove", "ocean", "ember", "iris", "glass"
 	FontSize   float32 // base UI text size in px (text-ui-base = 0.875rem = 14px in the original at a 16px root)
 	FontFamily string  // "Geist" (the original) or "" for the system font
 	ChatWidth  string  // "comfortable" (736px), "wide" (928px), "full" (100%)
 	DiffScheme string  // "classic" (Green/Red), "modern" (Blue/Orange)
 	IsOpen     bool
 
+	// Semi-transparent glass & custom window background settings.
+	GlassEnabled         bool    // Enables semi-transparent glass chrome for any palette
+	GlassOpacity         float32 // 0.00..0.95 (uses DefaultGlassOpacity when unset)
+	GlassOpacitySet      bool    // Distinguishes explicit 0.00 from uninitialized struct
+	BackgroundKind       string  // "", "preset", "image"
+	BackgroundPreset     string  // Built-in gradient preset ID
+	BackgroundImage      string  // Path to custom background image file
+	BackgroundOpacity    float32 // 0.00..1.00 (uses DefaultBackgroundOpacity when unset)
+	BackgroundOpacitySet bool    // Distinguishes explicit 0.00 from uninitialized struct
+	BackgroundBlur       float32 // 0..36 DIPs Gaussian blur over the background layer
+
 	// SupportsVibrancy reports that the window carries an OS translucent
-	// material (mygo window Vibrancy). Only the Glass palette needs it.
+	// material (mygo window Vibrancy).
 	SupportsVibrancy bool
 
 	cacheKey      string
@@ -149,13 +198,17 @@ const DefaultFontSize = 14
 // NewThemeManager constructs the styling engine with default Obsidian dark appearance.
 func NewThemeManager() *ThemeManager {
 	return &ThemeManager{
-		Appearance: "dark",
-		PaletteID:  ThemePaletteObsidian,
-		FontSize:   DefaultFontSize,
-		FontFamily: FontSans,
-		ChatWidth:  "full",
-		DiffScheme: "classic",
-		IsOpen:     false,
+		Appearance:           "dark",
+		PaletteID:            ThemePaletteObsidian,
+		FontSize:             DefaultFontSize,
+		FontFamily:           FontSans,
+		ChatWidth:            "full",
+		DiffScheme:           "classic",
+		GlassOpacity:         DefaultGlassOpacity,
+		GlassOpacitySet:      true,
+		BackgroundOpacity:    DefaultBackgroundOpacity,
+		BackgroundOpacitySet: true,
+		IsOpen:               false,
 	}
 }
 
@@ -167,15 +220,79 @@ func (tm *ThemeManager) Toggle() {
 // IsDark reports the active appearance.
 func (tm *ThemeManager) IsDark() bool { return tm.Appearance != "light" }
 
+// IsGlassActive reports whether semi-transparent glass chrome is enabled
+// (either via the Glass palette or the GlassEnabled toggle on any palette).
+func (tm *ThemeManager) IsGlassActive() bool {
+	return tm.GlassEnabled || tm.PaletteID == ThemePaletteGlass
+}
+
+// EffectiveGlassOpacity returns the clamped glass opacity in [MinGlassOpacity, MaxGlassOpacity].
+func (tm *ThemeManager) EffectiveGlassOpacity() float32 {
+	v := tm.GlassOpacity
+	if !tm.GlassOpacitySet && v <= 0 {
+		return DefaultGlassOpacity
+	}
+	if v < MinGlassOpacity {
+		return MinGlassOpacity
+	}
+	if v > MaxGlassOpacity {
+		return MaxGlassOpacity
+	}
+	return v
+}
+
+// HasBackground reports whether a window background preset or image is active.
+func (tm *ThemeManager) HasBackground() bool {
+	switch tm.BackgroundKind {
+	case BackgroundKindPreset:
+		_, ok := LookupBackgroundPreset(tm.BackgroundPreset)
+		return ok
+	case BackgroundKindImage:
+		return strings.TrimSpace(tm.BackgroundImage) != ""
+	default:
+		return false
+	}
+}
+
+// EffectiveBackgroundOpacity returns the clamped background opacity in [MinBackgroundOpacity, MaxBackgroundOpacity].
+func (tm *ThemeManager) EffectiveBackgroundOpacity() float32 {
+	v := tm.BackgroundOpacity
+	if !tm.BackgroundOpacitySet && v <= 0 {
+		return DefaultBackgroundOpacity
+	}
+	if v < MinBackgroundOpacity {
+		return MinBackgroundOpacity
+	}
+	if v > MaxBackgroundOpacity {
+		return MaxBackgroundOpacity
+	}
+	return v
+}
+
+// EffectiveBackgroundBlur returns the clamped background blur sigma in [0, MaxBackgroundBlur].
+func (tm *ThemeManager) EffectiveBackgroundBlur() float32 {
+	if tm.BackgroundBlur <= 0 {
+		return 0
+	}
+	if tm.BackgroundBlur > MaxBackgroundBlur {
+		return MaxBackgroundBlur
+	}
+	return tm.BackgroundBlur
+}
+
 // Colors returns the full ForgeADE role set for the active appearance.
 func (tm *ThemeManager) Colors() ThemeColors {
-	if tm.PaletteID == ThemePaletteGlass && !tm.SupportsVibrancy {
-		// No OS material behind the window (e.g. Linux): translucent chrome
-		// would expose the raw desktop unblurred — fall back to the opaque
-		// base palette instead.
-		return PaletteColors(ThemePaletteDefault, tm.IsDark())
+	base := BasePaletteColors(tm.PaletteID, tm.IsDark())
+	if tm.IsGlassActive() {
+		if !tm.SupportsVibrancy && !tm.HasBackground() {
+			// No OS material behind the window (e.g. Linux) and no custom
+			// background layer: translucent chrome would expose the raw desktop
+			// unblurred — fall back to opaque base colors instead.
+			return base
+		}
+		return GlassChrome(base, tm.IsDark(), tm.EffectiveGlassOpacity())
 	}
-	return PaletteColors(tm.PaletteID, tm.IsDark())
+	return base
 }
 
 // AvailablePalettes returns all built-in ForgeADE color palettes.
@@ -230,7 +347,10 @@ func (tm *ThemeManager) ActiveTheme() *ui.Theme {
 }
 
 func (tm *ThemeManager) themeCacheKey() string {
-	return fmt.Sprintf("%s|%s|%g|%s|%s", tm.Appearance, tm.PaletteID, tm.FontSize, tm.FontFamily, tm.DiffScheme)
+	glassActive := tm.IsGlassActive() && (tm.SupportsVibrancy || tm.HasBackground())
+	return fmt.Sprintf("%s|%s|%g|%s|%s|%v|%.2f",
+		tm.Appearance, tm.PaletteID, tm.FontSize, tm.FontFamily, tm.DiffScheme,
+		glassActive, tm.EffectiveGlassOpacity())
 }
 
 func (tm *ThemeManager) ensureCachedThemes() {
@@ -296,8 +416,153 @@ func (tm *ThemeManager) ChatLaneWidth() float32 {
 // IsKnownPalette reports whether a palette id is one of the built-in packs.
 func IsKnownPalette(id string) bool {
 	switch id {
-	case "forge-default", "blossom", "grove", "ocean", "ember", "iris":
+	case ThemePaletteObsidian, ThemePaletteDefault, ThemePaletteBlossom,
+		ThemePaletteGrove, ThemePaletteOcean, ThemePaletteEmber,
+		ThemePaletteIris, ThemePaletteGlass:
 		return true
 	}
 	return false
+}
+
+// AvailableBackgroundPresets returns the built-in ambient gradient background presets.
+func AvailableBackgroundPresets() []BackgroundPresetMeta {
+	return []BackgroundPresetMeta{
+		{
+			ID:          BackgroundPresetAurora,
+			Name:        "Aurora",
+			Description: "Deep indigo sky with emerald & violet northern glow",
+			SwatchHex:   "#38bdf8",
+			Angle:       135,
+			DarkStops: []ui.GradientStop{
+				{Color: ui.Hex("#090d16"), At: 0},
+				{Color: ui.Hex("#0f172a"), At: 0.45},
+				{Color: ui.Hex("#132a3e"), At: 0.78},
+				{Color: ui.Hex("#1e1b4b"), At: 1},
+			},
+			LightStops: []ui.GradientStop{
+				{Color: ui.Hex("#eef2ff"), At: 0},
+				{Color: ui.Hex("#e0f2fe"), At: 0.5},
+				{Color: ui.Hex("#ecfdf5"), At: 1},
+			},
+			DarkGlowA:  ui.RGBA(56, 189, 248, 0.28),
+			DarkGlowB:  ui.RGBA(168, 85, 247, 0.24),
+			LightGlowA: ui.RGBA(56, 189, 248, 0.25),
+			LightGlowB: ui.RGBA(167, 139, 250, 0.22),
+		},
+		{
+			ID:          BackgroundPresetMidnight,
+			Name:        "Midnight",
+			Description: "Subtle slate-carbon gradient with cobalt depth",
+			SwatchHex:   "#4f46e5",
+			Angle:       150,
+			DarkStops: []ui.GradientStop{
+				{Color: ui.Hex("#07080d"), At: 0},
+				{Color: ui.Hex("#0d111c"), At: 0.55},
+				{Color: ui.Hex("#141b30"), At: 1},
+			},
+			LightStops: []ui.GradientStop{
+				{Color: ui.Hex("#f8fafc"), At: 0},
+				{Color: ui.Hex("#eef2ff"), At: 0.55},
+				{Color: ui.Hex("#e2e8f0"), At: 1},
+			},
+			DarkGlowA:  ui.RGBA(99, 102, 241, 0.24),
+			DarkGlowB:  ui.RGBA(30, 64, 175, 0.20),
+			LightGlowA: ui.RGBA(99, 102, 241, 0.16),
+			LightGlowB: ui.RGBA(148, 163, 184, 0.20),
+		},
+		{
+			ID:          BackgroundPresetOceanic,
+			Name:        "Oceanic",
+			Description: "Deep abyssal teal and electric cyan horizon",
+			SwatchHex:   "#0ea5e9",
+			Angle:       140,
+			DarkStops: []ui.GradientStop{
+				{Color: ui.Hex("#04121d"), At: 0},
+				{Color: ui.Hex("#082436"), At: 0.5},
+				{Color: ui.Hex("#0c3b4f"), At: 1},
+			},
+			LightStops: []ui.GradientStop{
+				{Color: ui.Hex("#ecfeff"), At: 0},
+				{Color: ui.Hex("#e0f2fe"), At: 0.55},
+				{Color: ui.Hex("#dbeafe"), At: 1},
+			},
+			DarkGlowA:  ui.RGBA(14, 165, 233, 0.28),
+			DarkGlowB:  ui.RGBA(20, 184, 166, 0.22),
+			LightGlowA: ui.RGBA(14, 165, 233, 0.22),
+			LightGlowB: ui.RGBA(45, 212, 191, 0.18),
+		},
+		{
+			ID:          BackgroundPresetSunset,
+			Name:        "Sunset",
+			Description: "Warm dusk amber fading into deep plum",
+			SwatchHex:   "#f97316",
+			Angle:       135,
+			DarkStops: []ui.GradientStop{
+				{Color: ui.Hex("#180c14"), At: 0},
+				{Color: ui.Hex("#2b121c"), At: 0.5},
+				{Color: ui.Hex("#381b14"), At: 1},
+			},
+			LightStops: []ui.GradientStop{
+				{Color: ui.Hex("#fff7ed"), At: 0},
+				{Color: ui.Hex("#ffedd5"), At: 0.5},
+				{Color: ui.Hex("#fce7f3"), At: 1},
+			},
+			DarkGlowA:  ui.RGBA(249, 115, 22, 0.25),
+			DarkGlowB:  ui.RGBA(236, 72, 153, 0.22),
+			LightGlowA: ui.RGBA(251, 146, 60, 0.24),
+			LightGlowB: ui.RGBA(244, 114, 182, 0.18),
+		},
+		{
+			ID:          BackgroundPresetRose,
+			Name:        "Sakura",
+			Description: "Soft rosewood and lavender mist",
+			SwatchHex:   "#f43f5e",
+			Angle:       145,
+			DarkStops: []ui.GradientStop{
+				{Color: ui.Hex("#150b16"), At: 0},
+				{Color: ui.Hex("#241127"), At: 0.55},
+				{Color: ui.Hex("#2f1423"), At: 1},
+			},
+			LightStops: []ui.GradientStop{
+				{Color: ui.Hex("#fff1f2"), At: 0},
+				{Color: ui.Hex("#fce7f3"), At: 0.55},
+				{Color: ui.Hex("#f3e8ff"), At: 1},
+			},
+			DarkGlowA:  ui.RGBA(244, 63, 94, 0.24),
+			DarkGlowB:  ui.RGBA(192, 132, 252, 0.20),
+			LightGlowA: ui.RGBA(244, 63, 94, 0.18),
+			LightGlowB: ui.RGBA(192, 132, 252, 0.20),
+		},
+		{
+			ID:          BackgroundPresetEmerald,
+			Name:        "Forest",
+			Description: "Mossy obsidian pine with soft sage luminescence",
+			SwatchHex:   "#10b981",
+			Angle:       140,
+			DarkStops: []ui.GradientStop{
+				{Color: ui.Hex("#07130f"), At: 0},
+				{Color: ui.Hex("#0c231b"), At: 0.55},
+				{Color: ui.Hex("#102f25"), At: 1},
+			},
+			LightStops: []ui.GradientStop{
+				{Color: ui.Hex("#ecfdf5"), At: 0},
+				{Color: ui.Hex("#d1fae5"), At: 0.55},
+				{Color: ui.Hex("#e0f2fe"), At: 1},
+			},
+			DarkGlowA:  ui.RGBA(16, 185, 129, 0.24),
+			DarkGlowB:  ui.RGBA(52, 211, 153, 0.16),
+			LightGlowA: ui.RGBA(16, 185, 129, 0.20),
+			LightGlowB: ui.RGBA(56, 189, 248, 0.16),
+		},
+	}
+}
+
+// LookupBackgroundPreset returns metadata for a built-in background preset.
+func LookupBackgroundPreset(id string) (BackgroundPresetMeta, bool) {
+	for _, p := range AvailableBackgroundPresets() {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return BackgroundPresetMeta{}, false
 }

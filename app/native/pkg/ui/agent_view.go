@@ -273,6 +273,50 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 	}
 }
 
+func hasAssistantVisibleBody(m *agent.ChatMessage) bool {
+	if m == nil {
+		return false
+	}
+	return len(m.Blocks) > 0 || m.Text != "" || m.Thinking != "" || m.IsThinking ||
+		len(m.Tools) > 0 || len(m.Changes) > 0 ||
+		(m.PendingApproval != nil && !m.PendingApproval.Resolved) ||
+		len(m.PendingQuestions) > 0
+}
+
+func (a *AppUI) renderAssistantResponseCard(c *ui.Context, tc theme.ThemeColors, sessionID string, lastAssistantID int, m *agent.ChatMessage) {
+	if !hasAssistantVisibleBody(m) {
+		return
+	}
+	ui.Column(c).FillWidth().Padding(14, 16).Radius(12).Gap(8).
+		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+		a.renderAssistantMessageBody(c, tc, sessionID, lastAssistantID, m)
+	})
+}
+
+func renderUserPromptCopyRow(c *ui.Context, tc theme.ThemeColors, key string, m *agent.ChatMessage) {
+	if m == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(m.Text)
+	if strings.HasPrefix(trimmed, "## Session Handoff") || strings.HasPrefix(trimmed, "## Task from Coordinator") {
+		return
+	}
+	ui.Row(c).FillWidth().Justify(ui.End).Padding(2, 2, 0, 0).Children(func() {
+		copyBtn := ui.Row(c.Key(key)).Size(22, 22).Radius(4).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+		copyBtn.Label("Copy prompt").Tooltip("Copy prompt")
+		copyBtn.Children(func() {
+			ui.Icon(c, icons.TablerCopy).Width(13).Height(13).TextColor(tc.IconMuted)
+		})
+		if copyBtn.Hovered() {
+			copyBtn.Background(tc.Text.Alpha(0.06))
+		}
+		if copyBtn.Clicked() {
+			c.WriteClipboard(m.Text)
+			c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
+		}
+	})
+}
+
 // renderUserMessageBubble renders a user turn: either a compact collapsible
 // Orca-style Handoff / Coordinator Task card (so long handoff context never
 // bloats the chat) or a clean flat neutral user bubble.
@@ -543,29 +587,15 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 					}
 					m := msgs[i]
 					if m.Role == "user" {
-						uRow := ui.Row(c.Key("urow")).Padding(10, rightInset, 8, leftInset).Justify(ui.End).Gap(6).AlignItems(ui.Center)
-						uRow.Children(func() {
-							if uRow.Hovered() && !strings.HasPrefix(strings.TrimSpace(m.Text), "## Session Handoff") && !strings.HasPrefix(strings.TrimSpace(m.Text), "## Task from Coordinator") {
-								copyBtn := ui.Row(c.Key("ucopy-"+fmt.Sprint(m.ID))).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-								copyBtn.Tooltip("Copy prompt")
-								copyBtn.Children(func() {
-									ui.Icon(c, icons.TablerCopy).Width(12).Height(12).TextColor(tc.TextMuted)
-								})
-								if copyBtn.Hovered() {
-									copyBtn.Background(tc.Text.Alpha(0.06))
-								}
-								if copyBtn.Clicked() {
-									mygo.Clipboard.WriteText(m.Text)
-									c.AddToast(ui.Toast{Title: "Copied", Type: "success"})
-								}
-							}
+						ui.Column(c.Key("urow")).Padding(10, rightInset, 8, leftInset).Gap(4).AlignItems(ui.End).Children(func() {
 							a.renderUserMessageBubble(c, tc, sessionID, m, 620)
+							renderUserPromptCopyRow(c, tc, "ucopy-"+fmt.Sprint(m.ID), m)
 						})
 					} else {
-						// Agent message: ZCode lane with work traces -> markdown ->
-						// changes card -> bottom-left action icons + timestamp.
-						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, leftInset).Gap(8).Children(func() {
-							a.renderAssistantMessageBody(c, tc, sessionID, lastAssistantID, m)
+						// Agent message: response card with work traces -> markdown ->
+						// changes card, followed by bottom-left action icons + timestamp.
+						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, leftInset).Gap(6).Children(func() {
+							a.renderAssistantResponseCard(c, tc, sessionID, lastAssistantID, m)
 
 							// 5. ZCode Bottom-Left Action Icons + Timestamp
 							if m.Done && (m.Text != "" || len(m.Tools) > 0) {
