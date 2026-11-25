@@ -4469,6 +4469,45 @@ func (as *AgentState) LastTurnWrittenFiles(sessionID string) []string {
 	return nil
 }
 
+// SessionWrittenFiles returns all files written or edited across completed/past
+// assistant turns in the session, newest first and deduplicated.
+func (as *AgentState) SessionWrittenFiles(sessionID string) []string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	for _, s := range as.Sessions {
+		if s.ID != sessionID {
+			continue
+		}
+		seen := make(map[string]bool)
+		var out []string
+		for i := len(s.Messages) - 1; i >= 0; i-- {
+			m := s.Messages[i]
+			if m == nil || m.Role != "assistant" || len(m.Tools) == 0 {
+				continue
+			}
+			for j := len(m.Tools) - 1; j >= 0; j-- {
+				t := m.Tools[j]
+				if t == nil {
+					continue
+				}
+				name := strings.ToLower(t.ToolName)
+				isFileTool := strings.Contains(name, "write") || strings.Contains(name, "edit") ||
+					strings.Contains(name, "create") || strings.Contains(name, "save") ||
+					strings.Contains(name, "apply")
+				if !isFileTool {
+					continue
+				}
+				if p := writeToolPath(t.Command); p != "" && !seen[p] {
+					seen[p] = true
+					out = append(out, p)
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // SessionWorkspacePath returns the workspace folder a session runs in.
 func (as *AgentState) SessionWorkspacePath(sessionID string) string {
 	as.mu.Lock()

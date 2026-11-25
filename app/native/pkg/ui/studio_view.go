@@ -356,7 +356,7 @@ func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors
 						ui.Text(c, "New").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
 					})
 					if newTaskBtn.Clicked() {
-						a.handleNewTask()
+						a.handleNewStudioTask()
 					}
 
 					// Collapse the chat pane so the viewer gets full width.
@@ -2247,6 +2247,9 @@ func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 				continue
 			}
 			if imported {
+				a.studioArtifactScanAt = time.Time{}
+				a.studioArtifactCache = nil
+				a.studioWebviewReload = true
 				a.queueToast(ui.Toast{
 					Title:       "Studio Import (" + strings.ToUpper(flavor) + ")",
 					Description: filepath.Base(full) + " → " + proj.Name,
@@ -2532,12 +2535,13 @@ func (a *AppUI) openStudioWebView(targetPath, bg string) {
 	}
 	url := "file://" + targetPath
 	if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
-		if a.StudioWebViewURL == url {
+		if a.StudioWebViewURL == url && !a.studioWebviewReload {
 			return
 		}
 		a.StudioWebView.Destroy()
 		a.StudioWebView = nil
 	}
+	a.studioWebviewReload = false
 	wv, err := a.Window.NewWebView(mygo.WebViewOptions{URL: url, BackgroundColor: bg})
 	if err == nil {
 		a.StudioWebView = wv
@@ -2682,6 +2686,185 @@ func (a *AppUI) studioRunDirector(prompt string) {
 	}
 }
 
+// studioPromptRequestsNewFile detects explicit user intent to create a separate
+// new artifact file rather than modifying an existing one.
+func studioPromptRequestsNewFile(prompt string) bool {
+	p := strings.ToLower(prompt)
+	for _, kw := range []string{
+		"new file", "file baru", "buat baru", "bikin baru", "buatkan baru",
+		"create a new", "create new", "create another", "make a new", "make new",
+		"separate file", "terpisah", "project baru", "dari awal", "from scratch",
+		"yang baru", "lagi yang lain", "versi baru",
+	} {
+		if strings.Contains(p, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// studioTargetDir resolves the domain-specific directory where Studio artifacts
+// should be written for the session (workspace/<domain> or ~/.forge-ade/<domain>).
+func (a *AppUI) studioTargetDir(sessionID string, targetType corestudio.ArtifactType) string {
+	sub := "slides"
+	switch targetType {
+	case corestudio.ArtifactTypeMotion:
+		sub = "motion"
+	case corestudio.ArtifactTypeCodeJS:
+		sub = "3d"
+	case corestudio.ArtifactTypeSlides:
+		sub = "slides"
+	}
+	base := ""
+	if a.Agent != nil && sessionID != "" {
+		base = strings.TrimSpace(a.Agent.SessionWorkspacePath(sessionID))
+	}
+	if base == "" && a.Workspace != nil {
+		base = strings.TrimSpace(a.Workspace.RootDir)
+	}
+	if base == "" || strings.HasPrefix(base, "ssh://") {
+		if home, err := os.UserHomeDir(); err == nil {
+			base = filepath.Join(home, ".forge-ade")
+		}
+	}
+	if base == "" {
+		return sub
+	}
+	return filepath.Join(base, sub)
+}
+
+// studioSlugifyPrompt converts a user prompt into a concise lowercase kebab-case
+// filename slug suitable for slides/motion/3D artifacts.
+func studioSlugifyPrompt(prompt string) string {
+	skip := map[string]bool{
+		"buat": true, "buatkan": true, "bikin": true, "tolong": true, "yang": true,
+		"untuk": true, "dengan": true, "tentang": true, "dari": true, "baru": true,
+		"file": true, "create": true, "make": true, "generate": true, "build": true,
+		"please": true, "with": true, "about": true, "from": true, "new": true,
+		"the": true, "and": true, "for": true, "into": true, "another": true,
+		"3d": true, "slide": true, "slides": true, "motion": true, "deck": true,
+	}
+	var cur strings.Builder
+	var words []string
+	flush := func() {
+		if cur.Len() == 0 {
+			return
+		}
+		w := cur.String()
+		cur.Reset()
+		if !skip[w] && len(w) > 1 {
+			words = append(words, w)
+		}
+	}
+	for _, r := range strings.ToLower(prompt) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			cur.WriteRune(r)
+		} else {
+			flush()
+			if len(words) >= 4 {
+				break
+			}
+		}
+	}
+	flush()
+	if len(words) > 4 {
+		words = words[:4]
+	}
+	if len(words) == 0 {
+		return "custom"
+	}
+	slug := strings.Join(words, "-")
+	if len(slug) > 42 {
+		slug = strings.TrimRight(slug[:42], "-")
+	}
+	if slug == "" {
+		return "custom"
+	}
+	return slug
+}
+
+// studioSuggestUniqueArtifactPath returns a non-colliding file path in dir for
+// targetType using a domain prefix (slides-, motion-, scene3d-) + prompt slug.
+func studioSuggestUniqueArtifactPath(dir string, targetType corestudio.ArtifactType, prompt string) string {
+	prefix := "slides"
+	switch targetType {
+	case corestudio.ArtifactTypeMotion:
+		prefix = "motion"
+	case corestudio.ArtifactTypeCodeJS:
+		prefix = "scene3d"
+	}
+	slug := studioSlugifyPrompt(prompt)
+	if strings.HasPrefix(slug, prefix+"-") {
+		slug = strings.TrimPrefix(slug, prefix+"-")
+	}
+	if slug == "" {
+		slug = "custom"
+	}
+	stem := prefix + "-" + slug
+	candidate := filepath.Join(dir, stem+".html")
+	if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		return candidate
+	}
+	for i := 2; i <= 99; i++ {
+		next := filepath.Join(dir, fmt.Sprintf("%s-%d.html", stem, i))
+		if _, err := os.Stat(next); os.IsNotExist(err) {
+			return next
+		}
+	}
+	return filepath.Join(dir, fmt.Sprintf("%s-%d.html", stem, time.Now().Unix()))
+}
+
+// studioExistingArtifactNames lists existing artifact filenames in dir so the
+// prompt can warn the agent never to overwrite them.
+func studioExistingArtifactNames(dir string, limit int) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		switch ext {
+		case ".html", ".htm", ".md", ".js", ".jsx", ".tsx":
+			names = append(names, e.Name())
+		}
+		if limit > 0 && len(names) >= limit {
+			break
+		}
+	}
+	return names
+}
+
+// studioSessionActiveArtifact returns the most recent artifact file written by
+// sessionID that belongs to targetType, or "" if the session has not authored
+// an artifact for that domain yet.
+func (a *AppUI) studioSessionActiveArtifact(sessionID string, targetType corestudio.ArtifactType) string {
+	if a.Agent == nil || sessionID == "" {
+		return ""
+	}
+	for _, raw := range a.Agent.SessionWrittenFiles(sessionID) {
+		for _, full := range a.studioResolveImportPath(sessionID, raw) {
+			if _, err := os.Stat(full); err != nil {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(full))
+			switch ext {
+			case ".html", ".htm", ".md", ".js":
+			default:
+				continue
+			}
+			_, typ := detectPathFlavor(full)
+			if typ == targetType {
+				return full
+			}
+		}
+	}
+	return ""
+}
+
 // decorateStudioPrompt injects Open Design system guidelines and studio capabilities
 // into the agent turn prompt when executing in Studio Mode.
 func (a *AppUI) decorateStudioPrompt(sessionID, prompt string) string {
@@ -2689,9 +2872,44 @@ func (a *AppUI) decorateStudioPrompt(sessionID, prompt string) string {
 		return prompt
 	}
 
+	var targetType corestudio.ArtifactType
+	intent := detectStudioIntent(prompt)
+	switch intent {
+	case IntentMotion:
+		targetType = corestudio.ArtifactTypeMotion
+	case Intent3D:
+		targetType = corestudio.ArtifactTypeCodeJS
+	case IntentSlides:
+		targetType = corestudio.ArtifactTypeSlides
+	case IntentImage:
+		targetType = corestudio.ArtifactTypeImage
+	case IntentVideo:
+		targetType = corestudio.ArtifactTypeVideo
+	}
+	if targetType == "" && a.Studio != nil {
+		if p := a.Studio.ActiveProject(); p != nil {
+			targetType = p.Type
+		}
+	}
+	if targetType == "" {
+		targetType = corestudio.ArtifactTypeSlides
+	}
+
+	isCanvasDomain := targetType == corestudio.ArtifactTypeSlides ||
+		targetType == corestudio.ArtifactTypeMotion ||
+		targetType == corestudio.ArtifactTypeCodeJS
+
+	targetDir := a.studioTargetDir(sessionID, targetType)
+	existing := studioExistingArtifactNames(targetDir, 12)
+	sessionFile := a.studioSessionActiveArtifact(sessionID, targetType)
+	createNew := isCanvasDomain && (sessionFile == "" || studioPromptRequestsNewFile(prompt))
+	suggestedPath := ""
+	if createNew {
+		suggestedPath = studioSuggestUniqueArtifactPath(targetDir, targetType, prompt)
+	}
+
 	var b strings.Builder
 	b.WriteString("[FORGE STUDIO ENVIRONMENT — OPEN DESIGN SKILLS ACTIVATED]\n")
-	intent := detectStudioIntent(prompt)
 	if intent != IntentGeneral {
 		b.WriteString(fmt.Sprintf("[STUDIO INTENT ROUTER: DETECTED TARGET = %s]\n", strings.ToUpper(string(intent))))
 	}
@@ -2700,20 +2918,49 @@ func (a *AppUI) decorateStudioPrompt(sessionID, prompt string) string {
 	b.WriteString("STUDIO CORE CAPABILITIES & ENGINE STACKS:\n")
 	b.WriteString("1. Generate Image: Flux / Imagen / Visual Node API | Source: Prompt + Seed + ControlNet JSON | Formats: PNG, WebP, SVG\n")
 	b.WriteString("2. Generate Video: Veo / Kling / Runway / Wan API | Source: Storyboard + Keyframe Spec | Formats: MP4, WebM\n")
-	b.WriteString("3. Make Slides (PPT): HTML/CSS + PptxGenJS or Slidev | Source: Structured Slide JSON / Markdown | Formats: .pptx, PDF, Web (write to slides.html, deck.html, or slides.md in workspace or ~/.forge-ade/slides/)\n")
-	b.WriteString("4. Make Motion Video + TTS: Remotion (React) + ElevenLabs | Source: React TSX + Audio Timestamp JSON, or deterministic 60fps HTML5 canvas seekable per-frame | Formats: MP4 via headless render (write to motion.html in workspace or ~/.forge-ade/motion/motion.html)\n")
-	b.WriteString("5. 2D & 3D in JS: Three.js / R3F, PixiJS, P5.js | Source: Live JS/TSX Sandbox with OrbitControls | Formats: Interactive Web, .glb, MP4 (write to scene3d.html or scene.js in workspace or ~/.forge-ade/3d/)\n\n")
+	b.WriteString("3. Make Slides (PPT): HTML/CSS + PptxGenJS or Slidev | Source: Structured Slide JSON / Markdown | Formats: .pptx, PDF, Web (create a uniquely named file under slides/, e.g. slides-<topic>.html rather than overwriting an existing slides.html)\n")
+	b.WriteString("4. Make Motion Video + TTS: Remotion (React) + ElevenLabs | Source: React TSX + Audio Timestamp JSON, or deterministic 60fps HTML5 canvas seekable per-frame | Formats: MP4 via headless render (create a uniquely named file under motion/, e.g. motion-<topic>.html rather than overwriting an existing motion.html)\n")
+	b.WriteString("5. 2D & 3D in JS: Three.js / R3F, PixiJS, P5.js | Source: Live JS/TSX Sandbox with OrbitControls | Formats: Interactive Web, .glb, MP4 (create a uniquely named file under 3d/, e.g. scene3d-<topic>.html rather than overwriting an existing scene3d.html)\n\n")
+
+	if isCanvasDomain {
+		if createNew {
+			b.WriteString("FILE CREATION RULE (CRITICAL — DO NOT OVERWRITE EXISTING FILES):\n")
+			b.WriteString("- You MUST create a BRAND NEW file for this request. NEVER overwrite or rewrite existing files.\n")
+			b.WriteString(fmt.Sprintf("- Recommended new file path: %s\n", suggestedPath))
+			b.WriteString(fmt.Sprintf("- If you pick a different descriptive filename in %s, ensure it does NOT already exist and keeps the domain prefix (slides- / motion- / scene3d-).\n", targetDir))
+			if len(existing) > 0 {
+				b.WriteString(fmt.Sprintf("- Existing files to preserve untouched: %s\n", strings.Join(existing, ", ")))
+			}
+			b.WriteString("\n")
+		} else {
+			b.WriteString("FILE TARGET FOR THIS SESSION FOLLOW-UP:\n")
+			b.WriteString(fmt.Sprintf("- Update this session's active artifact file: %s\n", sessionFile))
+			b.WriteString("- Do NOT overwrite other unrelated files in the directory. If the prompt asks for a brand-new separate creation, write to a new uniquely named file instead.\n\n")
+		}
+	}
 
 	if a.Studio != nil {
 		if p := a.Studio.ActiveProject(); p != nil {
 			b.WriteString(fmt.Sprintf("ACTIVE STUDIO TARGET: %s (Type: %s)\n", p.Name, p.Type))
 			switch p.Type {
 			case corestudio.ArtifactTypeSlides:
-				b.WriteString("PRIMARY DIRECTIVE: Create / update slide deck. Generate slides.html (with 16:9 responsive presentation stage, showSlide() pagination, and keyboard nav) or markdown deck.\n")
+				if suggestedPath != "" {
+					b.WriteString(fmt.Sprintf("PRIMARY DIRECTIVE: Create a NEW slide deck at %s (16:9 responsive presentation stage, showSlide() pagination, keyboard nav).\n", suggestedPath))
+				} else {
+					b.WriteString("PRIMARY DIRECTIVE: Update the current slide deck (16:9 responsive presentation stage, showSlide() pagination, keyboard nav).\n")
+				}
 			case corestudio.ArtifactTypeMotion:
-				b.WriteString("PRIMARY DIRECTIVE: Create / update motion composition. Generate motion.html (1920x1080 canvas/HTML5 stage, seekable per-frame timeline, and TTS audio timestamp sync) in ~/.forge-ade/motion/motion.html or workspace.\n")
+				if suggestedPath != "" {
+					b.WriteString(fmt.Sprintf("PRIMARY DIRECTIVE: Create a NEW motion composition at %s (1920x1080 canvas/HTML5 stage, seekable per-frame timeline, TTS audio timestamp sync).\n", suggestedPath))
+				} else {
+					b.WriteString("PRIMARY DIRECTIVE: Update the current motion composition (1920x1080 canvas/HTML5 stage, seekable per-frame timeline, TTS audio timestamp sync).\n")
+				}
 			case corestudio.ArtifactTypeCodeJS:
-				b.WriteString("PRIMARY DIRECTIVE: Create / update interactive 3D/2D scene. Generate scene3d.html or scene.js using Three.js with OrbitControls, responsive viewport resize, and clean lighting in ~/.forge-ade/3d/ or workspace.\n")
+				if suggestedPath != "" {
+					b.WriteString(fmt.Sprintf("PRIMARY DIRECTIVE: Create a NEW interactive 3D/2D scene at %s using Three.js with OrbitControls, responsive viewport resize, and clean lighting.\n", suggestedPath))
+				} else {
+					b.WriteString("PRIMARY DIRECTIVE: Update the current interactive 3D/2D scene using Three.js with OrbitControls, responsive viewport resize, and clean lighting.\n")
+				}
 			case corestudio.ArtifactTypeImage:
 				b.WriteString("PRIMARY DIRECTIVE: Configure image generation prompt, seed, sampler, and visual node workflow graph.\n")
 			case corestudio.ArtifactTypeVideo:

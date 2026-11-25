@@ -626,6 +626,7 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *subagentSnapshot) {
 						txt := strings.TrimSpace(msg.text)
 						if txt != "" {
 							a.SideChatMd.Theme = a.ThemeMgr.MarkdownTheme()
+							a.SideChatMd.OnLink = a.openMarkdownLink
 							markdown.View(c, txt, &a.SideChatMd)
 						}
 					})

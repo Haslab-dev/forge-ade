@@ -1438,6 +1438,7 @@ func (a *AppUI) renderSideChatPane(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	a.SideChatMd.Theme = a.ThemeMgr.MarkdownTheme()
 	a.SideChatMd.Reveal = &markdown.Reveal{Unit: markdown.AtOnce, Fade: -1}
+	a.SideChatMd.OnLink = a.openMarkdownLink
 
 	sess := a.getActiveSideChat()
 

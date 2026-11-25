@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,8 +9,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
 	"unsafe"
 
+	"github.com/egoist/mygo"
 	termplugin "github.com/egoist/mygo/plugins/terminal"
 )
 
@@ -253,6 +256,16 @@ func (ts *TerminalState) spawnTabLocked(tab *TerminalTab) (*termplugin.Terminal,
 	opts := termplugin.Options{
 		Dir:         sanitizeCwd(tab.Cwd),
 		Transparent: true,
+		OpenLink: func(link string) bool {
+			trimmed := strings.TrimSpace(link)
+			lower := strings.ToLower(trimmed)
+			if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "mailto:") {
+				resolved := ts.ResolveURL(trimmed)
+				go func() { _ = mygo.Shell.OpenExternal(resolved) }()
+				return true
+			}
+			return false
+		},
 		OnTitle: func(title string) {
 			ts.mu.Lock()
 			if tab.gen == gen {
@@ -705,4 +718,229 @@ func (ts *TerminalState) ScrollToBottom() {
 	if term != nil {
 		scrollTerminal(term, "to_bottom")
 	}
+}
+
+func isURLBodyChar(b byte) bool {
+	if b <= ' ' || b >= 0x7f {
+		return false
+	}
+	switch b {
+	case '<', '>', '"', '`', '|', '\\', '^', '{', '}':
+		return false
+	}
+	return true
+}
+
+func trimTrailingURLPunct(u string) string {
+	for len(u) > 0 {
+		switch u[len(u)-1] {
+		case '.', ',', ';', ':', '!', '?', '\'', '"':
+			u = u[:len(u)-1]
+		case ')':
+			if strings.Count(u, ")") > strings.Count(u, "(") {
+				u = u[:len(u)-1]
+			} else {
+				return u
+			}
+		case ']':
+			if strings.Count(u, "]") > strings.Count(u, "[") {
+				u = u[:len(u)-1]
+			} else {
+				return u
+			}
+		default:
+			return u
+		}
+	}
+	return u
+}
+
+func isURLContinuationPrefix(s string) bool {
+	if s == "" || s[0] == ' ' || s[0] == '\t' {
+		return false
+	}
+	low := strings.ToLower(s)
+	if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+		return false
+	}
+	switch s[0] {
+	case '-', '*', '#', '>', '$', '[', '|':
+		return false
+	}
+	// Reject UTF-8 box-drawing / divider lines (─, ━, ═, │, etc.).
+	for _, r := range s {
+		if r >= 0x2500 && r <= 0x257f {
+			return false
+		}
+		break
+	}
+	return true
+}
+
+func hasURLSyntaxChar(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '=', '&', '%', '?', '/', '+', '_', '-', '.', ':':
+			return true
+		}
+	}
+	return false
+}
+
+// ExtractTerminalURLs scans terminal text and reconstructs http:// and https://
+// URLs even when wrapped across multiple lines (e.g. inside tmux, narrow panes,
+// or CLI output that hard-wraps at 80–120 columns). Results are returned
+// newest-first and deduplicated.
+func ExtractTerminalURLs(text string, cols int) []string {
+	if text == "" {
+		return nil
+	}
+	rawLines := strings.Split(text, "\n")
+	lines := make([]string, len(rawLines))
+	for i, l := range rawLines {
+		lines[i] = strings.TrimRightFunc(l, func(r rune) bool {
+			return unicode.IsSpace(r) || r == 0 || r == '\u200b'
+		})
+	}
+
+	wrapThresh := 40
+	if cols > 0 && cols-4 < wrapThresh {
+		wrapThresh = max(cols-4, 20)
+	}
+
+	var found []string
+	seen := make(map[string]bool)
+
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		searchFrom := 0
+		for searchFrom < len(line) {
+			low := strings.ToLower(line[searchFrom:])
+			idxHTTP := strings.Index(low, "http://")
+			idxHTTPS := strings.Index(low, "https://")
+			rel := -1
+			if idxHTTP >= 0 && (idxHTTPS < 0 || idxHTTP < idxHTTPS) {
+				rel = idxHTTP
+			} else if idxHTTPS >= 0 {
+				rel = idxHTTPS
+			}
+			if rel < 0 {
+				break
+			}
+			start := searchFrom + rel
+			end := start
+			for end < len(line) && isURLBodyChar(line[end]) {
+				end++
+			}
+			var sb strings.Builder
+			sb.WriteString(line[start:end])
+
+			// If the URL reached the end of a wrapped row, join continuation lines.
+			curIdx := i
+			curEnd := end
+			curLine := line
+			maxIndent := max(start+2, 4)
+			for curEnd == len(curLine) && len([]rune(curLine)) >= wrapThresh && curIdx+1 < len(lines) {
+				rawNext := lines[curIdx+1]
+				indent := 0
+				for indent < len(rawNext) && rawNext[indent] == ' ' {
+					indent++
+				}
+				if indent > maxIndent {
+					break
+				}
+				next := rawNext[indent:]
+				if !isURLContinuationPrefix(next) {
+					break
+				}
+				k := 0
+				for k < len(next) && isURLBodyChar(next[k]) {
+					k++
+				}
+				if k == 0 {
+					break
+				}
+				// Join if the entire next line is unbroken URL characters, OR its
+				// leading token clearly contains URL syntax (not a prose word).
+				if k < len(next) && !hasURLSyntaxChar(next[:k]) {
+					break
+				}
+				sb.WriteString(next[:k])
+				curIdx++
+				curLine = rawNext
+				curEnd = indent + k
+				i = curIdx
+			}
+
+			u := trimTrailingURLPunct(sb.String())
+			if parsed, err := url.Parse(u); err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+				if !seen[u] {
+					seen[u] = true
+					found = append(found, u)
+				}
+			}
+			line = curLine
+			searchFrom = curEnd
+		}
+	}
+
+	// Reverse so newest URL appears first.
+	for l, r := 0, len(found)-1; l < r; l, r = l+1, r-1 {
+		found[l], found[r] = found[r], found[l]
+	}
+	return found
+}
+
+// VisibleURLs returns http/https URLs found in the active terminal's visible
+// screen and recent scrollback, newest first.
+func (ts *TerminalState) VisibleURLs() []string {
+	if ts == nil {
+		return nil
+	}
+	ts.mu.Lock()
+	term := ts.term
+	ts.mu.Unlock()
+	if term == nil {
+		return nil
+	}
+	cols, rows := term.Size()
+	txt := term.Text()
+	if txt == "" {
+		return nil
+	}
+	lines := strings.Split(txt, "\n")
+	keep := rows + 16
+	if keep < 40 {
+		keep = 40
+	}
+	if len(lines) > keep {
+		lines = lines[len(lines)-keep:]
+	}
+	return ExtractTerminalURLs(strings.Join(lines, "\n"), cols)
+}
+
+// ResolveURL expands a truncated single-row URL fragment against wrapped URLs
+// currently visible in the terminal.
+func (ts *TerminalState) ResolveURL(fragment string) string {
+	fragment = trimTrailingURLPunct(strings.TrimSpace(fragment))
+	if fragment == "" || ts == nil {
+		return fragment
+	}
+	for _, full := range ts.VisibleURLs() {
+		if strings.HasPrefix(full, fragment) && len(full) > len(fragment) {
+			return full
+		}
+	}
+	return fragment
+}
+
+// URLHostLabel returns a short display label for a URL (e.g. "accounts.google.com").
+func URLHostLabel(raw string) string {
+	if u, err := url.Parse(strings.TrimSpace(raw)); err == nil && u.Host != "" {
+		return u.Host
+	}
+	if len(raw) > 32 {
+		return raw[:29] + "..."
+	}
+	return raw
 }

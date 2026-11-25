@@ -47,19 +47,8 @@ func (a *AppUI) setupMarkdownOptions(as *agent.AgentState, tc theme.ThemeColors)
 	}
 
 	// Markdown links to workspace or local files open in the right drawer's side
-	// file pane; http/https/mailto keep the standard external-open behavior.
-	as.MdOpts.OnLink = func(url string) {
-		if a.openMarkdownFileMention(url) {
-			return
-		}
-		if a.openLocalFileURL(url) {
-			return
-		}
-		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") ||
-			strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "file://") {
-			mygo.Shell.OpenExternal(url)
-		}
-	}
+	// file pane; http/https/mailto/file keep external-open in the default browser.
+	as.MdOpts.OnLink = a.openMarkdownLink
 
 	// Custom CodeBlock renderer for standard programming languages
 	as.MdOpts.CodeBlock = func(c *ui.Context, b *markdown.CodeBlockView) {
@@ -372,6 +361,22 @@ func (a *AppUI) openMarkdownFileMention(url string) bool {
 	}
 	a.openSidePreviewFile(nil, rel)
 	return true
+}
+
+// openMarkdownLink routes clicked markdown links to workspace/local previews
+// or the system's default external browser for http/https/mailto/file URLs.
+func (a *AppUI) openMarkdownLink(url string) {
+	if a.openMarkdownFileMention(url) {
+		return
+	}
+	if a.openLocalFileURL(url) {
+		return
+	}
+	lower := strings.ToLower(strings.TrimSpace(url))
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "mailto:") || strings.HasPrefix(lower, "file://") {
+		go func() { _ = mygo.Shell.OpenExternal(url) }()
+	}
 }
 
 // openLocalFileURL opens a file:// URL that points outside the active workspace

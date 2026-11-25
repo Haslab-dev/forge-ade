@@ -481,6 +481,17 @@ func (a *AppUI) renderGlobalHeaderTrailingControls(c *ui.Context, tc theme.Theme
 			}
 		}
 	}
+	if ts := a.displayedTerminal(); ts != nil {
+		if urls := a.termVisibleURLsCached(ts); len(urls) > 0 {
+			if IconButton(c, tc, icons.TablerExternalLink, 14).Shrink(0).Tooltip("Open Terminal URLs (⇧⌘L)").Clicked() {
+				fresh := ts.VisibleURLs()
+				if len(fresh) == 0 {
+					fresh = urls
+				}
+				a.OpenTerminalURLModal(fresh)
+			}
+		}
+	}
 	if ToggleIconButton(c, tc, icons.TablerTerminal, 14, a.isBottomTerminalVisible()).Shrink(0).Tooltip("Toggle Bottom Terminal (⌘`)").Clicked() {
 		a.toggleBottomTerminal()
 	}

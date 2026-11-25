@@ -138,6 +138,7 @@ type AppUI struct {
 	StudioTimelineTime             float64
 	studioTimelineAnchor           time.Time      // wall-clock anchor while the timeline plays
 	studioWebviewSynced            bool           // studio WebView state push confirmed by the page
+	studioWebviewReload            bool           // force WebView reload when the same artifact path is updated
 	studioAssetVer                 map[string]int // project ID → last asset-file version written
 	studioLastImportAt             time.Time      // debounce for the live write-tool import
 	studioArtifactScanAt           time.Time      // artifact explorer scan cache stamp
@@ -515,8 +516,11 @@ type AppUI struct {
 	TerminalSnippetTargetSession string
 	TerminalSnippetTargetState   *terminal.TerminalState
 
-	// Terminal active-focus badge state
-	termFocusWasFocused map[*terminal.TerminalState]bool
+	// Terminal active-focus badge state, visible URL cache & centered URL modal
+	termFocusWasFocused  map[*terminal.TerminalState]bool
+	termURLCache         map[*terminal.TerminalState]termURLCacheEntry
+	ShowTerminalURLModal bool
+	TerminalURLModalURLs []string
 
 	// Timeline vs Project view in sidebar
 	SidebarListView string // "project" (default) or "timeline"
@@ -1494,6 +1498,13 @@ func (a *AppUI) View(c *ui.Context) {
 	if cmdOrCtrlShift(ui.KeyJ) {
 		a.ShowRightDrawer = !a.ShowRightDrawer
 	}
+	if cmdOrCtrlShift(ui.KeyL) {
+		var urls []string
+		if ts := a.displayedTerminal(); ts != nil {
+			urls = ts.VisibleURLs()
+		}
+		a.OpenTerminalURLModal(urls)
+	}
 	if cmdOrCtrl(ui.KeyComma) {
 		if a.Mode == ModeSettings {
 			a.closeSettings()
@@ -2086,6 +2097,25 @@ func (a *AppUI) handleNewTask() {
 	}
 	a.ActiveTaskKind = "agent"
 	a.Mode = ModeAgent
+	a.AgentViewMode = AgentViewChat
+	a.ShowNewTaskModal = false
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
+
+// handleNewStudioTask clears the active chat session while staying in Studio Mode
+// so the user can author a brand-new slide deck, motion composition, or 3D scene.
+func (a *AppUI) handleNewStudioTask() {
+	if a.Agent != nil {
+		a.Agent.ClearActiveSession()
+		if a.Agent.ActiveAgentID != "" && a.Agent.ActiveAgentID != "agent-internal" {
+			a.Agent.ActiveModel = a.Agent.ResolveModelForAgent(a.Agent.ActiveAgentID, a.Agent.ActiveModel)
+			a.SelectedAgentModel = a.Agent.ActiveModel
+		}
+	}
+	a.ActiveTaskKind = "agent"
+	a.Mode = ModeStudio
 	a.AgentViewMode = AgentViewChat
 	a.ShowNewTaskModal = false
 	if a.Window != nil {
@@ -2686,6 +2716,21 @@ func (a *AppUI) activeTerminal() *terminal.TerminalState {
 // actions should target: the main-pane terminal when a "terminal://" tab is
 // active in Editor Mode, otherwise the mode's active dock/drawer terminal.
 func (a *AppUI) snippetDefaultTerminal() *terminal.TerminalState {
+	if a.Mode == ModeEditor && a.Editor != nil && strings.HasPrefix(a.Editor.ActivePath, "terminal://") && a.Terminal != nil {
+		return a.Terminal
+	}
+	return a.activeTerminal()
+}
+
+// displayedTerminal returns the terminal currently visible to the user across
+// Agent CLI terminal surfaces, Editor main-pane terminal:// tabs, and the
+// active mode's bottom/drawer terminal.
+func (a *AppUI) displayedTerminal() *terminal.TerminalState {
+	if a.Mode == ModeAgent && a.ActiveTaskKind == "cli" && a.CLIMgr != nil {
+		if sess := a.CLIMgr.ActiveSession(); sess != nil && sess.Terminal != nil {
+			return sess.Terminal
+		}
+	}
 	if a.Mode == ModeEditor && a.Editor != nil && strings.HasPrefix(a.Editor.ActivePath, "terminal://") && a.Terminal != nil {
 		return a.Terminal
 	}

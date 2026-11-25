@@ -581,11 +581,76 @@ func TestStudioDecoratePrompt(t *testing.T) {
 	if !strings.Contains(decorated, "Generate Image") || !strings.Contains(decorated, "Make Motion Video") {
 		t.Fatal("expected 5 studio capabilities in prompt")
 	}
-	if !strings.Contains(decorated, "slides.html") {
-		t.Fatal("expected slides target instruction in decorated prompt")
+	if !strings.Contains(decorated, "slides-") {
+		t.Fatal("expected unique slides target instruction in decorated prompt")
+	}
+	if !strings.Contains(decorated, "DO NOT OVERWRITE EXISTING FILES") {
+		t.Fatal("expected explicit anti-overwrite rule in decorated prompt")
 	}
 	if !strings.Contains(decorated, rawPrompt) {
 		t.Fatal("expected original user prompt to be preserved")
+	}
+}
+
+func TestStudioDecoratePromptUniqueFilesAndFollowUp(t *testing.T) {
+	dir := t.TempDir()
+	eng := engine.NewEngine(dir)
+	app := NewAppUI(eng, dir)
+	app.setMode(ModeStudio)
+
+	// Pre-populate an existing 3D file on disk so suggestions must never collide with it.
+	threeDDir := filepath.Join(dir, "3d")
+	if err := os.MkdirAll(threeDDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existingScene := filepath.Join(threeDDir, "scene3d-solar-system.html")
+	if err := os.WriteFile(existingScene, []byte("<html/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Fresh session with identical topic must suggest a non-colliding new path (-2).
+	app.studioEnsureProjectForType(corestudio.ArtifactTypeCodeJS)
+	decoratedNew := app.decorateStudioPrompt("sess-fresh-3d", "buatkan 3d solar system")
+	expectedNew := filepath.Join(threeDDir, "scene3d-solar-system-2.html")
+	if !strings.Contains(decoratedNew, expectedNew) {
+		t.Fatalf("expected non-colliding path %q in prompt:\n%s", expectedNew, decoratedNew)
+	}
+	if !strings.Contains(decoratedNew, "scene3d-solar-system.html") {
+		t.Fatalf("expected existing file warning in prompt:\n%s", decoratedNew)
+	}
+
+	// 2. Session that already wrote an artifact iterates on its own file on follow-up edits.
+	sessFollow := &agent.AgentSession{
+		ID: "sess-iter", Title: "3D Iter", Status: "idle",
+		WorkspacePath: dir, Tasks: agent.NewTaskManager(),
+		Messages: []*agent.ChatMessage{
+			{ID: 1, Role: "user", Text: "buatkan 3d solar system", Done: true},
+			{ID: 2, Role: "assistant", Done: true, Tools: []*agent.ToolExecution{
+				{ID: "t1", ToolName: "write", Command: fmt.Sprintf(`{"path":%q}`, existingScene), Status: "completed"},
+			}},
+			{ID: 3, Role: "user", Text: "ubah pencahayaan jadi lebih terang", Done: false},
+		},
+	}
+	app.Agent.ReplaceSessions([]*agent.AgentSession{sessFollow})
+	decoratedFollow := app.decorateStudioPrompt("sess-iter", "ubah pencahayaan jadi lebih terang")
+	if !strings.Contains(decoratedFollow, "FILE TARGET FOR THIS SESSION FOLLOW-UP") || !strings.Contains(decoratedFollow, existingScene) {
+		t.Fatalf("expected follow-up turn to target %q, got:\n%s", existingScene, decoratedFollow)
+	}
+
+	// 3. Explicit "new file" request in the same session forces a brand-new path instead of rewriting.
+	decoratedExplicitNew := app.decorateStudioPrompt("sess-iter", "buat file baru 3d solar system")
+	if !strings.Contains(decoratedExplicitNew, "DO NOT OVERWRITE EXISTING FILES") || !strings.Contains(decoratedExplicitNew, expectedNew) {
+		t.Fatalf("expected explicit new-file prompt to suggest %q, got:\n%s", expectedNew, decoratedExplicitNew)
+	}
+
+	// 4. handleNewStudioTask clears active session while remaining in ModeStudio.
+	app.Agent.SelectSession("sess-iter")
+	app.handleNewStudioTask()
+	if app.Mode != ModeStudio {
+		t.Fatalf("expected handleNewStudioTask to stay in ModeStudio, got %d", app.Mode)
+	}
+	if app.Agent.ActiveSessionID != "" {
+		t.Fatalf("expected ActiveSessionID cleared, got %q", app.Agent.ActiveSessionID)
 	}
 }
 

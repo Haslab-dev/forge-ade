@@ -1390,3 +1390,47 @@ func TestUserPromptCopyAlwaysVisibleWithoutHover(t *testing.T) {
 		t.Fatalf("expected clipboard 'hello world prompt', got %q", got)
 	}
 }
+
+func TestTerminalURLModalOpensExternalBrowser(t *testing.T) {
+	dataDir := t.TempDir()
+	wsDir := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, wsDir)
+	defer app.Close()
+
+	wantURL := "https://accounts.google.com/o/oauth2/auth?access_type=offline&state=abc123"
+	app.OpenTerminalURLModal([]string{wantURL})
+
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	if err := tw.Click("Open in Browser"); err != nil {
+		t.Fatalf("expected Open in Browser button in centered modal: %v", err)
+	}
+	opened := tw.OpenedURLs()
+	if len(opened) != 1 || opened[0] != wantURL {
+		t.Fatalf("expected OpenedURLs [%q], got %v", wantURL, opened)
+	}
+	if app.ShowTerminalURLModal {
+		t.Fatalf("expected modal to close after opening URL")
+	}
+}
+
+func TestDisplayedTerminalTargetsEditorTerminalTab(t *testing.T) {
+	dataDir := t.TempDir()
+	wsDir := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, wsDir)
+	defer app.Close()
+
+	app.setMode(ModeEditor)
+	app.Editor.ActivePath = "terminal://ssh-123"
+	if got := app.displayedTerminal(); got != app.Terminal {
+		t.Fatalf("expected displayedTerminal() to return app.Terminal for terminal:// tab, got %p (want %p)", got, app.Terminal)
+	}
+
+	app.Editor.ActivePath = "main.go"
+	if got := app.displayedTerminal(); got != app.EditorBottomTerminal {
+		t.Fatalf("expected displayedTerminal() to return app.EditorBottomTerminal for file tab, got %p (want %p)", got, app.EditorBottomTerminal)
+	}
+}

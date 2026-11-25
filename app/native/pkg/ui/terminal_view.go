@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	termplugin "github.com/egoist/mygo/plugins/terminal"
@@ -12,6 +13,35 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
+
+type termURLCacheEntry struct {
+	urls      []string
+	checkedAt time.Time
+}
+
+func (a *AppUI) termVisibleURLsCached(ts *terminal.TerminalState) []string {
+	if a == nil || ts == nil {
+		return nil
+	}
+	if a.termURLCache == nil {
+		a.termURLCache = make(map[*terminal.TerminalState]termURLCacheEntry)
+	}
+	if ent, ok := a.termURLCache[ts]; ok && time.Since(ent.checkedAt) < 450*time.Millisecond {
+		return ent.urls
+	}
+	urls := ts.VisibleURLs()
+	a.termURLCache[ts] = termURLCacheEntry{urls: urls, checkedAt: time.Now()}
+	return urls
+}
+
+// OpenTerminalURLModal opens the centered modal listing URLs detected in the terminal.
+func (a *AppUI) OpenTerminalURLModal(urls []string) {
+	a.TerminalURLModalURLs = urls
+	a.ShowTerminalURLModal = true
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
+}
 
 // renderTerminalTabsStrip draws the clickable tab strip for a TerminalState.
 func (a *AppUI) renderTerminalTabsStrip(c *ui.Context, tc theme.ThemeColors, ts *terminal.TerminalState, keyPrefix string, onSelect ...func(snap terminal.TerminalTabSnapshot)) {
@@ -219,6 +249,18 @@ func (a *AppUI) renderBottomTerminal(c *ui.Context) {
 
 			a.renderTerminalTabsStrip(c, tc, ts, "bottom-term")
 
+			if urls := a.termVisibleURLsCached(ts); len(urls) > 0 {
+				urlBtn := IconButton(c, tc, icons.TablerExternalLink, 13)
+				urlBtn.Tooltip("Open Terminal URLs (⇧⌘L)")
+				if urlBtn.Clicked() {
+					fresh := ts.VisibleURLs()
+					if len(fresh) == 0 {
+						fresh = urls
+					}
+					a.OpenTerminalURLModal(fresh)
+				}
+			}
+
 			moreBtn := ui.Row(c.Key("term-actions-menu")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 			moreBtn.Children(func() {
 				ui.Icon(c, icons.TablerDots).Width(14).Height(14).TextColor(tc.IconMuted)
@@ -332,9 +374,44 @@ func (a *AppUI) renderTerminal(c *ui.Context, ts *terminal.TerminalState) {
 		// Wrap the transparent terminal view in a box carrying tc.TerminalBackground
 		// so glass translucency and custom backgrounds show through naturally.
 		ui.Box(c).Grow(1).Fill().Background(tc.TerminalBackground).Children(func() {
+			visibleURLs := a.termVisibleURLsCached(ts)
+			hoveredRaw, hoveredPath, _ := term.HoveredLink()
+			hoveredURL := ""
+			if hoveredRaw != "" && !hoveredPath {
+				low := strings.ToLower(strings.TrimSpace(hoveredRaw))
+				if strings.HasPrefix(low, "http://") || strings.HasPrefix(low, "https://") {
+					hoveredURL = ts.ResolveURL(hoveredRaw)
+				}
+			}
+
+			primaryURL := hoveredURL
+			if primaryURL == "" && len(visibleURLs) > 0 {
+				primaryURL = visibleURLs[0]
+			}
+
 			// Key by active session on the Context BEFORE View() builds the box so
 			// wheel/pointer/keyboard handlers bind stably to the keyed element.
 			termView := termplugin.View(c.Key(fmt.Sprintf("term-sess-%s", ts.ActiveSessionID)), term).Fill().AutoFocus().ContextMenu(func(m *ui.Menu) {
+				if primaryURL != "" {
+					if m.Item(fmt.Sprintf("Open %s in Browser", terminal.URLHostLabel(primaryURL))).Chosen() {
+						u := primaryURL
+						go func() { _ = mygo.Shell.OpenExternal(u) }()
+					}
+					if m.Item("Open URLs Modal...").Shortcut(ui.Cmd|ui.Shift, ui.KeyL).Chosen() {
+						urls := ts.VisibleURLs()
+						if len(urls) == 0 {
+							urls = visibleURLs
+						}
+						if len(urls) == 0 {
+							urls = []string{primaryURL}
+						}
+						a.OpenTerminalURLModal(urls)
+					}
+					if m.Item("Copy URL").Chosen() {
+						mygo.Clipboard.WriteText(primaryURL)
+					}
+					m.Separator()
+				}
 				// No "Copy" item: the terminal copies on select (copy-on-select)
 				// and ⌘C is handled by the terminal itself; mygo exposes no API to
 				// read back the terminal selection to copy it manually.

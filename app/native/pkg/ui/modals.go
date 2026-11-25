@@ -15,6 +15,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/palette"
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
+	"github.com/hasdev/forge-ade/app/native/pkg/terminal"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 )
 
@@ -64,6 +65,9 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	}
 	if a.ShowSSHModal {
 		a.renderSSHConnectModal(c)
+	}
+	if a.ShowTerminalURLModal {
+		a.renderTerminalURLModal(c)
 	}
 	if a.ShowSSHQuickMenu {
 		a.renderSSHQuickMenuModal(c)
@@ -471,6 +475,84 @@ func (a *AppUI) renderPaletteModal(c *ui.Context) {
 				modeBtn("Line", palette.PaletteLine)
 				ui.Box(c).Grow(1)
 				ui.Text(c, "↑↓ navigate · ↵ open").FontSize(12).TextColor(tc.TextMuted)
+			})
+		})
+	})
+}
+
+// renderTerminalURLModal shows a centered modal with full unwrapped URLs
+// detected in the active terminal so users can open them in the default
+// external browser or copy them cleanly.
+func (a *AppUI) renderTerminalURLModal(c *ui.Context) {
+	tc := a.ThemeMgr.Colors()
+	urls := a.TerminalURLModalURLs
+	if len(urls) == 0 {
+		if ts := a.displayedTerminal(); ts != nil {
+			urls = ts.VisibleURLs()
+		}
+	}
+
+	a.modal(c, &a.ShowTerminalURLModal, func() {
+		ui.Column(c).Width(560).Radius(14).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border).Padding(16).Gap(12).
+			Shadow(0, 24, 72, -20, ui.RGBA(0, 0, 0, 0.55)).Clip().Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+				ui.Icon(c, icons.TablerExternalLink).Width(16).Height(16).TextColor(tc.Accent)
+				ui.Text(c, "Terminal URLs").FontSize(14).FontWeight(600).Grow(1)
+				if IconButton(c, tc, icons.TablerX, 13).Clicked() {
+					a.ShowTerminalURLModal = false
+				}
+			})
+
+			if len(urls) == 0 {
+				ui.Column(c).Padding(20, 12).Center().Gap(6).Radius(10).Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+					ui.Text(c, "No URLs detected in the active terminal").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
+					ui.Text(c, "Print an http:// or https:// link in the terminal, then press ⇧⌘L or right-click to open it in your default browser.").
+						FontSize(11.5).TextColor(tc.TextMuted).Center()
+				})
+			} else {
+				ui.Scroll(c.Key("term-url-modal-scroll")).MaxHeight(360).Children(func() {
+					ui.Column(c).Gap(8).Children(func() {
+						for idx, raw := range urls {
+							u := raw
+							host := terminal.URLHostLabel(u)
+							ui.Column(c.Key(fmt.Sprintf("turl-card-%d", idx))).Padding(10, 12).Radius(10).Gap(8).
+								Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+								ui.Row(c).AlignItems(ui.Center).Gap(6).Children(func() {
+									ui.Row(c).Padding(2, 7).Radius(5).Background(tc.Accent.Alpha(0.14)).Children(func() {
+										ui.Text(c, host).FontSize(11).FontWeight(600).TextColor(tc.Accent).SingleLine()
+									})
+									ui.Box(c).Grow(1)
+									copyBtn := ui.Row(c.Key(fmt.Sprintf("turl-copy-%d", idx))).Height(26).Radius(6).Padding(0, 9).Gap(5).
+										AlignItems(ui.Center).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
+									copyBtn.Children(func() {
+										ui.Icon(c, icons.TablerCopy).Width(12).Height(12).TextColor(tc.IconMuted)
+										ui.Text(c, "Copy").FontSize(11).FontWeight(500).TextColor(tc.Text)
+									})
+									if copyBtn.Hovered() {
+										copyBtn.Background(tc.ToolbarControlHover)
+									}
+									if copyBtn.Clicked() {
+										c.WriteClipboard(u)
+										c.AddToast(ui.Toast{Title: "URL Copied", Type: "success"})
+									}
+
+									openBtn := ui.PrimaryButton(c.Key(fmt.Sprintf("turl-open-%d", idx)), "Open in Browser").FontSize(11)
+									if openBtn.Clicked() {
+										c.OpenURL(u)
+										a.ShowTerminalURLModal = false
+									}
+								})
+								ui.Text(c, u).Selectable().FontSize(11).LineHeight(1.4).TextColor(tc.TextMuted)
+							})
+						}
+					})
+				})
+			}
+
+			ui.Row(c).Justify(ui.End).Children(func() {
+				if ui.Button(c.Key("turl-close"), "Close").FontSize(12).Clicked() {
+					a.ShowTerminalURLModal = false
+				}
 			})
 		})
 	})
