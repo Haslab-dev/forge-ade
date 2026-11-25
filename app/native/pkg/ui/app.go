@@ -1007,6 +1007,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	initGit := appUI.Git
 
 	if engine != nil {
+		if engine.MemoryMgr != nil && rootDir != "" {
+			engine.MemoryMgr.SetWorkspace(rootDir)
+		}
 		initWS := appUI.Workspace
 		engine.StartWatcher(rootDir, func() {
 			if initWS != nil {
@@ -3143,6 +3146,9 @@ func (a *AppUI) switchWorkspaceForMode(dir string, keepActiveSession bool, fromM
 		}
 	}
 	if rawDir != "" && a.Engine != nil {
+		if a.Engine.MemoryMgr != nil {
+			a.Engine.MemoryMgr.SetWorkspace(rawDir)
+		}
 		ws := a.Workspace
 		gm := a.Git
 		a.Engine.StartWatcher(rawDir, func() {

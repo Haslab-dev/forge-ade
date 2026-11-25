@@ -154,7 +154,8 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabShortcuts, "Shortcuts & Keys", icons.TablerKeyboard, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabMemory, "Memory", icons.TablerBrain, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabBrowser, "Browser Use", icons.TablerWorld, "")
-									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabComputer, "Computer Use", icons.TablerCpu, "")
+									// Computer Use disabled until desktop GUI automation is wired.
+									// a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabComputer, "Computer Use", icons.TablerCpu, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabIndexing, "Codebase Indexing", icons.TablerDatabase, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAutos, "Automations", icons.TablerClock, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabHooks, "Lifecycle Hooks", icons.TablerGitFork, "")
@@ -169,6 +170,9 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 					ui.Scroll(c.Key("settings-content-scroll")).Grow(1).Children(func() {
 						ui.Column(c).FillWidth().Padding(22, 32, 36, 32).AlignItems(ui.Center).Children(func() {
 							ui.Column(c).FillWidth().MaxWidth(920).Gap(18).Children(func() {
+								if sm.ActiveTab == settings.SettingsTabComputer {
+									sm.ActiveTab = settings.SettingsTabGeneral
+								}
 								switch sm.ActiveTab {
 								case settings.SettingsTabModels:
 									a.renderSettingsTabModels(c, tc, sm)
@@ -198,8 +202,8 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 									a.renderSettingsTabShortcuts(c, tc, sm)
 								case settings.SettingsTabBrowser:
 									a.renderSettingsTabBrowser(c, tc, sm)
-								case settings.SettingsTabComputer:
-									a.renderSettingsTabComputer(c, tc, sm)
+								// case settings.SettingsTabComputer:
+								// 	a.renderSettingsTabComputer(c, tc, sm)
 								case settings.SettingsTabIndexing:
 									a.renderSettingsTabIndexing(c, tc, sm)
 								case settings.SettingsTabHooks:

@@ -6,6 +6,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ func (a *AppUI) renderSettingsTabMCPReal(c *ui.Context, tc theme.ThemeColors, sm
 		return
 	}
 	servers := mgr.ListServers()
+	sort.Slice(servers, func(i, j int) bool {
+		return strings.ToLower(servers[i].Name) < strings.ToLower(servers[j].Name)
+	})
 
 	// Add-server form (collapsible) and Refresh All.
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
@@ -191,6 +195,9 @@ func (a *AppUI) renderSettingsTabSkillsReal(c *ui.Context, tc theme.ThemeColors,
 	}
 	skillMgr := a.Engine.SkillMgr
 	list := skillMgr.List()
+	sort.Slice(list, func(i, j int) bool {
+		return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
+	})
 
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		addLbl := "Create Skill"
@@ -305,6 +312,13 @@ func (a *AppUI) renderSettingsTabPlugins(c *ui.Context, tc theme.ThemeColors, sm
 	}
 	plugMgr := a.Engine.PluginMgr
 	list := plugMgr.List()
+	sort.Slice(list, func(i, j int) bool {
+		ni, nj := strings.ToLower(list[i].Name), strings.ToLower(list[j].Name)
+		if ni != nj {
+			return ni < nj
+		}
+		return list[i].ID < list[j].ID
+	})
 
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 		if settingsActionPill(c, tc, "plugins-reload-btn", "Reload Plugins", icons.TablerRefresh, false).Clicked() {
@@ -318,23 +332,25 @@ func (a *AppUI) renderSettingsTabPlugins(c *ui.Context, tc theme.ThemeColors, sm
 	ui.Column(c).Gap(8).Children(func() {
 		for _, p := range list {
 			thisP := p
-			settingsCard(c, tc, func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerPuzzle).Width(16).Height(16).TextColor(tc.Accent)
-					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, thisP.Name).FontSize(13).FontWeight(600)
-							if thisP.Version != "" {
-								Badge(c, tc, "v"+thisP.Version, tc.Info)
-							}
+			ui.Column(c.Key("plugin-card-" + thisP.ID)).Children(func() {
+				settingsCard(c, tc, func() {
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerPuzzle).Width(16).Height(16).TextColor(tc.Accent)
+						ui.Column(c).Grow(1).Gap(2).Children(func() {
+							ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+								ui.Text(c, thisP.Name).FontSize(13).FontWeight(600)
+								if thisP.Version != "" {
+									Badge(c, tc, "v"+thisP.Version, tc.Info)
+								}
+							})
+							ui.Text(c, thisP.Description).FontSize(11).TextColor(tc.TextMuted)
 						})
-						ui.Text(c, thisP.Description).FontSize(11).TextColor(tc.TextMuted)
+						if thisP.Enabled {
+							Badge(c, tc, "ENABLED", tc.Success)
+						} else {
+							Badge(c, tc, "DISABLED", tc.TextMuted)
+						}
 					})
-					if thisP.Enabled {
-						Badge(c, tc, "ENABLED", tc.Success)
-					} else {
-						Badge(c, tc, "DISABLED", tc.TextMuted)
-					}
 				})
 			})
 		}
@@ -355,13 +371,26 @@ func (a *AppUI) renderSettingsTabMemory(c *ui.Context, tc theme.ThemeColors, sm 
 	}
 	memMgr := a.Engine.MemoryMgr
 	list := memMgr.List()
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].UpdatedAt.Equal(list[j].UpdatedAt) {
+			return list[i].UpdatedAt.After(list[j].UpdatedAt)
+		}
+		if list[i].Key != list[j].Key {
+			return list[i].Key < list[j].Key
+		}
+		return list[i].ID < list[j].ID
+	})
 
 	settingsCard(c, tc, func() {
 		ui.Column(c).Gap(8).Children(func() {
-			ui.Row(c).AlignItems(ui.Center).Children(func() {
+			ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 				ui.Text(c, "Add Persistent Memory").FontSize(12.5).FontWeight(600).TextColor(tc.Text)
 				ui.Box(c).Grow(1)
 				ui.Text(c, fmt.Sprintf("%d saved", len(list))).FontSize(11).TextColor(tc.TextMuted)
+				if settingsActionPill(c, tc, "mem-reload-btn", "Reload", icons.TablerRefresh, false).Clicked() {
+					memMgr.Reload()
+					c.AddToast(ui.Toast{Title: "Memory Reloaded", Type: "success"})
+				}
 			})
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.TextInput(c, &sm.MemoryNew).Placeholder("Write a preference, rule, or project fact for the agent to remember…").Grow(1)
@@ -381,23 +410,25 @@ func (a *AppUI) renderSettingsTabMemory(c *ui.Context, tc theme.ThemeColors, sm 
 	ui.Column(c).Gap(8).Children(func() {
 		for _, e := range list {
 			thisE := e
-			settingsCard(c, tc, func() {
-				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-					ui.Icon(c, icons.TablerBrain).Width(16).Height(16).TextColor(tc.Accent)
-					ui.Column(c).Grow(1).Gap(2).Children(func() {
-						ui.Text(c, thisE.Content).FontSize(12).Grow(1)
-						if thisE.Category != "" || thisE.Scope != "" {
-							ui.Text(c, strings.TrimSpace(thisE.Category+" · "+thisE.Scope)).FontSize(10).TextColor(tc.TextMuted)
+			ui.Column(c.Key("mem-card-" + thisE.ID)).Children(func() {
+				settingsCard(c, tc, func() {
+					ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+						ui.Icon(c, icons.TablerBrain).Width(16).Height(16).TextColor(tc.Accent)
+						ui.Column(c).Grow(1).Gap(2).Children(func() {
+							ui.Text(c, thisE.Content).FontSize(12).Grow(1)
+							if thisE.Category != "" || thisE.Scope != "" {
+								ui.Text(c, strings.TrimSpace(thisE.Category+" · "+thisE.Scope)).FontSize(10).TextColor(tc.TextMuted)
+							}
+						})
+						del := IconButton(c, tc, icons.TablerTrash, 13)
+						if del.Clicked() {
+							a.confirmDialogLabeled("Delete Memory?", fmt.Sprintf("“%s” will no longer be recalled by the agent.", truncatePreview(thisE.Content, 60)), "Delete", func() {
+								if err := memMgr.Delete(thisE.ID); err != nil {
+									a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
+								}
+							}, nil)
 						}
 					})
-					del := IconButton(c, tc, icons.TablerTrash, 13)
-					if del.Clicked() {
-						a.confirmDialogLabeled("Delete Memory?", fmt.Sprintf("“%s” will no longer be recalled by the agent.", truncatePreview(thisE.Content, 60)), "Delete", func() {
-							if err := memMgr.Delete(thisE.ID); err != nil {
-								a.queueToast(ui.Toast{Title: "Delete Failed", Description: err.Error(), Type: "error"})
-							}
-						}, nil)
-					}
 				})
 			})
 		}
@@ -1096,11 +1127,16 @@ func (a *AppUI) renderSettingsTabCommands(c *ui.Context, tc theme.ThemeColors, s
 // ── Browser Use ────────────────────────────────────────────────────────────
 
 func (a *AppUI) renderSettingsTabBrowser(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Browser Use", "Headless browser, web automation, search providers, and page preview controls.")
+	settingsSectionHeader(c, tc, "Browser Use", "Built-in browser engine for agent web inspection, DOM snapshots, and screenshots.")
 
-	// Honesty: these preferences are not read by any browser automation yet.
-	settingsNoticeBanner(c, tc, icons.TablerInfoCircle, "Preview Only — Not Wired Up Yet",
-		"Browser automation controls are shown for reference and are currently disabled until runtime integration is enabled.", tc.Warning)
+	activeEngine := "Chromium CDP (Standalone)"
+	if a.Engine != nil && a.Engine.BrowserUse != nil {
+		if a.Engine.BrowserUse.EngineName() == "in-app" {
+			activeEngine = "macOS Native WKWebView (Zero-Chrome)"
+		}
+	}
+	settingsNoticeBanner(c, tc, icons.TablerCircleCheck, "Active Engine: "+activeEngine,
+		"Agent browser tools (forge_browser_open, snapshot, screenshot) run through this engine automatically via forge-mcp.", tc.Success)
 
 	if sm.BrowserEngine == "" {
 		sm.BrowserEngine = "DuckDuckGo"
