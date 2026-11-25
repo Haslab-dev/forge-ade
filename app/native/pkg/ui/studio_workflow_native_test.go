@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/engine"
 	corestudio "github.com/hasdev/forge-ade/core/studio"
 )
@@ -88,5 +89,21 @@ func TestStudioFullNativeWorkflowWithoutWebView(t *testing.T) {
 	}
 	if app.StudioVideoWorkflow == nil || app.StudioVideoWorkflow.Steps[0].GetString("path", "") != app.StudioGeneratedImagePath {
 		t.Fatalf("expected generated image injected into Video Studio keyframe, got %+v", app.StudioVideoWorkflow)
+	}
+
+	// Verify revamped Image & Video workflow UI renders cleanly (both expanded and collapsed sidebar)
+	app.studioEnsureProjectForType(corestudio.ArtifactTypeImage)
+	twImg := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	if _, ok := twImg.Find("IMAGE WORKFLOWS"); !ok {
+		t.Fatal("expected IMAGE WORKFLOWS sidebar when expanded")
+	}
+	if _, ok := twImg.Find("Generate"); !ok {
+		t.Fatal("expected Generate CTA in workflow topbar")
+	}
+
+	app.StudioWorkflowLeftCollapsed = true
+	twCollapsed := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	if _, ok := twCollapsed.Find("IMAGE WORKFLOWS"); ok {
+		t.Fatal("expected IMAGE WORKFLOWS sidebar hidden when collapsed")
 	}
 }

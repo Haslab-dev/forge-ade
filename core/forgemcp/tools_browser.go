@@ -2,8 +2,10 @@ package forgemcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/hasdev/forge-ade/core/browseruse"
 )
@@ -65,10 +67,15 @@ func (s *Server) RegisterBrowserTools(bm *browseruse.Manager) {
 			"properties": map[string]interface{}{},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (*ToolCallResult, error) {
-		b64, err := bm.Screenshot(ctx)
+		shotPath, err := bm.Screenshot(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to take browser screenshot: %w", err)
 		}
+		raw, readErr := os.ReadFile(shotPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read browser screenshot %s: %w", shotPath, readErr)
+		}
+		b64 := base64.StdEncoding.EncodeToString(raw)
 		return ImageResult(b64, "image/png"), nil
 	})
 

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/Haslab-dev/RakitKode/brain"
 	"github.com/Haslab-dev/RakitKode/search"
@@ -148,6 +149,7 @@ type AppUI struct {
 	StudioChatCollapsed            bool    // Hide the left chat pane so the viewer gets full width
 	StudioShowArtifacts            bool    // Show the agent artifact explorer panel
 	StudioArtifactFilterQuery      string
+	StudioPreviewPath              string // Viewer-only external file path (never imported into artifacts)
 	StudioSelectedSlideIdx         int
 	StudioWebView                  *mygo.WebView
 	StudioWebViewURL               string
@@ -176,6 +178,7 @@ type AppUI struct {
 	StudioWorkflowLogs             []string
 	StudioWorkflowError            string
 	StudioWorkflowRightTab         string // "preview", "gallery", "logs"
+	StudioWorkflowLeftCollapsed    bool   // Collapse left presets sidebar for more preview space
 	StudioWorkflowIsVideoOutput    bool
 	StudioWorkflowLastInjectedJSON string
 	StudioWorkflowStepDrafts       map[string]string // transient string buffers for step TextInputs
@@ -1333,6 +1336,19 @@ func (a *AppUI) SetWindow(w *mygo.Window) {
 	// Files dropped anywhere the composer does not take them attach to the
 	// draft, as forge-ade accepts drops across the window.
 	if w != nil {
+		if a.Engine != nil {
+			wsDir := ""
+			if a.Workspace != nil {
+				wsDir = a.Workspace.RootDir
+			}
+			a.Engine.StartMCPDaemon(wsDir, func() unsafe.Pointer {
+				if a.Window == nil {
+					return nil
+				}
+				h := a.Window.NativeHandle()
+				return *(*unsafe.Pointer)(unsafe.Pointer(&h))
+			})
+		}
 		w.OnFileDrop(func(e *mygo.FileDropEvent) {
 			if len(e.Paths) == 0 {
 				return

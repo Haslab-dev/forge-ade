@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/Haslab-dev/RakitKode/agent"
 	"github.com/Haslab-dev/RakitKode/events"
@@ -23,7 +24,10 @@ import (
 	"github.com/Haslab-dev/RakitKode/tools"
 	"github.com/hasdev/forge-ade/core/acp"
 	"github.com/hasdev/forge-ade/core/automations"
+	"github.com/hasdev/forge-ade/core/board"
+	"github.com/hasdev/forge-ade/core/browseruse"
 	"github.com/hasdev/forge-ade/core/commitmsg"
+	"github.com/hasdev/forge-ade/core/forgemcp"
 	"github.com/hasdev/forge-ade/core/git"
 	"github.com/hasdev/forge-ade/core/quota"
 	"github.com/hasdev/forge-ade/core/remotefs"
@@ -45,16 +49,18 @@ type Engine struct {
 
 	// RakitKode managers shared with the webview app (search, tools, skills,
 	// plugins, memory, MCP, PTY shells, and the full agent engine).
-	SearchMgr *search.SearchManager
-	ToolReg   *tools.Registry
-	SkillMgr  *skills.Manager
-	PluginMgr *plugins.Manager
-	MemoryMgr *memory.Manager
-	MCPMgr    *mcp.Manager
-	ShellMgr  *terminal.Manager
-	AgentMgr  *agent.Manager
-	AutoMgr   *automations.Manager
-	StudioMgr *corestudio.Manager
+	SearchMgr  *search.SearchManager
+	ToolReg    *tools.Registry
+	SkillMgr   *skills.Manager
+	PluginMgr  *plugins.Manager
+	MemoryMgr  *memory.Manager
+	MCPMgr     *mcp.Manager
+	ShellMgr   *terminal.Manager
+	AgentMgr   *agent.Manager
+	AutoMgr    *automations.Manager
+	StudioMgr  *corestudio.Manager
+	BrowserUse *browseruse.Manager
+	IPCDaemon  *forgemcp.IPCDaemon
 
 	// AntigravityAccounts tracks multiple Antigravity accounts, tiers, and quotas.
 	AntigravityAccounts *quota.AntigravityAccountManager
@@ -135,6 +141,7 @@ func NewEngine(dataDir string) *Engine {
 		AgentMgr:            mgrs.Agent,
 		AutoMgr:             autoMgr,
 		StudioMgr:           corestudio.NewManager(dataDir),
+		BrowserUse:          browseruse.NewManager(dataDir),
 		AntigravityAccounts: quota.NewAccountManager(dataDir),
 	}
 
@@ -616,12 +623,44 @@ func (e *Engine) StopWatcher() {
 	}
 }
 
+// StartMCPDaemon wires the native window provider into BrowserUse (enabling
+// zero-Chrome WKWebView automation on macOS) and starts the local forge-mcp
+// IPC daemon so external/ACP agents can inspect and screenshot HTML pages.
+func (e *Engine) StartMCPDaemon(workspaceDir string, winFn func() unsafe.Pointer) {
+	if e == nil {
+		return
+	}
+	if e.BrowserUse != nil && winFn != nil {
+		e.BrowserUse.SetWindowProvider(winFn)
+	}
+	if e.IPCDaemon != nil {
+		return
+	}
+	srv := forgemcp.NewServer(workspaceDir)
+	srv.RegisterBrowserTools(e.BrowserUse)
+	bm := board.NewManager(workspaceDir)
+	srv.RegisterBoardTools(bm)
+	srv.RegisterWorkspaceTools(bm)
+	if daemon, err := forgemcp.StartIPCDaemon(srv, 0); err == nil {
+		e.IPCDaemon = daemon
+	} else {
+		log.Printf("[engine] failed to start forge-mcp IPC daemon: %v", err)
+	}
+}
+
 // Close stops all background engine goroutines (watcher, automation scheduler, shells).
 func (e *Engine) Close() {
 	if e == nil {
 		return
 	}
 	e.StopWatcher()
+	if e.IPCDaemon != nil {
+		e.IPCDaemon.Stop()
+		e.IPCDaemon = nil
+	}
+	if e.BrowserUse != nil {
+		e.BrowserUse.Close()
+	}
 	if e.autoCancel != nil {
 		e.autoCancel()
 		e.autoCancel = nil

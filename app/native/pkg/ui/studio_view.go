@@ -285,8 +285,8 @@ func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors
 			ui.Column(c.Key("studio-agent-left-pane")).Width(a.StudioLeftChatWidth).FillHeight().
 				Background(tc.Surface).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
 
-				// Studio Agent Header Bar
-				ui.Row(c.Key("studio-agent-header")).Height(38).Padding(0, 10).Gap(8).AlignItems(ui.Center).
+				// Studio Agent Header Bar (clean, single-line; model & harness live in the composer)
+				ui.Row(c.Key("studio-agent-header")).Height(36).Padding(0, 10).Gap(6).AlignItems(ui.Center).
 					BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 
 					var activeSess *agent.AgentSession
@@ -298,69 +298,39 @@ func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors
 						(a.SelectedHarnessID == "agent-internal")
 
 					if isInternal {
-						ui.Icon(c, icons.ProviderForgeADE).Width(15).Height(15)
-						ui.Text(c, "ForgeADE").FontSize(12).FontWeight(600).TextColor(tc.Text)
-						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
-							ui.Text(c, "INTERNAL").FontSize(8).FontWeight(700).TextColor(tc.Accent)
-						})
+						ui.Icon(c, icons.ProviderForgeADE).Width(14).Height(14)
+						ui.Text(c, "ForgeADE").FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
 					} else {
-						ui.Icon(c, icons.ProviderAntigravity).Width(15).Height(15).TextColor(tc.Accent)
-						ui.Text(c, "Studio Agent").FontSize(12).FontWeight(600).TextColor(tc.Text)
-						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.ToolbarControl).Children(func() {
-							ui.Text(c, "ACP").FontSize(8).FontWeight(700).TextColor(tc.TextMuted)
-						})
-					}
-
-					// Model indicator pill (click to open model modal)
-					modelLabel := a.SelectedAgentModel
-					if modelLabel == "" {
-						if isInternal {
-							modelLabel = "ForgeADE Default"
-						} else {
-							modelLabel = "Gemini 3.8 Flash (ACP)"
-						}
-					}
-					modelPill := ui.Row(c.Key("studio-model-selector-pill")).Padding(2, 6).Radius(4).
-						Background(tc.ToolbarControl).MinWidth(0).Clip().AlignItems(ui.Center).Gap(3).Cursor(ui.CursorPointer)
-					modelPill.Children(func() {
-						ui.Text(c, shortModelLabel(modelLabel)).FontSize(9).FontWeight(600).TextColor(tc.TextMuted).SingleLine()
-						ui.Icon(c, icons.TablerChevronDown).Width(8).Height(8).TextColor(tc.IconMuted)
-					})
-					modelPill.Tooltip("Select Agent & Model (ACP / ForgeADE)")
-					if modelPill.Clicked() {
-						a.ShowModelPalette = true
+						ui.Icon(c, icons.ProviderAntigravity).Width(14).Height(14).TextColor(tc.Accent)
+						ui.Text(c, "Studio Agent").FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
 					}
 
 					ui.Box(c).Grow(1)
 
-					// Session History Button (toggles sidebar so user can continue prior work)
-					historyBtn := ui.Row(c.Key("studio-history-btn")).Height(24).Padding(0, 6).Gap(4).Radius(4).
-						Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-					if a.ShowLeftSidebar {
-						historyBtn.Background(tc.Accent.Alpha(0.18))
-					}
-					historyBtn.Children(func() {
-						ui.Icon(c, icons.TablerHistory).Width(11).Height(11).TextColor(tc.IconMuted)
-						ui.Text(c, "History").FontSize(11).FontWeight(500).TextColor(tc.Text)
-					})
-					historyBtn.Tooltip("Toggle Session History Sidebar")
+					// Session History Toggle (icon-only for a clean header)
+					historyBtn := ToggleIconButton(c, tc, icons.TablerHistory, 13, a.ShowLeftSidebar)
+					historyBtn.Tooltip("Session History")
 					if historyBtn.Clicked() {
 						a.ShowLeftSidebar = !a.ShowLeftSidebar
 					}
 
 					// New Conversation Button
-					newTaskBtn := ui.Row(c.Key("studio-new-agent-task")).Height(24).Padding(0, 6).Gap(4).Radius(4).
-						Background(tc.ToolbarControl).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					newTaskBtn := ui.Row(c.Key("studio-new-agent-task")).Height(24).Padding(0, 8).Gap(4).Radius(5).
+						Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
+						AlignItems(ui.Center).Cursor(ui.CursorPointer)
 					newTaskBtn.Children(func() {
 						ui.Icon(c, icons.TablerPlus).Width(11).Height(11).TextColor(tc.IconMuted)
-						ui.Text(c, "New").FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+						ui.Text(c, "New").FontSize(11).FontWeight(500).TextColor(tc.Text).SingleLine()
 					})
+					if newTaskBtn.Hovered() {
+						newTaskBtn.Background(tc.ToolbarControlHover)
+					}
 					if newTaskBtn.Clicked() {
 						a.handleNewStudioTask()
 					}
 
 					// Collapse the chat pane so the viewer gets full width.
-					collapseBtn := IconButton(c, tc, icons.TablerChevronLeft, 12)
+					collapseBtn := IconButton(c, tc, icons.TablerChevronLeft, 13)
 					collapseBtn.Tooltip("Hide chat pane")
 					if collapseBtn.Clicked() {
 						a.StudioChatCollapsed = true
@@ -376,19 +346,44 @@ func (a *AppUI) renderStudioSplitAgentViewer(c *ui.Context, tc theme.ThemeColors
 			// Draggable Resize Handle
 			RightResizeHandle(c, &a.StudioLeftChatWidth, minChatW, maxChatW, 420)
 		} else {
-			// Collapsed: thin reopen strip so the viewer gets full width.
-			reopen := ui.Column(c.Key("studio-chat-reopen")).Width(16).FillHeight().
+			// Collapsed: compact icon rail so the viewer gets maximum width while
+			// keeping Studio Agent actions clearly accessible.
+			ui.Column(c.Key("studio-chat-reopen")).Width(36).FillHeight().Padding(8, 0).Gap(8).
 				Background(tc.Surface).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).
-				AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-			reopen.Children(func() {
-				ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
+				AlignItems(ui.Center).Children(func() {
+
+				expandBtn := IconButton(c, tc, icons.TablerChevronRight, 14)
+				expandBtn.Tooltip("Show Studio Agent")
+				if expandBtn.Clicked() {
+					a.StudioChatCollapsed = false
+				}
+
+				chatBtn := ui.Row(c.Key("studio-chat-reopen-icon")).Size(26, 26).Radius(6).
+					Background(tc.Accent.Alpha(0.14)).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+				chatBtn.Tooltip("Open Studio Agent Chat")
+				chatBtn.Children(func() {
+					ui.Icon(c, icons.TablerMessage).Width(14).Height(14).TextColor(tc.Accent)
+				})
+				if chatBtn.Hovered() {
+					chatBtn.Background(tc.Accent.Alpha(0.24))
+				}
+				if chatBtn.Clicked() {
+					a.StudioChatCollapsed = false
+				}
+
+				newBtn := IconButton(c, tc, icons.TablerPlus, 14)
+				newBtn.Tooltip("New Studio Task")
+				if newBtn.Clicked() {
+					a.StudioChatCollapsed = false
+					a.handleNewStudioTask()
+				}
+
+				histBtn := ToggleIconButton(c, tc, icons.TablerHistory, 14, a.ShowLeftSidebar)
+				histBtn.Tooltip("Session History")
+				if histBtn.Clicked() {
+					a.ShowLeftSidebar = !a.ShowLeftSidebar
+				}
 			})
-			if reopen.Hovered() {
-				reopen.Background(tc.ToolbarControlHover)
-			}
-			if reopen.Clicked() {
-				a.StudioChatCollapsed = false
-			}
 		}
 
 		// -------------------------------------------------------------
@@ -617,174 +612,217 @@ func detectStudioFlavor(project *corestudio.StudioProject, data corestudio.Artif
 }
 
 // renderStudioUnifiedCanvasViewer provides a unified interactive canvas and viewer
-// for Slides, Motion compositions, 3D Sandbox, PDF, PPTX, and HTML artifacts.
+// for Slides, Motion compositions, 3D Sandbox, PDF, PPTX, and HTML artifacts,
+// as well as viewer-only external file previews (StudioPreviewPath).
 func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, data corestudio.ArtifactData) {
-	flavor := detectStudioFlavor(project, data)
-
-	// Ensure asset is generated or resolved
-	assetPath := data.EntryHTML
-	if assetPath == "" && project != nil {
-		assetPath = a.ensureStudioAssetFile(project)
+	isPreview := false
+	previewPath := strings.TrimSpace(a.StudioPreviewPath)
+	if previewPath != "" {
+		if _, err := os.Stat(previewPath); err == nil {
+			isPreview = true
+		} else {
+			a.StudioPreviewPath = ""
+		}
 	}
+
+	var flavor, assetPath string
+	if isPreview {
+		assetPath = previewPath
+		flavor, _ = detectPathFlavor(previewPath)
+	} else {
+		flavor = detectStudioFlavor(project, data)
+		assetPath = data.EntryHTML
+		if assetPath == "" && project != nil {
+			assetPath = a.ensureStudioAssetFile(project)
+		}
+	}
+
 	if assetPath != "" && mygo.WebViewAvailable() {
 		bg := colorToCSS(tc.Canvas)
 		if flavor == "3d" {
 			bg = "#0a0c14"
 		}
 		a.openStudioWebView(assetPath, bg)
-		a.studioSyncWebView(project)
+		if !isPreview {
+			a.studioSyncWebView(project)
+		}
 	} else if a.StudioWebView != nil {
 		a.closeStudioWebView()
 	}
 
 	slides := data.Slides
-	agentPage := data.EntryHTML != ""
+	agentPage := isPreview || data.EntryHTML != ""
 	currIdx := a.StudioSelectedSlideIdx
 	var currentSlide corestudio.SlideItem
-	if len(slides) > 0 {
-		if currIdx < 0 || currIdx >= len(slides) {
-			currIdx = 0
-		}
-		currentSlide = slides[currIdx]
-	} else if flavor == "slides" {
-		slides = corestudio.DemoSlides()
+	if !isPreview {
 		if len(slides) > 0 {
 			if currIdx < 0 || currIdx >= len(slides) {
 				currIdx = 0
 			}
 			currentSlide = slides[currIdx]
+		} else if flavor == "slides" {
+			slides = corestudio.DemoSlides()
+			if len(slides) > 0 {
+				if currIdx < 0 || currIdx >= len(slides) {
+					currIdx = 0
+				}
+				currentSlide = slides[currIdx]
+			}
 		}
 	}
 
 	ui.Column(c).Grow(1).FillHeight().Children(func() {
 		// Unified Viewer Toolbar
-		ui.Row(c.Key("studio-unified-toolbar")).Height(38).Padding(0, 16).Gap(8).AlignItems(ui.Center).
+		ui.Row(c.Key("studio-unified-toolbar")).Height(36).Padding(0, 14).Gap(8).AlignItems(ui.Center).
 			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 
-			switch flavor {
-			case "motion":
-				ui.Icon(c, icons.TablerMovie).Width(14).Height(14).TextColor(tc.Accent)
-				title := "Motion Composition"
-				if data.EntryHTML != "" {
-					title = "Motion — " + filepath.Base(data.EntryHTML)
-				}
-				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
-
-				fps := data.FPS
-				if fps <= 0 {
-					fps = 60
-				}
-				spec := fmt.Sprintf("1080P • %d FPS", fps)
-				if data.DurationSec > 0 {
-					spec = fmt.Sprintf("%s • %.0fs", spec, data.DurationSec)
-				}
-				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
-					ui.Text(c, spec).FontSize(9).FontWeight(700).TextColor(tc.Warning)
-				})
-
-				ui.Box(c).Grow(1)
-				voice := data.VoiceID
-				if voice == "" {
-					voice = "Default TTS Voice"
-				}
-				ui.Text(c, "Voice: "+voice).FontSize(11).TextColor(tc.TextMuted)
-
-			case "3d":
-				ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(tc.Success)
-				title := "3D WebGL Sandbox"
-				if data.EntryHTML != "" {
-					title = "3D Scene — " + filepath.Base(data.EntryHTML)
-				}
-				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
-				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Success.Alpha(0.15)).Children(func() {
-					ui.Text(c, "60 FPS").FontSize(9).FontWeight(700).TextColor(tc.Success)
-				})
-				ui.Box(c).Grow(1)
-
-				if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
-					if errCount := len(data.LastErrors); errCount > 0 {
-						ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Error.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
-							ui.Icon(c, icons.TablerAlertTriangle).Width(11).Height(11).TextColor(tc.Error)
-							ui.Text(c, fmt.Sprintf("%d Error(s)", errCount)).FontSize(10).FontWeight(600).TextColor(tc.Error)
-						})
-					} else {
-						ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
-							ui.Icon(c, icons.TablerCircleCheck).Width(11).Height(11).TextColor(tc.Success)
-							ui.Text(c, "WebGL Ready").FontSize(10).FontWeight(600).TextColor(tc.Success)
-						})
-					}
-				}
-
-			case "pdf":
-				ui.Icon(c, icons.TablerFileText).Width(14).Height(14).TextColor(tc.Error)
-				title := "PDF Document"
-				if data.EntryHTML != "" {
-					title = filepath.Base(data.EntryHTML)
-				}
-				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
-				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Error.Alpha(0.15)).Children(func() {
-					ui.Text(c, "PDF").FontSize(9).FontWeight(700).TextColor(tc.Error)
-				})
-				ui.Box(c).Grow(1)
-
-			case "pptx":
-				ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Warning)
-				title := "PowerPoint Presentation"
-				if data.EntryHTML != "" {
-					title = filepath.Base(data.EntryHTML)
-				}
-				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
-				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
-					ui.Text(c, "PPTX").FontSize(9).FontWeight(700).TextColor(tc.Warning)
-				})
-				ui.Box(c).Grow(1)
-
-			case "html":
+			if isPreview {
 				ui.Icon(c, icons.TablerBrowser).Width(14).Height(14).TextColor(tc.Accent)
-				title := "HTML / Web Preview"
-				if data.EntryHTML != "" {
-					title = filepath.Base(data.EntryHTML)
-				}
-				ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text)
-				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
-					ui.Text(c, "HTML / WEB").FontSize(9).FontWeight(700).TextColor(tc.Accent)
+				ui.Text(c, filepath.Base(assetPath)).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine().Tooltip(assetPath)
+				ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
+					ui.Text(c, "VIEW ONLY").FontSize(9).FontWeight(700).TextColor(tc.Warning)
 				})
 				ui.Box(c).Grow(1)
 
-			default: // slides
-				ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Accent)
-				if data.EntryHTML != "" {
-					ui.Text(c, "Deck — "+filepath.Base(data.EntryHTML)).FontSize(12).FontWeight(600).TextColor(tc.Text)
-				} else {
-					ui.Text(c, fmt.Sprintf("Slide %02d of %02d", currIdx+1, len(slides))).FontSize(12).FontWeight(600).TextColor(tc.Text)
-					layoutStr := currentSlide.Layout
-					if layoutStr == "" {
-						layoutStr = "hero"
-					}
-					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
-						ui.Text(c, strings.ToUpper(layoutStr)).FontSize(9).FontWeight(700).TextColor(tc.Accent)
-					})
+				closePrevBtn := ui.Row(c.Key("studio-close-preview")).Height(24).Padding(0, 8).Gap(4).Radius(5).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer)
+				closePrevBtn.Children(func() {
+					ui.Icon(c, icons.TablerX).Width(11).Height(11).TextColor(tc.IconMuted)
+					ui.Text(c, "Close Preview").FontSize(11).FontWeight(500).TextColor(tc.Text).SingleLine()
+				})
+				if closePrevBtn.Hovered() {
+					closePrevBtn.Background(tc.ToolbarControlHover)
 				}
-				ui.Box(c).Grow(1)
+				if closePrevBtn.Clicked() {
+					a.closeStudioPreview()
+				}
+			} else {
+				switch flavor {
+				case "motion":
+					ui.Icon(c, icons.TablerMovie).Width(14).Height(14).TextColor(tc.Accent)
+					title := "Motion Composition"
+					if data.EntryHTML != "" {
+						title = "Motion — " + filepath.Base(data.EntryHTML)
+					}
+					ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
 
-				// Navigation Controls (< Prev | Next >) for parsed decks
-				if data.EntryHTML == "" && len(slides) > 1 {
-					prevBtn := IconButton(c, tc, icons.TablerArrowLeft, 12)
-					if prevBtn.Clicked() && currIdx > 0 {
-						a.StudioSelectedSlideIdx--
-						a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+					fps := data.FPS
+					if fps <= 0 {
+						fps = 60
 					}
-					nextBtn := IconButton(c, tc, icons.TablerArrowRight, 12)
-					if nextBtn.Clicked() && currIdx < len(slides)-1 {
-						a.StudioSelectedSlideIdx++
-						a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+					spec := fmt.Sprintf("1080P • %d FPS", fps)
+					if data.DurationSec > 0 {
+						spec = fmt.Sprintf("%s • %.0fs", spec, data.DurationSec)
 					}
-					ui.Box(c).Size(1, 14).Background(tc.Border)
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
+						ui.Text(c, spec).FontSize(9).FontWeight(700).TextColor(tc.Warning)
+					})
+
+					ui.Box(c).Grow(1)
+					voice := data.VoiceID
+					if voice == "" {
+						voice = "Default TTS Voice"
+					}
+					ui.Text(c, "Voice: "+voice).FontSize(11).TextColor(tc.TextMuted).SingleLine()
+
+				case "3d":
+					ui.Icon(c, icons.TablerRotate).Width(14).Height(14).TextColor(tc.Success)
+					title := "3D WebGL Sandbox"
+					if data.EntryHTML != "" {
+						title = "3D Scene — " + filepath.Base(data.EntryHTML)
+					}
+					ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Success.Alpha(0.15)).Children(func() {
+						ui.Text(c, "60 FPS").FontSize(9).FontWeight(700).TextColor(tc.Success)
+					})
+					ui.Box(c).Grow(1)
+
+					if a.StudioWebView != nil && !a.StudioWebView.IsDestroyed() {
+						if errCount := len(data.LastErrors); errCount > 0 {
+							ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Error.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+								ui.Icon(c, icons.TablerAlertTriangle).Width(11).Height(11).TextColor(tc.Error)
+								ui.Text(c, fmt.Sprintf("%d Error(s)", errCount)).FontSize(10).FontWeight(600).TextColor(tc.Error)
+							})
+						} else {
+							ui.Row(c).Padding(2, 6).Radius(4).Background(tc.Success.Alpha(0.15)).Gap(4).AlignItems(ui.Center).Children(func() {
+								ui.Icon(c, icons.TablerCircleCheck).Width(11).Height(11).TextColor(tc.Success)
+								ui.Text(c, "WebGL Ready").FontSize(10).FontWeight(600).TextColor(tc.Success)
+							})
+						}
+					}
+
+				case "pdf":
+					ui.Icon(c, icons.TablerFileText).Width(14).Height(14).TextColor(tc.Error)
+					title := "PDF Document"
+					if data.EntryHTML != "" {
+						title = filepath.Base(data.EntryHTML)
+					}
+					ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Error.Alpha(0.15)).Children(func() {
+						ui.Text(c, "PDF").FontSize(9).FontWeight(700).TextColor(tc.Error)
+					})
+					ui.Box(c).Grow(1)
+
+				case "pptx":
+					ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Warning)
+					title := "PowerPoint Presentation"
+					if data.EntryHTML != "" {
+						title = filepath.Base(data.EntryHTML)
+					}
+					ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Warning.Alpha(0.15)).Children(func() {
+						ui.Text(c, "PPTX").FontSize(9).FontWeight(700).TextColor(tc.Warning)
+					})
+					ui.Box(c).Grow(1)
+
+				case "html":
+					ui.Icon(c, icons.TablerBrowser).Width(14).Height(14).TextColor(tc.Accent)
+					title := "HTML / Web Preview"
+					if data.EntryHTML != "" {
+						title = filepath.Base(data.EntryHTML)
+					}
+					ui.Text(c, title).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+					ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
+						ui.Text(c, "HTML / WEB").FontSize(9).FontWeight(700).TextColor(tc.Accent)
+					})
+					ui.Box(c).Grow(1)
+
+				default: // slides
+					ui.Icon(c, icons.TablerPresentation).Width(14).Height(14).TextColor(tc.Accent)
+					if data.EntryHTML != "" {
+						ui.Text(c, "Deck — "+filepath.Base(data.EntryHTML)).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+					} else {
+						ui.Text(c, fmt.Sprintf("Slide %02d of %02d", currIdx+1, len(slides))).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+						layoutStr := currentSlide.Layout
+						if layoutStr == "" {
+							layoutStr = "hero"
+						}
+						ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.15)).Children(func() {
+							ui.Text(c, strings.ToUpper(layoutStr)).FontSize(9).FontWeight(700).TextColor(tc.Accent)
+						})
+					}
+					ui.Box(c).Grow(1)
+
+					// Navigation Controls (< Prev | Next >) for parsed decks
+					if data.EntryHTML == "" && len(slides) > 1 {
+						prevBtn := IconButton(c, tc, icons.TablerArrowLeft, 12)
+						if prevBtn.Clicked() && currIdx > 0 {
+							a.StudioSelectedSlideIdx--
+							a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+						}
+						nextBtn := IconButton(c, tc, icons.TablerArrowRight, 12)
+						if nextBtn.Clicked() && currIdx < len(slides)-1 {
+							a.StudioSelectedSlideIdx++
+							a.studioWebViewRun(fmt.Sprintf("if (typeof showSlide === 'function') { showSlide(%d); }", a.StudioSelectedSlideIdx))
+						}
+						ui.Box(c).Size(1, 14).Background(tc.Border)
+					}
 				}
 			}
 
 			// Download / Export Menu (PDF, PPTX for slides, MP4 for motion, HTML)
-			if assetPath != "" {
+			if assetPath != "" && !isPreview {
 				dlBtn := ui.Row(c.Key("studio-canvas-download")).Height(26).Padding(0, 8).Gap(5).Radius(6).
 					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).
 					AlignItems(ui.Center).Cursor(ui.CursorPointer)
@@ -820,9 +858,9 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 				})
 			}
 
-			// Open local HTML file into Canvas Viewer
+			// Open local HTML / Web file in viewer-only preview mode (never added to artifacts)
 			openHTMLBtn := IconButton(c, tc, icons.TablerFileCode, 12)
-			openHTMLBtn.Tooltip("Open HTML file in Canvas")
+			openHTMLBtn.Tooltip("Preview local HTML/file in Viewer (view only)")
 			if openHTMLBtn.Clicked() {
 				go a.studioOpenLocalHTMLFile()
 			}
@@ -905,34 +943,37 @@ func (a *AppUI) renderStudioUnifiedCanvasViewer(c *ui.Context, tc theme.ThemeCol
 					})
 
 				default: // slides
-					cardPadY, cardPadX := float32(40), float32(48)
-					if stageW < 480 {
-						cardPadY, cardPadX = 20, 24
-					}
-					slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).Padding(cardPadY, cardPadX).
+					scale := min(float32(1.0), stageW/720.0)
+					cardPadY := max(float32(14), 36*scale)
+					cardPadX := max(float32(18), 44*scale)
+					titleSize := max(float32(15), 24*scale)
+					subSize := max(float32(11), 13*scale)
+					bulletSize := max(float32(10), 12*scale)
+					slideCard := ui.Column(c.Key("live-slide-stage")).Width(stageW).Height(stageH).Radius(12).
+						Padding(cardPadY, cardPadX).Clip().
 						Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Shadow(0, 16, 40, 0, tc.Border.Alpha(0.4))
 					slideCard.Children(func() {
 						ui.Row(c).AlignItems(ui.Center).Children(func() {
-							ui.Text(c, fmt.Sprintf("0%d", currIdx+1)).FontSize(12).FontWeight(700).TextColor(tc.Accent)
+							ui.Text(c, fmt.Sprintf("%02d", currIdx+1)).FontSize(max(10, 12*scale)).FontWeight(700).TextColor(tc.Accent)
 							ui.Box(c).Grow(1)
-							ui.Text(c, "16:9 PRESENTATION").FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+							ui.Text(c, "16:9 PRESENTATION").FontSize(max(8, 10*scale)).FontWeight(600).TextColor(tc.TextMuted)
 						})
-						ui.Box(c).Size(1, 24)
+						ui.Box(c).Size(1, max(8, 18*scale))
 						title := currentSlide.Title
 						if title == "" {
 							title = "Presentation Stage"
 						}
-						ui.Text(c, title).FontSize(26).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
-						ui.Box(c).Size(1, 8)
+						ui.Text(c, title).FontSize(titleSize).FontWeight(700).TextColor(tc.Text).LineHeight(1.2)
+						ui.Box(c).Size(1, max(4, 6*scale))
 						if currentSlide.Subtitle != "" {
-							ui.Text(c, currentSlide.Subtitle).FontSize(14).FontWeight(500).TextColor(tc.TextMuted)
-							ui.Box(c).Size(1, 20)
+							ui.Text(c, currentSlide.Subtitle).FontSize(subSize).FontWeight(500).TextColor(tc.TextMuted)
+							ui.Box(c).Size(1, max(8, 14*scale))
 						}
-						ui.Column(c).Gap(10).Children(func() {
+						ui.Column(c).Gap(max(4, 8*scale)).Children(func() {
 							for _, b := range currentSlide.Bullets {
-								ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-									ui.Row(c).Size(6, 6).Radius(3).Background(tc.Accent)
-									ui.Text(c, b).FontSize(13).TextColor(tc.Text)
+								ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+									ui.Row(c).Size(5, 5).Radius(3).Background(tc.Accent)
+									ui.Text(c, b).FontSize(bulletSize).TextColor(tc.Text)
 								})
 							}
 						})
@@ -1850,7 +1891,7 @@ func (a *AppUI) studioDownloadCanvasMP4(project *corestudio.StudioProject, data 
 func (a *AppUI) studioOpenLocalHTMLFile() {
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
 		Parent: a.Window,
-		Title:  "Open HTML / Web Content in Canvas Studio",
+		Title:  "Preview HTML / Web Content in Studio Viewer",
 		Filters: []mygo.FileFilter{
 			{Name: "Web / Studio Files", Extensions: []string{"html", "htm", "md", "pdf", "pptx"}},
 		},
@@ -1860,8 +1901,31 @@ func (a *AppUI) studioOpenLocalHTMLFile() {
 	}
 	p := paths[0]
 	a.runOnUI(func() {
-		a.studioImportArtifactFile(p)
+		a.openStudioPreviewFile(p)
 	})
+}
+
+// openStudioPreviewFile opens any local file in the Studio viewer for viewing
+// only, without importing it into ~/.forge artifacts or project history.
+func (a *AppUI) openStudioPreviewFile(path string) {
+	if path == "" {
+		return
+	}
+	a.StudioPreviewPath = path
+	a.studioWebviewReload = true
+	if a.Mode != ModeStudio {
+		a.setMode(ModeStudio)
+	}
+	a.studioEnsureCanvasProject()
+	a.invalidateUI()
+}
+
+// closeStudioPreview exits viewer-only preview mode and returns to the active artifact.
+func (a *AppUI) closeStudioPreview() {
+	a.StudioPreviewPath = ""
+	a.studioWebviewReload = true
+	a.closeStudioWebView()
+	a.invalidateUI()
 }
 
 func (a *AppUI) scanStudioMediaLibrary() []corestudio.MediaAsset {
@@ -2216,9 +2280,35 @@ func studioEmbeddedAssetVer(s string) int {
 	return n
 }
 
+// studioForgeRoot returns the global ~/.forge directory where Studio artifacts live.
+func studioForgeRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".forge")
+}
+
+// isUnderForgeDir reports whether path resides inside ~/.forge.
+func isUnderForgeDir(path string) bool {
+	root := studioForgeRoot()
+	if root == "" || path == "" {
+		return false
+	}
+	absRoot, err1 := filepath.Abs(root)
+	absPath, err2 := filepath.Abs(path)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // studioImportAgentArtifacts imports the files the agent wrote during its
-// last turn into the active studio project, so the viewer shows the agent's
-// real output instead of the seeded placeholder.
+// last turn into the active studio project, restricted strictly to ~/.forge.
 func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 	if a.Studio == nil || a.Agent == nil {
 		return
@@ -2228,8 +2318,7 @@ func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 		return
 	}
 
-	// Candidates: the turn's write/edit tool calls first (works outside git
-	// workspaces, where the change list stays empty), then the change list.
+	// Candidates: the turn's write/edit tool calls first, then the change list.
 	candidates := a.Agent.LastTurnWrittenFiles(sessionID)
 	for _, ch := range a.Agent.LastTurnChangedFiles(sessionID) {
 		candidates = append(candidates, ch.Path)
@@ -2237,6 +2326,9 @@ func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 
 	for _, path := range candidates {
 		for _, full := range a.studioResolveImportPath(sessionID, path) {
+			if !isUnderForgeDir(full) {
+				continue
+			}
 			flavor, targetType := detectPathFlavor(full)
 			if targetType != "" && targetType != proj.Type {
 				a.studioEnsureProjectForType(targetType)
@@ -2247,6 +2339,7 @@ func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 				continue
 			}
 			if imported {
+				a.StudioPreviewPath = ""
 				a.studioArtifactScanAt = time.Time{}
 				a.studioArtifactCache = nil
 				a.studioWebviewReload = true
@@ -2293,56 +2386,36 @@ type studioArtifactFile struct {
 	ModTime time.Time
 }
 
-// studioArtifactDirs lists the roots the explorer scans: the session
-// workspace, the app workspace, and the well-known agent output folders
-// under home.
-func (a *AppUI) studioArtifactDirs(sessionID string) []string {
+// studioArtifactDirs lists the roots the explorer scans, strictly scoped to ~/.forge.
+func (a *AppUI) studioArtifactDirs(_ string) []string {
+	root := studioForgeRoot()
+	if root == "" {
+		return nil
+	}
+	candidates := []string{
+		filepath.Join(root, "studio"),
+		filepath.Join(root, "slides"),
+		filepath.Join(root, "motion"),
+		filepath.Join(root, "3d"),
+		filepath.Join(root, "scenes"),
+		root,
+	}
 	seen := map[string]bool{}
 	var roots []string
-	add := func(p string) {
-		if p == "" || seen[p] {
-			return
+	for _, p := range candidates {
+		if seen[p] {
+			continue
 		}
 		seen[p] = true
 		if _, err := os.Stat(p); err == nil {
 			roots = append(roots, p)
 		}
 	}
-	if ws := a.Agent.SessionWorkspacePath(sessionID); ws != "" {
-		add(ws)
-		add(filepath.Join(ws, "slides"))
-		add(filepath.Join(ws, "motion"))
-		add(filepath.Join(ws, "3d"))
-		add(filepath.Join(ws, "scenes"))
-	}
-	if a.Workspace != nil && a.Workspace.RootDir != "" {
-		add(a.Workspace.RootDir)
-		add(filepath.Join(a.Workspace.RootDir, "slides"))
-		add(filepath.Join(a.Workspace.RootDir, "motion"))
-		add(filepath.Join(a.Workspace.RootDir, "3d"))
-		add(filepath.Join(a.Workspace.RootDir, "scenes"))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		add(filepath.Join(home, "slides"))
-		add(filepath.Join(home, "motion"))
-		add(filepath.Join(home, "3d"))
-		add(filepath.Join(home, ".forge-ade", "motion"))
-		add(filepath.Join(home, ".forge-ade", "slides"))
-		add(filepath.Join(home, ".forge-ade", "3d"))
-		add(filepath.Join(home, ".forge-ade", "scenes"))
-		add(filepath.Join(home, ".forge-ade", "sandbox"))
-		add(filepath.Join(home, ".forge-ade", "studio"))
-		add(filepath.Join(home, ".forge-ade", "studio_exports"))
-		add(filepath.Join(home, ".forge", "motion"))
-		add(filepath.Join(home, ".forge", "slides"))
-		add(filepath.Join(home, ".forge", "studio"))
-	}
 	return roots
 }
 
-// studioScanArtifactFiles browses the artifact roots for agent-authored
-// decks, scenes, and scripts (html/md/js), newest first. Scans are cached
-// for 2s so the per-frame render never walks the disk every frame.
+// studioScanArtifactFiles browses ~/.forge for creative artifacts (html/md/js/pdf/pptx),
+// newest first. Scans are cached for 2s so the per-frame render never walks disk every frame.
 func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 	if !a.studioArtifactScanAt.IsZero() && time.Since(a.studioArtifactScanAt) < 2*time.Second {
 		return a.studioArtifactCache
@@ -2351,8 +2424,8 @@ func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 
 	skipDir := map[string]bool{
 		".git": true, "node_modules": true, "skills": true, "plugins": true,
-		"memory": true, ".forge": true, "outputs": true, "build": true,
-		".zcode": true, "studio_temp": true,
+		"memory": true, "sessions": true, "attachments": true, "logs": true,
+		"cache": true, "outputs": true, "build": true, ".zcode": true, "studio_temp": true,
 	}
 	var files []studioArtifactFile
 	seenFile := map[string]bool{}
@@ -2374,7 +2447,7 @@ func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 				continue
 			}
 			switch strings.ToLower(filepath.Ext(e.Name())) {
-			case ".html", ".htm", ".md", ".js", ".jsx", ".tsx", ".json", ".pdf", ".pptx":
+			case ".html", ".htm", ".md", ".js", ".jsx", ".tsx", ".pdf", ".pptx":
 			default:
 				continue
 			}
@@ -2395,8 +2468,14 @@ func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 	return files
 }
 
-// studioImportArtifactFile imports one browsed artifact with user feedback.
+// studioImportArtifactFile imports an artifact from ~/.forge into the active project,
+// or opens external files in viewer-only preview mode without adding them to artifacts.
 func (a *AppUI) studioImportArtifactFile(path string) {
+	if !isUnderForgeDir(path) {
+		a.openStudioPreviewFile(path)
+		return
+	}
+	a.StudioPreviewPath = ""
 	flavor, targetType := detectPathFlavor(path)
 	if targetType != "" && a.Studio != nil {
 		if cur := a.Studio.ActiveProject(); cur == nil || cur.Type != targetType {
@@ -2420,43 +2499,49 @@ func (a *AppUI) studioImportArtifactFile(path string) {
 	a.invalidateUI()
 }
 
-// renderStudioArtifactsPane draws the browsable list of files the agent
-// produced in the Right Sidebar; clicking a row loads it into the active project's viewer.
+// renderStudioArtifactsPane draws the browsable list of ~/.forge artifacts
+// in the Right Sidebar; clicking a row loads it into the active project's viewer.
 func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 	sessionID := ""
 	if a.Agent != nil {
 		sessionID = a.Agent.ActiveSessionID
 	}
 	files := a.studioScanArtifactFiles(sessionID)
+	activeEntry := ""
+	if a.Studio != nil && a.StudioPreviewPath == "" {
+		if proj := a.Studio.ActiveProject(); proj != nil {
+			if ver := proj.ActiveVersion(); ver != nil {
+				activeEntry = ver.Data.EntryHTML
+			}
+		}
+	}
 
 	ui.Column(c.Key("studio-artifacts-pane")).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
 		// Header Toolbar
-		ui.Row(c.Key("artifacts-toolbar")).Height(38).Padding(0, 12).Gap(8).AlignItems(ui.Center).
+		ui.Row(c.Key("artifacts-toolbar")).Height(36).Padding(0, 12).Gap(6).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			ui.Icon(c, icons.TablerFolderOpen).Width(14).Height(14).TextColor(tc.Accent)
 			ui.Text(c, "Artifacts").FontSize(12).FontWeight(600).TextColor(tc.Text)
 			ui.Row(c).Padding(1, 5).Radius(3).Background(tc.Accent.Alpha(0.12)).Children(func() {
 				ui.Text(c, fmt.Sprintf("%d", len(files))).FontSize(10).FontWeight(600).TextColor(tc.Accent)
 			})
+			ui.Row(c).Padding(1, 5).Radius(3).Background(tc.ToolbarControl).Children(func() {
+				ui.Text(c, "~/.forge").FontSize(9).FontWeight(500).TextColor(tc.TextMuted)
+			})
 			ui.Box(c).Grow(1)
 
 			// Rescan / Refresh
-			if IconButton(c, tc, icons.TablerRefresh, 12).Clicked() {
+			refreshBtn := IconButton(c, tc, icons.TablerRefresh, 12)
+			refreshBtn.Tooltip("Rescan ~/.forge artifacts")
+			if refreshBtn.Clicked() {
 				a.studioArtifactScanAt = time.Time{}
 				a.studioArtifactCache = nil
-			}
-
-			// Switch to full workspace files explorer
-			allFilesBtn := IconButton(c, tc, icons.TablerFolder, 12)
-			allFilesBtn.Tooltip("Browse all workspace files")
-			if allFilesBtn.Clicked() {
-				a.pickDrawerPaneSingleton(RightTabFiles, "Files")
 			}
 		})
 
 		// Filter Query Input
 		ui.Row(c).Padding(6, 10).Children(func() {
-			ui.TextInput(c, &a.StudioArtifactFilterQuery).Placeholder("Filter artifacts...").Grow(1)
+			ui.TextInput(c, &a.StudioArtifactFilterQuery).Placeholder("Filter ~/.forge artifacts...").Grow(1)
 		})
 
 		// Filter files by query if set
@@ -2474,8 +2559,8 @@ func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 		if len(filtered) == 0 {
 			ui.Column(c).Grow(1).Padding(24, 16).AlignItems(ui.Center).Justify(ui.Center).Gap(10).Children(func() {
 				ui.Icon(c, icons.TablerSparkles).Width(24).Height(24).TextColor(tc.IconMuted)
-				ui.Text(c, "No artifacts found").FontSize(12).FontWeight(600).TextColor(tc.Text)
-				ui.Text(c, "Ask Studio Agent to generate a presentation, kinetic motion, or 3D scene.").
+				ui.Text(c, "No artifacts in ~/.forge").FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Ask Studio Agent to generate slides, motion, or 3D scenes — outputs are saved to ~/.forge.").
 					FontSize(11).TextColor(tc.TextMuted).Center()
 			})
 			return
@@ -2486,8 +2571,12 @@ func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 				for _, f := range filtered {
 					f := f
 					name := filepath.Base(f.Path)
-					row := ui.Row(c.Key("artifact-"+name+"-"+fmt.Sprint(f.ModTime.Unix()))).Height(32).Padding(0, 8).Radius(6).
+					isActive := activeEntry != "" && activeEntry == f.Path
+					row := ui.Row(c.Key("artifact-"+name+"-"+fmt.Sprint(f.ModTime.Unix()))).Height(34).Padding(0, 8).Radius(6).
 						Gap(8).AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					if isActive {
+						row.Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
+					}
 					row.Children(func() {
 						flavor, _ := detectPathFlavor(f.Path)
 						switch flavor {
@@ -2510,7 +2599,7 @@ func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 						})
 						ui.Text(c, relativeTime(f.ModTime)).FontSize(9).TextColor(tc.TextMuted)
 					})
-					if row.Hovered() {
+					if !isActive && row.Hovered() {
 						row.Background(tc.ToolbarControlHover)
 					}
 					if row.Clicked() {
@@ -2703,9 +2792,9 @@ func studioPromptRequestsNewFile(prompt string) bool {
 	return false
 }
 
-// studioTargetDir resolves the domain-specific directory where Studio artifacts
-// should be written for the session (workspace/<domain> or ~/.forge-ade/<domain>).
-func (a *AppUI) studioTargetDir(sessionID string, targetType corestudio.ArtifactType) string {
+// studioTargetDir resolves the domain-specific directory under ~/.forge/studio
+// where Studio artifacts are written.
+func (a *AppUI) studioTargetDir(_ string, targetType corestudio.ArtifactType) string {
 	sub := "slides"
 	switch targetType {
 	case corestudio.ArtifactTypeMotion:
@@ -2715,22 +2804,10 @@ func (a *AppUI) studioTargetDir(sessionID string, targetType corestudio.Artifact
 	case corestudio.ArtifactTypeSlides:
 		sub = "slides"
 	}
-	base := ""
-	if a.Agent != nil && sessionID != "" {
-		base = strings.TrimSpace(a.Agent.SessionWorkspacePath(sessionID))
+	if root := studioForgeRoot(); root != "" {
+		return filepath.Join(root, "studio", sub)
 	}
-	if base == "" && a.Workspace != nil {
-		base = strings.TrimSpace(a.Workspace.RootDir)
-	}
-	if base == "" || strings.HasPrefix(base, "ssh://") {
-		if home, err := os.UserHomeDir(); err == nil {
-			base = filepath.Join(home, ".forge-ade")
-		}
-	}
-	if base == "" {
-		return sub
-	}
-	return filepath.Join(base, sub)
+	return sub
 }
 
 // studioSlugifyPrompt converts a user prompt into a concise lowercase kebab-case

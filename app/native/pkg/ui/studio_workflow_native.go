@@ -89,27 +89,27 @@ func (a *AppUI) bindStepString(step *corestudio.WorkflowStep, paramKey, fallback
 // ---------------------------------------------------------------------------
 
 func wfPrimaryBtn(c *ui.Context, tc theme.ThemeColors, key string, icon *ui.SVG, label, kbd string, loading bool) ui.Element {
-	btn := ui.Row(c.Key(key)).Height(32).Padding(0, 14).Radius(8).Gap(7).
-		AlignItems(ui.Center).Justify(ui.Center).Background(tc.Text).Cursor(ui.CursorPointer)
+	btn := ui.Row(c.Key(key)).Height(30).Padding(0, 14).Radius(8).Gap(6).
+		AlignItems(ui.Center).Justify(ui.Center).Background(tc.Accent).Cursor(ui.CursorPointer)
 	if btn.Hovered() {
-		btn.Opacity(0.9)
+		btn.Background(tc.Accent.Alpha(0.88))
 	}
 	btn.Children(func() {
 		if loading {
-			ui.Spinner(c).Size(13, 13).Label("")
+			ui.Spinner(c).Size(12, 12).Label("")
 		} else if icon != nil {
-			ui.Icon(c, icon).Width(14).Height(14).TextColor(tc.Canvas)
+			ui.Icon(c, icon).Width(13).Height(13).TextColor(tc.AccentForeground)
 		}
-		ui.Text(c, label).FontSize(12.5).FontWeight(600).TextColor(tc.Canvas).SingleLine()
+		ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(tc.AccentForeground).SingleLine()
 		if kbd != "" && !loading {
-			ui.Text(c, kbd).FontSize(11).FontWeight(500).TextColor(tc.Canvas.Alpha(0.65)).SingleLine()
+			ui.Text(c, kbd).FontSize(10.5).FontWeight(500).TextColor(tc.AccentForeground.Alpha(0.72)).SingleLine()
 		}
 	})
 	return btn
 }
 
 func wfSecondaryBtn(c *ui.Context, tc theme.ThemeColors, key string, icon *ui.SVG, label string) ui.Element {
-	btn := ui.Row(c.Key(key)).Height(30).Padding(0, 11).Radius(7).Gap(6).
+	btn := ui.Row(c.Key(key)).Height(28).Padding(0, 10).Radius(7).Gap(6).
 		AlignItems(ui.Center).Justify(ui.Center).
 		Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).Cursor(ui.CursorPointer)
 	if btn.Hovered() {
@@ -119,19 +119,19 @@ func wfSecondaryBtn(c *ui.Context, tc theme.ThemeColors, key string, icon *ui.SV
 		if icon != nil {
 			ui.Icon(c, icon).Width(13).Height(13).TextColor(tc.IconMuted)
 		}
-		ui.Text(c, label).FontSize(12).FontWeight(500).TextColor(tc.Text).SingleLine()
+		ui.Text(c, label).FontSize(11.5).FontWeight(500).TextColor(tc.Text).SingleLine()
 	})
 	return btn
 }
 
 func wfGhostIconBtn(c *ui.Context, tc theme.ThemeColors, key string, icon *ui.SVG, tooltip string, danger bool) ui.Element {
-	btn := ui.Row(c.Key(key)).Size(28, 28).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+	btn := ui.Row(c.Key(key)).Size(26, 26).Radius(6).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 	hovered := btn.Hovered()
 	if hovered {
 		if danger {
 			btn.Background(tc.Error.Alpha(0.12))
 		} else {
-			btn.Background(tc.Text.Alpha(0.06))
+			btn.Background(tc.Text.Alpha(0.07))
 		}
 	}
 	if tooltip != "" {
@@ -146,36 +146,51 @@ func wfGhostIconBtn(c *ui.Context, tc theme.ThemeColors, key string, icon *ui.SV
 				col = tc.Text
 			}
 		}
-		ui.Icon(c, icon).Width(14).Height(14).TextColor(col)
+		ui.Icon(c, icon).Width(13).Height(13).TextColor(col)
 	})
 	return btn
 }
 
 func wfFieldLabel(c *ui.Context, tc theme.ThemeColors, text string) {
-	ui.Text(c, text).FontSize(12).FontWeight(500).TextColor(tc.TextMuted)
+	ui.Text(c, text).FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted)
 }
 
 func wfInputWrap(c *ui.Context, tc theme.ThemeColors, content func()) {
-	ui.Row(c).Height(34).Radius(8).Padding(0, 10).Gap(8).AlignItems(ui.Center).
-		Background(tc.Input).BorderWidth(1).BorderColor(tc.Border).Children(content)
+	wrap := ui.Row(c).Height(36).Radius(9).Padding(0, 12).Gap(8).AlignItems(ui.Center).
+		Background(tc.Input).BorderWidth(1).BorderColor(tc.Border)
+	if wrap.Hovered() {
+		wrap.BorderColor(tc.Accent.Alpha(0.45))
+	}
+	wrap.Children(content)
 }
 
 func wfTextAreaWrap(c *ui.Context, tc theme.ThemeColors, content func()) {
-	ui.Column(c).Radius(8).Padding(8, 10).
-		Background(tc.Input).BorderWidth(1).BorderColor(tc.Border).Children(content)
+	wrap := ui.Column(c).Radius(10).Padding(10, 12).Gap(6).
+		Background(tc.Input).BorderWidth(1).BorderColor(tc.Border)
+	if wrap.Hovered() {
+		wrap.BorderColor(tc.Accent.Alpha(0.45))
+	}
+	wrap.Children(content)
+}
+
+func wfValueBadge(c *ui.Context, tc theme.ThemeColors, text string) {
+	ui.Row(c).Height(24).Padding(0, 8).Radius(6).Background(tc.ToolbarControl).
+		BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+		ui.Text(c, text).FontSize(11).FontWeight(600).TextColor(tc.Text).SingleLine()
+	})
 }
 
 func wfChoiceGroup(c *ui.Context, tc theme.ThemeColors, keyPrefix string, options []string, current string, onSelect func(string)) {
 	ui.Row(c.Key(keyPrefix+"-grp")).Height(30).Padding(3, 3).Gap(2).Radius(8).
-		Background(tc.Input).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Children(func() {
+		Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).AlignItems(ui.Center).Children(func() {
 		for _, opt := range options {
 			active := current == opt
 			item := ui.Row(c.Key(keyPrefix+"-"+opt)).Height(22).Padding(0, 10).Radius(5).
 				AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
 			if active {
-				item.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+				item.Background(tc.Accent.Alpha(0.16)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.4))
 				item.Children(func() {
-					ui.Text(c, opt).FontSize(11.5).FontWeight(600).TextColor(tc.Text).SingleLine()
+					ui.Text(c, opt).FontSize(11.5).FontWeight(600).TextColor(tc.Accent).SingleLine()
 				})
 			} else {
 				if item.Hovered() {
@@ -207,18 +222,29 @@ func (a *AppUI) renderStudioNativeWorkflow(c *ui.Context, tc theme.ThemeColors, 
 		a.StudioWorkflowRightTab = "preview"
 	}
 
+	if c.Shortcut(ui.Cmd, ui.KeyEnter) && !a.StudioIsGenerating {
+		a.studioQueuePrompt()
+	}
+
 	winW, _ := c.Size()
 	compact := winW > 0 && winW < 1120
 
 	ui.Column(c.Key("native-workflow-studio")).Grow(1).FillHeight().Background(tc.Canvas).Children(func() {
 		// -----------------------------------------------------------------
-		// 1. TOP TOOLBAR (Clean macOS / ForgeADE Chrome)
+		// 1. TOP TOOLBAR (Clean, aligned 40px bar)
 		// -----------------------------------------------------------------
-		ui.Row(c.Key("native-wf-topbar")).Height(48).Padding(0, 16).Gap(10).AlignItems(ui.Center).
-			Background(tc.Chrome).BorderWidth(0, 0, 1, 0).BorderColor(tc.ToolbarBorder).Children(func() {
+		ui.Row(c.Key("native-wf-topbar")).Height(40).Padding(0, 14).Gap(8).AlignItems(ui.Center).
+			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+
+			// Collapse / Expand Left Presets Rail
+			sideBtn := ToggleIconButton(c, tc, icons.TablerPanelLeft, 14, !a.StudioWorkflowLeftCollapsed)
+			sideBtn.Tooltip("Toggle Workflows & Stages Sidebar")
+			if sideBtn.Clicked() {
+				a.StudioWorkflowLeftCollapsed = !a.StudioWorkflowLeftCollapsed
+			}
 
 			// Segmented Mode Switch: Pipeline | JSON Template
-			ui.Row(c.Key("wf-mode-switcher")).Height(30).Padding(3, 3).Gap(2).Radius(8).
+			ui.Row(c.Key("wf-mode-switcher")).Height(28).Padding(2, 2).Gap(2).Radius(7).
 				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).AlignItems(ui.Center).Children(func() {
 				modeTab := func(key, label, mode string) {
 					active := wf.Mode == mode
@@ -326,17 +352,19 @@ func (a *AppUI) renderStudioNativeWorkflow(c *ui.Context, tc theme.ThemeColors, 
 		// 2. 3-PANE WORKSPACE
 		// -----------------------------------------------------------------
 		ui.Row(c.Key("native-wf-body")).Grow(1).FillHeight().Children(func() {
-			// LEFT SIDEBAR: Flat native list of Workflows & Stages
-			leftW := float32(224)
-			if compact {
-				leftW = 196
+			// LEFT SIDEBAR: Flat native list of Workflows & Stages (collapsible)
+			if !a.StudioWorkflowLeftCollapsed {
+				leftW := float32(220)
+				if compact {
+					leftW = 192
+				}
+				a.renderStudioWorkflowLeftPane(c, tc, project, wf, leftW)
 			}
-			a.renderStudioWorkflowLeftPane(c, tc, project, wf, leftW)
 
 			// CENTER PANE: Workflow Stage Editor / JSON Template Injector
-			centerW := float32(460)
+			centerW := float32(450)
 			if compact {
-				centerW = 380
+				centerW = 370
 			}
 			ui.Column(c.Key("native-wf-center")).Width(centerW).FillHeight().
 				Background(tc.Canvas).BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
@@ -496,6 +524,27 @@ func (a *AppUI) renderStudioPipelineBuilderPane(c *ui.Context, tc theme.ThemeCol
 	})
 }
 
+func wfStepIcon(st corestudio.WorkflowStepType) *ui.SVG {
+	switch st {
+	case corestudio.StepTypeReference:
+		return icons.TablerPhoto
+	case corestudio.StepTypePrompt:
+		return icons.TablerPencil
+	case corestudio.StepTypeStoryboard:
+		return icons.TablerColumns
+	case corestudio.StepTypeImageGen:
+		return icons.TablerSparkles
+	case corestudio.StepTypeVideoGen:
+		return icons.TablerMovie
+	case corestudio.StepTypeUpscale:
+		return icons.TablerWand
+	case corestudio.StepTypeOutput:
+		return icons.TablerDeviceFloppy
+	default:
+		return icons.TablerBraces
+	}
+}
+
 func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors, wf *corestudio.WorkflowPipeline, step *corestudio.WorkflowStep, idx, total int) {
 	bgCol := tc.Surface
 	if !step.Enabled {
@@ -503,16 +552,20 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 	}
 
 	ui.Column(c.Key("step-card-"+step.ID)).Radius(12).Background(bgCol).
-		BorderWidth(1).BorderColor(tc.Border).Padding(16, 18).Gap(12).Children(func() {
+		BorderWidth(1).BorderColor(tc.Border).Padding(14, 16).Gap(12).Children(func() {
 
-		// Clean Card Header
+		// Clean Card Header with domain icon badge
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, fmt.Sprintf("%02d", idx+1)).FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Row(c).Size(24, 24).Radius(6).Background(tc.Accent.Alpha(0.12)).
+				AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+				ui.Icon(c, wfStepIcon(step.Type)).Width(13).Height(13).TextColor(tc.Accent)
+			})
+			ui.Text(c, fmt.Sprintf("%02d", idx+1)).FontSize(11).FontWeight(700).TextColor(tc.TextMuted)
 			titleCol := tc.Text
 			if !step.Enabled {
 				titleCol = tc.TextMuted
 			}
-			ui.Text(c, step.Title).FontSize(13.5).FontWeight(600).TextColor(titleCol).SingleLine()
+			ui.Text(c, step.Title).FontSize(13).FontWeight(600).TextColor(titleCol).SingleLine()
 
 			if !step.Enabled {
 				Badge(c, tc, "Bypassed", tc.Warning)
@@ -551,7 +604,7 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 				ui.Column(c).Gap(5).Children(func() {
 					wfFieldLabel(c, tc, "Reference Image")
 					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-						ui.Row(c).Grow(1).Height(34).Radius(8).Padding(0, 10).AlignItems(ui.Center).
+						ui.Row(c).Grow(1).Height(36).Radius(9).Padding(0, 12).AlignItems(ui.Center).
 							Background(tc.Input).BorderWidth(1).BorderColor(tc.Border).Children(func() {
 							a.bindStepString(step, "path", "", func(v *string) {
 								ui.TextInput(c, v).Placeholder("Choose an image file...").Grow(1)
@@ -568,17 +621,29 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 					strengthVal := step.GetFloat("strength", 0.65)
 					ui.Slider(c.Key("sl-str-"+step.ID), &strengthVal, 0.1, 1.0).Grow(1)
 					step.SetParam("strength", strengthVal)
-					ui.Text(c, fmt.Sprintf("%.2f", strengthVal)).FontSize(12).FontWeight(600).TextColor(tc.Text).Width(34)
+					wfValueBadge(c, tc, fmt.Sprintf("%.2f", strengthVal))
 				})
 			})
 
 		case corestudio.StepTypePrompt:
 			ui.Column(c).Gap(10).Children(func() {
 				ui.Column(c).Gap(5).Children(func() {
-					wfFieldLabel(c, tc, "Prompt")
+					ui.Row(c).AlignItems(ui.Center).Children(func() {
+						wfFieldLabel(c, tc, "Prompt")
+						ui.Box(c).Grow(1)
+						if strings.TrimSpace(step.GetString("positive", "")) != "" {
+							if wfGhostIconBtn(c, tc, "clr-pos-"+step.ID, icons.TablerX, "Clear prompt", false).Clicked() {
+								step.SetParam("positive", "")
+								if a.StudioWorkflowStepDrafts != nil {
+									a.StudioWorkflowStepDrafts[step.ID+":positive"] = ""
+								}
+								a.StudioPositivePrompt = ""
+							}
+						}
+					})
 					wfTextAreaWrap(c, tc, func() {
 						a.bindStepString(step, "positive", a.StudioPositivePrompt, func(v *string) {
-							ui.TextAreaBase(c, v).Lines(3, 5).Placeholder("Describe the scene, subject, lighting, and style...").FillWidth()
+							ui.TextAreaBase(c, v).Lines(3, 6).Placeholder("Describe the scene, subject, lighting, and style...").FillWidth()
 						})
 					})
 				})
@@ -590,35 +655,46 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 						})
 					})
 				})
-				// Subtle quick-append style chips
+				// Interactive style preset chips (highlighted when present in prompt)
 				ui.Row(c).Wrap().Gap(6).Children(func() {
+					curPos := step.GetString("positive", "")
 					chip := func(label, token string) {
-						btn := ui.Row(c.Key("chip-"+step.ID+"-"+label)).Height(26).Padding(0, 10).Radius(999).
-							Background(tc.Canvas).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Cursor(ui.CursorPointer)
-						if btn.Hovered() {
-							btn.Background(tc.ToolbarControlHover)
+						active := strings.Contains(strings.ToLower(curPos), strings.ToLower(token))
+						btn := ui.Row(c.Key("chip-"+step.ID+"-"+label)).Height(24).Padding(0, 9).Radius(999).
+							AlignItems(ui.Center).Cursor(ui.CursorPointer)
+						if active {
+							btn.Background(tc.Accent.Alpha(0.16)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.45))
+							btn.Children(func() {
+								ui.Text(c, label).FontSize(11).FontWeight(600).TextColor(tc.Accent)
+							})
+						} else {
+							btn.Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+							if btn.Hovered() {
+								btn.Background(tc.ToolbarControlHover)
+							}
+							btn.Children(func() {
+								ui.Text(c, "+ "+label).FontSize(11).FontWeight(500).TextColor(tc.TextMuted)
+							})
 						}
-						btn.Children(func() {
-							ui.Text(c, "+ "+label).FontSize(11.5).FontWeight(500).TextColor(tc.TextMuted)
-						})
-						if btn.Clicked() {
-							cur := step.GetString("positive", "")
-							if cur == "" {
-								cur = token
+						if btn.Clicked() && !active {
+							next := curPos
+							if strings.TrimSpace(next) == "" {
+								next = token
 							} else {
-								cur += ", " + token
+								next += ", " + token
 							}
-							step.SetParam("positive", cur)
+							step.SetParam("positive", next)
 							if a.StudioWorkflowStepDrafts != nil {
-								a.StudioWorkflowStepDrafts[step.ID+":positive"] = cur
+								a.StudioWorkflowStepDrafts[step.ID+":positive"] = next
 							}
-							a.StudioPositivePrompt = cur
+							a.StudioPositivePrompt = next
 						}
 					}
 					chip("Cinematic", "cinematic volumetric lighting, anamorphic lens, 8k")
 					chip("Cyberpunk", "neon rain reflections, cyberpunk atmosphere")
 					chip("Photoreal", "photorealistic 35mm photography, crisp depth of field")
 					chip("Anime", "makoto shinkai anime aesthetic, vibrant sky")
+					chip("Minimalist", "swiss minimalist composition, clean studio lighting")
 				})
 			})
 
@@ -643,12 +719,19 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 
 		case corestudio.StepTypeImageGen:
 			ui.Column(c).Gap(12).Children(func() {
-				ui.Column(c).Gap(5).Children(func() {
+				ui.Column(c).Gap(6).Children(func() {
 					wfFieldLabel(c, tc, "Model")
 					wfInputWrap(c, tc, func() {
 						a.bindStepString(step, "model", "flux-1-schnell", func(v *string) {
 							ui.TextInput(c, v).Placeholder("flux-1-schnell, sdxl, dall-e-3").Grow(1)
 						})
+					})
+					wfChoiceGroup(c, tc, "mdl-img-"+step.ID, []string{"flux-1-schnell", "flux-1-dev", "sdxl"}, step.GetString("model", "flux-1-schnell"), func(v string) {
+						step.SetParam("model", v)
+						if a.StudioWorkflowStepDrafts != nil {
+							a.StudioWorkflowStepDrafts[step.ID+":model"] = v
+						}
+						a.StudioModel = v
 					})
 				})
 
@@ -676,24 +759,21 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 					ui.Slider(c.Key("sl-steps-"+step.ID), &stepsVal, 5, 80).Grow(1)
 					step.SetParam("steps", int(stepsVal))
 					a.StudioSteps = int(stepsVal)
-					ui.Text(c, strconv.Itoa(int(stepsVal))).FontSize(12).FontWeight(600).TextColor(tc.Text).Width(28)
+					wfValueBadge(c, tc, strconv.Itoa(int(stepsVal)))
 				})
 
 				ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
 					wfFieldLabel(c, tc, "Seed")
 					ui.Box(c).Grow(1)
-					ui.Row(c).Height(30).Padding(0, 8).Gap(6).Radius(8).
+					ui.Row(c).Width(170).Height(32).Padding(0, 8).Gap(6).Radius(8).
 						Background(tc.Input).BorderWidth(1).BorderColor(tc.Border).AlignItems(ui.Center).Children(func() {
-						ui.Text(c, strconv.Itoa(step.GetInt("seed", 4928172))).FontSize(12).FontWeight(500).TextColor(tc.Text)
-						rBtn := ui.Row(c.Key("seed-rnd-"+step.ID)).Size(22, 22).Radius(5).AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
-						if rBtn.Hovered() {
-							rBtn.Background(tc.Text.Alpha(0.06))
+						seedStr := strconv.Itoa(step.GetInt("seed", 4928172))
+						ui.TextInput(c.Key("seed-in-"+step.ID), &seedStr).Placeholder("Seed").Grow(1)
+						if parsed, err := strconv.Atoi(strings.TrimSpace(seedStr)); err == nil {
+							step.SetParam("seed", parsed)
+							a.StudioSeed = int64(parsed)
 						}
-						rBtn.Tooltip("Randomize seed")
-						rBtn.Children(func() {
-							ui.Icon(c, icons.TablerRefresh).Width(12).Height(12).TextColor(tc.IconMuted)
-						})
-						if rBtn.Clicked() {
+						if wfGhostIconBtn(c, tc, "seed-rnd-"+step.ID, icons.TablerRefresh, "Randomize seed", false).Clicked() {
 							ns := int(time.Now().UnixNano() % 9999999)
 							step.SetParam("seed", ns)
 							a.StudioSeed = int64(ns)
@@ -704,12 +784,19 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 
 		case corestudio.StepTypeVideoGen:
 			ui.Column(c).Gap(12).Children(func() {
-				ui.Column(c).Gap(5).Children(func() {
+				ui.Column(c).Gap(6).Children(func() {
 					wfFieldLabel(c, tc, "Video Model")
 					wfInputWrap(c, tc, func() {
 						a.bindStepString(step, "model", "veo-2-ai", func(v *string) {
-							ui.TextInput(c, v).Placeholder("veo-2-ai, luma-ray, animate-diff-v3").Grow(1)
+							ui.TextInput(c, v).Placeholder("veo-2-ai, luma-ray, kling-1.6").Grow(1)
 						})
+					})
+					wfChoiceGroup(c, tc, "mdl-vid-"+step.ID, []string{"veo-2-ai", "luma-ray", "kling-1.6"}, step.GetString("model", "veo-2-ai"), func(v string) {
+						step.SetParam("model", v)
+						if a.StudioWorkflowStepDrafts != nil {
+							a.StudioWorkflowStepDrafts[step.ID+":model"] = v
+						}
+						a.StudioModel = v
 					})
 				})
 				ui.Row(c).AlignItems(ui.Center).Gap(10).Children(func() {
@@ -732,11 +819,11 @@ func (a *AppUI) renderStudioPipelineStepCard(c *ui.Context, tc theme.ThemeColors
 					})
 				})
 				ui.Row(c).AlignItems(ui.Center).Gap(12).Children(func() {
-					wfFieldLabel(c, tc, "Motion Intensity")
+					wfFieldLabel(c, tc, "Motion")
 					mbVal := float64(step.GetInt("motion_bucket", 127))
 					ui.Slider(c.Key("sl-mb-"+step.ID), &mbVal, 20, 255).Grow(1)
 					step.SetParam("motion_bucket", int(mbVal))
-					ui.Text(c, strconv.Itoa(int(mbVal))).FontSize(12).FontWeight(600).TextColor(tc.Text).Width(30)
+					wfValueBadge(c, tc, strconv.Itoa(int(mbVal)))
 				})
 			})
 
@@ -892,9 +979,9 @@ func (a *AppUI) renderStudioTemplateInjectorPane(c *ui.Context, tc theme.ThemeCo
 
 func (a *AppUI) renderStudioWorkflowRightPane(c *ui.Context, tc theme.ThemeColors, project *corestudio.StudioProject, wf *corestudio.WorkflowPipeline) {
 	ui.Column(c.Key("native-wf-right")).Grow(1).MinWidth(320).FillHeight().Background(tc.Canvas).Children(func() {
-		// Right Pane Sub-Header: Segmented Tabs + Output Metadata
-		ui.Row(c.Key("wf-right-tabs")).Height(44).Padding(0, 18).Gap(10).AlignItems(ui.Center).
-			BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
+		// Right Pane Sub-Header: Segmented Tabs + Output Metadata (aligned 40px)
+		ui.Row(c.Key("wf-right-tabs")).Height(40).Padding(0, 16).Gap(10).AlignItems(ui.Center).
+			Background(tc.Surface).BorderWidth(0, 0, 1, 0).BorderColor(tc.Border).Children(func() {
 			ui.Row(c).Height(28).Padding(2, 2).Gap(2).Radius(7).
 				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.ToolbarBorder).AlignItems(ui.Center).Children(func() {
 				rTab := func(id, label string) {
@@ -950,9 +1037,12 @@ func (a *AppUI) renderStudioWorkflowRightPane(c *ui.Context, tc theme.ThemeColor
 						if i >= 30 {
 							break
 						}
-						row := ui.Row(c.Key("wf-gal-"+asset.ID)).Height(44).Padding(0, 12).Radius(8).Gap(10).
+						isActive := asset.FilePath != "" && asset.FilePath == a.StudioGeneratedImagePath
+						row := ui.Row(c.Key("wf-gal-"+asset.ID)).Height(46).Padding(0, 12).Radius(9).Gap(10).
 							AlignItems(ui.Center).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Cursor(ui.CursorPointer)
-						if row.Hovered() {
+						if isActive {
+							row.Background(tc.Accent.Alpha(0.12)).BorderColor(tc.Accent.Alpha(0.4))
+						} else if row.Hovered() {
 							row.Background(tc.ToolbarControlHover)
 						}
 						row.Children(func() {
@@ -965,6 +1055,9 @@ func (a *AppUI) renderStudioWorkflowRightPane(c *ui.Context, tc theme.ThemeColor
 								ui.Text(c, asset.Title).FontSize(12.5).FontWeight(500).TextColor(tc.Text).SingleLine()
 								ui.Text(c, strings.ToUpper(asset.Type)).FontSize(10.5).TextColor(tc.TextMuted)
 							})
+							if isActive {
+								Badge(c, tc, "Active", tc.Accent)
+							}
 							if wfSecondaryBtn(c, tc, "wf-gal-ref-"+asset.ID, nil, "Use as Ref").Clicked() && asset.FilePath != "" {
 								a.studioInjectReferencePath(wf, asset.FilePath)
 								c.AddToast(ui.Toast{Title: "Reference Applied", Description: filepath.Base(asset.FilePath), Type: "success"})

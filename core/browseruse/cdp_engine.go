@@ -11,10 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -130,7 +130,7 @@ func findBrowser() (string, error) {
 			continue
 		}
 		for _, p := range cand {
-			if strings.Contains(p, "/") {
+			if strings.ContainsAny(p, "/\\") {
 				if _, err := os.Stat(p); err == nil {
 					return p, nil
 				}
@@ -139,7 +139,53 @@ func findBrowser() (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("no Chromium-based browser found; install Google Chrome (or set FORGE_ADE_BROWSER to a Chromium binary)")
+	if runtime.GOOS == "windows" {
+		for _, base := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)"), os.Getenv("LOCALAPPDATA")} {
+			if base == "" {
+				continue
+			}
+			for _, rel := range []string{
+				filepath.Join("Microsoft", "Edge", "Application", "msedge.exe"),
+				filepath.Join("Google", "Chrome", "Application", "chrome.exe"),
+				filepath.Join("BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+			} {
+				p := filepath.Join(base, rel)
+				if _, err := os.Stat(p); err == nil {
+					return p, nil
+				}
+			}
+		}
+		for _, name := range []string{"msedge.exe", "chrome.exe", "brave.exe"} {
+			if lp, err := exec.LookPath(name); err == nil {
+				return lp, nil
+			}
+		}
+		if localApp := os.Getenv("LOCALAPPDATA"); localApp != "" {
+			for _, pat := range []string{
+				filepath.Join(localApp, "ms-playwright", "chromium_headless_shell-*", "chrome-win*", "chrome-headless-shell.exe"),
+				filepath.Join(localApp, "ms-playwright", "chromium-*", "chrome-win*", "chrome.exe"),
+			} {
+				if matches, err := filepath.Glob(pat); err == nil && len(matches) > 0 {
+					return matches[len(matches)-1], nil
+				}
+			}
+		}
+	}
+	// Fallback: Playwright cached Chromium / headless-shell (macOS & Linux)
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		patterns := []string{
+			filepath.Join(home, "Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-*/chrome-headless-shell"),
+			filepath.Join(home, "Library/Caches/ms-playwright/chromium-*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"),
+			filepath.Join(home, ".cache/ms-playwright/chromium_headless_shell-*/chrome-*/chrome-headless-shell"),
+			filepath.Join(home, ".cache/ms-playwright/chromium-*/chrome-linux/chrome"),
+		}
+		for _, pat := range patterns {
+			if matches, err := filepath.Glob(pat); err == nil && len(matches) > 0 {
+				return matches[len(matches)-1], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no Chromium-based browser found; on macOS use ForgeADE's built-in WKWebView via IPC, or run `npx playwright install chromium`, or set FORGE_ADE_BROWSER")
 }
 
 // Start launches (or reuses) the browser and attaches to its active tab with
@@ -188,7 +234,7 @@ func (e *cdpEngine) launch(bin string, port int) error {
 	}
 
 	cmd := exec.Command(bin, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setBrowserProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch browser: %w", err)
 	}
@@ -384,14 +430,7 @@ func (e *cdpEngine) teardownLocked() {
 }
 
 func (e *cdpEngine) stopProcessLocked() {
-	if e.cmd != nil && e.cmd.Process != nil {
-		pid := e.cmd.Process.Pid
-		_ = syscall.Kill(-pid, syscall.SIGTERM)
-		go func() {
-			time.Sleep(3 * time.Second)
-			_ = syscall.Kill(-pid, syscall.SIGKILL)
-		}()
-	}
+	killBrowserProcess(e.cmd)
 	e.cmd = nil
 }
 

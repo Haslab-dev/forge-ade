@@ -459,12 +459,23 @@ func TestStudioEntryHTMLAsset(t *testing.T) {
 }
 
 // TestStudioImportFromWrittenFiles pins the import pipeline's primary source:
-// the turn's write tool calls (which work outside git workspaces), resolved
-// against the session workspace.
+// files written under ~/.forge are imported; files outside ~/.forge are ignored.
 func TestStudioImportFromWrittenFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	dir := t.TempDir()
 	eng := engine.NewEngine(dir)
 	app := NewAppUI(eng, dir)
+
+	forgeSlides := filepath.Join(home, ".forge", "studio", "slides")
+	if err := os.MkdirAll(forgeSlides, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deckPath := filepath.Join(forgeSlides, "deck.html")
+	if err := os.WriteFile(deckPath, []byte("<html><body>deck</body></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	as := app.Agent
 	sess := &agent.AgentSession{
@@ -475,7 +486,7 @@ func TestStudioImportFromWrittenFiles(t *testing.T) {
 			{ID: 2, Role: "assistant", Done: true, Timestamp: time.Now(),
 				Tools: []*agent.ToolExecution{
 					{ID: "t1", ToolName: "terminal", Command: `{"command":"ls"}`, Status: "completed"},
-					{ID: "t2", ToolName: "write", Command: `{"path":"deck.html","content":"<html/>"}`, Status: "completed"},
+					{ID: "t2", ToolName: "write", Command: fmt.Sprintf(`{"path":%q,"content":"<html/>"}`, deckPath), Status: "completed"},
 				}},
 		},
 	}
@@ -486,13 +497,8 @@ func TestStudioImportFromWrittenFiles(t *testing.T) {
 	as.Unlock()
 
 	files := app.Agent.LastTurnWrittenFiles("sess-writer")
-	if len(files) != 1 || files[0] != "deck.html" {
-		t.Fatalf("expected [deck.html], got %v", files)
-	}
-
-	deckPath := filepath.Join(dir, "deck.html")
-	if err := os.WriteFile(deckPath, []byte("<html><body>deck</body></html>"), 0o644); err != nil {
-		t.Fatal(err)
+	if len(files) != 1 || files[0] != deckPath {
+		t.Fatalf("expected [%s], got %v", deckPath, files)
 	}
 
 	app.setMode(ModeStudio)
@@ -507,47 +513,89 @@ func TestStudioImportFromWrittenFiles(t *testing.T) {
 	}
 }
 
-// TestStudioScanArtifactFiles pins the explorer scan: artifact files in the
-// session workspace are found, non-artifact files are filtered out.
+// TestStudioScanArtifactFiles pins the explorer scan: ONLY artifact files under
+// ~/.forge are loaded; workspace files and projects.json are excluded.
 func TestStudioScanArtifactFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	dir := t.TempDir()
 	eng := engine.NewEngine(dir)
 	app := NewAppUI(eng, dir)
 	app.setMode(ModeStudio)
 
-	as := app.Agent
-	sess := &agent.AgentSession{
-		ID: "sess-scan", Title: "Scanner", Status: "idle",
-		WorkspacePath: dir, Tasks: agent.NewTaskManager(),
-	}
-	as.Lock()
-	as.Sessions = []*agent.AgentSession{sess}
-	as.ActiveSessionID = "sess-scan"
-	as.Unlock()
-
-	if err := os.MkdirAll(filepath.Join(dir, "slides"), 0o755); err != nil {
+	forgeSlides := filepath.Join(home, ".forge", "slides")
+	if err := os.MkdirAll(forgeSlides, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	deck := filepath.Join(dir, "slides", "deck.html")
+	deck := filepath.Join(forgeSlides, "deck.html")
 	if err := os.WriteFile(deck, []byte("<html/>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(forgeSlides, "projects.json"), []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "slides"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	extHTML := filepath.Join(dir, "slides", "external.html")
+	if err := os.WriteFile(extHTML, []byte("<html/>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	files := app.studioScanArtifactFiles("sess-scan")
-	found := false
+	foundDeck := false
 	for _, f := range files {
 		if f.Path == deck {
-			found = true
+			foundDeck = true
 		}
-		if filepath.Ext(f.Path) == ".txt" {
-			t.Fatalf("non-artifact file leaked into scan: %s", f.Path)
+		if f.Path == extHTML {
+			t.Fatalf("external workspace file leaked into artifacts: %s", f.Path)
+		}
+		if filepath.Ext(f.Path) == ".json" {
+			t.Fatalf("json metadata file leaked into artifacts: %s", f.Path)
 		}
 	}
-	if !found {
+	if !foundDeck {
 		t.Fatalf("expected %s in scan results, got %+v", deck, files)
+	}
+}
+
+// TestStudioExternalPreviewDoesNotImportArtifact verifies that opening an HTML
+// file from outside ~/.forge uses viewer-only preview mode without mutating artifacts.
+func TestStudioExternalPreviewDoesNotImportArtifact(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	app := newStudioSlidesApp(t)
+	proj := app.Studio.ActiveProject()
+	initialVers := len(proj.Versions)
+
+	extDir := t.TempDir()
+	extHTML := filepath.Join(extDir, "landing.html")
+	if err := os.WriteFile(extHTML, []byte("<html><body>External</body></html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app.openStudioPreviewFile(extHTML)
+	if app.StudioPreviewPath != extHTML {
+		t.Fatalf("expected StudioPreviewPath=%q, got %q", extHTML, app.StudioPreviewPath)
+	}
+	if len(proj.Versions) != initialVers {
+		t.Fatalf("expected project versions unchanged (%d), got %d", initialVers, len(proj.Versions))
+	}
+
+	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
+	if _, ok := tw.Find("VIEW ONLY"); !ok {
+		t.Fatal("expected VIEW ONLY badge in toolbar during external preview")
+	}
+	if _, ok := tw.Find("Close Preview"); !ok {
+		t.Fatal("expected Close Preview button in toolbar during external preview")
+	}
+
+	app.closeStudioPreview()
+	if app.StudioPreviewPath != "" {
+		t.Fatalf("expected StudioPreviewPath cleared, got %q", app.StudioPreviewPath)
 	}
 }
 
@@ -593,13 +641,16 @@ func TestStudioDecoratePrompt(t *testing.T) {
 }
 
 func TestStudioDecoratePromptUniqueFilesAndFollowUp(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	dir := t.TempDir()
 	eng := engine.NewEngine(dir)
 	app := NewAppUI(eng, dir)
 	app.setMode(ModeStudio)
 
-	// Pre-populate an existing 3D file on disk so suggestions must never collide with it.
-	threeDDir := filepath.Join(dir, "3d")
+	// Pre-populate an existing 3D file under ~/.forge/studio/3d so suggestions must never collide with it.
+	threeDDir := filepath.Join(home, ".forge", "studio", "3d")
 	if err := os.MkdirAll(threeDDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -732,9 +783,12 @@ func TestStudioSessionHistoryAndAgentBadges(t *testing.T) {
 
 	tw := ui.NewTesterWith(func(c *ui.Context) { app.View(c) }, 1280, 800, ui.TesterOptions{Dark: true})
 
-	// 1. History button exists in Studio agent header
-	if _, ok := tw.Find("History"); !ok {
-		t.Fatal("expected 'History' button in studio agent header")
+	// 1. Clean Studio agent header: New button exists and redundant ACP badge is removed
+	if _, ok := tw.Find("New"); !ok {
+		t.Fatal("expected 'New' button in studio agent header")
+	}
+	if _, ok := tw.Find("ACP"); ok {
+		t.Fatal("expected redundant 'ACP' badge to be removed from studio agent header")
 	}
 
 	// 2. Both sessions are visible in the sidebar session history

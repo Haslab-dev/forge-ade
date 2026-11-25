@@ -550,6 +550,11 @@ func (e *iabEngine) attachLocked() error {
 	e.view = view
 	e.started = true
 	rect, visible := e.rect, e.visible
+	if rect[2] <= 0 || rect[3] <= 0 {
+		// Default offscreen/hidden viewport size so headless MCP screenshots
+		// render at a crisp 1280x800 even before the Browser panel is opened.
+		rect = [4]float64{0, 0, 1280, 800}
+	}
 	e.lastFrame = rect
 	e.lastVisible = visible
 	e.hasAppliedOnce = true
