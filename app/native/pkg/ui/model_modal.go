@@ -305,6 +305,7 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 	}
 
 	selectModel := func(m ModelMetadata) {
+		prevModel := a.Agent.ActiveModel
 		a.Agent.ActiveModel = m.DisplayName
 		a.SelectedAgentModel = m.DisplayName
 		if m.HarnessID != "" {
@@ -318,6 +319,10 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 			}
 		}
 		if sess := a.Agent.ActiveSession(); sess != nil {
+			oldSessModel := sess.Model
+			if oldSessModel == "" {
+				oldSessModel = prevModel
+			}
 			sess.Model = m.DisplayName
 			if m.HarnessID != "" {
 				sess.AgentID = m.HarnessID
@@ -334,7 +339,11 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 					sess.Provider = m.Provider
 				}
 			}
-			a.Agent.SaveSessionToDisk(sess)
+			if oldSessModel != "" && oldSessModel != m.DisplayName {
+				a.Agent.RecordModelChange(sess.ID, oldSessModel, m.DisplayName)
+			} else {
+				a.Agent.SaveSessionToDisk(sess)
+			}
 		}
 		if m.HarnessID == "agent-internal" {
 			if m.ProviderID != "" {

@@ -69,6 +69,7 @@ const (
 	RightTabDeck      = 11
 	RightTabLauncher  = 12
 	RightTabArtifacts = 13
+	RightTabBot       = 14
 )
 
 // Layout metrics of ForgeADE's CSS
@@ -318,6 +319,8 @@ type AppUI struct {
 	pendingOpenTabs        []string
 	pendingActiveSessionID string
 	pendingSplitSessionID  string
+	pendingActiveModel     string
+	pendingActiveAgentID   string
 	AgentSplitSessionID    string
 	AgentSplitWidth        float32
 	AgentSplitInput        string
@@ -334,11 +337,32 @@ type AppUI struct {
 	HandoffWorktreeBranch  string
 	HandoffError           string
 	ShowNewBotModal        bool
+	NewBotTemplateID       string
 	NewBotName             string
 	NewBotRole             string
 	NewBotPrompt           string
 	NewBotAgentID          string
 	NewBotAgentType        string
+	NewBotAvatar           string
+	ShowBotAvatarModal     bool
+	BotAvatarTargetID      string
+	BotDrawerSubTab        string // "tasks", "approvals", "persona"
+	BotPersonaEditID       string
+	BotPersonaName         string
+	BotPersonaRole         string
+	BotPersonaPrompt       string
+	BotPersonaAgentID      string
+	BotPersonaAgentType    string
+	ShowBotTaskModal       bool
+	SelectedBotTaskID      string
+	ShowNewBotTaskModal    bool
+	NewBotTaskBotID        string
+	NewBotTaskTitle        string
+	NewBotTaskPrompt       string
+	NewBotTaskAgentID      string
+	NewBotTaskAgentType    string
+	NewBotTaskWorktree     bool
+	NewBotTaskError        string
 	ShowSpawnWorkerModal   bool
 	WorkerNameInput        string
 	WorkerTaskInput        string
@@ -977,6 +1001,20 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	})
 	if appUI.Settings.APIKey != "" && appUI.Settings.Model != "" {
 		appUI.Agent.ActiveModel = appUI.Settings.Model
+	}
+	if appUI.pendingActiveAgentID != "" {
+		appUI.Agent.ActiveAgentID = appUI.pendingActiveAgentID
+		appUI.SelectedHarnessID = appUI.pendingActiveAgentID
+		appUI.SelectedAgentID = appUI.pendingActiveAgentID
+		if appUI.pendingActiveAgentID == "agent-internal" {
+			appUI.Agent.ActiveAgentType = "internal"
+		} else {
+			appUI.Agent.ActiveAgentType = "acp"
+		}
+	}
+	if appUI.pendingActiveModel != "" {
+		appUI.Agent.ActiveModel = appUI.pendingActiveModel
+		appUI.SelectedAgentModel = appUI.pendingActiveModel
 	}
 	appUI.Settings.ThemeMgr = appUI.ThemeMgr
 
@@ -2643,6 +2681,13 @@ func (a *AppUI) selectAgentSession(s *agent.AgentSession) {
 	a.ensureAgentTab(s.ID)
 	if a.Agent != nil {
 		a.Agent.SelectSession(s.ID)
+		if a.Agent.ActiveModel != "" {
+			a.SelectedAgentModel = a.Agent.ActiveModel
+		}
+		if a.Agent.ActiveAgentID != "" {
+			a.SelectedHarnessID = a.Agent.ActiveAgentID
+			a.SelectedAgentID = a.Agent.ActiveAgentID
+		}
 		if a.Mode == ModeStudio {
 			a.studioImportAgentArtifacts(s.ID)
 		}

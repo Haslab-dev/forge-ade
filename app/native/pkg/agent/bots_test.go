@@ -70,3 +70,80 @@ func TestBotStoreAndHandToBot(t *testing.T) {
 		t.Fatalf("expected empty bot list after delete")
 	}
 }
+
+func TestBotTemplatesTasksAndTurnStatus(t *testing.T) {
+	if tpls := DefaultBotTemplates(); len(tpls) < 3 {
+		t.Fatalf("expected at least 3 built-in bot templates, got %d", len(tpls))
+	}
+
+	dir := t.TempDir()
+	store := NewBotStore(dir)
+	bot := store.Create(BotProfile{
+		Name:      "Bewustein",
+		Role:      "Coordinator",
+		AgentID:   "agent-internal",
+		AgentType: "internal",
+	})
+
+	now := time.Now()
+	as := &AgentState{
+		workspacePath:   dir,
+		ActiveAgentID:   "agent-internal",
+		ActiveAgentType: "internal",
+	}
+	home := as.OpenBotHomeSession(store, bot)
+	taskSess, err := as.SpawnBotTask(store, bot, "Fix login bug", "Investigate auth token refresh", "agent-claude", "acp", false)
+	if err != nil {
+		t.Fatalf("SpawnBotTask failed: %v", err)
+	}
+	if taskSess.BotID != bot.ID || taskSess.ParentSessionID != home.ID {
+		t.Fatalf("expected task linked to bot %s and parent %s, got bot=%s parent=%s", bot.ID, home.ID, taskSess.BotID, taskSess.ParentSessionID)
+	}
+	taskSess.Status = "running"
+	home.Status = "running"
+	home.Messages = []*ChatMessage{
+		{
+			ID:            1,
+			Role:          "assistant",
+			IsThinking:    false,
+			TotalSteps:    2,
+			TurnStartedAt: now.Add(-4 * time.Second),
+			Tools: []*ToolExecution{
+				{ID: "t1", ToolName: "read_file", Command: "main.go", Status: "completed"},
+				{ID: "t2", ToolName: "grep_search", Command: "AuthToken", Status: "running"},
+			},
+		},
+	}
+
+	tasks := as.BotTasks(store, bot.ID)
+	if len(tasks) != 2 || tasks[0].Title != "Fix login bug" || tasks[0].Status != "running" {
+		t.Fatalf("unexpected BotTasks: %+v", tasks)
+	}
+	if len(tasks[1].Steps) != 2 || tasks[1].CurrentStep != "grep_search: AuthToken" {
+		t.Fatalf("unexpected Home Chat turn task: %+v", tasks[1])
+	}
+
+	st := as.ActiveTurnStatus(store, home.ID)
+	if !st.Active || st.CurrentTool != "grep_search" || st.CompletedTools != 1 || st.BackgroundRunning != 1 {
+		t.Fatalf("unexpected ActiveTurnStatus: %+v", st)
+	}
+
+	// Process isolation: switching to another bot while the first bot is running
+	// must NOT leak StreamingSnapshot() / Stop button into the second bot.
+	bot2 := store.Create(BotProfile{Name: "Reviewer", AgentID: "agent-internal", AgentType: "internal"})
+	as.mu.Lock()
+	as.IsStreaming = true
+	as.mu.Unlock()
+	home2 := as.OpenBotHomeSession(store, bot2)
+	if home2 == nil || home2.ID == home.ID {
+		t.Fatalf("expected distinct home session for bot2")
+	}
+	if as.StreamingSnapshot() {
+		t.Fatalf("expected StreamingSnapshot() == false for idle bot2 while bot1 is running")
+	}
+	// Switching back to bot1 restores streaming=true.
+	as.OpenBotHomeSession(store, bot)
+	if !as.StreamingSnapshot() {
+		t.Fatalf("expected StreamingSnapshot() == true when switching back to running bot1")
+	}
+}

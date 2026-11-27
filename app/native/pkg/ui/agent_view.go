@@ -155,9 +155,11 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 	if as == nil || m == nil {
 		return
 	}
+	sess := as.FindSession(sessionID)
+	isBotSession := sess != nil && sess.BotID != ""
 	if len(m.Blocks) > 0 {
-		open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
-		hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+		open := !isBotSession && (m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0)))
+		hasWork := !isBotSession && (m.Thinking != "" || m.IsThinking || len(m.Tools) > 0)
 		if hasWork {
 			a.renderWorkPill(c, tc, sessionID, m)
 		}
@@ -174,7 +176,7 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 				finalTextIdx = bi
 			}
 		}
-		if finalTextIdx >= 0 {
+		if !isBotSession && finalTextIdx >= 0 {
 			for _, blk := range m.Blocks[finalTextIdx+1:] {
 				if blk != nil && (blk.Kind == "tool" || blk.Kind == "thinking") {
 					finalTextIdx = -1
@@ -196,111 +198,120 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 			}
 			a.renderBoundedMarkdown(c, tc, as, sessionID, m.ID, blk.Text, streaming)
 		}
-		if open {
-			if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
-				a.renderThinkingBlock(c, tc, sessionID, m)
+		if isBotSession {
+			for bi, blk := range m.Blocks {
+				if blk == nil || blk.Kind != "text" {
+					continue
+				}
+				renderTextBlock(blk, !m.Done && bi == finalTextIdx)
 			}
-			work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
-				BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6))
-			work.Children(func() {
-				var toolByID map[string]*agent.ToolExecution
-				if len(m.Tools) > 4 {
-					toolByID = make(map[string]*agent.ToolExecution, len(m.Tools))
-					for _, t := range m.Tools {
-						if t != nil {
-							toolByID[t.ID] = t
+		} else {
+			if open {
+				if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
+					a.renderThinkingBlock(c, tc, sessionID, m)
+				}
+				work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
+					BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6))
+				work.Children(func() {
+					var toolByID map[string]*agent.ToolExecution
+					if len(m.Tools) > 4 {
+						toolByID = make(map[string]*agent.ToolExecution, len(m.Tools))
+						for _, t := range m.Tools {
+							if t != nil {
+								toolByID[t.ID] = t
+							}
 						}
 					}
-				}
-				toolAt := func(idx int) *agent.ToolExecution {
-					if idx >= len(m.Blocks) || m.Blocks[idx] == nil || m.Blocks[idx].Kind != "tool" {
+					toolAt := func(idx int) *agent.ToolExecution {
+						if idx >= len(m.Blocks) || m.Blocks[idx] == nil || m.Blocks[idx].Kind != "tool" {
+							return nil
+						}
+						tid := m.Blocks[idx].ToolID
+						if toolByID != nil {
+							return toolByID[tid]
+						}
+						for _, t := range m.Tools {
+							if t != nil && t.ID == tid {
+								return t
+							}
+						}
 						return nil
 					}
-					tid := m.Blocks[idx].ToolID
-					if toolByID != nil {
-						return toolByID[tid]
-					}
-					for _, t := range m.Tools {
-						if t != nil && t.ID == tid {
-							return t
-						}
-					}
-					return nil
-				}
-				bi := 0
-				for bi < len(m.Blocks) {
-					blk := m.Blocks[bi]
-					if blk == nil || bi == finalTextIdx {
-						bi++
-						continue
-					}
-					if blk.Kind == "thinking" {
-						isLast := bi == len(m.Blocks)-1
-						a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
-						bi++
-						continue
-					}
-					if blk.Kind == "tool" {
-						first := toolAt(bi)
-						if first == nil {
+					bi := 0
+					for bi < len(m.Blocks) {
+						blk := m.Blocks[bi]
+						if blk == nil || bi == finalTextIdx {
 							bi++
 							continue
 						}
-						fam := classifyTool(first).Family
-						if fam != tfExplore && fam != tfRun && fam != tfChange {
+						if blk.Kind == "thinking" {
+							isLast := bi == len(m.Blocks)-1
+							a.renderThinkingBlockSegment(c, tc, sessionID, m, bi, blk.Text, m.IsThinking && !m.Done && isLast)
+							bi++
+							continue
+						}
+						if blk.Kind == "tool" {
+							first := toolAt(bi)
+							if first == nil {
+								bi++
+								continue
+							}
+							fam := classifyTool(first).Family
+							if fam != tfExplore && fam != tfRun && fam != tfChange {
+								a.renderToolTraceRow(c, tc, sessionID, m, first)
+								bi++
+								continue
+							}
+							children := []groupChild{}
+							j := bi
+							for j < len(m.Blocks) && j != finalTextIdx {
+								b := m.Blocks[j]
+								if b == nil {
+									j++
+									continue
+								}
+								if b.Kind != "tool" {
+									break
+								}
+								t := toolAt(j)
+								if t == nil {
+									j++
+									continue
+								}
+								tf := classifyTool(t).Family
+								if tf != tfExplore && tf != tfRun && tf != tfChange {
+									break
+								}
+								children = append(children, groupChild{blockIdx: j, tool: t})
+								j++
+							}
+							if len(children) >= 2 {
+								a.renderConsecutiveSummaryGroup(c, tc, sessionID, m, children,
+									fmt.Sprintf("%s-%d-%d", sessionID, m.ID, bi))
+								bi = j
+								continue
+							}
 							a.renderToolTraceRow(c, tc, sessionID, m, first)
 							bi++
 							continue
 						}
-						children := []groupChild{}
-						j := bi
-						for j < len(m.Blocks) && j != finalTextIdx {
-							b := m.Blocks[j]
-							if b == nil {
-								j++
-								continue
-							}
-							if b.Kind != "tool" {
-								break
-							}
-							t := toolAt(j)
-							if t == nil {
-								j++
-								continue
-							}
-							tf := classifyTool(t).Family
-							if tf != tfExplore && tf != tfRun && tf != tfChange {
-								break
-							}
-							children = append(children, groupChild{blockIdx: j, tool: t})
-							j++
-						}
-						if len(children) >= 2 {
-							a.renderConsecutiveSummaryGroup(c, tc, sessionID, m, children,
-								fmt.Sprintf("%s-%d-%d", sessionID, m.ID, bi))
-							bi = j
-							continue
-						}
-						a.renderToolTraceRow(c, tc, sessionID, m, first)
+						renderTextBlock(blk, false)
 						bi++
-						continue
 					}
-					renderTextBlock(blk, false)
-					bi++
-				}
-				if hasThinkingBlocks && m.IsThinking && !m.Done {
-					last := m.Blocks[len(m.Blocks)-1]
-					if last == nil || last.Kind != "thinking" {
-						a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
+					if hasThinkingBlocks && m.IsThinking && !m.Done {
+						last := m.Blocks[len(m.Blocks)-1]
+						if last == nil || last.Kind != "thinking" {
+							a.renderThinkingBlockSegment(c, tc, sessionID, m, len(m.Blocks), "", true)
+						}
 					}
-				}
-			})
-		}
-		if finalTextIdx >= 0 {
-			renderTextBlock(m.Blocks[finalTextIdx], !m.Done)
+				})
+			}
+			if finalTextIdx >= 0 {
+				renderTextBlock(m.Blocks[finalTextIdx], !m.Done)
+			}
 		}
 	} else {
-		hasWork := m.Thinking != "" || m.IsThinking || len(m.Tools) > 0
+		hasWork := !isBotSession && (m.Thinking != "" || m.IsThinking || len(m.Tools) > 0)
 		if hasWork {
 			a.renderWorkPill(c, tc, sessionID, m)
 			open := m.ShowTools || (!m.Done && (m.IsThinking || len(m.Tools) > 0))
@@ -435,9 +446,59 @@ func hasAssistantVisibleBody(m *agent.ChatMessage) bool {
 		len(m.PendingQuestions) > 0
 }
 
+func (a *AppUI) renderModelChangeCard(c *ui.Context, tc theme.ThemeColors, rightInset, leftInset float32, m *agent.ChatMessage) {
+	if m == nil {
+		return
+	}
+	parts := strings.SplitN(m.Text, "\n", 2)
+	fromModel := strings.TrimSpace(parts[0])
+	toModel := ""
+	if len(parts) > 1 {
+		toModel = strings.TrimSpace(parts[1])
+	}
+	ui.Row(c.Key("mchg-"+fmt.Sprint(m.ID))).FillWidth().Padding(8, rightInset, 8, leftInset).Gap(10).AlignItems(ui.Center).Children(func() {
+		ui.Box(c).Grow(1).Height(1).Background(tc.Border.Alpha(0.7))
+		ui.Row(c).Height(26).Radius(999).Padding(0, 10).Gap(6).AlignItems(ui.Center).
+			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+			ui.Icon(c, icons.TablerSparkles).Width(12).Height(12).TextColor(tc.Accent)
+			ui.Text(c, "Model changed from").FontSize(11).TextColor(tc.TextMuted).SingleLine()
+			if fromModel != "" {
+				ui.Text(c, fromModel).FontSize(11).FontWeight(600).TextColor(tc.Text).SingleLine()
+			}
+			ui.Icon(c, icons.TablerArrowRight).Width(11).Height(11).TextColor(tc.IconMuted)
+			if toModel != "" {
+				ui.Text(c, toModel).FontSize(11).FontWeight(600).TextColor(tc.Accent).SingleLine()
+			}
+		})
+		ui.Box(c).Grow(1).Height(1).Background(tc.Border.Alpha(0.7))
+	})
+}
+
+func hasBotVisibleBody(m *agent.ChatMessage) bool {
+	if m == nil {
+		return false
+	}
+	if strings.TrimSpace(m.Text) != "" || m.PendingApproval != nil || len(m.PendingQuestions) > 0 {
+		return true
+	}
+	for _, b := range m.Blocks {
+		if b != nil && b.Kind == "text" && strings.TrimSpace(b.Text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *AppUI) renderAssistantResponseCard(c *ui.Context, tc theme.ThemeColors, sessionID string, lastAssistantID int, m *agent.ChatMessage) {
 	if !hasAssistantVisibleBody(m) {
 		return
+	}
+	if a.Agent != nil {
+		if sess := a.Agent.FindSession(sessionID); sess != nil && sess.BotID != "" {
+			if !hasBotVisibleBody(m) {
+				return
+			}
+		}
 	}
 	ui.Column(c).FillWidth().Padding(14, 16).Radius(12).Gap(8).
 		Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Children(func() {
@@ -762,7 +823,9 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 						return
 					}
 					m := msgs[i]
-					if m.Role == "user" {
+					if m.Role == "model-change" {
+						a.renderModelChangeCard(c, tc, rightInset, leftInset, m)
+					} else if m.Role == "user" {
 						ui.Column(c.Key("urow")).Padding(10, rightInset, 8, leftInset).Gap(4).AlignItems(ui.End).Children(func() {
 							a.renderUserMessageBubble(c, tc, sessionID, m, 620)
 							renderUserPromptCopyRow(c, tc, "ucopy-"+fmt.Sprint(m.ID), m)
@@ -2385,9 +2448,10 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 		rightPad = maxF(inset, 324)
 	}
 
-	// Composer area: animated wait/progress strip above the composer when streaming.
+	// Composer area: animated wait/progress strip + live Bot/process status above the composer.
 	ui.Column(c).Padding(0, rightPad, 12, rightInset).Gap(6).Children(func() {
 		a.renderStreamingLoaderStrip(c, tc, sess)
+		a.renderChatProcessBar(c, tc, sess)
 		a.renderComposerCard(c, tc, false)
 	})
 }
@@ -3279,6 +3343,10 @@ func (a *AppUI) renderAgentHome(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 	as := a.Agent
 	if as == nil {
+		return
+	}
+	if sess := as.ActiveSession(); sess != nil && sess.BotID != "" {
+		a.renderBotEmptyState(c, tc, sess)
 		return
 	}
 	projectName := resolveProjectName(as.WorkspacePath())

@@ -51,6 +51,8 @@ type uiPrefs struct {
 	ActiveSessionID      string                       `json:"active_session_id,omitempty"`
 	AgentSplitSessionID  string                       `json:"agent_split_session_id,omitempty"`
 	AgentSplitWidth      float32                      `json:"agent_split_width,omitempty"`
+	ActiveModel          string                       `json:"active_model,omitempty"`
+	ActiveAgentID        string                       `json:"active_agent_id,omitempty"`
 }
 
 func (a *AppUI) prefsPath() string {
@@ -216,6 +218,12 @@ func (a *AppUI) loadUIPrefs() {
 	if p.AgentSplitWidth > 0 {
 		a.AgentSplitWidth = p.AgentSplitWidth
 	}
+	if p.ActiveModel != "" {
+		a.pendingActiveModel = p.ActiveModel
+	}
+	if p.ActiveAgentID != "" {
+		a.pendingActiveAgentID = p.ActiveAgentID
+	}
 }
 
 // SaveUIPrefs snapshots the current preferences to disk (best effort).
@@ -228,8 +236,16 @@ func (a *AppUI) SaveUIPrefs() {
 	bgOp := a.ThemeMgr.EffectiveBackgroundOpacity()
 	rdTab := a.RightDrawerTab
 	activeSessID := ""
+	activeModel := a.SelectedAgentModel
+	activeAgentID := a.SelectedHarnessID
 	if a.Agent != nil {
 		activeSessID = a.Agent.ActiveSessionID
+		if a.Agent.ActiveModel != "" {
+			activeModel = a.Agent.ActiveModel
+		}
+		if a.Agent.ActiveAgentID != "" {
+			activeAgentID = a.Agent.ActiveAgentID
+		}
 	}
 	p := uiPrefs{
 		Appearance:           a.ThemeMgr.Appearance,
@@ -267,6 +283,8 @@ func (a *AppUI) SaveUIPrefs() {
 		ActiveSessionID:      activeSessID,
 		AgentSplitSessionID:  a.AgentSplitSessionID,
 		AgentSplitWidth:      a.AgentSplitWidth,
+		ActiveModel:          activeModel,
+		ActiveAgentID:        activeAgentID,
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
@@ -305,10 +323,11 @@ func (a *AppUI) prefsSnapshot() string {
 		f(a.FollowAgent), a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
 		strings.Join(a.ProjectOrder, ","),
 		fmt.Sprintf("%d:%d", len(a.ProjectIcons), len(a.CustomProjects)),
-		fmt.Sprintf("%d:%d:%d:%s:%s:%s:%.0f",
+		fmt.Sprintf("%d:%d:%d:%s:%s:%s:%.0f:%s:%s",
 			a.RightDrawerTab, len(a.DrawerTabs), a.drawerActiveIdx,
 			strings.Join(a.SideFileTabs, ","), a.ActiveSideFile,
-			strings.Join(a.AgentOpenTabs, ","), a.AgentSplitWidth),
+			strings.Join(a.AgentOpenTabs, ","), a.AgentSplitWidth,
+			a.SelectedAgentModel, a.SelectedHarnessID),
 	}.String()
 }
 

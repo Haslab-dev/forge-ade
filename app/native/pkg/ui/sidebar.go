@@ -188,19 +188,8 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								for _, b := range bots {
 									bot := b
 									botActive := a.Agent != nil && a.Agent.ActiveSession() != nil && a.Agent.ActiveSession().BotID == bot.ID
-									workingCnt, needsCnt := 0, 0
-									if a.Agent != nil {
-										for _, s := range a.Agent.Sessions {
-											if s != nil && s.BotID == bot.ID && !s.Archived {
-												if a.sessionNeedsApproval(s) {
-													needsCnt++
-												} else if s.Status == "running" {
-													workingCnt++
-												}
-											}
-										}
-									}
-									bRow := ui.Row(c.Key("sb-bot-"+bot.ID)).Height(30).Radius(6).Padding(0, 7).Gap(7).
+									workingCnt, needsCnt := a.botLiveCounts(bot)
+									bRow := ui.Row(c.Key("sb-bot-"+bot.ID)).Height(42).Radius(8).Padding(0, 8).Gap(9).
 										AlignItems(ui.Center).Cursor(ui.CursorPointer)
 									if botActive {
 										bRow.Background(tc.SidebarRowActive)
@@ -211,43 +200,60 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										bRow.Opacity(0.55)
 									}
 									bRow.Children(func() {
-										ui.Box(c).Size(20, 20).Radius(6).AlignItems(ui.Center).Justify(ui.Center).
-											Background(tc.Accent.Alpha(0.14)).Children(func() {
-											ui.Icon(c, icons.TablerBot).Width(12).Height(12).TextColor(tc.Accent)
-										})
-										ui.Column(c).Grow(1).MinWidth(0).Gap(0).Children(func() {
-											ui.Text(c, bot.Name).FontSize(12).FontWeight(600).TextColor(tc.Text).SingleLine()
+										a.renderBotAvatar(c, tc, bot, 30, 9)
+										ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+											ui.Text(c, bot.Name).FontSize(12.5).FontWeight(600).TextColor(tc.Text).SingleLine()
 											sub := bot.Role
+											subColor := tc.SidebarMutedForeground
 											if needsCnt > 0 {
 												sub = fmt.Sprintf("%d needs you", needsCnt)
+												subColor = tc.Warning
 											} else if workingCnt > 0 {
-												sub = fmt.Sprintf("%d working", workingCnt)
+												if workingCnt == 1 {
+													sub = "Running…"
+												} else {
+													sub = fmt.Sprintf("%d running…", workingCnt)
+												}
+												subColor = tc.Accent
 											} else if bot.Paused {
 												sub = "Paused"
 											}
 											if sub != "" {
-												subColor := tc.SidebarMutedForeground
-												if needsCnt > 0 {
-													subColor = tc.Warning
-												}
-												ui.Text(c, sub).FontSize(10).TextColor(subColor).SingleLine()
+												ui.Text(c, sub).FontSize(10.5).TextColor(subColor).SingleLine()
 											}
 										})
 										if needsCnt > 0 {
-											ui.Box(c).Size(6, 6).Radius(3).Background(tc.Warning).Shrink(0)
+											ui.Box(c).Size(7, 7).Radius(4).Background(tc.Warning).Shrink(0)
 										} else if workingCnt > 0 {
-											ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent).Shrink(0)
+											ui.Spinner(c).Size(12, 12).Label("")
 										}
 									})
 									if bRow.Clicked() && a.Agent != nil {
-										a.Agent.OpenBotHomeSession(a.Bots, bot)
+										if home := a.Agent.OpenBotHomeSession(a.Bots, bot); home != nil {
+											a.ensureAgentTab(home.ID)
+										}
 										a.IsGitClientOpen = false
 										a.AgentViewMode = AgentViewChat
 										a.ActiveTaskKind = "agent"
+										a.ShowRightDrawer = true
+										a.RightDrawerTab = RightTabBot
+										if a.BotDrawerSubTab == "" {
+											a.BotDrawerSubTab = "tasks"
+										}
 									}
 									bRow.ContextMenu(func(m *ui.Menu) {
 										if m.Item("Open Home Chat").Chosen() && a.Agent != nil {
-											a.Agent.OpenBotHomeSession(a.Bots, bot)
+											if home := a.Agent.OpenBotHomeSession(a.Bots, bot); home != nil {
+												a.ensureAgentTab(home.ID)
+											}
+											a.ShowRightDrawer = true
+											a.RightDrawerTab = RightTabBot
+										}
+										if m.Item("New Background Task…").Chosen() {
+											a.OpenNewBotTaskModal(bot.ID)
+										}
+										if m.Item("Change Avatar…").Chosen() {
+											a.OpenBotAvatarModal(bot.ID)
 										}
 										if a.Agent != nil && a.Agent.ActiveSession() != nil {
 											if m.Item("Hand current session to " + bot.Name).Chosen() {
@@ -1933,6 +1939,38 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 	a.renderExplorerTree(c, tc)
 }
 
+// botLiveCounts returns the number of running tasks/chats and pending approvals for bot.
+func (a *AppUI) botLiveCounts(bot *agent.BotProfile) (workingCnt, needsCnt int) {
+	if a.Agent == nil || bot == nil {
+		return 0, 0
+	}
+	homeRunning := false
+	if bot.HomeSessionID != "" {
+		if home := a.Agent.FindSession(bot.HomeSessionID); home != nil {
+			if a.sessionNeedsApproval(home) {
+				needsCnt++
+			} else if home.Status == "running" {
+				homeRunning = true
+			}
+		}
+	}
+	hasTurnRunning := false
+	for _, tk := range a.Agent.BotTasks(a.Bots, bot.ID) {
+		if tk.Status == "needs_approval" {
+			needsCnt++
+		} else if tk.Status == "running" {
+			workingCnt++
+			if strings.Contains(tk.SessionID, "#turn-") {
+				hasTurnRunning = true
+			}
+		}
+	}
+	if homeRunning && !hasTurnRunning {
+		workingCnt++
+	}
+	return workingCnt, needsCnt
+}
+
 // renderCollapsedLeftRail renders a compact 48px icon rail when the left
 // sidebar is collapsed, showing project icons with a round pulsing indicator
 // whenever a project has a running agent or CLI session.
@@ -1953,6 +1991,67 @@ func (a *AppUI) renderCollapsedLeftRail(c *ui.Context) {
 
 			ui.Scroll(c.Key("rail-projects")).Grow(1).FillWidth().Scrollbars(false).Children(func() {
 				ui.Column(c).FillWidth().AlignItems(ui.Center).Gap(6).Padding(2, 0).Children(func() {
+					if a.Bots != nil {
+						bots := a.Bots.List()
+						if len(bots) > 0 {
+							for _, b := range bots {
+								bot := b
+								botActive := a.Agent != nil && a.Agent.ActiveSession() != nil && a.Agent.ActiveSession().BotID == bot.ID
+								workingCnt, needsCnt := a.botLiveCounts(bot)
+								tip := bot.Name
+								if needsCnt > 0 {
+									tip += fmt.Sprintf(" · %d needs approval", needsCnt)
+								} else if workingCnt > 0 {
+									tip += fmt.Sprintf(" · %d working", workingCnt)
+								} else if bot.Paused {
+									tip += " · Paused"
+								}
+								bTile := ui.Box(c.Key("rail-bot-"+bot.ID)).Size(34, 34).Radius(9).
+									AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).Tooltip(tip)
+								if botActive {
+									bTile.Background(tc.SidebarRowActive).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.5))
+								} else if bTile.Hovered() {
+									bTile.Background(tc.SidebarRowHover)
+								}
+								if bot.Paused {
+									bTile.Opacity(0.55)
+								}
+								bTile.Children(func() {
+									a.renderBotAvatar(c, tc, bot, 28, 8)
+									if needsCnt > 0 {
+										ui.Box(c).Absolute().Top(1).Right(1).Size(8, 8).Radius(4).Background(tc.Warning)
+									} else if workingCnt > 0 {
+										p := shimmerPhase()
+										t := p
+										if t > 0.5 {
+											t = 1 - t
+										}
+										pulseAlpha := float32(0.18 + 0.42*(t*2))
+										ui.Box(c).Absolute().Top(1).Right(1).Size(10, 10).Radius(5).
+											Background(tc.Accent.Alpha(pulseAlpha)).
+											AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+											ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+										})
+									}
+								})
+								if bTile.Clicked() && a.Agent != nil {
+									if home := a.Agent.OpenBotHomeSession(a.Bots, bot); home != nil {
+										a.ensureAgentTab(home.ID)
+									}
+									a.IsGitClientOpen = false
+									a.AgentViewMode = AgentViewChat
+									a.ActiveTaskKind = "agent"
+									a.ShowRightDrawer = true
+									a.RightDrawerTab = RightTabBot
+									if a.BotDrawerSubTab == "" {
+										a.BotDrawerSubTab = "tasks"
+									}
+								}
+							}
+							ui.Box(c).Width(24).Height(1).Background(tc.SidebarBorder.Alpha(0.7))
+						}
+					}
+
 					for _, g := range groups {
 						group := g
 						if group == nil || (group.ProjectName == "General" && len(group.Sessions) == 0 && len(group.CLISessions) == 0) {

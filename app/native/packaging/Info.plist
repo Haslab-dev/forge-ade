@@ -15,10 +15,16 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.36</string>
+	<string>1.0.37</string>
 	<key>CFBundleVersion</key>
-	<string>16</string>
+	<string>17</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>ForgeADE needs access to your Desktop folder when you open or work on projects there.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>ForgeADE needs access to your Documents folder when you open or work on projects there.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>ForgeADE needs access to your Downloads folder when you open or work on projects there.</string>
 </dict>
 </plist>

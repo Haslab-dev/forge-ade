@@ -777,11 +777,21 @@ func (as *AgentState) SteerQueueSnapshot() []string {
 	return append([]string(nil), as.SteerQueue...)
 }
 
-// StreamingSnapshot reports whether the active session is streaming.
+// StreamingSnapshot reports whether the active session is streaming,
+// strictly isolated to ActiveSessionID so another running session/bot
+// never leaks its Stop button or streaming indicator into the current view.
 func (as *AgentState) StreamingSnapshot() bool {
 	as.mu.Lock()
 	defer as.mu.Unlock()
-	return as.IsStreaming
+	if as.ActiveSessionID == "" {
+		return false
+	}
+	for _, s := range as.Sessions {
+		if s != nil && s.ID == as.ActiveSessionID {
+			return s.Status == "running" || s.Status == "streaming"
+		}
+	}
+	return false
 }
 
 // SnapshotActiveSessionID returns the active session id under the state lock.
@@ -2998,6 +3008,50 @@ func (as *AgentState) SessionDiffStats(sessionID string) (added, removed int) {
 	return added, removed
 }
 
+// RecordModelChange appends a centered inline model-change marker to the
+// session transcript so the chat shows when the user switched models.
+func (as *AgentState) RecordModelChange(sessionID, fromModel, toModel string) {
+	fromModel = strings.TrimSpace(fromModel)
+	toModel = strings.TrimSpace(toModel)
+	if sessionID == "" || fromModel == "" || toModel == "" || fromModel == toModel {
+		return
+	}
+	as.mu.Lock()
+	var target *AgentSession
+	for _, s := range as.Sessions {
+		if s != nil && s.ID == sessionID {
+			target = s
+			break
+		}
+	}
+	if target == nil {
+		as.mu.Unlock()
+		return
+	}
+	id := target.nextMsgID
+	if id <= 0 {
+		id = len(target.Messages) + 1
+	}
+	target.nextMsgID = id + 1
+	target.Messages = append(target.Messages, &ChatMessage{
+		ID:        id,
+		Role:      "model-change",
+		Text:      fromModel + "\n" + toModel,
+		Done:      true,
+		Timestamp: time.Now(),
+	})
+	if as.ActiveSessionID == target.ID {
+		as.Messages = target.Messages
+	}
+	target.UpdatedAt = time.Now()
+	as.mu.Unlock()
+
+	goSave("SaveSessionToDisk", func() { as.SaveSessionToDisk(target) })
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
+}
+
 // CreateSessionWithInitialPrompt creates a new session with an initial user prompt and starts the turn.
 func (as *AgentState) CreateSessionWithInitialPrompt(prompt, agentID string) *AgentSession {
 	now := time.Now()
@@ -4285,7 +4339,7 @@ func (as *AgentState) triggerAgentTurnForSession(targetSessID, prompt string, at
 			var llmMsgs []llm.LLMMessage
 			as.mu.Lock()
 			for _, m := range targetSess.Messages {
-				if m == assistantMsg {
+				if m == assistantMsg || m == nil || m.Role == "model-change" {
 					continue
 				}
 				llmMsgs = append(llmMsgs, llm.LLMMessage{

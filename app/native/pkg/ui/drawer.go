@@ -87,7 +87,16 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 										title = fmt.Sprintf("%s (%d)", title, n)
 									}
 								}
-								ui.Icon(c, ic).Width(13).Height(13).TextColor(tc.IconMuted)
+								if inst.Kind == RightTabBot {
+									if bot := a.activeBotProfile(); bot != nil {
+										a.renderBotAvatar(c, tc, bot, 15, 4)
+										title = bot.Name
+									} else {
+										ui.Icon(c, ic).Width(13).Height(13).TextColor(tc.IconMuted)
+									}
+								} else {
+									ui.Icon(c, ic).Width(13).Height(13).TextColor(tc.IconMuted)
+								}
 								txt := ui.Text(c, title).FontSize(12).FontWeight(500).TextColor(tc.Text).MaxWidth(150).SingleLine()
 								if !active {
 									txt.TextColor(tc.TextMuted)
@@ -298,6 +307,8 @@ func (a *AppUI) renderRightDrawer(c *ui.Context) {
 					a.renderBrowserPane(c)
 				case RightTabSubagent:
 					a.renderSubagentPane(c)
+				case RightTabBot:
+					a.renderBotRightPane(c, tc)
 				case RightTabDeck:
 					a.renderDeckPane(c)
 				default:
@@ -817,6 +828,8 @@ func drawerTabIcon(kind int) *ui.SVG {
 		return icons.TablerFolderOpen
 	case RightTabSubagent:
 		return icons.TablerBot
+	case RightTabBot:
+		return icons.TablerBot
 	case RightTabTasks:
 		return icons.TablerChecklist
 	case RightTabChat:
@@ -857,6 +870,8 @@ func (a *AppUI) drawerTabTitle(kind int) string {
 		return "Artifacts"
 	case RightTabSubagent:
 		return "Child Agents"
+	case RightTabBot:
+		return "Bot"
 	case RightTabTasks:
 		return "Plans & Progress"
 	case RightTabChat:

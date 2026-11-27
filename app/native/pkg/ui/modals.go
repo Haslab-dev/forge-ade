@@ -90,6 +90,15 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowNewBotModal {
 		a.renderNewBotModal(c)
 	}
+	if a.ShowBotAvatarModal {
+		a.renderBotAvatarModal(c)
+	}
+	if a.ShowNewBotTaskModal {
+		a.renderNewBotTaskModal(c)
+	}
+	if a.ShowBotTaskModal {
+		a.renderBotTaskModal(c)
+	}
 	if a.ShowSpawnWorkerModal {
 		a.renderSpawnWorkerModal(c)
 	}

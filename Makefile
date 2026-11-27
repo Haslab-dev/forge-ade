@@ -43,6 +43,11 @@ native-dev: ## Build the native binary with debug symbols
 native-e2e: ## Build the native binary with the e2e automation plugin
 	cd $(NATIVE_DIR) && $(GO) build -tags e2e -o ../../$(NATIVE_BIN)-e2e ./cmd/forge-ade
 
+CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development:[^"]*\)".*/\1/p' | head -n1)
+ifeq ($(strip $(CODESIGN_IDENTITY)),)
+CODESIGN_IDENTITY := -
+endif
+
 .PHONY: native-app
 native-app: native ## Build the signed macOS .app bundle
 	@rm -rf $(NATIVE_APP)
@@ -51,7 +56,8 @@ native-app: native ## Build the signed macOS .app bundle
 	cp $(NATIVE_DIR)/packaging/Info.plist $(NATIVE_APP)/Contents/Info.plist
 	cp $(NATIVE_DIR)/packaging/AppIcon.icns $(NATIVE_APP)/Contents/Resources/AppIcon.icns
 	xattr -cr $(NATIVE_APP) 2>/dev/null || true
-	codesign --force --deep -s - $(NATIVE_APP)
+	codesign --force --deep -s "$(CODESIGN_IDENTITY)" $(NATIVE_APP)
+	@echo "signed with: $(CODESIGN_IDENTITY)"
 	@echo "bundle: $(NATIVE_APP)"
 
 .PHONY: native-run
