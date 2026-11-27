@@ -104,6 +104,20 @@ func (a *AppUI) renderBotRightPane(c *ui.Context, tc theme.ThemeColors) {
 						ui.Text(c, statusText).FontSize(11).FontWeight(500).TextColor(statusColor).SingleLine()
 					})
 				})
+				editBtn := ui.Row(c.Key("bp-edit-persona")).Size(26, 26).Radius(6).
+					AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+				editBtn.Tooltip("Edit bot persona, icon & limitations")
+				editBtn.Children(func() {
+					ui.Icon(c, icons.TablerPencil).Width(12).Height(12).TextColor(tc.TextMuted)
+				})
+				if editBtn.Hovered() {
+					editBtn.Background(tc.Text.Alpha(0.08))
+				}
+				if editBtn.Clicked() {
+					a.BotDrawerSubTab = "persona"
+				}
+
 				newTaskBtn := ui.Row(c.Key("bp-new-task")).Height(26).Radius(6).Padding(0, 9).Gap(4).
 					AlignItems(ui.Center).Cursor(ui.CursorPointer).
 					Background(tc.Accent.Alpha(0.14)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.35))
@@ -262,6 +276,8 @@ func (a *AppUI) renderBotTasksTab(c *ui.Context, tc theme.ThemeColors, bot *agen
 						ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 							ui.Text(c, tk.HarnessLabel).FontSize(10).TextColor(tc.TextMuted)
 							ui.Text(c, "·").FontSize(10).TextColor(tc.TextMuted)
+							ui.Text(c, formatStepCount(len(tk.Steps))).FontSize(10).TextColor(tc.TextMuted)
+							ui.Text(c, "·").FontSize(10).TextColor(tc.TextMuted)
 							ui.Text(c, tk.UpdatedAt.Format("3:04 PM")).FontSize(10).TextColor(tc.TextMuted)
 						})
 					})
@@ -271,6 +287,7 @@ func (a *AppUI) renderBotTasksTab(c *ui.Context, tc theme.ThemeColors, bot *agen
 				}
 				if card.Clicked() {
 					a.SelectedBotTaskID = tk.SessionID
+					a.SelectedBotTaskStepKey = ""
 					a.ShowBotTaskModal = true
 				}
 			}
@@ -352,18 +369,8 @@ func (a *AppUI) syncBotPersonaDraft(bot *agent.BotProfile) {
 	a.BotPersonaName = bot.Name
 	a.BotPersonaRole = bot.Role
 	a.BotPersonaPrompt = bot.SystemPrompt
-	a.BotPersonaAgentID = bot.AgentID
-	if a.BotPersonaAgentID == "" {
-		a.BotPersonaAgentID = "agent-internal"
-	}
-	a.BotPersonaAgentType = bot.AgentType
-	if a.BotPersonaAgentType == "" {
-		if a.BotPersonaAgentID == "agent-internal" {
-			a.BotPersonaAgentType = "internal"
-		} else {
-			a.BotPersonaAgentType = "acp"
-		}
-	}
+	a.BotPersonaLimitations = bot.Limitations
+	a.BotPersonaWorkspace = bot.WorkspacePath
 }
 
 func (a *AppUI) renderBotPersonaTab(c *ui.Context, tc theme.ThemeColors, bot *agent.BotProfile) {
@@ -374,35 +381,47 @@ func (a *AppUI) renderBotPersonaTab(c *ui.Context, tc theme.ThemeColors, bot *ag
 		a.syncBotPersonaDraft(bot)
 	}
 
-	type botAgentOpt struct {
-		ID   string
-		Name string
-		Type string
-	}
-	opts := []botAgentOpt{
-		{ID: "agent-internal", Name: "ForgeADE Internal", Type: "internal"},
-	}
-	if a.ACPMgr != nil {
-		for _, def := range a.ACPMgr.Agents {
-			if def.Type == "internal" || def.ID == "agent-internal" {
-				continue
-			}
-			opts = append(opts, botAgentOpt{ID: def.ID, Name: def.Name, Type: "acp"})
-		}
-	}
-
 	dirty := strings.TrimSpace(a.BotPersonaName) != strings.TrimSpace(bot.Name) ||
 		strings.TrimSpace(a.BotPersonaRole) != strings.TrimSpace(bot.Role) ||
 		strings.TrimSpace(a.BotPersonaPrompt) != strings.TrimSpace(bot.SystemPrompt) ||
-		a.BotPersonaAgentID != bot.AgentID
+		strings.TrimSpace(a.BotPersonaLimitations) != strings.TrimSpace(bot.Limitations) ||
+		strings.TrimSpace(a.BotPersonaWorkspace) != strings.TrimSpace(bot.WorkspacePath)
 
 	ui.Column(c).Gap(10).Children(func() {
 		infoCard := ui.Column(c).Padding(12, 12).Gap(10).Radius(9).
 			Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
 		infoCard.Children(func() {
-			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "Bot Name").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
-				ui.TextInput(c, &a.BotPersonaName).Placeholder("Bot name").FillWidth()
+			// Icon / Avatar & Name
+			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+				avBtn := ui.Box(c.Key("bp-persona-av-" + bot.ID)).Radius(12).Cursor(ui.CursorPointer)
+				avBtn.Tooltip("Change bot icon / avatar")
+				avBtn.Children(func() {
+					a.renderBotAvatar(c, tc, bot, 48, 12)
+				})
+				if avBtn.Clicked() {
+					a.OpenBotAvatarModal(bot.ID)
+				}
+				ui.Column(c).Grow(1).Gap(4).Children(func() {
+					ui.Text(c, "Bot Name").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.TextInput(c, &a.BotPersonaName).Placeholder("Bot name").FillWidth()
+				})
+			})
+
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				changeIconBtn := ui.Row(c.Key("bp-persona-icon-"+bot.ID)).Height(24).Radius(6).Padding(0, 9).Gap(5).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+				changeIconBtn.Children(func() {
+					ui.Icon(c, icons.TablerPencil).Width(11).Height(11).TextColor(tc.TextMuted)
+					ui.Text(c, "Change Icon").FontSize(10.5).FontWeight(500).TextColor(tc.Text)
+				})
+				if changeIconBtn.Hovered() {
+					changeIconBtn.Background(tc.Text.Alpha(0.08))
+				}
+				if changeIconBtn.Clicked() {
+					a.OpenBotAvatarModal(bot.ID)
+				}
+				ui.Text(c, "Preset or custom image").FontSize(10.5).TextColor(tc.TextMuted)
 			})
 
 			ui.Column(c).Gap(4).Children(func() {
@@ -410,43 +429,65 @@ func (a *AppUI) renderBotPersonaTab(c *ui.Context, tc theme.ThemeColors, bot *ag
 				ui.TextInput(c, &a.BotPersonaRole).Placeholder("e.g. Bug triage & PR fixer").FillWidth()
 			})
 
-			ui.Column(c).Gap(5).Children(func() {
-				ui.Text(c, "Default Harness").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
-				ui.Row(c).Gap(6).Wrap().Children(func() {
-					for _, o := range opts {
-						opt := o
-						sel := a.BotPersonaAgentID == opt.ID
-						pill := ui.Row(c.Key("bp-ag-"+bot.ID+"-"+opt.ID)).Height(26).Radius(6).Padding(0, 8).Gap(5).
-							AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
-						if sel {
-							pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.55))
-						} else {
-							pill.Background(tc.Surface).BorderColor(tc.Border)
-						}
-						pill.Children(func() {
-							if opt.Type == "internal" {
-								ui.Icon(c, icons.ProviderForgeADE).Width(11).Height(11)
-							} else {
-								icons.RenderProviderIcon(c, opt.ID+" "+opt.Name, 11)
-							}
-							ui.Text(c, opt.Name).FontSize(11).FontWeight(500).TextColor(tc.Text)
-						})
-						if pill.Clicked() {
-							a.BotPersonaAgentID = opt.ID
-							a.BotPersonaAgentType = opt.Type
-						}
-					}
-				})
-			})
-
 			ui.Column(c).Gap(4).Children(func() {
-				ui.Text(c, "Standing Instructions").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+				ui.Text(c, "Persona & Instructions").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
 				ui.TextAreaBase(c, &a.BotPersonaPrompt).Lines(4, 8).
-					Placeholder("Standing instructions when this bot handles chats or background tasks...").
+					Placeholder("How this bot thinks, communicates, and handles chats or tasks...").
 					FillWidth()
 			})
 
-			ui.Row(c).Gap(6).Justify(ui.End).AlignItems(ui.Center).Padding(2, 0, 0, 0).Children(func() {
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "Limitations & Guardrails").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+				ui.TextAreaBase(c, &a.BotPersonaLimitations).Lines(3, 6).
+					Placeholder("e.g. Do not push/merge, read-only investigation, stay within app/native/...").
+					FillWidth()
+			})
+
+			ui.Column(c).Gap(4).Children(func() {
+				ui.Text(c, "Workspace Scope (optional)").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+				ui.TextInput(c, &a.BotPersonaWorkspace).Placeholder("Inherit active workspace").FillWidth()
+			})
+
+			ui.Row(c).Padding(6, 8).Radius(6).Gap(6).AlignItems(ui.Center).
+				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+				ui.Icon(c, icons.TablerBot).Width(12).Height(12).TextColor(tc.TextMuted)
+				ui.Text(c, "Harness & model follow the parent chat automatically.").FontSize(10.5).TextColor(tc.TextMuted)
+			})
+
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Padding(2, 0, 0, 0).Children(func() {
+				pauseBtn := ui.Row(c.Key("bp-persona-pause-"+bot.ID)).Height(26).Radius(6).Padding(0, 9).Gap(4).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+				pauseIcon := icons.TablerPlayerPause
+				pauseLbl := "Pause"
+				if bot.Paused {
+					pauseIcon = icons.TablerPlayerPlay
+					pauseLbl = "Resume"
+				}
+				pauseBtn.Children(func() {
+					ui.Icon(c, pauseIcon).Width(11).Height(11).TextColor(tc.TextMuted)
+					ui.Text(c, pauseLbl).FontSize(10.5).FontWeight(500).TextColor(tc.Text)
+				})
+				if pauseBtn.Clicked() && a.Bots != nil {
+					a.Bots.TogglePause(bot.ID)
+				}
+
+				delBtn := ui.Row(c.Key("bp-persona-del-"+bot.ID)).Height(26).Radius(6).Padding(0, 9).Gap(4).
+					AlignItems(ui.Center).Cursor(ui.CursorPointer).
+					Background(tc.Error.Alpha(0.1)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.35))
+				delBtn.Children(func() {
+					ui.Icon(c, icons.TablerTrash).Width(11).Height(11).TextColor(tc.Error)
+					ui.Text(c, "Delete").FontSize(10.5).FontWeight(500).TextColor(tc.Error)
+				})
+				if delBtn.Clicked() && a.Bots != nil {
+					a.Bots.Delete(bot.ID)
+					a.BotPersonaEditID = ""
+					a.BotDrawerSubTab = "tasks"
+					a.queueToast(ui.Toast{Title: "Bot Deleted", Description: bot.Name + " removed", Type: "info"})
+				}
+
+				ui.Box(c).Grow(1)
+
 				if dirty {
 					resetBtn := ui.Row(c.Key("bp-persona-reset-"+bot.ID)).Height(26).Radius(6).Padding(0, 10).
 						AlignItems(ui.Center).Cursor(ui.CursorPointer).
@@ -479,8 +520,8 @@ func (a *AppUI) renderBotPersonaTab(c *ui.Context, tc theme.ThemeColors, bot *ag
 						a.BotPersonaName,
 						a.BotPersonaRole,
 						a.BotPersonaPrompt,
-						a.BotPersonaAgentID,
-						a.BotPersonaAgentType,
+						a.BotPersonaLimitations,
+						a.BotPersonaWorkspace,
 					)
 					if updated != nil {
 						a.syncBotPersonaDraft(updated)
@@ -555,21 +596,40 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 				}
 				if xBtn.Clicked() {
 					a.ShowBotTaskModal = false
+					a.SelectedBotTaskStepKey = ""
 				}
 			})
+
+			var selectedStep *agent.BotTaskStep
+			selectedStepIdx := -1
+			for i := range task.Steps {
+				stepKey := fmt.Sprintf("%d:%s", i, task.Steps[i].ID)
+				if stepKey == a.SelectedBotTaskStepKey {
+					selectedStep = &task.Steps[i]
+					selectedStepIdx = i
+					break
+				}
+			}
 
 			// 2-Column Body
 			ui.Row(c).Grow(1).MinHeight(360).Children(func() {
 				// Left column: Execution steps / tool calls
 				ui.Scroll(c).Width(310).FillHeight().Padding(14, 16).
 					BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
-					ui.Column(c).Gap(8).Children(func() {
-						ui.Text(c, "EXECUTION TRACE").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Column(c).Gap(6).Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Padding(0, 0, 2, 0).Children(func() {
+							ui.Text(c, "EXECUTION TRACE").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
+							ui.Box(c).Radius(8).Padding(1, 6).Background(tc.Text.Alpha(0.08)).Children(func() {
+								ui.Text(c, formatStepCount(len(task.Steps))).FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
+							})
+						})
 						if len(task.Steps) == 0 {
 							ui.Text(c, "No tool calls recorded yet.").FontSize(11.5).TextColor(tc.TextMuted)
 						} else {
 							for i, st := range task.Steps {
 								step := st
+								stepKey := fmt.Sprintf("%d:%s", i, step.ID)
+								isSelected := a.SelectedBotTaskStepKey == stepKey
 								ic := icons.TablerCheck
 								col := tc.Success
 								if step.Status == "running" {
@@ -579,22 +639,46 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 									ic = icons.TablerX
 									col = tc.Error
 								}
-								ui.Row(c.Key(fmt.Sprintf("btm-st-%d-%s", i, step.ID))).Gap(8).AlignItems(ui.Start).Padding(4, 0).Children(func() {
+								row := ui.Row(c.Key("btm-st-"+stepKey)).Gap(8).AlignItems(ui.Start).
+									Padding(6, 8).Radius(7).Cursor(ui.CursorPointer).BorderWidth(1)
+								if isSelected {
+									row.Background(tc.Accent.Alpha(0.12)).BorderColor(tc.Accent.Alpha(0.45))
+								} else {
+									row.BorderColor(tc.Border.Alpha(0))
+								}
+								row.Children(func() {
 									ui.Icon(c, ic).Width(13).Height(13).TextColor(col)
 									ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
-										ui.Text(c, step.Label).FontSize(11.5).FontWeight(600).TextColor(tc.Text).SingleLine()
+										ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+											ui.Text(c, step.Label).FontSize(11.5).FontWeight(600).TextColor(tc.Text).Grow(1).SingleLine()
+											ui.Text(c, fmt.Sprintf("#%d", i+1)).FontSize(10).TextColor(tc.TextMuted)
+										})
 										if step.Detail != "" {
 											ui.Text(c, step.Detail).FontSize(10.5).TextColor(tc.TextMuted).SingleLine()
 										}
 									})
 								})
+								if row.Hovered() && !isSelected {
+									row.Background(tc.Text.Alpha(0.05))
+								}
+								if row.Clicked() {
+									if isSelected {
+										a.SelectedBotTaskStepKey = ""
+									} else {
+										a.SelectedBotTaskStepKey = stepKey
+									}
+								}
 							}
 						}
 					})
 				})
 
-				// Right column: Summary & Artifacts
+				// Right column: Selected Step Detail OR Summary & Artifacts
 				ui.Scroll(c).Grow(1).FillHeight().Padding(16, 18).Children(func() {
+					if selectedStep != nil {
+						a.renderBotTaskStepDetail(c, tc, selectedStep, selectedStepIdx, len(task.Steps))
+						return
+					}
 					ui.Column(c).Gap(14).Children(func() {
 						ui.Column(c).Gap(4).Children(func() {
 							ui.Text(c, "Summary").FontSize(13).FontWeight(600).TextColor(tc.Text)
@@ -639,11 +723,92 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 				})
 				if openBtn.Clicked() {
 					a.ShowBotTaskModal = false
+					a.SelectedBotTaskStepKey = ""
 					sessID := task.SessionID
 					if idx := strings.Index(sessID, "#"); idx > 0 {
 						sessID = sessID[:idx]
 					}
 					a.Agent.SelectSession(sessID)
+				}
+			})
+		})
+	})
+}
+
+func formatStepCount(n int) string {
+	if n == 1 {
+		return "1 step"
+	}
+	return fmt.Sprintf("%d steps", n)
+}
+
+func formatStepDuration(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.1fs", float64(ms)/1000.0)
+}
+
+func (a *AppUI) renderBotTaskStepDetail(c *ui.Context, tc theme.ThemeColors, step *agent.BotTaskStep, idx, total int) {
+	ui.Column(c).Gap(12).Children(func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			backBtn := ui.Row(c.Key("btm-step-back")).Height(24).Radius(6).Padding(0, 8).Gap(4).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).
+				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+			backBtn.Children(func() {
+				ui.Icon(c, icons.TablerChevronLeft).Width(12).Height(12).TextColor(tc.TextMuted)
+				ui.Text(c, "Summary").FontSize(11).FontWeight(500).TextColor(tc.Text)
+			})
+			if backBtn.Hovered() {
+				backBtn.Background(tc.Text.Alpha(0.08))
+			}
+			if backBtn.Clicked() {
+				a.SelectedBotTaskStepKey = ""
+			}
+
+			ui.Text(c, fmt.Sprintf("Step %d of %d", idx+1, total)).FontSize(11).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
+
+			stLabel := "Complete"
+			stColor := tc.Success
+			if step.Status == "running" {
+				stLabel = "Running"
+				stColor = tc.Accent
+			} else if step.Status == "failed" {
+				stLabel = "Failed"
+				stColor = tc.Error
+			}
+			ui.Box(c).Radius(6).Padding(2, 7).Background(stColor.Alpha(0.16)).Children(func() {
+				ui.Text(c, stLabel).FontSize(10.5).FontWeight(600).TextColor(stColor)
+			})
+			if step.DurationMs > 0 {
+				ui.Text(c, formatStepDuration(step.DurationMs)).FontSize(10.5).TextColor(tc.TextMuted)
+			}
+		})
+
+		ui.Text(c, step.Label).FontSize(14).FontWeight(600).TextColor(tc.Text)
+
+		args := step.FullDetail
+		if args == "" {
+			args = step.Detail
+		}
+		ui.Column(c).Gap(5).Children(func() {
+			ui.Text(c, "Arguments / Input").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Box(c).Padding(8, 10).Radius(8).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+				if args == "" {
+					ui.Text(c, "No arguments recorded.").FontSize(11).TextColor(tc.TextMuted)
+				} else {
+					ui.Text(c, args).FontSize(11).TextColor(tc.Text)
+				}
+			})
+		})
+
+		ui.Column(c).Gap(5).Children(func() {
+			ui.Text(c, "Output").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Box(c).Padding(8, 10).Radius(8).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Children(func() {
+				if step.Output == "" {
+					ui.Text(c, "No output recorded.").FontSize(11).TextColor(tc.TextMuted)
+				} else {
+					ui.Text(c, step.Output).FontSize(11).TextColor(tc.Text)
 				}
 			})
 		})

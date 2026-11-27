@@ -12,21 +12,44 @@ import (
 )
 
 // BotProfile defines a persistent Local ForgeADE Bot (inspired by Orca Bots):
-// a named autonomous persona with its own Home Chat, default agent/model,
-// workspace scope, and system instructions.
+// a named autonomous persona with its own Home Chat, persona instructions,
+// limitations/guardrails, and workspace scope. Harness/agent is inherited from
+// the parent chat unless explicitly overridden.
 type BotProfile struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
 	Role          string    `json:"role"`
 	SystemPrompt  string    `json:"systemPrompt,omitempty"`
-	AgentID       string    `json:"agentId"`
-	AgentType     string    `json:"agentType"` // "internal" or "acp"
+	Limitations   string    `json:"limitations,omitempty"`
+	AgentID       string    `json:"agentId,omitempty"`
+	AgentType     string    `json:"agentType,omitempty"` // optional override; empty = inherit from parent chat
 	Model         string    `json:"model,omitempty"`
 	WorkspacePath string    `json:"workspacePath,omitempty"`
 	HomeSessionID string    `json:"homeSessionId,omitempty"`
 	Avatar        string    `json:"avatar,omitempty"`
 	Paused        bool      `json:"paused,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// FormatPersonaInstructions formats the bot's identity, standing instructions,
+// and limitations into a single prompt block.
+func (b *BotProfile) FormatPersonaInstructions() string {
+	if b == nil {
+		return ""
+	}
+	var parts []string
+	if r := strings.TrimSpace(b.Role); r != "" {
+		parts = append(parts, fmt.Sprintf("Persona: %s (%s)", b.Name, r))
+	} else if n := strings.TrimSpace(b.Name); n != "" {
+		parts = append(parts, fmt.Sprintf("Persona: %s", n))
+	}
+	if sp := strings.TrimSpace(b.SystemPrompt); sp != "" {
+		parts = append(parts, sp)
+	}
+	if lim := strings.TrimSpace(b.Limitations); lim != "" {
+		parts = append(parts, "Limitations & Guardrails:\n"+lim)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // BotStore persists Local Bot profiles to disk (<dir>/bots.json).
@@ -122,10 +145,7 @@ func (st *BotStore) Create(b BotProfile) *BotProfile {
 	if strings.TrimSpace(b.Name) == "" {
 		b.Name = "Forge Bot"
 	}
-	if b.AgentID == "" {
-		b.AgentID = "agent-internal"
-	}
-	if b.AgentType == "" {
+	if b.AgentID != "" && b.AgentType == "" {
 		if b.AgentID == "agent-internal" {
 			b.AgentType = "internal"
 		} else {
@@ -202,8 +222,9 @@ func (st *BotStore) Update(botID, name, role, systemPrompt, agentID, agentType s
 }
 
 // UpdatePersona updates a bot's editable persona fields (name, role, system prompt,
-// default harness) and persists the store.
-func (st *BotStore) UpdatePersona(botID, name, role, systemPrompt, agentID, agentType string) *BotProfile {
+// limitations, workspace scope) and clears any pinned harness so it inherits from
+// the parent chat.
+func (st *BotStore) UpdatePersona(botID, name, role, systemPrompt, limitations, workspacePath string) *BotProfile {
 	if st == nil || botID == "" {
 		return nil
 	}
@@ -216,16 +237,10 @@ func (st *BotStore) UpdatePersona(botID, name, role, systemPrompt, agentID, agen
 			}
 			b.Role = strings.TrimSpace(role)
 			b.SystemPrompt = strings.TrimSpace(systemPrompt)
-			if strings.TrimSpace(agentID) != "" {
-				b.AgentID = strings.TrimSpace(agentID)
-				if strings.TrimSpace(agentType) != "" {
-					b.AgentType = strings.TrimSpace(agentType)
-				} else if b.AgentID == "agent-internal" {
-					b.AgentType = "internal"
-				} else {
-					b.AgentType = "acp"
-				}
-			}
+			b.Limitations = strings.TrimSpace(limitations)
+			b.WorkspacePath = strings.TrimSpace(workspacePath)
+			b.AgentID = ""
+			b.AgentType = ""
 			st.saveLocked()
 			cp := *b
 			return &cp
@@ -267,6 +282,66 @@ func (st *BotStore) Delete(botID string) {
 	st.saveLocked()
 }
 
+// resolveBotHarnessLocked resolves the effective harness (agentID, agentType, model, provider)
+// for a bot: explicit bot override if set, otherwise inherited from parentSessionID (or the
+// current active session), falling back to ActiveAgentID / agent-internal.
+// Caller must hold as.mu.
+func (as *AgentState) resolveBotHarnessLocked(bot *BotProfile, parentSessionID string) (agentID, agentType, model, provider string) {
+	if bot != nil {
+		agentID = strings.TrimSpace(bot.AgentID)
+		agentType = strings.TrimSpace(bot.AgentType)
+		model = strings.TrimSpace(bot.Model)
+	}
+	var parent *AgentSession
+	if parentSessionID != "" {
+		for _, s := range as.Sessions {
+			if s != nil && s.ID == parentSessionID {
+				parent = s
+				break
+			}
+		}
+	}
+	if parent == nil && as.ActiveSessionID != "" {
+		for _, s := range as.Sessions {
+			if s != nil && s.ID == as.ActiveSessionID {
+				parent = s
+				break
+			}
+		}
+	}
+	if parent != nil {
+		if agentID == "" {
+			agentID = parent.AgentID
+			agentType = parent.AgentType
+		}
+		if model == "" {
+			model = parent.Model
+		}
+		provider = parent.Provider
+	}
+	if agentID == "" {
+		agentID = as.ActiveAgentID
+		agentType = as.ActiveAgentType
+	}
+	if agentID == "" {
+		agentID = "agent-internal"
+		agentType = "internal"
+	} else if agentType == "" {
+		if agentID == "agent-internal" {
+			agentType = "internal"
+		} else {
+			agentType = "acp"
+		}
+	}
+	if model == "" {
+		model = as.ActiveModel
+	}
+	if provider == "" {
+		provider = as.ActiveProvider
+	}
+	return agentID, agentType, model, provider
+}
+
 // OpenBotHomeSession activates (or creates) the persistent Home Chat session
 // for bot, tagging it with BotID.
 func (as *AgentState) OpenBotHomeSession(store *BotStore, bot *BotProfile) *AgentSession {
@@ -294,10 +369,7 @@ func (as *AgentState) OpenBotHomeSession(store *BotStore, bot *BotProfile) *Agen
 	if ws == "" {
 		ws = as.workspacePath
 	}
-	model := bot.Model
-	if model == "" {
-		model = as.ActiveModel
-	}
+	agentID, agentType, model, provider := as.resolveBotHarnessLocked(bot, "")
 	sess := &AgentSession{
 		ID:            id,
 		Title:         bot.Name + " · Home",
@@ -305,9 +377,9 @@ func (as *AgentState) OpenBotHomeSession(store *BotStore, bot *BotProfile) *Agen
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		Model:         model,
-		Provider:      as.ActiveProvider,
-		AgentID:       bot.AgentID,
-		AgentType:     bot.AgentType,
+		Provider:      provider,
+		AgentID:       agentID,
+		AgentType:     agentType,
 		WorkspacePath: ws,
 		BotID:         bot.ID,
 		Tasks:         NewTaskManager(),
@@ -335,19 +407,15 @@ func (as *AgentState) HandToBot(bot *BotProfile, sourceSessionID, goal string, a
 	if as == nil || bot == nil {
 		return nil, fmt.Errorf("bot is required")
 	}
-	nextSteps := strings.TrimSpace(bot.SystemPrompt)
-	if bot.Role != "" {
-		if nextSteps != "" {
-			nextSteps = fmt.Sprintf("Act as **%s** (%s).\n%s", bot.Name, bot.Role, nextSteps)
-		} else {
-			nextSteps = fmt.Sprintf("Act as **%s** (%s) and complete the goal autonomously.", bot.Name, bot.Role)
-		}
-	}
+	nextSteps := bot.FormatPersonaInstructions()
+	as.mu.Lock()
+	targetAgentID, targetAgentType, targetModel, _ := as.resolveBotHarnessLocked(bot, sourceSessionID)
+	as.mu.Unlock()
 	sess, err := as.ExecuteHandoff(HandoffRequest{
 		SourceSessionID: sourceSessionID,
-		TargetAgentID:   bot.AgentID,
-		TargetAgentType: bot.AgentType,
-		TargetModel:     bot.Model,
+		TargetAgentID:   targetAgentID,
+		TargetAgentType: targetAgentType,
+		TargetModel:     targetModel,
 		Goal:            goal,
 		NextSteps:       nextSteps,
 		AutoStart:       autoStart,
@@ -362,16 +430,14 @@ func (as *AgentState) HandToBot(bot *BotProfile, sourceSessionID, goal string, a
 	return sess, nil
 }
 
-// BotTemplate defines a ready-to-use persona and default harness preset for
-// creating a Local Bot (inspired by oh-my-hermes bot templates).
+// BotTemplate defines a ready-to-use persona preset for creating a Local Bot.
 type BotTemplate struct {
 	ID           string `json:"id"`
 	Title        string `json:"title"`
 	Role         string `json:"role"`
 	Summary      string `json:"summary"`
 	SystemPrompt string `json:"systemPrompt"`
-	AgentID      string `json:"agentId"`
-	AgentType    string `json:"agentType"`
+	Limitations  string `json:"limitations,omitempty"`
 	Avatar       string `json:"avatar,omitempty"`
 }
 
@@ -379,46 +445,42 @@ type BotTemplate struct {
 func DefaultBotTemplates() []BotTemplate {
 	return []BotTemplate{
 		{
-			ID:        "pr-reviewer",
-			Title:     "PR Reviewer",
-			Role:      "Bug-first PR & diff reviewer",
-			Summary:   "Reviews pull requests bug-first, checks diffs and tests, and delegates deep fixes to background workers.",
-			AgentID:   "agent-internal",
-			AgentType: "internal",
-			Avatar:    "07_chrome_mecha_bot.png",
+			ID:      "pr-reviewer",
+			Title:   "PR Reviewer",
+			Role:    "Bug-first PR & diff reviewer",
+			Summary: "Reviews pull requests bug-first, checks diffs and tests, and delegates deep fixes to background workers.",
+			Avatar:  "07_chrome_mecha_bot.png",
 			SystemPrompt: "You are a PR Reviewer bot. Keep the main chat concise for Q&A and decisions. " +
 				"When asked to review or fix code, read the diff and touched files first, lead with bugs and risks with file:line citations, and delegate heavy multi-file fixes to a background task.",
+			Limitations: "Do not push, merge, or modify unrelated files without explicit approval.",
 		},
 		{
-			ID:        "ci-watch",
-			Title:     "CI & Build Triage",
-			Role:      "Build failure & test triage",
-			Summary:   "Diagnoses failing builds or flaky tests, isolates root causes, and proposes targeted fixes.",
-			AgentID:   "agent-internal",
-			AgentType: "internal",
-			Avatar:    "06_cyberpunk_android.png",
+			ID:      "ci-watch",
+			Title:   "CI & Build Triage",
+			Role:    "Build failure & test triage",
+			Summary: "Diagnoses failing builds or flaky tests, isolates root causes, and proposes targeted fixes.",
+			Avatar:  "06_cyberpunk_android.png",
 			SystemPrompt: "You are a CI & Build Triage bot. Keep chat focused on root-cause summaries and next-step options. " +
 				"Delegate log inspection, reproduction, and test fixes to background tasks (RakitKode or ACP worktrees).",
+			Limitations: "Never silence failing tests, skip assertions, or weaken lint/vet checks.",
 		},
 		{
 			ID:           "release-notes",
 			Title:        "Release Notes",
 			Role:         "Changelog & release drafter",
 			Summary:      "Summarizes merged PRs and commits since the last tag into clean user-facing release notes.",
-			AgentID:      "agent-internal",
-			AgentType:    "internal",
 			Avatar:       "14_3d_clay_robot.png",
 			SystemPrompt: "You are a Release Notes bot. Group merged changes by user impact, cite PR/commit numbers, and put breaking changes first. Never invent changes not present in git history.",
+			Limitations:  "Only cite commits, PRs, and behaviors verified directly in git history.",
 		},
 		{
 			ID:           "research-assistant",
 			Title:        "Research & Docs",
 			Role:         "Codebase & architecture researcher",
 			Summary:      "Answers architecture questions with exact file citations and delegates deep codebase audits to background tasks.",
-			AgentID:      "agent-internal",
-			AgentType:    "internal",
 			Avatar:       "10_owl_knowledge_bot.png",
 			SystemPrompt: "You are a Research & Docs bot. Keep answers concise and evidence-backed with exact file paths and symbol names. Delegate broad audits to background tasks.",
+			Limitations:  "Read-only investigation by default; do not edit source files unless asked.",
 		},
 	}
 }
@@ -428,8 +490,27 @@ type BotTaskStep struct {
 	ID         string `json:"id"`
 	Label      string `json:"label"`
 	Detail     string `json:"detail,omitempty"`
+	FullDetail string `json:"fullDetail,omitempty"`
+	Output     string `json:"output,omitempty"`
 	Status     string `json:"status"` // "running", "completed", "failed"
 	DurationMs int64  `json:"durationMs,omitempty"`
+}
+
+func buildBotTaskStep(t *ToolExecution) BotTaskStep {
+	fullDetail := strings.TrimSpace(t.Command)
+	detail := fullDetail
+	if len(detail) > 120 {
+		detail = detail[:120] + "…"
+	}
+	return BotTaskStep{
+		ID:         t.ID,
+		Label:      t.ToolName,
+		Detail:     detail,
+		FullDetail: fullDetail,
+		Output:     strings.TrimSpace(t.Output),
+		Status:     t.Status,
+		DurationMs: t.DurationMs,
+	}
 }
 
 // BotTaskSummary is a live read-model of one background task owned by a BotProfile.
@@ -480,11 +561,18 @@ func (as *AgentState) SpawnBotTask(store *BotStore, bot *BotProfile, title, task
 	if home != nil {
 		parentID = home.ID
 	}
+	as.mu.Lock()
+	resolvedID, resolvedType, resolvedModel, _ := as.resolveBotHarnessLocked(bot, parentID)
+	as.mu.Unlock()
 	if strings.TrimSpace(agentID) == "" {
-		agentID = bot.AgentID
-	}
-	if strings.TrimSpace(agentType) == "" {
-		agentType = bot.AgentType
+		agentID = resolvedID
+		agentType = resolvedType
+	} else if strings.TrimSpace(agentType) == "" {
+		if agentID == "agent-internal" {
+			agentType = "internal"
+		} else {
+			agentType = "acp"
+		}
 	}
 	wsMode := "shared"
 	if useWorktree {
@@ -497,15 +585,15 @@ func (as *AgentState) SpawnBotTask(store *BotStore, bot *BotProfile, title, task
 			workerName = workerName[:42] + "…"
 		}
 	}
-	if bot.SystemPrompt != "" {
-		prompt = fmt.Sprintf("Bot Persona (%s — %s):\n%s\n\nTask:\n%s", bot.Name, bot.Role, bot.SystemPrompt, prompt)
+	if persona := bot.FormatPersonaInstructions(); persona != "" {
+		prompt = fmt.Sprintf("%s\n\nTask:\n%s", persona, prompt)
 	}
 	rec, err := as.SpawnWorker(WorkerSpec{
 		ParentSessionID: parentID,
 		Name:            workerName,
 		AgentID:         agentID,
 		AgentType:       agentType,
-		Model:           bot.Model,
+		Model:           resolvedModel,
 		Task:            prompt,
 		WorkspaceMode:   wsMode,
 		AutoStart:       true,
@@ -591,21 +679,12 @@ func (as *AgentState) BotTasks(store *BotStore, botID string) []BotTaskSummary {
 					if t == nil {
 						continue
 					}
-					detail := strings.TrimSpace(t.Command)
-					if len(detail) > 120 {
-						detail = detail[:120] + "…"
-					}
-					steps = append(steps, BotTaskStep{
-						ID:         t.ID,
-						Label:      t.ToolName,
-						Detail:     detail,
-						Status:     t.Status,
-						DurationMs: t.DurationMs,
-					})
+					step := buildBotTaskStep(t)
+					steps = append(steps, step)
 					if t.Status == "running" {
 						currentStep = t.ToolName
-						if detail != "" {
-							currentStep += ": " + detail
+						if step.Detail != "" {
+							currentStep += ": " + step.Detail
 						}
 					}
 					if t.Status == "failed" && status != "running" && status != "needs_approval" {
@@ -698,21 +777,12 @@ func (as *AgentState) BotTasks(store *BotStore, botID string) []BotTaskSummary {
 				if t == nil {
 					continue
 				}
-				detail := strings.TrimSpace(t.Command)
-				if len(detail) > 120 {
-					detail = detail[:120] + "…"
-				}
-				steps = append(steps, BotTaskStep{
-					ID:         t.ID,
-					Label:      t.ToolName,
-					Detail:     detail,
-					Status:     t.Status,
-					DurationMs: t.DurationMs,
-				})
+				step := buildBotTaskStep(t)
+				steps = append(steps, step)
 				if t.Status == "running" {
 					currentStep = t.ToolName
-					if detail != "" {
-						currentStep += ": " + detail
+					if step.Detail != "" {
+						currentStep += ": " + step.Detail
 					}
 				}
 				if t.Status == "failed" && status != "running" {

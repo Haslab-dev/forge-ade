@@ -15,11 +15,8 @@ func (a *AppUI) OpenNewBotModal() {
 	a.NewBotName = ""
 	a.NewBotRole = ""
 	a.NewBotPrompt = ""
+	a.NewBotLimitations = ""
 	a.NewBotAvatar = defaultBotAvatarPreset
-	if a.NewBotAgentID == "" {
-		a.NewBotAgentID = "agent-internal"
-		a.NewBotAgentType = "internal"
-	}
 	a.ShowNewBotModal = true
 }
 
@@ -30,10 +27,18 @@ func (a *AppUI) OpenNewBotTaskModal(botID string) {
 	a.NewBotTaskPrompt = ""
 	a.NewBotTaskWorktree = false
 	a.NewBotTaskError = ""
+	a.NewBotTaskAgentID = ""
+	a.NewBotTaskAgentType = ""
 	if a.Bots != nil {
 		if b := a.Bots.Get(botID); b != nil && b.AgentID != "" {
 			a.NewBotTaskAgentID = b.AgentID
 			a.NewBotTaskAgentType = b.AgentType
+		}
+	}
+	if a.NewBotTaskAgentID == "" && a.Agent != nil {
+		if sess := a.Agent.ActiveSession(); sess != nil && sess.AgentID != "" {
+			a.NewBotTaskAgentID = sess.AgentID
+			a.NewBotTaskAgentType = sess.AgentType
 		}
 	}
 	if a.NewBotTaskAgentID == "" {
@@ -61,23 +66,6 @@ func (a *AppUI) renderNewBotModal(c *ui.Context) {
 		return
 	}
 	tc := a.ThemeMgr.Colors()
-
-	type botAgentOpt struct {
-		ID   string
-		Name string
-		Type string
-	}
-	opts := []botAgentOpt{
-		{ID: "agent-internal", Name: "ForgeADE Internal", Type: "internal"},
-	}
-	if a.ACPMgr != nil {
-		for _, def := range a.ACPMgr.Agents {
-			if def.Type == "internal" || def.ID == "agent-internal" {
-				continue
-			}
-			opts = append(opts, botAgentOpt{ID: def.ID, Name: def.Name, Type: "acp"})
-		}
-	}
 
 	a.modal(c, &a.ShowNewBotModal, func() {
 		modal := ui.Column(c).Width(460).Radius(14).
@@ -140,8 +128,7 @@ func (a *AppUI) renderNewBotModal(c *ui.Context) {
 								a.NewBotName = t.Title
 								a.NewBotRole = t.Role
 								a.NewBotPrompt = t.SystemPrompt
-								a.NewBotAgentID = t.AgentID
-								a.NewBotAgentType = t.AgentType
+								a.NewBotLimitations = t.Limitations
 								if t.Avatar != "" {
 									a.NewBotAvatar = t.Avatar
 								}
@@ -169,37 +156,14 @@ func (a *AppUI) renderNewBotModal(c *ui.Context) {
 					ui.TextInput(c, &a.NewBotRole).Placeholder("e.g. Bug triage & PR fixer").FillWidth()
 				})
 				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, "Default Agent").FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted)
-					ui.Row(c).Gap(6).Wrap().Children(func() {
-						for _, o := range opts {
-							opt := o
-							sel := a.NewBotAgentID == opt.ID
-							pill := ui.Row(c.Key("nb-ag-"+opt.ID)).Height(28).Radius(7).Padding(0, 9).Gap(5).
-								AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
-							if sel {
-								pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.55))
-							} else {
-								pill.Background(tc.SurfaceRaised).BorderColor(tc.Border)
-							}
-							pill.Children(func() {
-								if opt.Type == "internal" {
-									ui.Icon(c, icons.ProviderForgeADE).Width(12).Height(12)
-								} else {
-									icons.RenderProviderIcon(c, opt.ID+" "+opt.Name, 12)
-								}
-								ui.Text(c, opt.Name).FontSize(11.5).FontWeight(500).TextColor(tc.Text)
-							})
-							if pill.Clicked() {
-								a.NewBotAgentID = opt.ID
-								a.NewBotAgentType = opt.Type
-							}
-						}
-					})
-				})
-				ui.Column(c).Gap(4).Children(func() {
-					ui.Text(c, "Instructions (optional)").FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Text(c, "Persona / Instructions (optional)").FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted)
 					ui.TextAreaBase(c, &a.NewBotPrompt).Lines(2, 4).Placeholder("Standing instructions when this bot takes over a task...").FillWidth()
 				})
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Limitations & Guardrails (optional)").FontSize(11.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.TextAreaBase(c, &a.NewBotLimitations).Lines(2, 3).Placeholder("e.g. Do not push/merge, read-only investigation, stay within app/native/...").FillWidth()
+				})
+				ui.Text(c, "Harness & model are inherited automatically from the active parent chat.").FontSize(10.5).TextColor(tc.TextMuted)
 			})
 
 			ui.Row(c).Padding(12, 18).Gap(8).Justify(ui.End).AlignItems(ui.Center).
@@ -228,8 +192,7 @@ func (a *AppUI) renderNewBotModal(c *ui.Context) {
 						Name:          strings.TrimSpace(a.NewBotName),
 						Role:          strings.TrimSpace(a.NewBotRole),
 						SystemPrompt:  strings.TrimSpace(a.NewBotPrompt),
-						AgentID:       a.NewBotAgentID,
-						AgentType:     a.NewBotAgentType,
+						Limitations:   strings.TrimSpace(a.NewBotLimitations),
 						Avatar:        a.NewBotAvatar,
 						WorkspacePath: ws,
 					})

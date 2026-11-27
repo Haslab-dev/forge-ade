@@ -348,6 +348,7 @@ type AppUI struct {
 	NewBotName             string
 	NewBotRole             string
 	NewBotPrompt           string
+	NewBotLimitations      string
 	NewBotAgentID          string
 	NewBotAgentType        string
 	NewBotAvatar           string
@@ -358,10 +359,11 @@ type AppUI struct {
 	BotPersonaName         string
 	BotPersonaRole         string
 	BotPersonaPrompt       string
-	BotPersonaAgentID      string
-	BotPersonaAgentType    string
+	BotPersonaLimitations  string
+	BotPersonaWorkspace    string
 	ShowBotTaskModal       bool
 	SelectedBotTaskID      string
+	SelectedBotTaskStepKey string
 	ShowNewBotTaskModal    bool
 	NewBotTaskBotID        string
 	NewBotTaskTitle        string

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,7 +110,7 @@ func TestBotTemplatesTasksAndTurnStatus(t *testing.T) {
 			TotalSteps:    2,
 			TurnStartedAt: now.Add(-4 * time.Second),
 			Tools: []*ToolExecution{
-				{ID: "t1", ToolName: "read_file", Command: "main.go", Status: "completed"},
+				{ID: "t1", ToolName: "read_file", Command: strings.Repeat("a", 150), Output: "package main\nfunc main() {}", Status: "completed"},
 				{ID: "t2", ToolName: "grep_search", Command: "AuthToken", Status: "running"},
 			},
 		},
@@ -121,6 +122,9 @@ func TestBotTemplatesTasksAndTurnStatus(t *testing.T) {
 	}
 	if len(tasks[1].Steps) != 2 || tasks[1].CurrentStep != "grep_search: AuthToken" {
 		t.Fatalf("unexpected Home Chat turn task: %+v", tasks[1])
+	}
+	if len(tasks[1].Steps[0].FullDetail) != 150 || len(tasks[1].Steps[0].Detail) >= 150 || tasks[1].Steps[0].Output == "" {
+		t.Fatalf("expected FullDetail and Output preserved on BotTaskStep: %+v", tasks[1].Steps[0])
 	}
 
 	st := as.ActiveTurnStatus(store, home.ID)
@@ -145,5 +149,60 @@ func TestBotTemplatesTasksAndTurnStatus(t *testing.T) {
 	as.OpenBotHomeSession(store, bot)
 	if !as.StreamingSnapshot() {
 		t.Fatalf("expected StreamingSnapshot() == true when switching back to running bot1")
+	}
+}
+
+func TestBotPersonaInheritsParentHarnessAndLimitations(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBotStore(dir)
+
+	bot := store.Create(BotProfile{
+		Name:         "Auditor",
+		Role:         "Security Reviewer",
+		SystemPrompt: "Check auth boundaries first.",
+		Limitations:  "Read-only; never edit files.",
+	})
+	if bot.AgentID != "" || bot.AgentType != "" {
+		t.Fatalf("expected persona-only bot to leave AgentID/AgentType empty, got %q/%q", bot.AgentID, bot.AgentType)
+	}
+
+	as := &AgentState{
+		workspacePath:   dir,
+		ActiveAgentID:   "agent-internal",
+		ActiveAgentType: "internal",
+		Sessions: []*AgentSession{
+			{
+				ID:            "parent-1",
+				Title:         "Parent Chat",
+				Status:        "idle",
+				AgentID:       "agent-claude",
+				AgentType:     "acp",
+				Model:         "claude-sonnet-4-5",
+				WorkspacePath: dir,
+				Tasks:         NewTaskManager(),
+			},
+		},
+		ActiveSessionID: "parent-1",
+	}
+
+	home := as.OpenBotHomeSession(store, bot)
+	if home.AgentID != "agent-claude" || home.AgentType != "acp" || home.Model != "claude-sonnet-4-5" {
+		t.Fatalf("expected bot home session to inherit parent harness, got %s/%s/%s", home.AgentID, home.AgentType, home.Model)
+	}
+
+	handed, err := as.HandToBot(bot, "parent-1", "Audit login handler", false)
+	if err != nil {
+		t.Fatalf("HandToBot failed: %v", err)
+	}
+	if handed.AgentID != "agent-claude" || handed.AgentType != "acp" {
+		t.Fatalf("expected handed session to inherit parent harness, got %s/%s", handed.AgentID, handed.AgentType)
+	}
+	if instr := bot.FormatPersonaInstructions(); !strings.Contains(instr, "Limitations & Guardrails:\nRead-only; never edit files.") {
+		t.Fatalf("expected Limitations in FormatPersonaInstructions, got %q", instr)
+	}
+
+	updated := store.UpdatePersona(bot.ID, "Auditor v2", "AppSec", "Focus on OWASP top 10.", "No network calls.", "/tmp/ws")
+	if updated == nil || updated.Name != "Auditor v2" || updated.Limitations != "No network calls." || updated.WorkspacePath != "/tmp/ws" || updated.AgentID != "" {
+		t.Fatalf("unexpected UpdatePersona result: %+v", updated)
 	}
 }

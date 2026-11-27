@@ -227,6 +227,28 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										} else if workingCnt > 0 {
 											ui.Spinner(c).Size(12, 12).Label("")
 										}
+										if bRow.Hovered() || botActive {
+											editIconBtn := ui.Row(c.Key("sb-bot-edit-"+bot.ID)).Size(20, 20).Radius(5).
+												AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).Shrink(0)
+											editIconBtn.Tooltip("Edit persona, icon & limitations")
+											editIconBtn.Children(func() {
+												ui.Icon(c, icons.TablerPencil).Width(11).Height(11).TextColor(tc.SidebarMutedForeground)
+											})
+											if editIconBtn.Hovered() {
+												editIconBtn.Background(tc.Text.Alpha(0.08))
+											}
+											if editIconBtn.Clicked() && a.Agent != nil {
+												if home := a.Agent.OpenBotHomeSession(a.Bots, bot); home != nil {
+													a.ensureAgentTab(home.ID)
+												}
+												a.IsGitClientOpen = false
+												a.AgentViewMode = AgentViewChat
+												a.ActiveTaskKind = "agent"
+												a.ShowRightDrawer = true
+												a.RightDrawerTab = RightTabBot
+												a.BotDrawerSubTab = "persona"
+											}
+										}
 									})
 									if bRow.Clicked() && a.Agent != nil {
 										if home := a.Agent.OpenBotHomeSession(a.Bots, bot); home != nil {
@@ -248,6 +270,14 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 											}
 											a.ShowRightDrawer = true
 											a.RightDrawerTab = RightTabBot
+										}
+										if m.Item("Edit Persona & Limitations…").Chosen() && a.Agent != nil {
+											if home := a.Agent.OpenBotHomeSession(a.Bots, bot); home != nil {
+												a.ensureAgentTab(home.ID)
+											}
+											a.ShowRightDrawer = true
+											a.RightDrawerTab = RightTabBot
+											a.BotDrawerSubTab = "persona"
 										}
 										if m.Item("New Background Task…").Chosen() {
 											a.OpenNewBotTaskModal(bot.ID)
