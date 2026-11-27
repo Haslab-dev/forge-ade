@@ -3843,12 +3843,20 @@ func (as *AgentState) CancelStreaming() {
 				msg.Done = true
 				msg.IsThinking = false
 				msg.ShowThinking = false
-				msg.ShowTools = false
+				for _, t := range msg.Tools {
+					if t != nil && t.Status == "running" {
+						t.Status = "failed"
+					}
+				}
 				if !msg.TurnStartedAt.IsZero() {
 					msg.ThinkingTimeSec = time.Since(msg.TurnStartedAt).Seconds()
 				}
 				if strings.TrimSpace(msg.Text) == "" {
-					setAssistantTextLocked(msg, "*(stopped by user)*")
+					msg.Text = "*(stopped by user)*"
+					appendTextBlockDeltaLocked(msg, "*(stopped by user)*")
+				} else {
+					msg.Text = strings.TrimSpace(msg.Text) + "\n\n*(stopped by user)*"
+					appendTextBlockDeltaLocked(msg, "\n\n*(stopped by user)*")
 				}
 			}
 			// A stopped turn can no longer answer its approvals: mark them

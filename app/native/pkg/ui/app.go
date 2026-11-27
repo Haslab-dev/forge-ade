@@ -335,6 +335,7 @@ type AppUI struct {
 	HandoffNextSteps       string
 	HandoffCreateWorktree  bool
 	HandoffWorktreeBranch  string
+	HandoffAutoStart       bool
 	HandoffError           string
 	ShowNewBotModal        bool
 	NewBotTemplateID       string

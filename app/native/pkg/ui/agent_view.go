@@ -2360,80 +2360,89 @@ func (a *AppUI) renderSteerQueueTray(c *ui.Context) {
 	queue := as.SteerQueueSnapshot()
 	streaming := as.StreamingSnapshot()
 
+	inset, rightInset := a.chatLaneInset(c)
+	rightPad := inset
+	if a.showFloatingInspector(c) {
+		rightPad = maxF(inset, 324)
+	}
+
 	// ZCode queued-prompt tray: compact rows — grip, text, then per-row
 	// Steer (first row only, dashed into the running turn), edit and delete.
-	tray := ui.Column(c).Padding(6).Radius(12).Background(tc.SurfaceRaised).
-		BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).Gap(2)
-	tray.Children(func() {
-		for idx, item := range queue {
-			thisItem := item
-			// The snapshot index only keys the row for this frame; removals
-			// match by identity, never by a captured index.
-			row := ui.Row(c.Key(fmt.Sprintf("steer-%d", idx))).MinHeight(34).Radius(8).
-				Padding(4, 8).Gap(8).AlignItems(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
-			row.Children(func() {
-				ui.Icon(c, icons.TablerGripVertical).Width(13).Height(13).TextColor(tc.IconMuted)
-				ui.Text(c, thisItem).FontSize(12).Grow(1).SingleLine()
-				if idx == 0 {
-					steerBtn := ui.Row(c.Key("steer-now")).Height(26).Radius(7).Padding(0, 10).Gap(4).
-						AlignItems(ui.Center).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border)
-					steerBtn.Children(func() {
-						ui.Icon(c, icons.TablerArrowUp).Width(12).Height(12).TextColor(tc.Text)
-						ui.Text(c, "Steer").FontSize(12).FontWeight(600).TextColor(tc.Text)
-					})
-					if steerBtn.Clicked() && streaming {
-						text := thisItem
-						sid := as.SnapshotActiveSessionID()
-						go func() {
-							// Keep the queued item on failure so the text is
-							// never silently lost; remove by identity.
-							if err := as.SteerInternal(sid, text); err != nil {
-								if errors.Is(err, agent.ErrSteerQueuedNextTurn) {
-									a.queueToast(ui.Toast{Title: "Queued for Next Turn", Description: "This agent cannot accept mid-turn prompts — it will run when the current turn finishes", Type: "info"})
-								} else {
-									a.queueToast(ui.Toast{Title: "Steer Failed", Description: err.Error(), Type: "error"})
+	// Match the chat composer's horizontal inset so widths align cleanly.
+	ui.Column(c).Padding(0, rightPad, 6, rightInset).Children(func() {
+		tray := ui.Column(c).Padding(6).Radius(12).Background(tc.SurfaceRaised).
+			BorderWidth(1).BorderColor(tc.Border.Alpha(0.8)).Gap(2)
+		tray.Children(func() {
+			for idx, item := range queue {
+				thisItem := item
+				// The snapshot index only keys the row for this frame; removals
+				// match by identity, never by a captured index.
+				row := ui.Row(c.Key(fmt.Sprintf("steer-%d", idx))).MinHeight(34).Radius(8).
+					Padding(4, 8).Gap(8).AlignItems(ui.Center).
+					Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+				row.Children(func() {
+					ui.Icon(c, icons.TablerGripVertical).Width(13).Height(13).TextColor(tc.IconMuted)
+					ui.Text(c, thisItem).FontSize(12).Grow(1).SingleLine()
+					if idx == 0 {
+						steerBtn := ui.Row(c.Key("steer-now")).Height(26).Radius(7).Padding(0, 10).Gap(4).
+							AlignItems(ui.Center).Background(tc.SurfaceOverlay).BorderWidth(1).BorderColor(tc.Border)
+						steerBtn.Children(func() {
+							ui.Icon(c, icons.TablerArrowUp).Width(12).Height(12).TextColor(tc.Text)
+							ui.Text(c, "Steer").FontSize(12).FontWeight(600).TextColor(tc.Text)
+						})
+						if steerBtn.Clicked() && streaming {
+							text := thisItem
+							sid := as.SnapshotActiveSessionID()
+							go func() {
+								// Keep the queued item on failure so the text is
+								// never silently lost; remove by identity.
+								if err := as.SteerInternal(sid, text); err != nil {
+									if errors.Is(err, agent.ErrSteerQueuedNextTurn) {
+										a.queueToast(ui.Toast{Title: "Queued for Next Turn", Description: "This agent cannot accept mid-turn prompts — it will run when the current turn finishes", Type: "info"})
+									} else {
+										a.queueToast(ui.Toast{Title: "Steer Failed", Description: err.Error(), Type: "error"})
+									}
+									if a.Window != nil {
+										a.Window.Invalidate()
+									}
+									return
 								}
-								if a.Window != nil {
-									a.Window.Invalidate()
+								as.RemoveSteerItem(text)
+								as.SaveSteerQueues()
+								if as.Invalidate != nil {
+									as.Invalidate()
 								}
-								return
-							}
-							as.RemoveSteerItem(text)
-							as.SaveSteerQueues()
-							if as.Invalidate != nil {
-								as.Invalidate()
-							}
-						}()
+							}()
+						}
 					}
-				}
-				edit := ui.Row(c.Key("steer-edit")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
-				edit.Children(func() {
-					ui.Icon(c, icons.TablerPencil).Width(13).Height(13).TextColor(tc.TextMuted)
+					edit := ui.Row(c.Key("steer-edit")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+					edit.Children(func() {
+						ui.Icon(c, icons.TablerPencil).Width(13).Height(13).TextColor(tc.TextMuted)
+					})
+					if edit.Clicked() {
+						// TakeSteerItem locks internally (never wrap it in
+						// as.Lock — sync.Mutex is not reentrant). InputText is
+						// composer/UI-thread state.
+						as.InputText = as.TakeSteerItem(thisItem)
+						as.SaveSteerQueues()
+					}
+					del := ui.Row(c.Key("steer-del")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
+					del.Children(func() {
+						ui.Icon(c, icons.TablerTrash).Width(13).Height(13).TextColor(tc.TextMuted)
+					})
+					if del.Hovered() {
+						del.Background(tc.Error.Alpha(0.12))
+					}
+					if del.Clicked() {
+						as.RemoveSteerItem(thisItem)
+						as.SaveSteerQueues()
+					}
 				})
-				if edit.Clicked() {
-					// TakeSteerItem locks internally (never wrap it in
-					// as.Lock — sync.Mutex is not reentrant). InputText is
-					// composer/UI-thread state.
-					as.InputText = as.TakeSteerItem(thisItem)
-					as.SaveSteerQueues()
+				if row.Hovered() {
+					row.Background(tc.SurfaceOverlay)
 				}
-				del := ui.Row(c.Key("steer-del")).Size(24, 24).Radius(6).AlignItems(ui.Center).Justify(ui.Center)
-				del.Children(func() {
-					ui.Icon(c, icons.TablerTrash).Width(13).Height(13).TextColor(tc.TextMuted)
-				})
-				if del.Hovered() {
-					del.Background(tc.Error.Alpha(0.12))
-				}
-				if del.Clicked() {
-					as.RemoveSteerItem(thisItem)
-					as.SaveSteerQueues()
-				}
-			})
-			if row.Hovered() {
-				row.Background(tc.SurfaceOverlay)
 			}
-		}
+		})
 	})
 }
 

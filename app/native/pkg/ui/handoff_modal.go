@@ -25,6 +25,7 @@ func (a *AppUI) OpenHandoffModal() {
 	a.HandoffNextSteps = ""
 	a.HandoffCreateWorktree = false
 	a.HandoffWorktreeBranch = ""
+	a.HandoffAutoStart = false
 	a.HandoffError = ""
 	if a.HandoffTargetAgentID == "" {
 		if sess != nil && sess.AgentType == "internal" {
@@ -172,6 +173,24 @@ func (a *AppUI) renderHandoffModal(c *ui.Context) {
 					if a.HandoffCreateWorktree {
 						ui.TextInput(c, &a.HandoffWorktreeBranch).Placeholder("Branch name (e.g. feature/handoff-review)").FillWidth()
 					}
+
+					autoToggle := ui.Row(c.Key("ho-auto-toggle")).Height(28).Radius(7).Padding(0, 8).Gap(8).
+						AlignItems(ui.Center).Cursor(ui.CursorPointer).
+						Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border)
+					autoToggle.Children(func() {
+						box := ui.Box(c).Size(14, 14).Radius(4).AlignItems(ui.Center).Justify(ui.Center).BorderWidth(1)
+						if a.HandoffAutoStart {
+							box.Background(tc.Accent).BorderColor(tc.Accent).Children(func() {
+								ui.Icon(c, icons.TablerCheck).Width(10).Height(10).TextColor(tc.AccentForeground)
+							})
+						} else {
+							box.BorderColor(tc.Border)
+						}
+						ui.Text(c, "Start running immediately (auto-send prompt)").FontSize(12).FontWeight(500).TextColor(tc.Text).Grow(1)
+					})
+					if autoToggle.Clicked() {
+						a.HandoffAutoStart = !a.HandoffAutoStart
+					}
 				})
 
 				if a.HandoffError != "" {
@@ -209,16 +228,23 @@ func (a *AppUI) renderHandoffModal(c *ui.Context) {
 						NextSteps:       strings.TrimSpace(a.HandoffNextSteps),
 						CreateWorktree:  a.HandoffCreateWorktree,
 						WorktreeBranch:  strings.TrimSpace(a.HandoffWorktreeBranch),
-						AutoStart:       true,
+						AutoStart:       a.HandoffAutoStart,
 					})
 					if err != nil {
 						a.HandoffError = fmt.Sprintf("Handoff failed: %v", err)
 					} else {
 						a.ShowHandoffModal = false
-						if sess != nil && sess.WorkspacePath != "" && a.Workspace != nil && !sameWorkspacePath(a.Workspace.RootDir, sess.WorkspacePath) {
-							a.switchWorkspace(sess.WorkspacePath)
+						if sess != nil {
+							a.ensureAgentTab(sess.ID)
+							if sess.WorkspacePath != "" && a.Workspace != nil && !sameWorkspacePath(a.Workspace.RootDir, sess.WorkspacePath) {
+								a.switchWorkspace(sess.WorkspacePath)
+							}
 						}
-						c.AddToast(ui.Toast{Title: "Session Handed Off", Description: "Started " + sess.Title, Type: "success"})
+						toastDesc := "Prepared " + sess.Title + " (review before running)"
+						if a.HandoffAutoStart {
+							toastDesc = "Started " + sess.Title
+						}
+						c.AddToast(ui.Toast{Title: "Session Handed Off", Description: toastDesc, Type: "success"})
 					}
 				}
 			})

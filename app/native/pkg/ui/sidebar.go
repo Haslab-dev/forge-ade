@@ -258,7 +258,13 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										if a.Agent != nil && a.Agent.ActiveSession() != nil {
 											if m.Item("Hand current session to " + bot.Name).Chosen() {
 												src := a.Agent.ActiveSession()
-												_, _ = a.Agent.HandToBot(bot, src.ID, src.Title, true)
+												if handed, err := a.Agent.HandToBot(bot, src.ID, src.Title, false); err == nil && handed != nil {
+													a.ensureAgentTab(handed.ID)
+													a.ShowRightDrawer = true
+													a.RightDrawerTab = RightTabBot
+													a.BotDrawerSubTab = "tasks"
+													c.AddToast(ui.Toast{Title: "Handed Off to " + bot.Name, Description: "Prepared for your confirmation before running", Type: "success"})
+												}
 											}
 										}
 										pauseLbl := "Pause bot"
@@ -1062,9 +1068,6 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 			ui.Row(c).Height(32).Padding(0, 10).Gap(4).AlignItems(ui.Center).
 				BorderWidth(1, 0, 0, 0).BorderColor(tc.SidebarBorder.Alpha(0.6)).
 				Children(func() {
-					dockBtn("settings", "Settings (⌘,)", icons.TablerSettings, a.Mode == ModeSettings, func() {
-						a.openSettings()
-					})
 					dockBtn("plugins", "Plugin Marketplace", icons.TablerPuzzle, false, func() { a.openSettings(settings.SettingsTabPlugins) })
 					dockBtn("rules", "Rules & Instructions", icons.TablerBook, false, func() { a.OpenRulesModal() })
 					ui.Box(c).Grow(1)
@@ -2125,9 +2128,6 @@ func (a *AppUI) renderCollapsedLeftRail(c *ui.Context) {
 			ui.Box(c).Width(24).Height(1).Background(tc.SidebarBorder.Alpha(0.7))
 			if IconButton(c, tc, icons.TablerPlus, 16).Tooltip("New Task (⌘N)").Clicked() {
 				a.handleNewTask()
-			}
-			if IconButton(c, tc, icons.TablerSettings, 16).Tooltip("Settings (⌘,)").Clicked() {
-				a.openSettings(0)
 			}
 		})
 }
