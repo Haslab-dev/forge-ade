@@ -388,18 +388,18 @@ func renderTaskRow(c *ui.Context, tc theme.ThemeColors, d taskRowData) {
 			DiffStatText(c, tc, d.DiffAdded, d.DiffRemoved)
 		}
 
-		// Model tag + relative time (with running pulse dot), hidden while hover actions show.
+		// Model tag + relative time (with running spinner loader), hidden while hover actions show.
 		if !row.Hovered() {
 			timeRow := ui.Row(c).Gap(5).AlignItems(ui.Center).Shrink(0)
 			timeRow.Children(func() {
-				if isRunning {
-					ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
-				}
-				if mLabel := shortSidebarModel(d.Model); mLabel != "" && !d.IsCLI && d.DiffAdded == 0 && d.DiffRemoved == 0 && !isAwaiting {
+				if mLabel := shortSidebarModel(d.Model); mLabel != "" && !d.IsCLI && d.DiffAdded == 0 && d.DiffRemoved == 0 && !isAwaiting && !isRunning {
 					ui.Text(c, mLabel).FontSize(10).TextColor(tc.SidebarMutedForeground.Alpha(0.75)).SingleLine()
 				}
-				if ts := relativeTime(d.UpdatedTime); ts != "" {
+				if ts := relativeTime(d.UpdatedTime); ts != "" && !isRunning {
 					ui.Text(c, ts).FontSize(10.5).TextColor(tc.SidebarMutedForeground)
+				}
+				if isRunning {
+					ui.Spinner(c).Size(12, 12).Label("")
 				}
 			})
 		}

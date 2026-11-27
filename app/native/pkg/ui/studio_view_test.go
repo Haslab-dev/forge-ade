@@ -459,7 +459,7 @@ func TestStudioEntryHTMLAsset(t *testing.T) {
 }
 
 // TestStudioImportFromWrittenFiles pins the import pipeline's primary source:
-// files written under ~/.forge are imported; files outside ~/.forge are ignored.
+// files written under ~/.forge-ade are imported; files outside ~/.forge-ade are ignored.
 func TestStudioImportFromWrittenFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -468,7 +468,7 @@ func TestStudioImportFromWrittenFiles(t *testing.T) {
 	eng := engine.NewEngine(dir)
 	app := NewAppUI(eng, dir)
 
-	forgeSlides := filepath.Join(home, ".forge", "studio", "slides")
+	forgeSlides := filepath.Join(home, ".forge-ade", "studio", "slides")
 	if err := os.MkdirAll(forgeSlides, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestStudioImportFromWrittenFiles(t *testing.T) {
 }
 
 // TestStudioScanArtifactFiles pins the explorer scan: ONLY artifact files under
-// ~/.forge are loaded; workspace files and projects.json are excluded.
+// ~/.forge-ade are loaded; workspace files and projects.json are excluded.
 func TestStudioScanArtifactFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -524,7 +524,7 @@ func TestStudioScanArtifactFiles(t *testing.T) {
 	app := NewAppUI(eng, dir)
 	app.setMode(ModeStudio)
 
-	forgeSlides := filepath.Join(home, ".forge", "slides")
+	forgeSlides := filepath.Join(home, ".forge-ade", "slides")
 	if err := os.MkdirAll(forgeSlides, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +562,7 @@ func TestStudioScanArtifactFiles(t *testing.T) {
 }
 
 // TestStudioExternalPreviewDoesNotImportArtifact verifies that opening an HTML
-// file from outside ~/.forge uses viewer-only preview mode without mutating artifacts.
+// file from outside ~/.forge-ade uses viewer-only preview mode without mutating artifacts.
 func TestStudioExternalPreviewDoesNotImportArtifact(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -649,8 +649,8 @@ func TestStudioDecoratePromptUniqueFilesAndFollowUp(t *testing.T) {
 	app := NewAppUI(eng, dir)
 	app.setMode(ModeStudio)
 
-	// Pre-populate an existing 3D file under ~/.forge/studio/3d so suggestions must never collide with it.
-	threeDDir := filepath.Join(home, ".forge", "studio", "3d")
+	// Pre-populate an existing 3D file under ~/.forge-ade/studio/3d so suggestions must never collide with it.
+	threeDDir := filepath.Join(home, ".forge-ade", "studio", "3d")
 	if err := os.MkdirAll(threeDDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -60,7 +60,6 @@ const (
 	RightTabTerminal  = 1
 	RightTabChat      = 2
 	RightTabTasks     = 3
-	RightTabBoard     = 4
 	RightTabGit       = 5
 	RightTabDatabase  = 6
 	RightTabFiles     = 7
@@ -431,29 +430,38 @@ type AppUI struct {
 	// listed keep the implicit alphabetical order after the ordered ones;
 	// "General" is always pinned first and never stored here. Persisted via
 	// ui prefs ("project_order").
-	ProjectOrder             []string
-	RecentWorkspaces         []string // most-recent-first history of opened folders
-	OpenWorkspaces           []string // active workspaces open in this window ("This Window" group)
-	ShowProjectSwitcherModal bool
-	ProjectSwitcherQuery     string
-	projectSwitcherSelected  int
-	ShowSSHModal             bool
-	ShowSSHQuickMenu         bool
-	SSHLabel                 string
-	SSHHost                  string
-	SSHPort                  int
-	SSHPortText              string
-	SSHUser                  string
-	SSHAuthType              string // "key_file", "password", "agent"
-	SSHKeyPath               string
-	SSHUploadStatus          string
-	ShowRemoteUploadModal    bool
-	RemoteUploadTargetDir    string
-	RemoteUploadQueue        []RemoteUploadItem
-	RemoteUploadIsUploading  bool
-	uploadQueueMu            sync.Mutex // guards RemoteUploadQueue across dialog/upload goroutines
-	sshConnectGen            int        // SSH connect generation: cancel abandons in-flight results
-	sshSFTPBusyID            string     // saved host currently running the connect-then-SFTP chain
+	ProjectOrder                  []string
+	ProjectIcons                  map[string]ProjectIconConfig
+	CustomProjects                []CustomProject
+	ShowProjectIconModal          bool
+	ProjectIconTarget             string
+	ShowCustomProjectModal        bool
+	CustomProjectEditOriginalName string
+	CustomProjectNameInput        string
+	CustomProjectFoldersInput     []string
+	CustomProjectError            string
+	RecentWorkspaces              []string // most-recent-first history of opened folders
+	OpenWorkspaces                []string // active workspaces open in this window ("This Window" group)
+	ShowProjectSwitcherModal      bool
+	ProjectSwitcherQuery          string
+	projectSwitcherSelected       int
+	ShowSSHModal                  bool
+	ShowSSHQuickMenu              bool
+	SSHLabel                      string
+	SSHHost                       string
+	SSHPort                       int
+	SSHPortText                   string
+	SSHUser                       string
+	SSHAuthType                   string // "key_file", "password", "agent"
+	SSHKeyPath                    string
+	SSHUploadStatus               string
+	ShowRemoteUploadModal         bool
+	RemoteUploadTargetDir         string
+	RemoteUploadQueue             []RemoteUploadItem
+	RemoteUploadIsUploading       bool
+	uploadQueueMu                 sync.Mutex // guards RemoteUploadQueue across dialog/upload goroutines
+	sshConnectGen                 int        // SSH connect generation: cancel abandons in-flight results
+	sshSFTPBusyID                 string     // saved host currently running the connect-then-SFTP chain
 
 	// External Open Target in header split button ("terminal" | "finder" | "zed")
 	ExternalOpenTarget string
@@ -2491,11 +2499,31 @@ func (a *AppUI) deleteWorkspaceGroup(c *ui.Context, groupName, folderPath string
 			if cs == nil {
 				continue
 			}
-			csWs := agentsession.NormalizeWorkspacePath(cs.Cwd)
+			csWs := cs.Cwd
+			if !strings.HasPrefix(csWs, "ssh://") {
+				csWs = agentsession.NormalizeWorkspacePath(csWs)
+			}
 			if (normFolder != "" && csWs == normFolder) || (normFolder == "" && resolveProjectName(csWs) == groupName) {
 				a.CLIMgr.DeleteSession(cs.ID)
 			}
 		}
+	}
+	if len(a.OpenWorkspaces) > 0 {
+		keptOpen := make([]string, 0, len(a.OpenWorkspaces))
+		for _, p := range a.OpenWorkspaces {
+			normP := p
+			if !strings.HasPrefix(normP, "ssh://") {
+				normP = agentsession.NormalizeWorkspacePath(p)
+			}
+			if normP == "" {
+				continue
+			}
+			if (normFolder != "" && normP == normFolder) || (groupName != "" && resolveProjectName(normP) == groupName) {
+				continue
+			}
+			keptOpen = append(keptOpen, normP)
+		}
+		a.OpenWorkspaces = keptOpen
 	}
 	if len(a.RecentWorkspaces) > 0 {
 		kept := make([]string, 0, len(a.RecentWorkspaces))

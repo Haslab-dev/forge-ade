@@ -87,6 +87,14 @@ func NormalizeWorkspacePath(folderPath string) string {
 	if clean == "" || clean == "." || clean == "/" || strings.EqualFold(clean, "general") {
 		return ""
 	}
+	if strings.HasPrefix(clean, "ssh://") {
+		// Preserve the ssh:// scheme; filepath.Clean would collapse "//" to "/".
+		rest := strings.TrimPrefix(clean, "ssh://")
+		if len(rest) > 1 {
+			rest = strings.TrimRight(rest, "/")
+		}
+		return "ssh://" + rest
+	}
 	clean = filepath.Clean(clean)
 	if clean == "." || clean == "/" {
 		return ""
@@ -104,7 +112,7 @@ func NormalizeWorkspacePath(folderPath string) string {
 }
 
 // resolveProjectDir maps a workspace path to the per-project session
-// directory under ~/.forge/sessions/[project-name].
+// directory under ~/.forge-ade/sessions/[project-name].
 func resolveProjectDir(workspacePath, sessWorkspacePath string) (projectDir string, projectName string, targetWs string, homeDir string) {
 	homeDir, _ = os.UserHomeDir()
 	targetWs = NormalizeWorkspacePath(sessWorkspacePath)
@@ -119,7 +127,7 @@ func resolveProjectDir(workspacePath, sessWorkspacePath string) (projectDir stri
 		}
 	}
 	if homeDir != "" {
-		projectDir = filepath.Join(homeDir, ".forge", "sessions", projectName)
+		projectDir = filepath.Join(homeDir, ".forge-ade", "sessions", projectName)
 	}
 	return projectDir, projectName, targetWs, homeDir
 }
@@ -232,7 +240,7 @@ func readProjectSessionInfo(projectDir string) (ProjectSessionInfo, bool) {
 	return info, true
 }
 
-// SaveSessionDisk persists an agent session JSON to ~/.forge/sessions/[project-name]/ with info.json
+// SaveSessionDisk persists an agent session JSON to ~/.forge-ade/sessions/[project-name]/ with info.json
 func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 	id, sessWs, ok := extractDiskSessionRef([]byte(sessionJSON))
 	if !ok {
@@ -253,20 +261,12 @@ func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 		return nil
 	}
 
-	projectDir, projectName, targetWs, homeDir := resolveProjectDir(workspacePath, sessWs)
+	projectDir, projectName, targetWs, _ := resolveProjectDir(workspacePath, sessWs)
 	if projectDir != "" {
 		_ = os.MkdirAll(projectDir, 0755)
 		sessionFile := filepath.Join(projectDir, id+".json")
 		_ = WriteFileAtomic(sessionFile, []byte(sessionJSON), 0644)
 		_ = updateProjectSessionInfo(projectDir, projectName, targetWs)
-	}
-
-	// Legacy global backup mirror if directory already exists
-	if homeDir != "" {
-		legacyDir := filepath.Join(homeDir, ".forge-ade", "sessions")
-		if info, err := os.Stat(legacyDir); err == nil && info.IsDir() {
-			_ = WriteFileAtomic(filepath.Join(legacyDir, id+".json"), []byte(sessionJSON), 0644)
-		}
 	}
 
 	// NOTE: no workspace mirror — sessions live only in the global store so
@@ -276,8 +276,8 @@ func SaveSessionDisk(sessionJSON string, workspacePath string) error {
 	return nil
 }
 
-// LoadSessionsDisk retrieves all agent sessions from global ~/.forge/sessions/[project-name]/,
-// workspace, and auto-migrates legacy ~/.forge-ade/sessions/
+// LoadSessionsDisk retrieves all agent sessions from global ~/.forge-ade/sessions/[project-name]/,
+// workspace, and auto-migrates legacy ~/.forge/sessions/
 func LoadSessionsDisk(workspacePath string) ([]string, error) {
 	seen := make(map[string]bool)
 	var result []string
@@ -322,28 +322,43 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 
 	homeDir, _ := os.UserHomeDir()
 
-	// 1. Auto-migrate any unmigrated legacy sessions from ~/.forge-ade/sessions/
-	// to ~/.forge/sessions/[project-name]/ using the session's own workspace.
+	// 1. Auto-migrate any unmigrated legacy sessions from ~/.forge/sessions/
+	// to ~/.forge-ade/sessions/[project-name]/ using the session's own workspace.
 	if homeDir != "" {
-		legacyGlobalDir := filepath.Join(homeDir, ".forge-ade", "sessions")
+		legacyGlobalDir := filepath.Join(homeDir, ".forge", "sessions")
+		migrateLegacyFile := func(path string) {
+			content, rerr := os.ReadFile(path)
+			if rerr != nil || len(content) == 0 {
+				return
+			}
+			if id, sessWs, ok := extractDiskSessionRef(content); ok {
+				if IsTempTestPath(sessWs) || isInternalSubagentSessionFile(content) {
+					return
+				}
+				projDir, projName, tws, _ := resolveProjectDir("", sessWs)
+				if projDir != "" {
+					_ = os.MkdirAll(projDir, 0755)
+					targetFile := filepath.Join(projDir, id+".json")
+					if _, serr := os.Stat(targetFile); os.IsNotExist(serr) {
+						_ = os.WriteFile(targetFile, content, 0644)
+						_ = updateProjectSessionInfo(projDir, projName, tws)
+					}
+				}
+			}
+		}
 		if entries, err := os.ReadDir(legacyGlobalDir); err == nil {
 			for _, e := range entries {
-				if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") && e.Name() != "info.json" {
-					content, rerr := os.ReadFile(filepath.Join(legacyGlobalDir, e.Name()))
-					if rerr == nil && len(content) > 0 {
-						if id, sessWs, ok := extractDiskSessionRef(content); ok {
-							if IsTempTestPath(sessWs) || isInternalSubagentSessionFile(content) {
-								continue
-							}
-							projDir, projName, tws, _ := resolveProjectDir("", sessWs)
-							if projDir != "" {
-								_ = os.MkdirAll(projDir, 0755)
-								targetFile := filepath.Join(projDir, id+".json")
-								if _, serr := os.Stat(targetFile); os.IsNotExist(serr) {
-									_ = os.WriteFile(targetFile, content, 0644)
-									_ = updateProjectSessionInfo(projDir, projName, tws)
-								}
-							}
+				if !e.IsDir() {
+					if strings.HasSuffix(e.Name(), ".json") && e.Name() != "info.json" {
+						migrateLegacyFile(filepath.Join(legacyGlobalDir, e.Name()))
+					}
+					continue
+				}
+				subDir := filepath.Join(legacyGlobalDir, e.Name())
+				if subEntries, serr := os.ReadDir(subDir); serr == nil {
+					for _, se := range subEntries {
+						if !se.IsDir() && strings.HasSuffix(se.Name(), ".json") && se.Name() != "info.json" {
+							migrateLegacyFile(filepath.Join(subDir, se.Name()))
 						}
 					}
 				}
@@ -351,10 +366,10 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 		}
 	}
 
-	// 2. Read all project sessions from ~/.forge/sessions/*/, cleaning up
+	// 2. Read all project sessions from ~/.forge-ade/sessions/*/, cleaning up
 	// polluted temp-test directories and misplaced duplicate files.
 	if homeDir != "" {
-		globalSessionsRoot := filepath.Join(homeDir, ".forge", "sessions")
+		globalSessionsRoot := filepath.Join(homeDir, ".forge-ade", "sessions")
 		if entries, err := os.ReadDir(globalSessionsRoot); err == nil {
 			for _, e := range entries {
 				if !e.IsDir() {
@@ -470,15 +485,10 @@ func LoadSessionsDisk(workspacePath string) ([]string, error) {
 		readDir(filepath.Join(wsClean, ".forge-ade", "sessions"), true)
 	}
 
-	// 4. Fallback check legacy global sessions (~/.forge-ade/sessions/)
-	if homeDir != "" {
-		readDir(filepath.Join(homeDir, ".forge-ade", "sessions"), true)
-	}
-
 	return result, nil
 }
 
-// DeleteSessionDisk removes session JSON from ~/.forge/sessions/[project-name]/, workspace, and legacy paths
+// DeleteSessionDisk removes session JSON from ~/.forge-ade/sessions/[project-name]/, workspace, and legacy paths
 func DeleteSessionDisk(sessionID string, workspacePath string) error {
 	if sessionID == "" {
 		return nil
@@ -494,26 +504,26 @@ func DeleteSessionDisk(sessionID string, workspacePath string) error {
 
 	homeDir, _ := os.UserHomeDir()
 	if homeDir != "" {
-		globalSessionsRoot := filepath.Join(homeDir, ".forge", "sessions")
-		_ = os.Remove(filepath.Join(globalSessionsRoot, targetFileName))
-
-		// Walk through all project folders in ~/.forge/sessions/
-		if entries, err := os.ReadDir(globalSessionsRoot); err == nil {
-			for _, e := range entries {
-				if e.IsDir() {
-					projDir := filepath.Join(globalSessionsRoot, e.Name())
-					removed := os.Remove(filepath.Join(projDir, targetFileName)) == nil
-					if os.Remove(filepath.Join(projDir, "here", targetFileName)) == nil {
-						removed = true
-					}
-					if removed {
-						_ = updateProjectSessionInfo(projDir, e.Name(), "")
+		for _, root := range []string{
+			filepath.Join(homeDir, ".forge-ade", "sessions"),
+			filepath.Join(homeDir, ".forge", "sessions"),
+		} {
+			_ = os.Remove(filepath.Join(root, targetFileName))
+			if entries, err := os.ReadDir(root); err == nil {
+				for _, e := range entries {
+					if e.IsDir() {
+						projDir := filepath.Join(root, e.Name())
+						removed := os.Remove(filepath.Join(projDir, targetFileName)) == nil
+						if os.Remove(filepath.Join(projDir, "here", targetFileName)) == nil {
+							removed = true
+						}
+						if removed {
+							_ = updateProjectSessionInfo(projDir, e.Name(), "")
+						}
 					}
 				}
 			}
 		}
-
-		_ = os.Remove(filepath.Join(homeDir, ".forge-ade", "sessions", targetFileName))
 	}
 
 	if wsClean := NormalizeWorkspacePath(workspacePath); wsClean != "" {
@@ -525,7 +535,7 @@ func DeleteSessionDisk(sessionID string, workspacePath string) error {
 }
 
 // DeleteProjectSessionsDisk removes persisted session storage for the named
-// non-General project directory under ~/.forge/sessions/<projectName> (and any
+// non-General project directory under ~/.forge-ade/sessions/<projectName> (and any
 // matching legacy sessions), leaving workspace source files untouched.
 func DeleteProjectSessionsDisk(projectName, workspacePath string) error {
 	if IsTempTestPath(workspacePath) {
@@ -543,10 +553,10 @@ func DeleteProjectSessionsDisk(projectName, workspacePath string) error {
 		return nil
 	}
 
-	_ = os.RemoveAll(filepath.Join(homeDir, ".forge", "sessions", projectName))
+	_ = os.RemoveAll(filepath.Join(homeDir, ".forge-ade", "sessions", projectName))
 
 	normWs := NormalizeWorkspacePath(workspacePath)
-	globalSessionsRoot := filepath.Join(homeDir, ".forge", "sessions")
+	globalSessionsRoot := filepath.Join(homeDir, ".forge-ade", "sessions")
 	if entries, err := os.ReadDir(globalSessionsRoot); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
@@ -592,9 +602,10 @@ func DeleteProjectSessionsDisk(projectName, workspacePath string) error {
 		_ = os.RemoveAll(filepath.Join(normWs, ".forge-ade", "sessions"))
 	}
 
-	// Also prune matching sessions in legacy ~/.forge-ade/sessions/ so they do
+	// Also prune matching sessions in legacy ~/.forge/sessions/ so they do
 	// not re-migrate back on next launch.
-	legacyDir := filepath.Join(homeDir, ".forge-ade", "sessions")
+	legacyDir := filepath.Join(homeDir, ".forge", "sessions")
+	_ = os.RemoveAll(filepath.Join(legacyDir, projectName))
 	if entries, err := os.ReadDir(legacyDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || e.Name() == "info.json" {

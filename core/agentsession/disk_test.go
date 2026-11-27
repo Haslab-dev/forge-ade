@@ -46,13 +46,13 @@ func TestTempTestPathIsolation(t *testing.T) {
 		t.Fatalf("SaveSessionDisk failed: %v", err)
 	}
 
-	// Must live under <tmpWs>/.forge/sessions and NEVER under ~/.forge/sessions.
+	// Must live under <tmpWs>/.forge/sessions and NEVER under ~/.forge-ade/sessions.
 	expectedFile := filepath.Join(tmpWs, ".forge", "sessions", "sess-temp-1.json")
 	if _, err := os.Stat(expectedFile); err != nil {
 		t.Fatalf("expected isolated temp session file at %s: %v", expectedFile, err)
 	}
-	if entries, err := os.ReadDir(filepath.Join(fakeHome, ".forge", "sessions")); err == nil && len(entries) > 0 {
-		t.Fatalf("expected ~/.forge/sessions to remain untouched for temp workspace, found %d entries", len(entries))
+	if entries, err := os.ReadDir(filepath.Join(fakeHome, ".forge-ade", "sessions")); err == nil && len(entries) > 0 {
+		t.Fatalf("expected ~/.forge-ade/sessions to remain untouched for temp workspace, found %d entries", len(entries))
 	}
 
 	loaded, err := LoadSessionsDisk(tmpWs)
@@ -75,7 +75,7 @@ func TestLoadSessionsDiskSkipsInternalSubagentSessions(t *testing.T) {
 	fakeHome := t.TempDir()
 	t.Setenv("HOME", fakeHome)
 
-	projDir := filepath.Join(fakeHome, ".forge", "sessions", "proj")
+	projDir := filepath.Join(fakeHome, ".forge-ade", "sessions", "proj")
 	if err := os.MkdirAll(projDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -123,11 +123,11 @@ func TestDeleteProjectSessionsDisk(t *testing.T) {
 		t.Fatalf("DeleteProjectSessionsDisk failed: %v", err)
 	}
 
-	alphaDir := filepath.Join(fakeHome, ".forge", "sessions", "alpha")
+	alphaDir := filepath.Join(fakeHome, ".forge-ade", "sessions", "alpha")
 	if _, err := os.Stat(alphaDir); !os.IsNotExist(err) {
 		t.Fatalf("expected alpha sessions dir %s to be removed, err=%v", alphaDir, err)
 	}
-	betaFile := filepath.Join(fakeHome, ".forge", "sessions", "beta", "s-b1.json")
+	betaFile := filepath.Join(fakeHome, ".forge-ade", "sessions", "beta", "s-b1.json")
 	if _, err := os.Stat(betaFile); err != nil {
 		t.Fatalf("expected beta session %s to remain intact: %v", betaFile, err)
 	}

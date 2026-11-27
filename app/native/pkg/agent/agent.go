@@ -302,7 +302,13 @@ func setAssistantTextLocked(msg *ChatMessage, text string) {
 // result. Returns the number of removed messages.
 func (as *AgentState) CompactActiveSession() (int, error) {
 	as.mu.Lock()
-	sess := as.ActiveSession()
+	var sess *AgentSession
+	for _, s := range as.Sessions {
+		if s != nil && s.ID == as.ActiveSessionID {
+			sess = s
+			break
+		}
+	}
 	if sess == nil {
 		as.mu.Unlock()
 		return 0, fmt.Errorf("no active session")
@@ -316,13 +322,17 @@ func (as *AgentState) CompactActiveSession() (int, error) {
 	compacted = append(compacted, sess.Messages[0])
 	compacted = append(compacted, sess.Messages[len(sess.Messages)-3:]...)
 	sess.Messages = compacted
+	sess.LastUsage = nil
 	if as.ActiveSessionID == sess.ID {
 		as.Messages = sess.Messages
 	}
 	sess.UpdatedAt = time.Now()
 	as.mu.Unlock()
 
-	as.SaveSessionToDisk(sess)
+	goSave("SaveSessionToDisk", func() { as.SaveSessionToDisk(sess) })
+	if as.Invalidate != nil {
+		as.Invalidate()
+	}
 	return removed, nil
 }
 
@@ -979,11 +989,14 @@ func (as *AgentState) HandleTokenChunk(sessionID, text string) {
 			break
 		}
 		msg := as.ensureStreamingMessage(s)
-		combined := msg.Text + text
-		if isHarnessDumpDelta(text, msg.Text) ||
-			(len(strings.TrimSpace(msg.Text)) < 256 && harnessDumpSignature(combined) &&
-				strings.HasPrefix(strings.TrimSpace(combined), "{")) {
+		if isHarnessDumpDelta(text, msg.Text) {
 			msg.SkipHarnessDumps = true
+		} else if len(msg.Text) < 512 {
+			combined := msg.Text + text
+			if len(strings.TrimSpace(msg.Text)) < 256 && harnessDumpSignature(combined) &&
+				strings.HasPrefix(strings.TrimSpace(combined), "{") {
+				msg.SkipHarnessDumps = true
+			}
 		}
 		if msg.SkipHarnessDumps {
 			// Harness protocol blob: never show it as chat text.
@@ -2027,6 +2040,12 @@ type diskSessionRaw struct {
 	Archived             bool             `json:"archived"`
 	Snoozed              bool             `json:"snoozed"`
 	RemoteSessionID      string           `json:"remoteSessionId"`
+	ParentSessionCamel   string           `json:"parentSessionId"`
+	WorkerName           string           `json:"workerName"`
+	HandoffFromID        string           `json:"handoffFromId"`
+	HandoffFromAgent     string           `json:"handoffFromAgent"`
+	HandoffToIDs         []string         `json:"handoffToIds"`
+	BotID                string           `json:"botId"`
 	LastCheckpointTurnID string           `json:"lastCheckpointTurnId"`
 	LastUsage            *UsageInfo       `json:"lastUsage"`
 	Messages             []diskMessageRaw `json:"messages"`
@@ -2300,6 +2319,12 @@ func (as *AgentState) LoadSessionsFromDisk(workspacePath string) {
 			Archived:             diskSess.Archived,
 			Snoozed:              diskSess.Snoozed,
 			RemoteSessionID:      diskSess.RemoteSessionID,
+			ParentSessionID:      diskSess.ParentSessionCamel,
+			WorkerName:           diskSess.WorkerName,
+			HandoffFromID:        diskSess.HandoffFromID,
+			HandoffFromAgent:     diskSess.HandoffFromAgent,
+			HandoffToIDs:         append([]string(nil), diskSess.HandoffToIDs...),
+			BotID:                diskSess.BotID,
 			LastCheckpointTurnID: diskSess.LastCheckpointTurnID,
 			LastUsage:            diskSess.LastUsage,
 			Messages:             msgs,
@@ -2460,10 +2485,34 @@ func (as *AgentState) SaveSessionToDisk(sess *AgentSession) {
 	}
 	remoteID := sess.RemoteSessionID
 	checkpointID := sess.LastCheckpointTurnID
+	parentSessID := sess.ParentSessionID
+	workerName := sess.WorkerName
+	handoffFromID := sess.HandoffFromID
+	handoffFromAgent := sess.HandoffFromAgent
+	handoffToIDs := append([]string(nil), sess.HandoffToIDs...)
+	botID := sess.BotID
 	as.mu.Unlock()
 
 	if remoteID != "" {
 		data["remoteSessionId"] = remoteID
+	}
+	if parentSessID != "" {
+		data["parentSessionId"] = parentSessID
+	}
+	if workerName != "" {
+		data["workerName"] = workerName
+	}
+	if handoffFromID != "" {
+		data["handoffFromId"] = handoffFromID
+	}
+	if handoffFromAgent != "" {
+		data["handoffFromAgent"] = handoffFromAgent
+	}
+	if len(handoffToIDs) > 0 {
+		data["handoffToIds"] = handoffToIDs
+	}
+	if botID != "" {
+		data["botId"] = botID
 	}
 	if checkpointID != "" {
 		data["lastCheckpointTurnId"] = checkpointID

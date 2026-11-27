@@ -138,9 +138,7 @@ func leftInsetOf(a *AppUI, c *ui.Context) float32 {
 // renderTurnScrubber draws the left micro-minimap: one tick per user turn,
 // active tick highlighted, hover preview, click scrolls to the turn — shown
 // only when the thread has ≥2 turns, as forge-ade's scrubber does.
-func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agent.AgentState) {
-	// Locked per-frame copy: the transcript streams in from bus goroutines.
-	msgs := as.MessagesSnapshot()
+func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agent.AgentState, msgs []*agent.ChatMessage) {
 	var turns []int // message indices of user turns
 	for i, m := range msgs {
 		if m != nil && m.Role == "user" {
@@ -171,8 +169,14 @@ func (a *AppUI) renderTurnScrubber(c *ui.Context, tc theme.ThemeColors, as *agen
 				preview := ""
 				if m := msgs[msgIdx]; m != nil {
 					preview = m.Text
-					if runes := []rune(preview); len(runes) > 60 {
-						preview = string(runes[:60]) + "…"
+					// Bound rune scan to 60 runes without allocating []rune over huge prompts.
+					count := 0
+					for idx := range preview {
+						if count == 60 {
+							preview = preview[:idx] + "…"
+							break
+						}
+						count++
 					}
 					preview = strings.ReplaceAll(preview, "\n", " ")
 				}

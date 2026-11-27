@@ -16,29 +16,31 @@ import (
 
 // uiPrefs is the persisted shape.
 type uiPrefs struct {
-	Appearance           string   `json:"appearance"`
-	PaletteID            string   `json:"palette_id"`
-	GlassEnabled         bool     `json:"glass_enabled,omitempty"`
-	GlassOpacity         *float32 `json:"glass_opacity,omitempty"`
-	BackgroundKind       string   `json:"background_kind,omitempty"`
-	BackgroundPreset     string   `json:"background_preset,omitempty"`
-	BackgroundImage      string   `json:"background_image,omitempty"`
-	BackgroundOpacity    *float32 `json:"background_opacity,omitempty"`
-	BackgroundBlur       float32  `json:"background_blur,omitempty"`
-	ChatWidth            string   `json:"chat_width"`
-	DiffScheme           string   `json:"diff_scheme"`
-	ShowLeftSidebar      bool     `json:"show_left_sidebar"`
-	ShowRightDrawer      bool     `json:"show_right_drawer"`
-	ShowBottomTerminal   bool     `json:"show_bottom_terminal"`
-	LeftSidebarWidth     float32  `json:"left_sidebar_width"`
-	RightDrawerWidth     float32  `json:"right_drawer_width"`
-	BottomTerminalHeight float32  `json:"bottom_terminal_height"`
-	FollowAgent          bool     `json:"follow_agent"`
-	LeftSidebarView      string   `json:"left_sidebar_view"`
-	SidebarListView      string   `json:"sidebar_list_view"`
-	ProjectFilter        string   `json:"project_filter"`
-	TaskSortBy           string   `json:"task_sort_by"`
-	ProjectOrder         []string `json:"project_order"` // custom sidebar project-group order
+	Appearance           string                       `json:"appearance"`
+	PaletteID            string                       `json:"palette_id"`
+	GlassEnabled         bool                         `json:"glass_enabled,omitempty"`
+	GlassOpacity         *float32                     `json:"glass_opacity,omitempty"`
+	BackgroundKind       string                       `json:"background_kind,omitempty"`
+	BackgroundPreset     string                       `json:"background_preset,omitempty"`
+	BackgroundImage      string                       `json:"background_image,omitempty"`
+	BackgroundOpacity    *float32                     `json:"background_opacity,omitempty"`
+	BackgroundBlur       float32                      `json:"background_blur,omitempty"`
+	ChatWidth            string                       `json:"chat_width"`
+	DiffScheme           string                       `json:"diff_scheme"`
+	ShowLeftSidebar      bool                         `json:"show_left_sidebar"`
+	ShowRightDrawer      bool                         `json:"show_right_drawer"`
+	ShowBottomTerminal   bool                         `json:"show_bottom_terminal"`
+	LeftSidebarWidth     float32                      `json:"left_sidebar_width"`
+	RightDrawerWidth     float32                      `json:"right_drawer_width"`
+	BottomTerminalHeight float32                      `json:"bottom_terminal_height"`
+	FollowAgent          bool                         `json:"follow_agent"`
+	LeftSidebarView      string                       `json:"left_sidebar_view"`
+	SidebarListView      string                       `json:"sidebar_list_view"`
+	ProjectFilter        string                       `json:"project_filter"`
+	TaskSortBy           string                       `json:"task_sort_by"`
+	ProjectOrder         []string                     `json:"project_order"` // custom sidebar project-group order
+	ProjectIcons         map[string]ProjectIconConfig `json:"project_icons,omitempty"`
+	CustomProjects       []CustomProject              `json:"custom_projects,omitempty"`
 }
 
 func (a *AppUI) prefsPath() string {
@@ -148,6 +150,12 @@ func (a *AppUI) loadUIPrefs() {
 	if len(p.ProjectOrder) > 0 {
 		a.ProjectOrder = p.ProjectOrder
 	}
+	if len(p.ProjectIcons) > 0 {
+		a.ProjectIcons = p.ProjectIcons
+	}
+	if len(p.CustomProjects) > 0 {
+		a.CustomProjects = p.CustomProjects
+	}
 }
 
 // SaveUIPrefs snapshots the current preferences to disk (best effort).
@@ -182,6 +190,8 @@ func (a *AppUI) SaveUIPrefs() {
 		ProjectFilter:        a.ProjectFilter,
 		TaskSortBy:           a.TaskSortBy,
 		ProjectOrder:         a.ProjectOrder,
+		ProjectIcons:         a.ProjectIcons,
+		CustomProjects:       a.CustomProjects,
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
@@ -219,10 +229,11 @@ func (a *AppUI) prefsSnapshot() string {
 		f32(a.LeftSidebarWidth), f32(a.RightDrawerWidth), f32(a.BottomTerminalHeight),
 		f(a.FollowAgent), a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
 		strings.Join(a.ProjectOrder, ","),
+		fmt.Sprintf("%d:%d", len(a.ProjectIcons), len(a.CustomProjects)),
 	}.String()
 }
 
-type prefsSnap [23]string
+type prefsSnap [24]string
 
 func (p prefsSnap) String() string {
 	return strings.Join(p[:], "|")

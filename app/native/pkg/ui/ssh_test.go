@@ -83,10 +83,22 @@ func TestSSHSavedConfigsPersistence(t *testing.T) {
 		t.Fatalf("expected Staging VPS, got %s", app2.SSHSavedConfigs[0].Label)
 	}
 
-	// Delete config
+	// Delete config also cleans up matching RecentWorkspaces / OpenWorkspaces
+	app.RecentWorkspaces = append(app.RecentWorkspaces, "ssh://ssh-test-1/srv/app")
+	app.OpenWorkspaces = append(app.OpenWorkspaces, "ssh://ssh-test-1/srv/app")
 	app.DeleteSSHConfig("ssh-test-1")
 	if len(app.SSHSavedConfigs) != 0 {
 		t.Fatalf("expected 0 configs after delete, got %d", len(app.SSHSavedConfigs))
+	}
+	for _, rw := range app.RecentWorkspaces {
+		if rw == "ssh://ssh-test-1/srv/app" {
+			t.Fatalf("expected ssh://ssh-test-1/srv/app removed from RecentWorkspaces")
+		}
+	}
+	for _, ow := range app.OpenWorkspaces {
+		if ow == "ssh://ssh-test-1/srv/app" {
+			t.Fatalf("expected ssh://ssh-test-1/srv/app removed from OpenWorkspaces")
+		}
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/settings"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
 	"github.com/hasdev/forge-ade/core/agentsession"
+	"github.com/hasdev/forge-ade/core/quota"
 )
 
 // renderAgentSurface renders the center chat viewport, collapsible terminal & right drawer.
@@ -90,6 +91,65 @@ func (a *AppUI) chatLaneInset(c *ui.Context) (float32, float32) {
 // markdown/JSON output, turn changes card, approval bar, and structured
 // questions). Shared by both the primary Agent chat pane and the side-by-side
 // Split Session Pane for 100% visual & functional parity.
+// renderBoundedMarkdown prevents multi-hundred-KB markdown payloads from
+// saturating the UI thread on every frame/stream tick, while letting users
+// expand completed large responses on demand.
+func (a *AppUI) renderBoundedMarkdown(c *ui.Context, tc theme.ThemeColors, as *agent.AgentState, sessionID string, msgID int, text string, streaming bool) {
+	const maxMarkdownRenderBytes = 48 * 1024
+	if len(text) <= maxMarkdownRenderBytes {
+		if streaming {
+			markdown.Stream(c, text, &as.MdOpts)
+		} else {
+			markdown.View(c, text, &as.MdOpts)
+		}
+		return
+	}
+
+	if streaming {
+		// During streaming, render only the tail window at a clean newline/UTF-8 boundary.
+		start := len(text) - maxMarkdownRenderBytes
+		for start < len(text) && (text[start]&0xC0) == 0x80 {
+			start++
+		}
+		if nl := strings.IndexByte(text[start:], '\n'); nl >= 0 && nl < 1024 {
+			start += nl + 1
+		}
+		tail := "… *(streaming large output — earlier text will appear when complete)*\n\n" + text[start:]
+		markdown.Stream(c, tail, &as.MdOpts)
+		return
+	}
+
+	expandKey := fmt.Sprintf("fullmd-%s-%d", sessionID, msgID)
+	expanded := a.ToolGroupExpanded != nil && a.ToolGroupExpanded[expandKey]
+	if expanded {
+		markdown.View(c, text, &as.MdOpts)
+		return
+	}
+
+	end := maxMarkdownRenderBytes
+	for end > 0 && (text[end]&0xC0) == 0x80 {
+		end--
+	}
+	if nl := strings.LastIndexByte(text[:end], '\n'); nl > maxMarkdownRenderBytes/2 {
+		end = nl
+	}
+	markdown.View(c, text[:end]+"\n\n…", &as.MdOpts)
+	btn := ui.Row(c.Key("btn-"+expandKey)).Height(24).Radius(6).Padding(0, 10).Gap(5).
+		AlignItems(ui.Center).Background(tc.ToolbarControl).Cursor(ui.CursorPointer)
+	btn.Children(func() {
+		ui.Text(c, fmt.Sprintf("Show full response (%d KB)", len(text)/1024)).FontSize(11).FontWeight(500).TextColor(tc.Accent)
+	})
+	if btn.Hovered() {
+		btn.Background(tc.ToolbarControlHover)
+	}
+	if btn.Clicked() {
+		if a.ToolGroupExpanded == nil {
+			a.ToolGroupExpanded = make(map[string]bool)
+		}
+		a.ToolGroupExpanded[expandKey] = true
+	}
+}
+
 func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, sessionID string, lastAssistantID int, m *agent.ChatMessage) {
 	as := a.Agent
 	if as == nil || m == nil {
@@ -127,17 +187,14 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 			if trimmed == "" {
 				return
 			}
-			isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
-				(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+			isPureJSON := len(trimmed) <= 64*1024 &&
+				((strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+					(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")))
 			if isPureJSON && json.Valid([]byte(trimmed)) {
 				a.renderJSONResponseCard(c, tc, m, trimmed)
 				return
 			}
-			if streaming {
-				markdown.Stream(c, blk.Text, &as.MdOpts)
-			} else {
-				markdown.View(c, blk.Text, &as.MdOpts)
-			}
+			a.renderBoundedMarkdown(c, tc, as, sessionID, m.ID, blk.Text, streaming)
 		}
 		if open {
 			if !hasThinkingBlocks && (m.Thinking != "" || m.IsThinking) {
@@ -146,12 +203,25 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 			work := ui.Column(c).Gap(6).Padding(0, 0, 0, 14).
 				BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6))
 			work.Children(func() {
+				var toolByID map[string]*agent.ToolExecution
+				if len(m.Tools) > 4 {
+					toolByID = make(map[string]*agent.ToolExecution, len(m.Tools))
+					for _, t := range m.Tools {
+						if t != nil {
+							toolByID[t.ID] = t
+						}
+					}
+				}
 				toolAt := func(idx int) *agent.ToolExecution {
 					if idx >= len(m.Blocks) || m.Blocks[idx] == nil || m.Blocks[idx].Kind != "tool" {
 						return nil
 					}
+					tid := m.Blocks[idx].ToolID
+					if toolByID != nil {
+						return toolByID[tid]
+					}
 					for _, t := range m.Tools {
-						if t != nil && t.ID == m.Blocks[idx].ToolID {
+						if t != nil && t.ID == tid {
 							return t
 						}
 					}
@@ -250,14 +320,13 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 
 		if m.Text != "" {
 			trimmed := strings.TrimSpace(m.Text)
-			isPureJSON := (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
-				(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+			isPureJSON := len(trimmed) <= 64*1024 &&
+				((strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+					(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")))
 			if isPureJSON && json.Valid([]byte(trimmed)) {
 				a.renderJSONResponseCard(c, tc, m, trimmed)
-			} else if m.Done {
-				markdown.View(c, m.Text, &as.MdOpts)
 			} else {
-				markdown.Stream(c, m.Text, &as.MdOpts)
+				a.renderBoundedMarkdown(c, tc, as, sessionID, m.ID, m.Text, !m.Done)
 			}
 		}
 	}
@@ -265,12 +334,95 @@ func (a *AppUI) renderAssistantMessageBody(c *ui.Context, tc theme.ThemeColors, 
 	if len(m.Changes) > 0 {
 		a.renderTurnChangesCard(c, tc, sessionID, m.ID == lastAssistantID, m)
 	}
+	if m.Done && m.ID == lastAssistantID && isQuotaExceededMessage(m) {
+		a.renderQuotaSwitchAccountBanner(c, tc, sessionID)
+	}
 	if m.PendingApproval != nil && !m.PendingApproval.Resolved {
 		a.renderApprovalBar(c, tc, m)
 	}
 	if len(m.PendingQuestions) > 0 {
 		a.renderPendingQuestionsCard(c, tc, sessionID, m)
 	}
+}
+
+func isQuotaExceededMessage(m *agent.ChatMessage) bool {
+	if m == nil {
+		return false
+	}
+	low := strings.ToLower(m.Text)
+	if !strings.Contains(low, "error") && !strings.Contains(low, "⚠️") && !strings.Contains(low, "429") {
+		return false
+	}
+	for _, kw := range []string{"quota", "429", "rate limit", "rate_limit", "resource_exhausted", "usage limit", "limit reached"} {
+		if strings.Contains(low, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *AppUI) renderQuotaSwitchAccountBanner(c *ui.Context, tc theme.ThemeColors, sessionID string) {
+	if a.Agent == nil || a.Settings == nil {
+		return
+	}
+	sess := a.Agent.FindSession(sessionID)
+	if sess == nil {
+		return
+	}
+	aid := strings.ToLower(strings.TrimSpace(sess.AgentID))
+	if aid != "agent-agy" && aid != "agy" && !strings.Contains(aid, "agy") && !strings.Contains(aid, "antigravity") {
+		return
+	}
+	mgr := a.Settings.AntigravityAccountMgr()
+	if mgr == nil {
+		return
+	}
+	accounts := mgr.Accounts()
+	var others []*quota.AntigravityAccount
+	for _, acc := range accounts {
+		if acc != nil && !acc.IsActive {
+			others = append(others, acc)
+		}
+	}
+	if len(others) == 0 {
+		return
+	}
+
+	ui.Column(c.Key("quota-switch-banner")).FillWidth().Padding(10, 12).Radius(8).Gap(8).
+		Background(tc.Warning.Alpha(0.08)).BorderWidth(1).BorderColor(tc.Warning.Alpha(0.35)).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Icon(c, icons.TablerRefresh).Width(14).Height(14).TextColor(tc.Warning)
+			ui.Text(c, "Antigravity Quota Exceeded").FontSize(12).FontWeight(600).TextColor(tc.Text)
+		})
+		ui.Text(c, "Stop the current session and safely switch to another saved `agy` account:").
+			FontSize(11).TextColor(tc.TextMuted)
+		ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
+			for _, other := range others {
+				target := other
+				label := target.Email
+				if target.Label != "" {
+					label = fmt.Sprintf("%s (%s)", target.Label, target.Email)
+				}
+				btn := ui.Row(c.Key("qswitch-"+target.ID)).Height(28).Radius(6).Padding(0, 10).Gap(6).
+					AlignItems(ui.Center).Background(tc.Accent).Cursor(ui.CursorPointer)
+				btn.Children(func() {
+					ui.Icon(c, icons.TablerUser).Width(12).Height(12).TextColor(tc.AccentForeground)
+					ui.Text(c, "Switch to "+label).FontSize(11.5).FontWeight(600).TextColor(tc.AccentForeground)
+				})
+				if btn.Hovered() {
+					btn.Background(tc.Accent.Alpha(0.85))
+				}
+				if btn.Clicked() {
+					a.safeSwitchAntigravityAccountFromChat(target.ID, sessionID)
+					c.AddToast(ui.Toast{
+						Title:       "Switching Account",
+						Description: fmt.Sprintf("Stopping session and switching to %s…", target.Email),
+						Type:        "info",
+					})
+				}
+			}
+		})
+	})
 }
 
 func hasAssistantVisibleBody(m *agent.ChatMessage) bool {
@@ -405,7 +557,31 @@ func (a *AppUI) renderUserMessageBubble(c *ui.Context, tc theme.ThemeColors, ses
 			Background(tc.MessageSurface).BorderWidth(1).BorderColor(tc.Border).
 			MaxWidth(maxWidth)
 		bubble.Children(func() {
-			ui.Text(c, m.Text).Selectable().FontSize(13).LineHeight(1.45).TextColor(tc.MessageForeground)
+			const maxUserPromptBytes = 16 * 1024
+			displayPrompt := m.Text
+			truncatedPrompt := false
+			expandKey := fmt.Sprintf("fulluser-%s-%d", sessionID, m.ID)
+			if len(displayPrompt) > maxUserPromptBytes && (a.ToolGroupExpanded == nil || !a.ToolGroupExpanded[expandKey]) {
+				end := 8 * 1024
+				for end > 0 && (displayPrompt[end]&0xC0) == 0x80 {
+					end--
+				}
+				displayPrompt = displayPrompt[:end] + "\n…"
+				truncatedPrompt = true
+			}
+			ui.Text(c, displayPrompt).Selectable().FontSize(13).LineHeight(1.45).TextColor(tc.MessageForeground)
+			if truncatedPrompt {
+				moreBtn := ui.Row(c.Key("btn-"+expandKey)).Padding(4, 0, 0, 0).Cursor(ui.CursorPointer)
+				moreBtn.Children(func() {
+					ui.Text(c, fmt.Sprintf("Show full prompt (%d KB)", len(m.Text)/1024)).FontSize(11).FontWeight(500).TextColor(tc.Accent)
+				})
+				if moreBtn.Clicked() {
+					if a.ToolGroupExpanded == nil {
+						a.ToolGroupExpanded = make(map[string]bool)
+					}
+					a.ToolGroupExpanded[expandKey] = true
+				}
+			}
 			atts := userMessageAttachments(m.Text)
 			if len(atts) > 0 {
 				chipRow := ui.Row(c).Gap(5).Wrap().Padding(6, 0, 0, 0)
@@ -580,7 +756,7 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 			// Turn scrubber + chat lane.
 			transcriptWidth := a.chatColumnWidth(c)
 			ui.Row(c).Grow(1).MaxWidth(transcriptWidth).Children(func() {
-				a.renderTurnScrubber(c, tc, as)
+				a.renderTurnScrubber(c, tc, as, msgs)
 				ui.List(c, &as.ListState, len(msgs), func(i int) {
 					if i >= len(msgs) || msgs[i] == nil {
 						return
@@ -959,7 +1135,16 @@ func (a *AppUI) renderThinkingBlockSegment(c *ui.Context, tc theme.ThemeColors, 
 			ui.Column(c).Padding(0, 0, 0, 14).BorderWidth(0, 0, 0, 1).BorderColor(tc.Border.Alpha(0.6)).Children(func() {
 				ui.Scroll(c).TrackScroll(ss).MaxHeight(240).Children(func() {
 					ui.Column(c).Padding(0, 0, 4, 10).Children(func() {
-						ui.Text(c, text).FontSize(11.5).TextColor(tc.TextMuted).Selectable()
+						displayText := text
+						const maxThinkingRenderBytes = 24 * 1024
+						if len(displayText) > maxThinkingRenderBytes {
+							start := len(displayText) - maxThinkingRenderBytes
+							for start < len(displayText) && (displayText[start]&0xC0) == 0x80 {
+								start++
+							}
+							displayText = "… [earlier reasoning hidden; use Copy for full text]\n\n" + displayText[start:]
+						}
+						ui.Text(c, displayText).FontSize(11.5).TextColor(tc.TextMuted).Selectable()
 					})
 				})
 			})
@@ -4047,21 +4232,41 @@ func (a *AppUI) renderQuestionModal(c *ui.Context) {
 // userMessageAttachments extracts the @path entries of a user message's
 // "Attached files:" block (as SubmitMessage formats them).
 func userMessageAttachments(text string) []string {
+	idx := strings.Index(text, "Attached files:")
+	if idx < 0 {
+		return nil
+	}
+	// Back up to start of the line containing "Attached files:"
+	lineStart := strings.LastIndexByte(text[:idx], '\n')
+	if lineStart >= 0 {
+		idx = lineStart + 1
+	} else {
+		idx = 0
+	}
 	var atts []string
 	inBlock := false
-	for _, line := range strings.Split(text, "\n") {
+	rest := text[idx:]
+	for len(rest) > 0 {
+		var line string
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			line = rest[:nl]
+			rest = rest[nl+1:]
+		} else {
+			line = rest
+			rest = ""
+		}
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "Attached files:") {
-			inBlock = true
+		if !inBlock {
+			if strings.HasPrefix(trimmed, "Attached files:") {
+				inBlock = true
+			}
 			continue
 		}
-		if inBlock {
-			if trimmed == "" {
-				break // blank line ends the attachment block
-			}
-			if strings.HasPrefix(trimmed, "@") {
-				atts = append(atts, strings.TrimPrefix(trimmed, "@"))
-			}
+		if trimmed == "" {
+			break // blank line ends the attachment block
+		}
+		if strings.HasPrefix(trimmed, "@") {
+			atts = append(atts, strings.TrimPrefix(trimmed, "@"))
 		}
 	}
 	return atts

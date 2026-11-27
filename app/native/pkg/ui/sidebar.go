@@ -408,6 +408,7 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 						}
 					})
 
+					smallAction("newcp", "New custom project (multi-folder)", icons.TablerPlus, false, func() { a.openNewCustomProjectModal() })
 					smallAction("open", "Open workspace folder", icons.TablerFolderPlus, false, func() { a.openWorkspaceFolder() })
 					collapsedOthers := a.otherProjectsCollapsed(activeProject)
 					if collapsedOthers {
@@ -668,8 +669,8 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 								// workspace) that forge-ade shows on group hover.
 								canExplore := group.ProjectName != "General" && group.FolderPath != ""
 								headerActionClicked := false
-								pHeader := ui.Row(c.Key("pheader-"+group.ProjectName)).Height(28).Radius(6).
-									Padding(0, 6).Gap(5).AlignItems(ui.Center)
+								pHeader := ui.Row(c.Key("pheader-"+group.ProjectName)).Height(32).Radius(6).
+									Padding(0, 6).Gap(6).AlignItems(ui.Center)
 
 								// Drag-and-drop reorder (MyGo same-window value
 								// drag-drop): non-pinned project headers drag their
@@ -688,19 +689,10 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									isRemote := strings.HasPrefix(group.FolderPath, "ssh://")
 									if isCollapsed {
 										ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.IconMuted)
-										if isRemote {
-											ui.Icon(c, icons.TablerServer).Width(13).Height(13).TextColor(tc.IconMuted)
-										} else {
-											ui.Icon(c, icons.TablerFolder).Width(13).Height(13).TextColor(tc.IconMuted)
-										}
 									} else {
 										ui.Icon(c, icons.TablerChevronDown).Width(12).Height(12).TextColor(tc.IconMuted)
-										if isRemote {
-											ui.Icon(c, icons.TablerServer).Width(13).Height(13).TextColor(tc.Accent)
-										} else {
-											ui.Icon(c, icons.TablerFolderOpen).Width(13).Height(13).TextColor(tc.Accent)
-										}
 									}
+									a.renderProjectGroupIcon(c, tc, group, isCollapsed)
 
 									ui.Text(c, group.ProjectName).FontSize(12).FontWeight(600).Grow(1).MinWidth(0).SingleLine()
 
@@ -708,6 +700,11 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 										ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
 											Background(tc.ToolbarControl).Children(func() {
 											ui.Text(c, "SSH").FontSize(9).FontWeight(600).TextColor(tc.SidebarMutedForeground)
+										})
+									} else if group.IsCustom && len(group.Folders) > 1 && !pHeader.Hovered() {
+										ui.Row(c).Height(15).Radius(4).Padding(0, 4).AlignItems(ui.Center).
+											Background(tc.ToolbarControl).Children(func() {
+											ui.Text(c, fmt.Sprintf("%d folders", len(group.Folders))).FontSize(9).FontWeight(600).TextColor(tc.SidebarMutedForeground)
 										})
 									} else if isCollapsed && totalCount > 0 && !pHeader.Hovered() {
 										ui.Text(c, fmt.Sprintf("%d", totalCount)).FontSize(10.5).TextColor(tc.SidebarMutedForeground)
@@ -813,11 +810,33 @@ func (a *AppUI) renderAgentSidebar(c *ui.Context) {
 									if m.Item("New task in " + group.ProjectName).Chosen() {
 										a.NewAgentTaskInProject(group.ProjectName, group.FolderPath)
 									}
+									if group.IsCustom && len(group.Folders) > 0 {
+										for _, f := range group.Folders {
+											folder := f
+											if m.Item("New task in " + filepath.Base(folder)).Chosen() {
+												a.NewAgentTaskInProject(filepath.Base(folder), folder)
+											}
+										}
+									}
 									if m.Item("New task with Agent / CLI…").Chosen() {
 										if group.ProjectName == "General" || group.FolderPath == "" {
 											a.OpenNewTaskModal()
 										} else {
 											a.OpenNewTaskModalFor(group.FolderPath)
+										}
+									}
+									if group.ProjectName != "General" {
+										m.Separator()
+										if m.Item("Change project icon…").Chosen() {
+											a.openProjectIconModal(group.ProjectName)
+										}
+									}
+									if group.IsCustom {
+										if m.Item("Manage folders…").Chosen() {
+											a.openEditCustomProjectModal(group.ProjectName)
+										}
+										if m.Item("Delete custom project").Danger().Chosen() {
+											a.deleteCustomProject(group.ProjectName)
 										}
 									}
 									if canExplore {
@@ -1249,6 +1268,8 @@ func (a *AppUI) renderSidebarFileExplorer(c *ui.Context, tc theme.ThemeColors) {
 type sidebarProjectGroup struct {
 	ProjectName string
 	FolderPath  string
+	IsCustom    bool
+	Folders     []string
 	Sessions    []*agent.AgentSession
 	CLISessions []*agent.AgentCLISession
 }
@@ -1265,7 +1286,26 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 			activeWsPath = agentsession.NormalizeWorkspacePath(activeWsPath)
 		}
 	}
-	activeProjectName := resolveProjectName(activeWsPath)
+
+	folderToCustom := make(map[string]string)
+	for _, cp := range a.CustomProjects {
+		if strings.TrimSpace(cp.Name) == "" {
+			continue
+		}
+		for _, f := range cp.Folders {
+			nf := agentsession.NormalizeWorkspacePath(f)
+			if nf != "" {
+				folderToCustom[nf] = cp.Name
+			}
+		}
+	}
+	resolveGroupName := func(wsPath string) string {
+		if cpName, ok := folderToCustom[wsPath]; ok {
+			return cpName
+		}
+		return resolveProjectName(wsPath)
+	}
+	activeProjectName := resolveGroupName(activeWsPath)
 
 	groupMap := make(map[string]*sidebarProjectGroup)
 	getOrCreateGroup := func(name, path string) *sidebarProjectGroup {
@@ -1291,8 +1331,20 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 		return g
 	}
 
-	// Always seed General and the active workspace.
+	// Always seed General, custom projects, and the active workspace.
 	getOrCreateGroup("General", "")
+	for _, cp := range a.CustomProjects {
+		if strings.TrimSpace(cp.Name) == "" {
+			continue
+		}
+		firstFolder := ""
+		if len(cp.Folders) > 0 {
+			firstFolder = cp.Folders[0]
+		}
+		g := getOrCreateGroup(cp.Name, firstFolder)
+		g.IsCustom = true
+		g.Folders = append([]string(nil), cp.Folders...)
+	}
 	getOrCreateGroup(activeProjectName, activeWsPath)
 
 	tab := "active"
@@ -1319,7 +1371,7 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 					continue
 				}
 			}
-			getOrCreateGroup(resolveProjectName(normRP), normRP)
+			getOrCreateGroup(resolveGroupName(normRP), normRP)
 		}
 	}
 
@@ -1343,7 +1395,7 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 			if !strings.HasPrefix(wsPath, "ssh://") {
 				wsPath = agentsession.NormalizeWorkspacePath(wsPath)
 			}
-			pName := resolveProjectName(wsPath)
+			pName := resolveGroupName(wsPath)
 			g := getOrCreateGroup(pName, wsPath)
 			g.Sessions = append(g.Sessions, s)
 		}
@@ -1366,7 +1418,7 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 			if !strings.HasPrefix(wsPath, "ssh://") {
 				wsPath = agentsession.NormalizeWorkspacePath(wsPath)
 			}
-			pName := resolveProjectName(wsPath)
+			pName := resolveGroupName(wsPath)
 			g := getOrCreateGroup(pName, wsPath)
 			g.CLISessions = append(g.CLISessions, cs)
 		}

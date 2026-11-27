@@ -1906,7 +1906,7 @@ func (a *AppUI) studioOpenLocalHTMLFile() {
 }
 
 // openStudioPreviewFile opens any local file in the Studio viewer for viewing
-// only, without importing it into ~/.forge artifacts or project history.
+// only, without importing it into ~/.forge-ade artifacts or project history.
 func (a *AppUI) openStudioPreviewFile(path string) {
 	if path == "" {
 		return
@@ -2280,16 +2280,16 @@ func studioEmbeddedAssetVer(s string) int {
 	return n
 }
 
-// studioForgeRoot returns the global ~/.forge directory where Studio artifacts live.
+// studioForgeRoot returns the global ~/.forge-ade directory where Studio artifacts live.
 func studioForgeRoot() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".forge")
+	return filepath.Join(home, ".forge-ade")
 }
 
-// isUnderForgeDir reports whether path resides inside ~/.forge.
+// isUnderForgeDir reports whether path resides inside ~/.forge-ade.
 func isUnderForgeDir(path string) bool {
 	root := studioForgeRoot()
 	if root == "" || path == "" {
@@ -2308,7 +2308,7 @@ func isUnderForgeDir(path string) bool {
 }
 
 // studioImportAgentArtifacts imports the files the agent wrote during its
-// last turn into the active studio project, restricted strictly to ~/.forge.
+// last turn into the active studio project, restricted strictly to ~/.forge-ade.
 func (a *AppUI) studioImportAgentArtifacts(sessionID string) {
 	if a.Studio == nil || a.Agent == nil {
 		return
@@ -2386,7 +2386,7 @@ type studioArtifactFile struct {
 	ModTime time.Time
 }
 
-// studioArtifactDirs lists the roots the explorer scans, strictly scoped to ~/.forge.
+// studioArtifactDirs lists the roots the explorer scans, strictly scoped to ~/.forge-ade.
 func (a *AppUI) studioArtifactDirs(_ string) []string {
 	root := studioForgeRoot()
 	if root == "" {
@@ -2414,7 +2414,7 @@ func (a *AppUI) studioArtifactDirs(_ string) []string {
 	return roots
 }
 
-// studioScanArtifactFiles browses ~/.forge for creative artifacts (html/md/js/pdf/pptx),
+// studioScanArtifactFiles browses ~/.forge-ade for creative artifacts (html/md/js/pdf/pptx),
 // newest first. Scans are cached for 2s so the per-frame render never walks disk every frame.
 func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 	if !a.studioArtifactScanAt.IsZero() && time.Since(a.studioArtifactScanAt) < 2*time.Second {
@@ -2468,7 +2468,7 @@ func (a *AppUI) studioScanArtifactFiles(sessionID string) []studioArtifactFile {
 	return files
 }
 
-// studioImportArtifactFile imports an artifact from ~/.forge into the active project,
+// studioImportArtifactFile imports an artifact from ~/.forge-ade into the active project,
 // or opens external files in viewer-only preview mode without adding them to artifacts.
 func (a *AppUI) studioImportArtifactFile(path string) {
 	if !isUnderForgeDir(path) {
@@ -2499,7 +2499,7 @@ func (a *AppUI) studioImportArtifactFile(path string) {
 	a.invalidateUI()
 }
 
-// renderStudioArtifactsPane draws the browsable list of ~/.forge artifacts
+// renderStudioArtifactsPane draws the browsable list of ~/.forge-ade artifacts
 // in the Right Sidebar; clicking a row loads it into the active project's viewer.
 func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 	sessionID := ""
@@ -2526,13 +2526,13 @@ func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 				ui.Text(c, fmt.Sprintf("%d", len(files))).FontSize(10).FontWeight(600).TextColor(tc.Accent)
 			})
 			ui.Row(c).Padding(1, 5).Radius(3).Background(tc.ToolbarControl).Children(func() {
-				ui.Text(c, "~/.forge").FontSize(9).FontWeight(500).TextColor(tc.TextMuted)
+				ui.Text(c, "~/.forge-ade").FontSize(9).FontWeight(500).TextColor(tc.TextMuted)
 			})
 			ui.Box(c).Grow(1)
 
 			// Rescan / Refresh
 			refreshBtn := IconButton(c, tc, icons.TablerRefresh, 12)
-			refreshBtn.Tooltip("Rescan ~/.forge artifacts")
+			refreshBtn.Tooltip("Rescan ~/.forge-ade artifacts")
 			if refreshBtn.Clicked() {
 				a.studioArtifactScanAt = time.Time{}
 				a.studioArtifactCache = nil
@@ -2541,7 +2541,7 @@ func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 
 		// Filter Query Input
 		ui.Row(c).Padding(6, 10).Children(func() {
-			ui.TextInput(c, &a.StudioArtifactFilterQuery).Placeholder("Filter ~/.forge artifacts...").Grow(1)
+			ui.TextInput(c, &a.StudioArtifactFilterQuery).Placeholder("Filter ~/.forge-ade artifacts...").Grow(1)
 		})
 
 		// Filter files by query if set
@@ -2559,8 +2559,8 @@ func (a *AppUI) renderStudioArtifactsPane(c *ui.Context, tc theme.ThemeColors) {
 		if len(filtered) == 0 {
 			ui.Column(c).Grow(1).Padding(24, 16).AlignItems(ui.Center).Justify(ui.Center).Gap(10).Children(func() {
 				ui.Icon(c, icons.TablerSparkles).Width(24).Height(24).TextColor(tc.IconMuted)
-				ui.Text(c, "No artifacts in ~/.forge").FontSize(12).FontWeight(600).TextColor(tc.Text)
-				ui.Text(c, "Ask Studio Agent to generate slides, motion, or 3D scenes — outputs are saved to ~/.forge.").
+				ui.Text(c, "No artifacts in ~/.forge-ade").FontSize(12).FontWeight(600).TextColor(tc.Text)
+				ui.Text(c, "Ask Studio Agent to generate slides, motion, or 3D scenes — outputs are saved to ~/.forge-ade.").
 					FontSize(11).TextColor(tc.TextMuted).Center()
 			})
 			return
@@ -2792,7 +2792,7 @@ func studioPromptRequestsNewFile(prompt string) bool {
 	return false
 }
 
-// studioTargetDir resolves the domain-specific directory under ~/.forge/studio
+// studioTargetDir resolves the domain-specific directory under ~/.forge-ade/studio
 // where Studio artifacts are written.
 func (a *AppUI) studioTargetDir(_ string, targetType corestudio.ArtifactType) string {
 	sub := "slides"

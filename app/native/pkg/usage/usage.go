@@ -276,7 +276,7 @@ func DefaultProviderName(model, provID string) string {
 }
 
 // BackfillHistoricalSessions scans saved session files under provided directories
-// (or ~/.forge/sessions/ if none given) and registers past usage if not already tracked in the ledger.
+// (or ~/.forge-ade/sessions/ if none given) and registers past usage if not already tracked in the ledger.
 func (um *UsageManager) BackfillHistoricalSessions(customDirs ...string) {
 	var searchDirs []string
 	if len(customDirs) > 0 {
@@ -284,7 +284,7 @@ func (um *UsageManager) BackfillHistoricalSessions(customDirs ...string) {
 	} else {
 		home, _ := os.UserHomeDir()
 		searchDirs = []string{
-			filepath.Join(home, ".forge", "sessions"),
+			filepath.Join(home, ".forge-ade", "sessions"),
 			filepath.Join(um.dataDir, "sessions"),
 		}
 	}

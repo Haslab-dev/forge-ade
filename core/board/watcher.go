@@ -91,7 +91,7 @@ func NewWatcher(opts WatcherOptions) (*Watcher, error) {
 		resolve = func(wsFolder string) string {
 			if wsFolder == "" {
 				home, _ := os.UserHomeDir()
-				return filepath.Join(home, ".forge", "board")
+				return filepath.Join(home, ".forge-ade", "board")
 			}
 			return filepath.Join(wsFolder, ".forge")
 		}

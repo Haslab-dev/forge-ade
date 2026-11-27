@@ -214,7 +214,8 @@ func (a *AppUI) SaveSSHConfig(cfg remotefs.SSHConfig) {
 	a.PersistSavedSSHConfigs()
 }
 
-// DeleteSSHConfig removes a profile from saved hosts.
+// DeleteSSHConfig removes a profile from saved hosts and cleans up any
+// sidebar workspaces/sessions bound to that host so it does not reappear.
 func (a *AppUI) DeleteSSHConfig(id string) {
 	updated := make([]remotefs.SSHConfig, 0, len(a.SSHSavedConfigs))
 	for _, c := range a.SSHSavedConfigs {
@@ -226,6 +227,38 @@ func (a *AppUI) DeleteSSHConfig(id string) {
 	a.PersistSavedSSHConfigs()
 	if a.SSHSelectedConfigID == id {
 		a.ResetSSHForm()
+	}
+	if id != "" {
+		hostPrefix := "ssh://" + id
+		matchesHost := func(ws string) bool {
+			return ws == hostPrefix || strings.HasPrefix(ws, hostPrefix+"/")
+		}
+		var toRemove []string
+		for _, p := range a.RecentWorkspaces {
+			if matchesHost(p) {
+				toRemove = append(toRemove, p)
+			}
+		}
+		for _, p := range a.OpenWorkspaces {
+			if matchesHost(p) {
+				toRemove = append(toRemove, p)
+			}
+		}
+		if a.Agent != nil {
+			for _, s := range a.Agent.AllSessions() {
+				if s != nil && matchesHost(s.WorkspacePath) {
+					toRemove = append(toRemove, s.WorkspacePath)
+				}
+			}
+		}
+		seen := make(map[string]bool, len(toRemove))
+		for _, ws := range toRemove {
+			if seen[ws] {
+				continue
+			}
+			seen[ws] = true
+			a.deleteWorkspaceGroup(nil, resolveProjectName(ws), ws)
+		}
 	}
 }
 

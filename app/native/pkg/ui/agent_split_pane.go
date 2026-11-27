@@ -267,10 +267,12 @@ func (a *AppUI) renderAgentHeaderTabStrip(c *ui.Context, tc theme.ThemeColors) {
 						continue
 					}
 					isActive := id == activeID
+					needsApproval := a.sessionNeedsApproval(sess)
+					isRunning := (isActive && a.Agent != nil && a.Agent.IsStreaming) || sess.Status == "running" || sess.Status == "working"
 					statusColor := tc.Success
-					if a.sessionNeedsApproval(sess) {
+					if needsApproval {
 						statusColor = tc.Warning
-					} else if (isActive && a.Agent != nil && a.Agent.IsStreaming) || sess.Status == "running" {
+					} else if isRunning {
 						statusColor = tc.Accent
 					}
 
@@ -285,7 +287,9 @@ func (a *AppUI) renderAgentHeaderTabStrip(c *ui.Context, tc theme.ThemeColors) {
 					}
 
 					tab.Children(func() {
-						ui.Box(c).Size(6, 6).Radius(3).Background(statusColor).Shrink(0)
+						if !isRunning {
+							ui.Box(c).Size(6, 6).Radius(3).Background(statusColor).Shrink(0)
+						}
 						if sess.AgentType == "internal" || strings.Contains(strings.ToLower(sess.AgentID), "internal") {
 							ui.Icon(c, icons.ProviderForgeADE).Width(12).Height(12)
 						} else {
@@ -299,6 +303,9 @@ func (a *AppUI) renderAgentHeaderTabStrip(c *ui.Context, tc theme.ThemeColors) {
 							txt.FontWeight(500).TextColor(tc.Text)
 						} else {
 							txt.FontWeight(400).TextColor(tc.TextMuted)
+						}
+						if isRunning && !needsApproval {
+							ui.Spinner(c).Size(11, 11).Label("")
 						}
 
 						xBtn := ui.Row(c.Key("hdr-tab-x-"+id)).Size(16, 16).Radius(4).
@@ -403,7 +410,9 @@ func (a *AppUI) renderSplitSessionPane(c *ui.Context, tc theme.ThemeColors, sess
 				AlignItems(ui.Center).Background(tc.Canvas).
 				BorderWidth(0, 1, 0, 0).BorderColor(tc.ToolbarBorder)
 			spTab.Children(func() {
-				ui.Box(c).Size(6, 6).Radius(3).Background(statusColor).Shrink(0)
+				if !isRunning {
+					ui.Box(c).Size(6, 6).Radius(3).Background(statusColor).Shrink(0)
+				}
 				if sess.AgentType == "internal" || strings.Contains(strings.ToLower(sess.AgentID), "internal") {
 					ui.Icon(c, icons.ProviderForgeADE).Width(12).Height(12)
 				} else {
@@ -413,6 +422,9 @@ func (a *AppUI) renderSplitSessionPane(c *ui.Context, tc theme.ThemeColors, sess
 					}
 				}
 				ui.Text(c, sess.Title).FontSize(12).FontWeight(500).TextColor(tc.Text).MaxWidth(200).SingleLine()
+				if isRunning && !a.sessionNeedsApproval(sess) {
+					ui.Spinner(c).Size(11, 11).Label("")
+				}
 			})
 			spTab.ContextMenu(func(m *ui.Menu) {
 				if m.Item("Move Left").Chosen() {

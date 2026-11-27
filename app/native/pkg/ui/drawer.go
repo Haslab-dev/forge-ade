@@ -919,11 +919,11 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 			}
 
 			launcherGroup("WORKSPACE TOOLS", func() {
+				launcherCard("changes", "Changes & Diffs", "Review diffs, stage changes, and commit.", icons.TablerGitBranch, tc.Accent, false, func() {
+					a.pickDrawerPaneSingleton(RightTabChanges, "Review")
+				})
 				launcherCard("files", "Files", "Browse and preview workspace files, images, and PDFs.", icons.TablerFolder, tc.Accent, false, func() {
 					a.pickDrawerPaneSingleton(RightTabFiles, "Files")
-				})
-				launcherCard("git", "Source Control", "Review diffs, stage changes, commit, and switch branches.", icons.TablerGitBranch, tc.Accent, false, func() {
-					a.pickDrawerPaneSingleton(RightTabGit, "Source Control")
 				})
 				launcherCard("terminal", "Terminal", "Run shell commands and inspect output.", icons.TablerTerminal, tc.Accent, false, func() {
 					a.pickDrawerPaneTerminal()
@@ -941,15 +941,14 @@ func (a *AppUI) renderRightDrawerLauncher(c *ui.Context, tc theme.ThemeColors) {
 				launcherCard("sidechat", "Side Conversation", "Ask quick questions without interrupting your main task.", icons.TablerMessage, tc.Accent, true, func() {
 					a.pickDrawerPaneSideChat()
 				})
-				launcherCard("plans", "Plans & Progress", "Track active plans, checklists, and task progress.", icons.TablerChecklist, tc.Success, true, func() {
-					a.pickDrawerPaneSingleton(RightTabTasks, "Plans")
-				})
 				launcherCard("subagents", "Child Agents", "Inspect and steer spawned sub-agents.", icons.TablerBot, tc.Warning, true, func() {
 					a.pickDrawerPaneSingleton(RightTabSubagent, "Child Agents")
 				})
-				launcherCard("artifacts", "Artifacts", "Browse generated slides, scenes, and media.", icons.TablerFolderOpen, tc.Accent, true, func() {
-					a.pickDrawerPaneSingleton(RightTabArtifacts, "Artifacts")
-				})
+				if a.Mode == ModeStudio {
+					launcherCard("artifacts", "Artifacts", "Browse generated slides, scenes, and media.", icons.TablerFolderOpen, tc.Accent, true, func() {
+						a.pickDrawerPaneSingleton(RightTabArtifacts, "Artifacts")
+					})
+				}
 			})
 		})
 	})

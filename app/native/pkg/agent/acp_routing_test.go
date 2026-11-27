@@ -19,7 +19,7 @@ func TestACPRoutingWithoutInternalAPIKey(t *testing.T) {
 	eng := engine.NewEngine(tempDir)
 
 	as := NewAgentState(eng, tempDir, func() {})
-	// Sessions shared with ForgeADE under ~/.forge/sessions/General may
+	// Sessions shared with ForgeADE under ~/.forge-ade/sessions/General may
 	// preload into any workspace; the default-harness assertions only hold
 	// on a clean disk.
 	preloaded := len(as.Sessions) > 0

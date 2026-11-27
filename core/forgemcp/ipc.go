@@ -55,7 +55,7 @@ func StartIPCDaemon(server *Server, preferredPort int) (*IPCDaemon, error) {
 	tcpAddr := listener.Addr().(*net.TCPAddr)
 	port := tcpAddr.Port
 
-	// Record the port into ~/.forge/ipc.port for CLI discovery
+	// Record the port into ~/.forge-ade/ipc.port for CLI discovery
 	recordIPCPort(port)
 
 	mux := http.NewServeMux()
@@ -269,7 +269,7 @@ func recordIPCPort(port int) {
 	if err != nil {
 		return
 	}
-	dir := filepath.Join(home, ".forge")
+	dir := filepath.Join(home, ".forge-ade")
 	_ = os.MkdirAll(dir, 0755)
 	_ = os.WriteFile(filepath.Join(dir, "ipc.port"), []byte(strconv.Itoa(port)), 0644)
 }
@@ -279,7 +279,7 @@ func readIPCPort() int {
 	if err != nil {
 		return 0
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".forge", "ipc.port"))
+	data, err := os.ReadFile(filepath.Join(home, ".forge-ade", "ipc.port"))
 	if err != nil {
 		return 0
 	}
@@ -295,5 +295,5 @@ func clearIPCPort() {
 	if err != nil {
 		return
 	}
-	_ = os.Remove(filepath.Join(home, ".forge", "ipc.port"))
+	_ = os.Remove(filepath.Join(home, ".forge-ade", "ipc.port"))
 }

@@ -30,6 +30,12 @@ func (a *AppUI) renderModals(c *ui.Context) {
 	if a.ShowProjectSwitcherModal {
 		a.renderProjectSwitcherModal(c)
 	}
+	if a.ShowProjectIconModal {
+		a.renderProjectIconModal(c)
+	}
+	if a.ShowCustomProjectModal {
+		a.renderCustomProjectModal(c)
+	}
 	if a.Palette != nil && a.Palette.IsOpen {
 		a.renderPaletteModal(c)
 	}
