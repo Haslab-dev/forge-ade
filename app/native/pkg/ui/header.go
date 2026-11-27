@@ -196,9 +196,9 @@ func (a *AppUI) renderWorkspaceHeader(c *ui.Context) {
 		leftPad = 14
 	} else if bar.Left > 0 {
 		// Clear macOS close/minimize/maximize traffic lights cleanly on the same Y baseline.
-		leftPad = max(bar.Left+10, 78)
+		leftPad = max(bar.Left+14, 88)
 	} else if runtime.GOOS == "darwin" {
-		leftPad = 78
+		leftPad = 88
 	}
 
 	// Keep leftPad tight in ModeAgent when the flush tab starts at the left edge.

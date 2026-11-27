@@ -206,16 +206,16 @@ func forgeDefaultDark() ThemeColors {
 		Surface: ok(0.17, 0.005, 260), SurfaceRaised: ok(0.21, 0.006, 260), SurfaceOverlay: ok(0.25, 0.007, 260),
 		Text: ok(0.97, 0.002, 260), TextMuted: ok(0.68, 0.01, 260),
 		Border: ok(0.24, 0.005, 260), Input: ok(0.18, 0.005, 260),
-		Focus: ok(0.65, 0.20, 250), Accent: ok(0.65, 0.20, 250), AccentForeground: ok(0.99, 0, 0),
+		Focus: ok(0.62, 0.21, 272), Accent: ok(0.62, 0.21, 272), AccentForeground: ok(0.99, 0, 0),
 		Secondary: ok(0.22, 0.005, 260), SecondaryForeground: ok(0.88, 0.005, 260),
 		Muted: ok(0.20, 0.005, 260), MutedForeground: ok(0.62, 0.01, 260),
 		Placeholder: ok(0.48, 0.01, 260), SecondaryLabel: ok(0.68, 0.01, 260), IconMuted: ok(0.62, 0.01, 260),
 		Error: ok(0.60, 0.22, 25), ErrorForeground: ok(0.95, 0.02, 25), ErrorSurface: ok(0.20, 0.06, 25),
 		Warning: ok(0.75, 0.16, 75), WarningForeground: ok(0.95, 0.05, 75), WarningSurface: ok(0.22, 0.05, 75),
-		Update: ok(0.65, 0.20, 250), UpdateForeground: ok(0.95, 0.02, 250), UpdateSurface: ok(0.20, 0.05, 250),
-		AccentSurface: ok(0.22, 0.05, 250), AccentSurfaceForeground: ok(0.95, 0.02, 250),
+		Update: ok(0.62, 0.21, 272), UpdateForeground: ok(0.95, 0.02, 272), UpdateSurface: ok(0.20, 0.06, 272),
+		AccentSurface: ok(0.22, 0.06, 272), AccentSurfaceForeground: ok(0.95, 0.02, 272),
 		MessageSurface: ok(0.17, 0.005, 260), MessageForeground: ok(0.97, 0.002, 260),
-		MessageAction: ok(0.65, 0.20, 250), MessageActionForeground: ok(0.99, 0, 0), MessageActionHover: ok(0.58, 0.20, 250),
+		MessageAction: ok(0.62, 0.21, 272), MessageActionForeground: ok(0.99, 0, 0), MessageActionHover: ok(0.55, 0.21, 272),
 		CodeBackground: ok(0.12, 0.003, 260), CodeForeground: ok(0.92, 0.005, 260),
 		SearchMatchBackground: ok(0.55, 0.1, 85), SearchMatchForeground: ok(0.970151, 0, 0),
 		SearchMatchActiveBackground: ok(0.774202, 0.151946, 74.331), SearchMatchActiveForeground: ok(0.216164, 0.028283, 77.423),
@@ -224,8 +224,40 @@ func forgeDefaultDark() ThemeColors {
 		SidebarRowHover: ok(0.19, 0.005, 260), SidebarRowActive: ok(0.21, 0.006, 260),
 		SidebarRowSelected: ok(0.22, 0.006, 260), SidebarBorder: ok(0.22, 0.005, 260),
 		TerminalBackground: ok(0.11, 0.002, 260), TerminalForeground: ok(0.96, 0.002, 260),
-		TerminalCursor: ok(0.65, 0.20, 250), TerminalSelection: ok(0.28, 0.04, 250),
+		TerminalCursor: ok(0.62, 0.21, 272), TerminalSelection: ok(0.28, 0.05, 272),
 		TerminalScrollbar: ok(0.22, 0.005, 260), TerminalScrollbarHover: ok(0.32, 0.006, 260),
+	}
+}
+
+func blossomDark() ThemeColors {
+	return ThemeColors{
+		Canvas: ok(0.145, 0.012, 345), Chrome: ok(0.16, 0.014, 345),
+		Toolbar: ok(0.16, 0.014, 345), ToolbarForeground: ok(0.96, 0.008, 345),
+		ToolbarBorder: ok(0.27, 0.024, 345), ToolbarControl: ok(0.22, 0.020, 345),
+		ToolbarControlForeground: ok(0.90, 0.012, 345), ToolbarControlHover: ok(0.27, 0.026, 345),
+		Surface: ok(0.18, 0.015, 345), SurfaceRaised: ok(0.22, 0.018, 345), SurfaceOverlay: ok(0.26, 0.020, 345),
+		Text: ok(0.97, 0.006, 345), TextMuted: ok(0.68, 0.025, 345),
+		Border: ok(0.27, 0.024, 345), Input: ok(0.20, 0.018, 345),
+		Focus: ok(0.65, 0.22, 12), Accent: ok(0.65, 0.22, 12), AccentForeground: ok(0.99, 0, 0),
+		Secondary: ok(0.23, 0.020, 345), SecondaryForeground: ok(0.90, 0.010, 345),
+		Muted: ok(0.21, 0.016, 345), MutedForeground: ok(0.64, 0.022, 345),
+		Placeholder: ok(0.50, 0.020, 345), SecondaryLabel: ok(0.68, 0.025, 345), IconMuted: ok(0.64, 0.022, 345),
+		Error: ok(0.62, 0.22, 25), ErrorForeground: ok(0.95, 0.02, 25), ErrorSurface: ok(0.22, 0.06, 25),
+		Warning: ok(0.75, 0.16, 75), WarningForeground: ok(0.95, 0.05, 75), WarningSurface: ok(0.22, 0.05, 75),
+		Update: ok(0.65, 0.22, 12), UpdateForeground: ok(0.95, 0.02, 12), UpdateSurface: ok(0.23, 0.06, 12),
+		AccentSurface: ok(0.24, 0.06, 12), AccentSurfaceForeground: ok(0.96, 0.02, 12),
+		MessageSurface: ok(0.18, 0.015, 345), MessageForeground: ok(0.97, 0.006, 345),
+		MessageAction: ok(0.65, 0.22, 12), MessageActionForeground: ok(0.99, 0, 0), MessageActionHover: ok(0.58, 0.22, 12),
+		CodeBackground: ok(0.125, 0.010, 345), CodeForeground: ok(0.93, 0.010, 345),
+		SearchMatchBackground: ok(0.55, 0.1, 85), SearchMatchForeground: ok(0.970151, 0, 0),
+		SearchMatchActiveBackground: ok(0.774202, 0.151946, 74.331), SearchMatchActiveForeground: ok(0.216164, 0.028283, 77.423),
+		Sidebar: ok(0.155, 0.014, 345), SidebarForeground: ok(0.96, 0.008, 345),
+		SidebarMutedForeground: ok(0.66, 0.024, 345), SidebarControlSurface: ok(0.20, 0.018, 345),
+		SidebarRowHover: ok(0.21, 0.020, 345), SidebarRowActive: ok(0.24, 0.024, 345),
+		SidebarRowSelected: ok(0.25, 0.026, 345), SidebarBorder: ok(0.25, 0.022, 345),
+		TerminalBackground: ok(0.12, 0.010, 345), TerminalForeground: ok(0.96, 0.008, 345),
+		TerminalCursor: ok(0.65, 0.22, 12), TerminalSelection: ok(0.30, 0.06, 12),
+		TerminalScrollbar: ok(0.24, 0.020, 345), TerminalScrollbarHover: ok(0.34, 0.024, 345),
 	}
 }
 
@@ -561,7 +593,7 @@ func BasePaletteColors(paletteID string, dark bool) ThemeColors {
 			return obsidianLight()
 		case ThemePaletteBlossom:
 			if dark {
-				return forgeDefaultDark() // blossom's dark variant is forge-default's
+				return blossomDark()
 			}
 			return blossomLight()
 		case ThemePaletteGrove:

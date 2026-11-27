@@ -223,6 +223,30 @@ func (a *AppUI) reconcileAgentOpenTabs() {
 	if a.Agent == nil {
 		return
 	}
+	// Restore persisted tabs/active/split sessions once AgentState finishes
+	// loading sessions from disk.
+	if len(a.pendingOpenTabs) > 0 || a.pendingActiveSessionID != "" || a.pendingSplitSessionID != "" {
+		if len(a.Agent.AllSessions()) > 0 {
+			for _, id := range a.pendingOpenTabs {
+				if a.findAgentSessionByID(id) != nil {
+					a.ensureAgentTab(id)
+				}
+			}
+			if a.pendingActiveSessionID != "" {
+				if sess := a.findAgentSessionByID(a.pendingActiveSessionID); sess != nil {
+					a.selectAgentSession(sess)
+				}
+			}
+			if a.pendingSplitSessionID != "" {
+				if a.findAgentSessionByID(a.pendingSplitSessionID) != nil {
+					a.AgentSplitSessionID = a.pendingSplitSessionID
+				}
+			}
+			a.pendingOpenTabs = nil
+			a.pendingActiveSessionID = ""
+			a.pendingSplitSessionID = ""
+		}
+	}
 	if a.Agent.ActiveSessionID != "" {
 		a.ensureAgentTab(a.Agent.ActiveSessionID)
 	}

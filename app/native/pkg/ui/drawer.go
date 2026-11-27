@@ -2222,6 +2222,12 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 			doc, _ = a.Editor.OpenFile(full, a.ActiveSideFile)
 		}
 	}
+	if doc != nil && time.Since(a.lastSideFileSync) >= 400*time.Millisecond {
+		a.lastSideFileSync = time.Now()
+		if a.Editor.ReloadIfChangedOnDisk(full) && a.Git != nil {
+			a.Git.RefreshAsync()
+		}
+	}
 	if doc == nil {
 		ui.Column(c).Grow(1).Center().Children(func() {
 			ui.Text(c, "File unavailable").FontSize(12).TextColor(tc.TextMuted)
@@ -2266,6 +2272,8 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 		ui.Row(c).Height(26).Padding(0, 12).Gap(6).AlignItems(ui.Center).
 			BorderWidth(1, 0, 0, 0).BorderColor(tc.Border).Children(func() {
 			ui.Text(c, a.ActiveSideFile).FontSize(10).TextColor(tc.TextMuted).SingleLine()
+			ui.Box(c).Size(6, 6).Radius(3).Background(tc.Success.Alpha(0.85)).Shrink(0).Tooltip("Live sync enabled")
+			ui.Text(c, "Live").FontSize(9.5).TextColor(tc.Success)
 			ui.Box(c).Grow(1)
 			diffToggle := ui.Text(c, "Diff").FontSize(10).Cursor(ui.CursorPointer)
 			if diffMode {

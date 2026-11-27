@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -79,7 +80,49 @@ func resolveProjectIconColor(tc theme.ThemeColors, key string) ui.Color {
 	}
 }
 
-// renderProjectGroupIcon renders the project's custom image, custom icon, or default folder/server icon.
+// projectBadgePalette returns a list of distinct, theme-derived colors so
+// every project in the sidebar can be assigned a unique badge color.
+func projectBadgePalette(tc theme.ThemeColors) []ui.Color {
+	return []ui.Color{
+		tc.Accent,
+		tc.Info,
+		tc.Success,
+		tc.Warning,
+		tc.Error,
+		tc.Accent.Mix(tc.Info, 0.5),
+		tc.Accent.Mix(tc.Error, 0.5),
+		tc.Success.Mix(tc.Info, 0.5),
+		tc.Warning.Mix(tc.Error, 0.5),
+		tc.Info.Mix(tc.Error, 0.45),
+		tc.Accent.Mix(tc.Success, 0.5),
+		tc.Warning.Mix(tc.Success, 0.45),
+		tc.Accent.Mix(tc.Warning, 0.5),
+		tc.Info.Mix(tc.Success, 0.3),
+		tc.Error.Mix(tc.Accent, 0.35),
+		tc.Success.Mix(tc.Warning, 0.35),
+	}
+}
+
+func projectInitial(name string) string {
+	for _, r := range strings.TrimSpace(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return string(unicode.ToUpper(r))
+		}
+	}
+	return "P"
+}
+
+func hashProjectName(name string) int {
+	h := uint32(2166136261)
+	for i := 0; i < len(name); i++ {
+		h ^= uint32(name[i])
+		h *= 16777619
+	}
+	return int(h & 0x7fffffff)
+}
+
+// renderProjectGroupIcon renders the project's custom image, custom icon, or a
+// uniquely colored initial badge box (e.g. ForgeADE -> F).
 func (a *AppUI) renderProjectGroupIcon(c *ui.Context, tc theme.ThemeColors, group *sidebarProjectGroup, isCollapsed bool) {
 	if group != nil && a.ProjectIcons != nil {
 		if cfg, ok := a.ProjectIcons[group.ProjectName]; ok {
@@ -99,28 +142,21 @@ func (a *AppUI) renderProjectGroupIcon(c *ui.Context, tc theme.ThemeColors, grou
 		}
 	}
 
-	isRemote := group != nil && strings.HasPrefix(group.FolderPath, "ssh://")
-	if group != nil && group.IsCustom {
-		if isCollapsed {
-			ui.Icon(c, icons.TablerPuzzle).Width(16).Height(16).TextColor(tc.IconMuted)
-		} else {
-			ui.Icon(c, icons.TablerPuzzle).Width(16).Height(16).TextColor(tc.Accent)
+	name := "Project"
+	colorIdx := 0
+	if group != nil {
+		if group.ProjectName != "" {
+			name = group.ProjectName
 		}
-		return
+		colorIdx = group.ColorIdx
 	}
-	if isCollapsed {
-		if isRemote {
-			ui.Icon(c, icons.TablerServer).Width(16).Height(16).TextColor(tc.IconMuted)
-		} else {
-			ui.Icon(c, icons.TablerFolder).Width(16).Height(16).TextColor(tc.IconMuted)
-		}
-	} else {
-		if isRemote {
-			ui.Icon(c, icons.TablerServer).Width(16).Height(16).TextColor(tc.Accent)
-		} else {
-			ui.Icon(c, icons.TablerFolderOpen).Width(16).Height(16).TextColor(tc.Accent)
-		}
-	}
+	palette := projectBadgePalette(tc)
+	col := palette[colorIdx%len(palette)]
+	ui.Box(c).Size(20, 20).Radius(5).Shrink(0).
+		Background(col.Alpha(0.22)).BorderWidth(1).BorderColor(col.Alpha(0.55)).
+		AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+		ui.Text(c, projectInitial(name)).FontSize(11).FontWeight(700).TextColor(col)
+	})
 }
 
 func (a *AppUI) openProjectIconModal(projectName string) {

@@ -1270,6 +1270,7 @@ type sidebarProjectGroup struct {
 	FolderPath  string
 	IsCustom    bool
 	Folders     []string
+	ColorIdx    int
 	Sessions    []*agent.AgentSession
 	CLISessions []*agent.AgentCLISession
 }
@@ -1462,8 +1463,20 @@ func (a *AppUI) sidebarProjectGroups() []*sidebarProjectGroup {
 	})
 
 	groups := make([]*sidebarProjectGroup, 0, len(names))
+	const paletteSize = 16
+	usedColors := make([]bool, paletteSize)
 	for _, name := range names {
 		g := groupMap[name]
+		idx := hashProjectName(name) % paletteSize
+		for step := 0; step < paletteSize; step++ {
+			cand := (idx + step) % paletteSize
+			if !usedColors[cand] {
+				usedColors[cand] = true
+				idx = cand
+				break
+			}
+		}
+		g.ColorIdx = idx
 		sort.SliceStable(g.Sessions, func(i, j int) bool {
 			si, sj := g.Sessions[i], g.Sessions[j]
 			if tab == "active" && si.Pinned != sj.Pinned {
@@ -1918,4 +1931,104 @@ func (a *AppUI) renderFileTree(c *ui.Context) {
 	// Shared hierarchical explorer with context menus (also rendered by the
 	// right drawer's Files pane).
 	a.renderExplorerTree(c, tc)
+}
+
+// renderCollapsedLeftRail renders a compact 48px icon rail when the left
+// sidebar is collapsed, showing project icons with a round pulsing indicator
+// whenever a project has a running agent or CLI session.
+func (a *AppUI) renderCollapsedLeftRail(c *ui.Context) {
+	tc := a.ThemeMgr.Colors()
+
+	ui.Column(c.Key("collapsed-left-rail")).Width(52).FillHeight().Shrink(0).
+		Padding(10, 0, 8, 0).Gap(6).AlignItems(ui.Center).
+		Background(tc.Sidebar).BorderWidth(0, 1, 0, 0).BorderColor(tc.SidebarBorder).
+		Children(func() {
+			// Project icons with running pulse badge
+			activeWs := ""
+			if a.Workspace != nil {
+				activeWs = a.Workspace.RootDir
+			}
+			activeProj := resolveProjectName(activeWs)
+			groups := a.sidebarProjectGroups()
+
+			ui.Scroll(c.Key("rail-projects")).Grow(1).FillWidth().Scrollbars(false).Children(func() {
+				ui.Column(c).FillWidth().AlignItems(ui.Center).Gap(6).Padding(2, 0).Children(func() {
+					for _, g := range groups {
+						group := g
+						if group == nil || (group.ProjectName == "General" && len(group.Sessions) == 0 && len(group.CLISessions) == 0) {
+							continue
+						}
+						hasRunning := false
+						var runningSess *agent.AgentSession
+						for _, s := range group.Sessions {
+							if s == nil {
+								continue
+							}
+							isActiveStream := a.Agent != nil && a.Agent.ActiveSessionID == s.ID && a.Agent.IsStreaming
+							if isActiveStream || s.Status == "running" || s.Status == "working" {
+								hasRunning = true
+								if runningSess == nil {
+									runningSess = s
+								}
+							}
+						}
+						if !hasRunning {
+							for _, cs := range group.CLISessions {
+								if cs != nil && cs.Status == "running" && cs.Terminal != nil && !cs.Terminal.IsExited() {
+									hasRunning = true
+									break
+								}
+							}
+						}
+
+						isActiveProj := group.ProjectName == activeProj
+						tip := group.ProjectName
+						if hasRunning {
+							tip += " · Agent running"
+						}
+						tile := ui.Box(c.Key("rail-proj-"+group.ProjectName)).Size(34, 34).Radius(8).
+							AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).Tooltip(tip)
+						if isActiveProj {
+							tile.Background(tc.SidebarRowActive).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.5))
+						} else if tile.Hovered() {
+							tile.Background(tc.SidebarRowHover)
+						}
+						tile.Children(func() {
+							a.renderProjectGroupIcon(c, tc, group, false)
+							if hasRunning {
+								p := shimmerPhase()
+								t := p
+								if t > 0.5 {
+									t = 1 - t
+								}
+								pulseAlpha := float32(0.18 + 0.42*(t*2))
+								// Outer pulsing halo + inner solid round indicator
+								ui.Box(c).Absolute().Top(1).Right(1).Size(10, 10).Radius(5).
+									Background(tc.Accent.Alpha(pulseAlpha)).
+									AlignItems(ui.Center).Justify(ui.Center).Children(func() {
+									ui.Box(c).Size(6, 6).Radius(3).Background(tc.Accent)
+								})
+							}
+						})
+						if tile.Clicked() {
+							if runningSess != nil {
+								a.selectAgentSession(runningSess)
+							} else if len(group.Sessions) > 0 && group.Sessions[0] != nil {
+								a.selectAgentSession(group.Sessions[0])
+							} else if group.FolderPath != "" {
+								a.switchWorkspace(group.FolderPath)
+							}
+						}
+					}
+				})
+			})
+
+			ui.Box(c).Width(24).Height(1).Background(tc.SidebarBorder.Alpha(0.7))
+			if IconButton(c, tc, icons.TablerPlus, 16).Tooltip("New Task (⌘N)").Clicked() {
+				a.handleNewTask()
+			}
+			if IconButton(c, tc, icons.TablerSettings, 16).Tooltip("Settings (⌘,)").Clicked() {
+				a.openSettings(0)
+			}
+		})
 }

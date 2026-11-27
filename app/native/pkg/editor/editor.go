@@ -1466,6 +1466,48 @@ func (em *EditorManager) saveDocLocked(doc *OpenDocument, newText string) error 
 	return nil
 }
 
+// ReloadIfChangedOnDisk checks whether fullPath changed on disk (e.g. edited
+// by a running agent) and reloads the clean buffer in place. Returns true if
+// the buffer was updated.
+func (em *EditorManager) ReloadIfChangedOnDisk(fullPath string) bool {
+	if em == nil || fullPath == "" || strings.HasPrefix(fullPath, "ssh://") {
+		return false
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return false
+	}
+	em.mu.Lock()
+	doc, ok := em.docs[fullPath]
+	if !ok || doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+		em.mu.Unlock()
+		return false
+	}
+	if doc.Editor.Buffer.Modified() || info.ModTime().Equal(doc.ModTime) {
+		em.mu.Unlock()
+		return false
+	}
+	em.mu.Unlock()
+
+	raw, err := os.ReadFile(fullPath)
+	if err != nil {
+		return false
+	}
+	newText := string(raw)
+
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	doc, ok = em.docs[fullPath]
+	if !ok || doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil || doc.Editor.Buffer.Modified() {
+		return false
+	}
+	doc.ModTime = info.ModTime()
+	doc.DiskContent = newText
+	doc.Editor.Buffer.Set(newText)
+	doc.Editor.Buffer.MarkSaved()
+	return true
+}
+
 // writeFileAtomic replaces path's content without clobbering its permissions:
 // the existing mode is preserved, bytes land in a same-directory temp file,
 // and a rename swaps it into place. The temp file is cleaned up on failure.

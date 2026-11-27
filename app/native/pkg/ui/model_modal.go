@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -199,13 +200,16 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 
 	getAgentModels := func(ag agent.ACPAgentDefinition) []string {
 		models := ag.SupportedModels
-		if ag.ID == "agent-agy" && a.Settings != nil {
-			if acctMgr := a.Settings.AntigravityAccountMgr(); acctMgr != nil {
-				if activeAcc := acctMgr.ActiveAccount(); activeAcc != nil {
-					if len(activeAcc.AvailableModels) > 0 {
-						models = activeAcc.AvailableModels
-					} else if activeAcc.SupportsArgon() {
-						models = quota.DefaultArgonModels()
+		if ag.ID == "agent-agy" {
+			a.ensureAgyModelsFetchedAsync()
+			if a.Settings != nil {
+				if acctMgr := a.Settings.AntigravityAccountMgr(); acctMgr != nil {
+					if activeAcc := acctMgr.ActiveAccount(); activeAcc != nil {
+						if len(activeAcc.AvailableModels) > len(models) {
+							models = activeAcc.AvailableModels
+						} else if activeAcc.SupportsArgon() && len(quota.DefaultArgonModels()) > len(models) {
+							models = quota.DefaultArgonModels()
+						}
 					}
 				}
 			}
@@ -811,4 +815,22 @@ func (a *AppUI) renderModelProviderPaletteModal(c *ui.Context) {
 			})
 		})
 	})
+}
+
+func (a *AppUI) ensureAgyModelsFetchedAsync() {
+	if a.isFetchingAntigravityModels || a.agyModelsFetched || a.ACPMgr == nil {
+		return
+	}
+	a.isFetchingAntigravityModels = true
+	go func() {
+		models, err := quota.FetchAgyCLIModels(context.Background())
+		a.runOnUI(func() {
+			a.isFetchingAntigravityModels = false
+			a.agyModelsFetched = true
+			if err == nil && len(models) > 0 {
+				a.ACPMgr.UpdateAgentSupportedModels("agent-agy", models)
+				a.invalidateUI()
+			}
+		})
+	}()
 }

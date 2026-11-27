@@ -109,6 +109,10 @@ func DefaultArgonModels() []string {
 // DefaultAntigravityModels returns standard models for accounts without Argon tier.
 func DefaultAntigravityModels() []string {
 	return []string{
+		"gemini-4-hydrogen-high",
+		"gemini-4-hydrogen-xhigh",
+		"gemini-4-hydrogen-medium",
+		"gemini-4-hydrogen-low",
 		"gemini-3.8-flash-high",
 		"gemini-3.8-flash-medium",
 		"gemini-3.8-flash-low",
@@ -116,6 +120,51 @@ func DefaultAntigravityModels() []string {
 		"claude-opus-4-6-thinking",
 		"gpt-oss-120b-medium",
 	}
+}
+
+// ParseAgyModelsOutput extracts model IDs from `agy models` CLI output.
+func ParseAgyModelsOutput(raw string) []string {
+	seen := make(map[string]bool)
+	var models []string
+	// Handle carriage-return spinner frames by taking the last segment per line.
+	for _, line := range strings.Split(raw, "\n") {
+		if cr := strings.LastIndexByte(line, '\r'); cr >= 0 {
+			line = line[cr+1:]
+		}
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		id := fields[0]
+		if strings.HasPrefix(id, "Fetching") || !strings.Contains(id, "-") {
+			continue
+		}
+		if !seen[id] {
+			seen[id] = true
+			models = append(models, id)
+		}
+	}
+	return models
+}
+
+// FetchAgyCLIModels queries the official `agy models` command for the active
+// account's live available model list.
+func FetchAgyCLIModels(ctx context.Context) ([]string, error) {
+	bin := findAgyBinary()
+	if bin == "" {
+		return nil, errors.New("agy CLI not found")
+	}
+	tctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(tctx, bin, "models").Output()
+	if err != nil {
+		return nil, err
+	}
+	models := ParseAgyModelsOutput(string(out))
+	if len(models) == 0 {
+		return nil, errors.New("no models returned by agy models")
+	}
+	return models, nil
 }
 
 func modelPriority(id string) int {

@@ -1326,7 +1326,11 @@ func (a *AppUI) renderToolRowEx(c *ui.Context, tc theme.ThemeColors, sessionID s
 				}
 				if fileChip.Clicked() {
 					labelClicked = true
-					a.openTranscriptFileInSidePane(v.FilePath)
+					if v.Family == tfChange {
+						a.openTranscriptFileInSidePaneDiff(v.FilePath)
+					} else {
+						a.openTranscriptFileInSidePane(v.FilePath)
+					}
 				}
 			} else if v.Label != "" {
 				lbl := ui.Text(c, v.Label).FontSize(13).TextColor(tc.Text).SingleLine()
@@ -1870,6 +1874,14 @@ func fileExtBadgeColor(path string, tc theme.ThemeColors) ui.Color {
 // elsewhere on disk — are rejected: agent-controlled strings must not open
 // arbitrary locations.
 func (a *AppUI) openTranscriptFileInSidePane(path string) {
+	a.openTranscriptFileInSidePaneOpts(path, false)
+}
+
+func (a *AppUI) openTranscriptFileInSidePaneDiff(path string) {
+	a.openTranscriptFileInSidePaneOpts(path, true)
+}
+
+func (a *AppUI) openTranscriptFileInSidePaneOpts(path string, diff bool) {
 	if path == "" || a.Workspace == nil {
 		return
 	}
@@ -1879,8 +1891,9 @@ func (a *AppUI) openTranscriptFileInSidePane(path string) {
 	}
 	clean := filepath.Clean(path)
 	if strings.HasPrefix(clean, "ssh://") {
-		// ssh://… paths resolve inside that remote workspace — keep the
-		// string as-is; there is no local root to escape.
+		if diff {
+			a.SideFileDiffMode[clean] = true
+		}
 		a.openSidePreviewFile(nil, clean)
 		return
 	}
@@ -1895,6 +1908,12 @@ func (a *AppUI) openTranscriptFileInSidePane(path string) {
 		clean = r
 	} else if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return // relative escape
+	}
+	if diff {
+		a.SideFileDiffMode[clean] = true
+		if a.Git != nil {
+			a.Git.RefreshAsync()
+		}
 	}
 	a.openSidePreviewFile(nil, clean)
 }

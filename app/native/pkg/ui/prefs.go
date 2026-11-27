@@ -41,6 +41,16 @@ type uiPrefs struct {
 	ProjectOrder         []string                     `json:"project_order"` // custom sidebar project-group order
 	ProjectIcons         map[string]ProjectIconConfig `json:"project_icons,omitempty"`
 	CustomProjects       []CustomProject              `json:"custom_projects,omitempty"`
+	RightDrawerTab       *int                         `json:"right_drawer_tab,omitempty"`
+	DrawerTabs           []DrawerTabInstance          `json:"drawer_tabs,omitempty"`
+	DrawerActiveIdx      int                          `json:"drawer_active_idx,omitempty"`
+	SideFileTabs         []string                     `json:"side_file_tabs,omitempty"`
+	ActiveSideFile       string                       `json:"active_side_file,omitempty"`
+	SideFileDiffMode     map[string]bool              `json:"side_file_diff_mode,omitempty"`
+	AgentOpenTabs        []string                     `json:"agent_open_tabs,omitempty"`
+	ActiveSessionID      string                       `json:"active_session_id,omitempty"`
+	AgentSplitSessionID  string                       `json:"agent_split_session_id,omitempty"`
+	AgentSplitWidth      float32                      `json:"agent_split_width,omitempty"`
 }
 
 func (a *AppUI) prefsPath() string {
@@ -156,6 +166,56 @@ func (a *AppUI) loadUIPrefs() {
 	if len(p.CustomProjects) > 0 {
 		a.CustomProjects = p.CustomProjects
 	}
+	if p.RightDrawerTab != nil {
+		a.RightDrawerTab = *p.RightDrawerTab
+	}
+	if len(p.DrawerTabs) > 0 {
+		restored := make([]DrawerTabInstance, 0, len(p.DrawerTabs))
+		for _, dt := range p.DrawerTabs {
+			// Skip ephemeral terminal/chat instances without backing process;
+			// singleton panes & launcher restore directly.
+			if dt.Kind == RightTabTerminal || dt.Kind == RightTabChat {
+				continue
+			}
+			restored = append(restored, dt)
+		}
+		if len(restored) > 0 {
+			a.DrawerTabs = restored
+			idx := p.DrawerActiveIdx
+			if idx < 0 || idx >= len(restored) {
+				idx = 0
+			}
+			a.drawerActiveIdx = idx
+			a.RightDrawerTab = restored[idx].Kind
+		}
+	}
+	if len(p.SideFileTabs) > 0 {
+		a.SideFileTabs = append([]string(nil), p.SideFileTabs...)
+		a.ActiveSideFile = p.ActiveSideFile
+		if a.ActiveSideFile == "" && len(a.SideFileTabs) > 0 {
+			a.ActiveSideFile = a.SideFileTabs[0]
+		}
+	}
+	if len(p.SideFileDiffMode) > 0 {
+		if a.SideFileDiffMode == nil {
+			a.SideFileDiffMode = make(map[string]bool)
+		}
+		for k, v := range p.SideFileDiffMode {
+			a.SideFileDiffMode[k] = v
+		}
+	}
+	if len(p.AgentOpenTabs) > 0 {
+		a.pendingOpenTabs = append([]string(nil), p.AgentOpenTabs...)
+	}
+	if p.ActiveSessionID != "" {
+		a.pendingActiveSessionID = p.ActiveSessionID
+	}
+	if p.AgentSplitSessionID != "" {
+		a.pendingSplitSessionID = p.AgentSplitSessionID
+	}
+	if p.AgentSplitWidth > 0 {
+		a.AgentSplitWidth = p.AgentSplitWidth
+	}
 }
 
 // SaveUIPrefs snapshots the current preferences to disk (best effort).
@@ -166,6 +226,11 @@ func (a *AppUI) SaveUIPrefs() {
 	}
 	glassOp := a.ThemeMgr.EffectiveGlassOpacity()
 	bgOp := a.ThemeMgr.EffectiveBackgroundOpacity()
+	rdTab := a.RightDrawerTab
+	activeSessID := ""
+	if a.Agent != nil {
+		activeSessID = a.Agent.ActiveSessionID
+	}
 	p := uiPrefs{
 		Appearance:           a.ThemeMgr.Appearance,
 		PaletteID:            a.ThemeMgr.PaletteID,
@@ -192,6 +257,16 @@ func (a *AppUI) SaveUIPrefs() {
 		ProjectOrder:         a.ProjectOrder,
 		ProjectIcons:         a.ProjectIcons,
 		CustomProjects:       a.CustomProjects,
+		RightDrawerTab:       &rdTab,
+		DrawerTabs:           a.DrawerTabs,
+		DrawerActiveIdx:      a.drawerActiveIdx,
+		SideFileTabs:         a.SideFileTabs,
+		ActiveSideFile:       a.ActiveSideFile,
+		SideFileDiffMode:     a.SideFileDiffMode,
+		AgentOpenTabs:        a.AgentOpenTabs,
+		ActiveSessionID:      activeSessID,
+		AgentSplitSessionID:  a.AgentSplitSessionID,
+		AgentSplitWidth:      a.AgentSplitWidth,
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
@@ -230,10 +305,14 @@ func (a *AppUI) prefsSnapshot() string {
 		f(a.FollowAgent), a.LeftSidebarView, a.SidebarListView, a.ProjectFilter, a.TaskSortBy,
 		strings.Join(a.ProjectOrder, ","),
 		fmt.Sprintf("%d:%d", len(a.ProjectIcons), len(a.CustomProjects)),
+		fmt.Sprintf("%d:%d:%d:%s:%s:%s:%.0f",
+			a.RightDrawerTab, len(a.DrawerTabs), a.drawerActiveIdx,
+			strings.Join(a.SideFileTabs, ","), a.ActiveSideFile,
+			strings.Join(a.AgentOpenTabs, ","), a.AgentSplitWidth),
 	}.String()
 }
 
-type prefsSnap [24]string
+type prefsSnap [25]string
 
 func (p prefsSnap) String() string {
 	return strings.Join(p[:], "|")

@@ -73,7 +73,7 @@ const (
 
 // Layout metrics of ForgeADE's CSS
 const (
-	WorkspaceTopBarHeight = float32(36)
+	WorkspaceTopBarHeight = float32(40)
 	RightDrawerDefault    = float32(360)
 	LeftSidebarDefault    = float32(288)
 	TerminalHeaderHeight  = float32(34)
@@ -301,6 +301,7 @@ type AppUI struct {
 	SideFilePreviewImage string
 	SideFilePreviewMd    string
 	SideFileDiffMode     map[string]bool
+	lastSideFileSync     time.Time
 	sidePreviewImgPath   string
 	sidePreviewImgMod    int64
 	sidePreviewImgSrc    ui.ImageSource
@@ -314,6 +315,9 @@ type AppUI struct {
 
 	// Local Bots, ACP Handoff, Multi-Tab & Hybrid Worker Orchestration state
 	AgentOpenTabs          []string
+	pendingOpenTabs        []string
+	pendingActiveSessionID string
+	pendingSplitSessionID  string
 	AgentSplitSessionID    string
 	AgentSplitWidth        float32
 	AgentSplitInput        string
@@ -416,6 +420,7 @@ type AppUI struct {
 	SelectedHarnessID           string
 	SelectedProviderTab         string
 	isFetchingAntigravityModels bool
+	agyModelsFetched            bool
 	CollapsedProjectGroups      map[string]bool
 	ExpandedProjectGroups       map[string]bool
 	ExpandedFileTreeFolders     map[string]bool
@@ -3246,6 +3251,9 @@ func (a *AppUI) renderMainColumn(c *ui.Context) {
 				a.renderWorkspaceHeader(c)
 
 				ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+					if !a.ShowLeftSidebar {
+						a.renderCollapsedLeftRail(c)
+					}
 					a.renderStudioSurface(c)
 				})
 			})
@@ -3287,6 +3295,9 @@ func (a *AppUI) renderMainColumn(c *ui.Context) {
 				a.renderWorkspaceHeader(c)
 
 				ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
+					if !a.ShowLeftSidebar {
+						a.renderCollapsedLeftRail(c)
+					}
 					a.renderAgentSurface(c)
 				})
 			})
