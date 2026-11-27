@@ -472,13 +472,11 @@ func (a *AppUI) renderGlobalHeaderTrailingControls(c *ui.Context, tc theme.Theme
 		}
 	})
 
-	if a.Mode != ModeAgent || !a.ShowLeftSidebar {
-		if IconButton(c, tc, icons.TablerSettings, 14).Shrink(0).Tooltip("Settings (⌘,)").Clicked() {
-			if a.Mode == ModeStudio {
-				a.openSettings(settings.SettingsTabStudio)
-			} else {
-				a.openSettings(settings.SettingsTabGeneral)
-			}
+	if IconButton(c, tc, icons.TablerSettings, 14).Shrink(0).Tooltip("Settings (⌘,)").Clicked() {
+		if a.Mode == ModeStudio {
+			a.openSettings(settings.SettingsTabStudio)
+		} else {
+			a.openSettings(settings.SettingsTabGeneral)
 		}
 	}
 	if ts := a.displayedTerminal(); ts != nil {

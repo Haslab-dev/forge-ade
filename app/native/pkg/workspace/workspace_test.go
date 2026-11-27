@@ -130,3 +130,38 @@ func TestWorkspaceFileOperations(t *testing.T) {
 		t.Fatalf("expected 0 files after delete, got %d", len(ws.Files))
 	}
 }
+
+func TestSearchFilesIncludeExcludeAndDefaults(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"src/app.ts":               "const tingkatkan = true;\n",
+		"src/ignored.min.ts":       "const tingkatkan = false;\n",
+		"node_modules/pkg/idx.js":  "const tingkatkan = 1;\n",
+		"ios/Pods/lib/pod.swift":   "let tingkatkan = 2\n",
+		"android/.gradle/cache.kt": "val tingkatkan = 3\n",
+		"docs/readme.md":           "Tingkatkan performa\n",
+	}
+	for rel, content := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ws := NewWorkspaceState(dir)
+	// Include a directory entry to verify IsDir does not abort the scan.
+	ws.Files = append([]WorkspaceFile{{RelativePath: "src", FullPath: filepath.Join(dir, "src"), IsDir: true}}, ws.Files...)
+
+	hits := ws.SearchFilesWithOptions(context.Background(), FileSearchOptions{
+		Query:              "tingkatkan",
+		Include:            "*.ts, *.md",
+		Exclude:            "*.min.ts",
+		UseDefaultExcludes: true,
+	})
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 hits (src/app.ts and docs/readme.md), got %d: %+v", len(hits), hits)
+	}
+}

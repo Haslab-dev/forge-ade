@@ -75,7 +75,10 @@ func (a *AppUI) renderProjectSearchModal(c *ui.Context) {
 				qbox.Children(func() {
 					ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.IconMuted)
 					in := ui.TextInput(c, &a.FileSearchQuery).Placeholder("Search content… (⏎)").Grow(1)
-					if in.Changed() || in.Submitted() {
+					if in.Changed() {
+						a.scheduleEditorSearch()
+					}
+					if in.Submitted() {
 						a.runEditorSearch()
 					}
 				})
@@ -84,13 +87,42 @@ func (a *AppUI) renderProjectSearchModal(c *ui.Context) {
 				a.renderSearchToggle(c, tc, "ab", "Match whole word", &a.FileSearchWholeWord)
 			})
 
-			// Include glob + replace row.
+			// Include / exclude glob + replace row.
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "include").FontSize(11).TextColor(tc.TextMuted)
 				globIn := ui.TextInput(c, &a.FileSearchGlob).Placeholder("*.go, src/**").Grow(1).FontSize(11).Height(24)
-				if globIn.Changed() || globIn.Submitted() {
+				if globIn.Changed() {
+					a.scheduleEditorSearch()
+				}
+				if globIn.Submitted() {
 					a.runEditorSearch()
 				}
+				ui.Text(c, "exclude").FontSize(11).TextColor(tc.TextMuted)
+				excIn := ui.TextInput(c, &a.FileSearchExclude).Placeholder("*.min.js, gen/**").Grow(1).FontSize(11).Height(24)
+				if excIn.Changed() {
+					a.scheduleEditorSearch()
+				}
+				if excIn.Submitted() {
+					a.runEditorSearch()
+				}
+				useDef := !a.FileSearchNoDefaultExcludes
+				defBtn := ui.Row(c.Key("ps-def-excl")).Height(24).Radius(6).Padding(0, 8).AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
+				if useDef {
+					defBtn.Background(tc.Accent.Alpha(0.14)).BorderColor(tc.Accent.Alpha(0.35))
+				} else {
+					defBtn.Background(tc.Surface).BorderColor(tc.Border)
+				}
+				defBtn.Tooltip("Exclude default dependency & build folders")
+				defBtn.Children(func() {
+					ui.Text(c, "Ignore deps").FontSize(10).FontWeight(500).TextColor(tc.Text)
+				})
+				if defBtn.Clicked() {
+					a.FileSearchNoDefaultExcludes = !a.FileSearchNoDefaultExcludes
+					a.runEditorSearch()
+				}
+			})
+
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 				repIn := ui.TextInput(c, &a.FileSearchReplace).Placeholder("replace with…").Grow(1).FontSize(11).Height(24)
 				_ = repIn
 				repBtn := ui.Row(c.Key("ps-replace-all")).Height(24).Radius(6).Padding(0, 10).AlignItems(ui.Center).

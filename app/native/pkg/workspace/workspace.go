@@ -5,10 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/hasdev/forge-ade/core/remotefs"
 )
@@ -547,74 +550,353 @@ const (
 	searchMaxFileBytes = 512 << 10 // skip files above 512 KB
 	searchMaxHits      = 200
 	searchMaxPerFile   = 20
+	searchWorkers      = 4
 )
 
-// SearchFiles greps the workspace's tracked files for a case-insensitive
-// substring and returns up to 200 hits, mirroring forge-ade's project
-// search. Binary-looking files are skipped. The file index is read under the
-// state's read lock (snapshot copy), and ctx cancellation stops the scan.
-func (ws *WorkspaceState) SearchFiles(ctx context.Context, query string) []FileSearchHit {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+// DefaultSearchExcludeDirs lists dependency, build, cache, and VCS directories
+// excluded by default (VS Code-style files.exclude / search.exclude).
+var DefaultSearchExcludeDirs = map[string]bool{
+	"node_modules":  true,
+	".git":          true,
+	".hg":           true,
+	".svn":          true,
+	"pods":          true,
+	".gradle":       true,
+	"build":         true,
+	"dist":          true,
+	"out":           true,
+	"target":        true,
+	"vendor":        true,
+	".dart_tool":    true,
+	".pub-cache":    true,
+	".next":         true,
+	".nuxt":         true,
+	".output":       true,
+	".turbo":        true,
+	".cache":        true,
+	".parcel-cache": true,
+	".venv":         true,
+	"venv":          true,
+	"__pycache__":   true,
+	".pytest_cache": true,
+	".mypy_cache":   true,
+	".ruff_cache":   true,
+	"deriveddata":   true,
+	".build":        true,
+	".swiftpm":      true,
+	"carthage":      true,
+	".cargo":        true,
+	"coverage":      true,
+	"bin":           true,
+	"obj":           true,
+	".idea":         true,
+	".vscode-test":  true,
+	".bundle":       true,
+}
+
+// FileSearchOptions configures workspace file/content search with VS Code-style
+// include/exclude globs and default dependency-folder exclusions.
+type FileSearchOptions struct {
+	Query              string
+	Include            string
+	Exclude            string
+	UseDefaultExcludes bool
+	MatchCase          bool
+	UseRegex           bool
+	MatchWholeWord     bool
+	MaxHits            int
+}
+
+func splitSearchGlobs(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
 		return nil
 	}
-	// Snapshot the index under RLock; the reads below are file IO and must
-	// not hold the lock (Refresh writes it from watcher goroutines).
-	ws.mu.RLock()
-	files := make([]WorkspaceFile, len(ws.Files))
-	copy(files, ws.Files)
-	ws.mu.RUnlock()
+	parts := strings.Split(raw, ",")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(filepath.ToSlash(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
-	var hits []FileSearchHit
-	for _, f := range files {
-		if f.IsDir || len(hits) >= searchMaxHits {
-			break
+func matchSearchGlob(relSlash, base, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
+	relLower := strings.ToLower(relSlash)
+	baseLower := strings.ToLower(base)
+	pat := strings.ToLower(strings.TrimPrefix(strings.TrimSuffix(pattern, "/"), "./"))
+	if pat == "" {
+		return false
+	}
+	// Exact segment match for plain folder/name patterns like "node_modules" or "Pods".
+	if !strings.ContainsAny(pat, "*?/") {
+		for _, seg := range strings.Split(relLower, "/") {
+			if seg == pat {
+				return true
+			}
 		}
-		select {
-		case <-ctx.Done():
-			return hits
-		default:
+	}
+	// Strip leading "**/" for convenience when matching relative paths or basenames.
+	patTrim := strings.TrimPrefix(pat, "**/")
+	if !strings.Contains(patTrim, "/") {
+		if ok, _ := path.Match(patTrim, baseLower); ok {
+			return true
 		}
-		data, err := os.ReadFile(f.FullPath)
-		if err != nil || len(data) > searchMaxFileBytes {
-			continue
+	}
+	if ok, _ := path.Match(pat, relLower); ok {
+		return true
+	}
+	if ok, _ := path.Match(patTrim, relLower); ok {
+		return true
+	}
+	// Handle "prefix/**" or "**/mid/**"
+	if strings.HasSuffix(pat, "/**") {
+		dir := strings.TrimSuffix(pat, "/**")
+		dir = strings.TrimPrefix(dir, "**/")
+		if dir != "" && (strings.HasPrefix(relLower, dir+"/") || strings.Contains(relLower, "/"+dir+"/")) {
+			return true
 		}
-		if isBinary(data) {
-			continue
+	}
+	return false
+}
+
+// MatchesSearchFilters checks whether relPath passes default dependency-folder
+// exclusions as well as custom include and exclude comma-separated glob patterns.
+func MatchesSearchFilters(relPath, includeGlob, excludeGlob string, useDefaultExcludes bool) bool {
+	relSlash := filepath.ToSlash(relPath)
+	base := path.Base(relSlash)
+
+	if useDefaultExcludes {
+		for _, seg := range strings.Split(strings.ToLower(relSlash), "/") {
+			if seg != "" && DefaultSearchExcludeDirs[seg] {
+				return false
+			}
 		}
-		lower := strings.ToLower(string(data))
-		start := 0
-		perFile := 0
-		line := 1
-		for perFile < searchMaxPerFile && len(hits) < searchMaxHits {
-			idx := strings.Index(lower[start:], query)
-			if idx == -1 {
+	}
+
+	excludes := splitSearchGlobs(excludeGlob)
+	for _, pat := range excludes {
+		if matchSearchGlob(relSlash, base, pat) {
+			return false
+		}
+	}
+
+	includes := splitSearchGlobs(includeGlob)
+	if len(includes) > 0 {
+		matched := false
+		for _, pat := range includes {
+			if matchSearchGlob(relSlash, base, pat) {
+				matched = true
 				break
 			}
-			abs := start + idx
-			line += strings.Count(lower[start:abs], "\n")
-			lineStart := strings.LastIndexByte(lower[:abs], '\n') + 1
-			lineEnd := lineStart
-			if lineEnd < len(lower) {
-				if nl := strings.IndexByte(lower[abs:], '\n'); nl != -1 {
-					lineEnd = abs + nl
-				} else {
-					lineEnd = len(lower)
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// SearchFiles greps the workspace's tracked files for a case-insensitive
+// substring using default dependency-folder exclusions.
+func (ws *WorkspaceState) SearchFiles(ctx context.Context, query string) []FileSearchHit {
+	return ws.SearchFilesWithOptions(ctx, FileSearchOptions{
+		Query:              query,
+		UseDefaultExcludes: true,
+	})
+}
+
+// SearchFilesWithOptions performs a bounded, parallel, cancellable workspace search
+// supporting VS Code-style include/exclude globs, default dependency excludes,
+// case sensitivity, whole-word, and regex matching.
+func (ws *WorkspaceState) SearchFilesWithOptions(ctx context.Context, opts FileSearchOptions) []FileSearchHit {
+	rawQuery := strings.TrimSpace(opts.Query)
+	if rawQuery == "" {
+		return nil
+	}
+	maxHits := opts.MaxHits
+	if maxHits <= 0 {
+		maxHits = searchMaxHits
+	}
+
+	var re *regexp.Regexp
+	if opts.UseRegex || opts.MatchWholeWord {
+		pattern := rawQuery
+		if !opts.UseRegex {
+			pattern = regexp.QuoteMeta(pattern)
+		}
+		if opts.MatchWholeWord {
+			pattern = `\b` + pattern + `\b`
+		}
+		if !opts.MatchCase {
+			pattern = `(?i)` + pattern
+		}
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil
+		}
+		re = compiled
+	}
+	needle := rawQuery
+	if !opts.MatchCase {
+		needle = strings.ToLower(rawQuery)
+	}
+
+	// Snapshot & pre-filter the file list under RLock so excluded/dependency
+	// folders never touch disk IO.
+	ws.mu.RLock()
+	candidates := make([]WorkspaceFile, 0, len(ws.Files))
+	for _, f := range ws.Files {
+		if f.IsDir {
+			continue
+		}
+		if MatchesSearchFilters(f.RelativePath, opts.Include, opts.Exclude, opts.UseDefaultExcludes) {
+			candidates = append(candidates, f)
+		}
+	}
+	ws.mu.RUnlock()
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	type indexedHits struct {
+		idx  int
+		hits []FileSearchHit
+	}
+
+	workers := searchWorkers
+	if len(candidates) < workers {
+		workers = len(candidates)
+	}
+	jobs := make(chan int, len(candidates))
+	results := make(chan indexedHits, len(candidates))
+	var totalHits atomic.Int32
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				if ctx.Err() != nil || int(totalHits.Load()) >= maxHits {
+					return
+				}
+				f := candidates[idx]
+				info, err := os.Stat(f.FullPath)
+				if err != nil || info.IsDir() || info.Size() > searchMaxFileBytes {
+					continue
+				}
+				data, err := os.ReadFile(f.FullPath)
+				if err != nil || len(data) > searchMaxFileBytes || isBinary(data) {
+					continue
+				}
+
+				fileHits := scanFileHits(f.RelativePath, data, needle, opts.MatchCase, re, searchMaxPerFile)
+				if len(fileHits) > 0 {
+					totalHits.Add(int32(len(fileHits)))
+					results <- indexedHits{idx: idx, hits: fileHits}
 				}
 			}
-			text := strings.TrimSpace(string(data)[lineStart:lineEnd])
-			if len(text) > 160 {
-				text = truncationSafe(text, 160) + "…"
+		}()
+	}
+
+	for i := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+
+	var collected []indexedHits
+	for r := range results {
+		collected = append(collected, r)
+	}
+	sort.Slice(collected, func(i, j int) bool {
+		return collected[i].idx < collected[j].idx
+	})
+
+	var out []FileSearchHit
+	for _, r := range collected {
+		for _, h := range r.hits {
+			out = append(out, h)
+			if len(out) >= maxHits {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func scanFileHits(relPath string, data []byte, needle string, matchCase bool, re *regexp.Regexp, maxPerFile int) []FileSearchHit {
+	text := string(data)
+	var hits []FileSearchHit
+	if re != nil {
+		locs := re.FindAllStringIndex(text, maxPerFile)
+		if len(locs) == 0 {
+			return nil
+		}
+		lastOff := 0
+		line := 1
+		for _, loc := range locs {
+			abs := loc[0]
+			line += strings.Count(text[lastOff:abs], "\n")
+			lastOff = abs
+			lineStart := strings.LastIndexByte(text[:abs], '\n') + 1
+			lineEnd := len(text)
+			if nl := strings.IndexByte(text[abs:], '\n'); nl != -1 {
+				lineEnd = abs + nl
+			}
+			lineText := strings.TrimSpace(text[lineStart:lineEnd])
+			if len(lineText) > 160 {
+				lineText = truncationSafe(lineText, 160) + "…"
 			}
 			hits = append(hits, FileSearchHit{
-				Path:      f.RelativePath,
+				Path:      relPath,
 				Line:      line,
-				Text:      text,
+				Text:      lineText,
 				ByteStart: abs,
 			})
-			perFile++
-			start = abs + len(query)
 		}
+		return hits
+	}
+
+	hay := text
+	if !matchCase {
+		hay = strings.ToLower(text)
+	}
+	start := 0
+	line := 1
+	for len(hits) < maxPerFile {
+		idx := strings.Index(hay[start:], needle)
+		if idx == -1 {
+			break
+		}
+		abs := start + idx
+		line += strings.Count(hay[start:abs], "\n")
+		lineStart := strings.LastIndexByte(hay[:abs], '\n') + 1
+		lineEnd := len(text)
+		if nl := strings.IndexByte(text[abs:], '\n'); nl != -1 {
+			lineEnd = abs + nl
+		}
+		lineText := strings.TrimSpace(text[lineStart:lineEnd])
+		if len(lineText) > 160 {
+			lineText = truncationSafe(lineText, 160) + "…"
+		}
+		hits = append(hits, FileSearchHit{
+			Path:      relPath,
+			Line:      line,
+			Text:      lineText,
+			ByteStart: abs,
+		})
+		start = abs + len(needle)
 	}
 	return hits
 }

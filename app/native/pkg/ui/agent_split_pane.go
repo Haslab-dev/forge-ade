@@ -292,7 +292,7 @@ func (a *AppUI) renderAgentHeaderTabStrip(c *ui.Context, tc theme.ThemeColors) {
 					}
 					isActive := id == activeID
 					needsApproval := a.sessionNeedsApproval(sess)
-					isRunning := (isActive && a.Agent != nil && a.Agent.IsStreaming) || sess.Status == "running" || sess.Status == "working"
+					isRunning := sess.Status == "running" || sess.Status == "streaming" || sess.Status == "working"
 					statusColor := tc.Success
 					if needsApproval {
 						statusColor = tc.Warning
@@ -314,7 +314,17 @@ func (a *AppUI) renderAgentHeaderTabStrip(c *ui.Context, tc theme.ThemeColors) {
 						if !isRunning {
 							ui.Box(c).Size(6, 6).Radius(3).Background(statusColor).Shrink(0)
 						}
-						if sess.AgentType == "internal" || strings.Contains(strings.ToLower(sess.AgentID), "internal") {
+						tabTitle := sess.Title
+						var tabBot *agent.BotProfile
+						if sess.BotID != "" && a.Bots != nil {
+							tabBot = a.Bots.Get(sess.BotID)
+						}
+						if tabBot != nil {
+							a.renderBotAvatar(c, tc, tabBot, 16, 4)
+							if sess.ID == tabBot.HomeSessionID || strings.HasSuffix(tabTitle, " · Home") {
+								tabTitle = tabBot.Name
+							}
+						} else if sess.AgentType == "internal" || strings.Contains(strings.ToLower(sess.AgentID), "internal") {
 							ui.Icon(c, icons.ProviderForgeADE).Width(12).Height(12)
 						} else {
 							lookup := strings.TrimSpace(sess.AgentID + " " + sess.Model)
@@ -322,7 +332,7 @@ func (a *AppUI) renderAgentHeaderTabStrip(c *ui.Context, tc theme.ThemeColors) {
 								icons.RenderProviderIcon(c, lookup, 12)
 							}
 						}
-						txt := ui.Text(c, sess.Title).FontSize(12).MaxWidth(175).SingleLine()
+						txt := ui.Text(c, tabTitle).FontSize(12).MaxWidth(175).SingleLine()
 						if isActive {
 							txt.FontWeight(500).TextColor(tc.Text)
 						} else {

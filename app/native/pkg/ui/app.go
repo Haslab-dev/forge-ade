@@ -197,36 +197,42 @@ type AppUI struct {
 	// DrawerTabs holds the OPEN drawer panes as tab instances (launcher
 	// tabs, terminal sessions, review, files… — duplicates allowed, ZCode
 	// style). RightDrawerTab mirrors the active entry.
-	DrawerTabs            []DrawerTabInstance
-	drawerActiveIdx       int
-	agentDrawerState      ModeDrawerState
-	editorDrawerState     ModeDrawerState
-	studioDrawerState     ModeDrawerState
-	activeDrawerMode      int
-	EditorActivity        int // ActivityExplorer, ActivityGit, ActivityDatabase
-	SelectedFile          string
-	FileSearchQuery       string
-	FileSearchHits        []workspace.FileSearchHit
-	FileSearchMode        string // "files" | "content" (ProjectSearchModal parity)
-	FileSearchCase        bool
-	FileSearchRegex       bool
-	FileSearchWholeWord   bool
-	FileSearchGlob        string
-	FileSearchReplaceOpen bool
-	FileSearchReplace     string
-	FileSearchBusy        bool
-	SearchStatusMsg       string
-	ContentHits           []search.RankedResult
-	ContentHitsAt         string
-	SelectedDiffPath      string
-	SideChatMessages      []*agent.ChatMessage
-	SideChatInput         string
-	SideChatModel         string
-	SideChatMode          string // "full", "ask", "plan"
-	SideChatStreaming     bool
-	SideChatMd            markdown.Options
-	SideChatSessions      map[string]*SideChatSession
-	ActiveSideChatID      string
+	DrawerTabs                  []DrawerTabInstance
+	drawerActiveIdx             int
+	agentDrawerState            ModeDrawerState
+	editorDrawerState           ModeDrawerState
+	studioDrawerState           ModeDrawerState
+	activeDrawerMode            int
+	EditorActivity              int // ActivityExplorer, ActivityGit, ActivityDatabase
+	SelectedFile                string
+	FileSearchQuery             string
+	FileSearchHits              []workspace.FileSearchHit
+	FileSearchMode              string // "files" | "content" (ProjectSearchModal parity)
+	FileSearchCase              bool
+	FileSearchRegex             bool
+	FileSearchWholeWord         bool
+	FileSearchGlob              string
+	FileSearchExclude           string
+	FileSearchNoDefaultExcludes bool
+	FileSearchDetailsOpen       bool
+	FileSearchReplaceOpen       bool
+	FileSearchReplace           string
+	FileSearchBusy              bool
+	SearchStatusMsg             string
+	ContentHits                 []search.RankedResult
+	ContentHitsAt               string
+	searchCancel                context.CancelFunc
+	searchDebounce              *time.Timer
+	searchSeq                   uint64
+	SelectedDiffPath            string
+	SideChatMessages            []*agent.ChatMessage
+	SideChatInput               string
+	SideChatModel               string
+	SideChatMode                string // "full", "ask", "plan"
+	SideChatStreaming           bool
+	SideChatMd                  markdown.Options
+	SideChatSessions            map[string]*SideChatSession
+	ActiveSideChatID            string
 
 	// Composer autocomplete state (slash commands / @-mentions): visibility
 	// derives from the composer text each frame; the dismissal latches hold

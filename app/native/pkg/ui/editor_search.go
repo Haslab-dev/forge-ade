@@ -24,7 +24,20 @@ import (
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 )
+
+func workspaceSearchOpts(query, include, exclude string, useDefExcl, matchCase, useRegex, wholeWord bool) workspace.FileSearchOptions {
+	return workspace.FileSearchOptions{
+		Query:              query,
+		Include:            include,
+		Exclude:            exclude,
+		UseDefaultExcludes: useDefExcl,
+		MatchCase:          matchCase,
+		UseRegex:           useRegex,
+		MatchWholeWord:     wholeWord,
+	}
+}
 
 // truncRunes cuts s to at most max runes so multi-byte UTF-8 is never split
 // mid-rune (thread_find.go's preview pattern).
@@ -89,29 +102,105 @@ func (a *AppUI) renderFileSearch(c *ui.Context) {
 		}
 	})
 
-	// Query row.
+	// Query row + VS Code "..." details toggle.
 	ui.Row(c).Padding(4, 10).Gap(6).AlignItems(ui.Center).Children(func() {
 		ui.Icon(c, icons.TablerSearch).Width(13).Height(13).TextColor(tc.IconMuted)
 		in := ui.TextInput(c, &a.FileSearchQuery).Placeholder("Search in files... (⏎)").Grow(1)
-		if in.Changed() || in.Submitted() {
+		if in.Changed() {
+			a.scheduleEditorSearch()
+		}
+		if in.Submitted() {
 			a.runEditorSearch()
+		}
+		detBtn := ui.Row(c.Key("fs-details-tog")).Size(22, 22).Radius(5).
+			AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer)
+		if a.FileSearchDetailsOpen || a.FileSearchGlob != "" || a.FileSearchExclude != "" {
+			detBtn.Background(tc.Accent.Alpha(0.16)).BorderWidth(1).BorderColor(tc.Accent.Alpha(0.4))
+		} else {
+			detBtn.Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border)
+		}
+		detBtn.Tooltip("Toggle Search Details (files to include / exclude)")
+		detBtn.Children(func() {
+			ui.Text(c, "…").FontSize(11).FontWeight(600)
+		})
+		if detBtn.Clicked() {
+			a.FileSearchDetailsOpen = !a.FileSearchDetailsOpen
 		}
 	})
 
-	// Options row (content mode): Aa | .* | [w] toggles + include glob.
+	// Options row (content mode): Aa | .* | ab toggles.
 	if a.FileSearchMode == "content" {
 		ui.Row(c).Padding(2, 10).Gap(4).AlignItems(ui.Center).Children(func() {
 			a.renderSearchToggle(c, tc, "Aa", "Match case", &a.FileSearchCase)
 			a.renderSearchToggle(c, tc, ".*", "Regular expression", &a.FileSearchRegex)
 			a.renderSearchToggle(c, tc, "ab", "Match whole word", &a.FileSearchWholeWord)
 			ui.Box(c).Grow(1)
-			globIn := ui.TextInput(c, &a.FileSearchGlob).Placeholder("*.go, src/**").Grow(1).
-				FontSize(11).Height(22)
-			if globIn.Changed() || globIn.Submitted() {
+			useDef := !a.FileSearchNoDefaultExcludes
+			defBtn := ui.Row(c.Key("fs-def-excl")).Height(22).Radius(5).Padding(0, 7).Gap(4).
+				AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
+			if useDef {
+				defBtn.Background(tc.Accent.Alpha(0.14)).BorderColor(tc.Accent.Alpha(0.35))
+			} else {
+				defBtn.Background(tc.Surface).BorderColor(tc.Border)
+			}
+			defBtn.Tooltip("Exclude default dependency & build folders (node_modules, Pods, .gradle, vendor, target, dist, etc.)")
+			defBtn.Children(func() {
+				ui.Text(c, "Ignore deps").FontSize(10).FontWeight(500).TextColor(tc.Text)
+			})
+			if defBtn.Clicked() {
+				a.FileSearchNoDefaultExcludes = !a.FileSearchNoDefaultExcludes
 				a.runEditorSearch()
 			}
 		})
+	}
 
+	// VS Code-style Include & Exclude rows (both Files and Content modes).
+	if a.FileSearchDetailsOpen {
+		ui.Column(c).Padding(2, 10, 4, 10).Gap(4).Children(func() {
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, "files to include").FontSize(10).TextColor(tc.TextMuted)
+				incIn := ui.TextInput(c, &a.FileSearchGlob).Placeholder("e.g. *.go, src/**").FillWidth().FontSize(11).Height(22)
+				if incIn.Changed() {
+					a.scheduleEditorSearch()
+				}
+				if incIn.Submitted() {
+					a.runEditorSearch()
+				}
+			})
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Row(c).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "files to exclude").FontSize(10).TextColor(tc.TextMuted).Grow(1)
+					if a.FileSearchMode != "content" {
+						useDef := !a.FileSearchNoDefaultExcludes
+						defBtn := ui.Row(c.Key("fs-def-excl-f")).Height(18).Radius(4).Padding(0, 6).
+							AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
+						if useDef {
+							defBtn.Background(tc.Accent.Alpha(0.14)).BorderColor(tc.Accent.Alpha(0.35))
+						} else {
+							defBtn.Background(tc.Surface).BorderColor(tc.Border)
+						}
+						defBtn.Tooltip("Exclude default dependency & build folders")
+						defBtn.Children(func() {
+							ui.Text(c, "Ignore deps").FontSize(9.5).TextColor(tc.Text)
+						})
+						if defBtn.Clicked() {
+							a.FileSearchNoDefaultExcludes = !a.FileSearchNoDefaultExcludes
+							a.runEditorSearch()
+						}
+					}
+				})
+				excIn := ui.TextInput(c, &a.FileSearchExclude).Placeholder("e.g. *.min.js, **/generated/**").FillWidth().FontSize(11).Height(22)
+				if excIn.Changed() {
+					a.scheduleEditorSearch()
+				}
+				if excIn.Submitted() {
+					a.runEditorSearch()
+				}
+			})
+		})
+	}
+
+	if a.FileSearchMode == "content" {
 		// Replace row.
 		chev := icons.TablerChevronRight
 		if a.FileSearchReplaceOpen {
@@ -210,34 +299,73 @@ func (a *AppUI) renderSearchToggle(c *ui.Context, tc theme.ThemeColors, label, t
 	}
 }
 
-// runEditorSearch executes the active mode's search off the render path.
-// The goroutine collects results locally and applies them on the UI thread —
-// render reads FileSearchHits/ContentHits/FileSearchBusy every frame, so
-// they are never written from the background goroutine directly.
+// scheduleEditorSearch debounces typing (120ms) and cancels any in-flight scan
+// so rapid keystrokes never spawn overlapping workspace searches.
+func (a *AppUI) scheduleEditorSearch() {
+	if a.searchCancel != nil {
+		a.searchCancel()
+		a.searchCancel = nil
+	}
+	if a.searchDebounce != nil {
+		a.searchDebounce.Stop()
+	}
+	a.searchSeq++
+	seq := a.searchSeq
+	a.searchDebounce = time.AfterFunc(120*time.Millisecond, func() {
+		a.runOnUI(func() {
+			if a.searchSeq == seq {
+				a.runEditorSearch()
+			}
+		})
+	})
+}
+
+// runEditorSearch executes the active mode's search off the render path,
+// cancelling any previous search and applying include/exclude + default
+// dependency-folder exclusions.
 func (a *AppUI) runEditorSearch() {
+	if a.searchDebounce != nil {
+		a.searchDebounce.Stop()
+		a.searchDebounce = nil
+	}
+	if a.searchCancel != nil {
+		a.searchCancel()
+		a.searchCancel = nil
+	}
+
 	query := strings.TrimSpace(a.FileSearchQuery)
+	useDefExcl := !a.FileSearchNoDefaultExcludes
+	includeGlob := strings.TrimSpace(a.FileSearchGlob)
+	excludeGlob := strings.TrimSpace(a.FileSearchExclude)
+
+	if len(query) < 2 || a.Workspace == nil {
+		a.FileSearchHits = nil
+		a.ContentHits = nil
+		a.ContentHitsAt = ""
+		a.FileSearchBusy = false
+		return
+	}
+
+	ws := a.Workspace
 	if a.FileSearchMode != "content" {
-		if len(query) < 2 || a.Workspace == nil {
-			a.FileSearchHits = nil
-			a.ContentHitsAt = ""
-			return
-		}
-		signature := "files|" + a.Workspace.RootDir + "|" + query
+		signature := fmt.Sprintf("files|%s|%s|%s|%s|%v", ws.RootDir, query, includeGlob, excludeGlob, useDefExcl)
 		if signature == a.ContentHitsAt {
 			return
 		}
 		a.ContentHitsAt = signature
 		a.FileSearchBusy = true
-		ws := a.Workspace
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		a.searchCancel = cancel
 		go func() {
 			defer cancel()
-			hits := ws.SearchFiles(ctx, query)
+			hits := ws.SearchFilesWithOptions(ctx, workspaceSearchOpts(query, includeGlob, excludeGlob, useDefExcl, false, false, false))
 			a.runOnUI(func() {
-				if a.ContentHitsAt == signature {
+				if a.ContentHitsAt == signature && ctx.Err() == nil {
 					a.FileSearchHits = hits
 				}
-				a.FileSearchBusy = false
+				if a.ContentHitsAt == signature {
+					a.FileSearchBusy = false
+				}
 				if a.Window != nil {
 					a.Window.Invalidate()
 				}
@@ -245,17 +373,8 @@ func (a *AppUI) runEditorSearch() {
 		}()
 		return
 	}
-	if len(query) < 2 || a.Engine == nil || a.Engine.SearchMgr == nil {
-		if len(query) < 2 {
-			a.ContentHits = nil
-			a.ContentHitsAt = ""
-		}
-		return
-	}
-	if a.Workspace != nil {
-		a.Engine.SearchMgr.SetDirectories([]string{a.Workspace.RootDir})
-	}
-	signature := fmt.Sprintf("content|%s|%v|%v|%v|%s", query, a.FileSearchCase, a.FileSearchRegex, a.FileSearchWholeWord, a.FileSearchGlob)
+
+	signature := fmt.Sprintf("content|%s|%s|%v|%v|%v|%s|%s|%v", ws.RootDir, query, a.FileSearchCase, a.FileSearchRegex, a.FileSearchWholeWord, includeGlob, excludeGlob, useDefExcl)
 	if signature == a.ContentHitsAt {
 		return
 	}
@@ -264,20 +383,26 @@ func (a *AppUI) runEditorSearch() {
 	if a.Window != nil {
 		a.Window.Invalidate()
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	a.searchCancel = cancel
+	opts := workspaceSearchOpts(query, includeGlob, excludeGlob, useDefExcl, a.FileSearchCase, a.FileSearchRegex, a.FileSearchWholeWord)
 	go func() {
-		opts := search.SearchOptions{
-			Query:          query,
-			MatchCase:      a.FileSearchCase,
-			UseRegex:       a.FileSearchRegex,
-			MatchWholeWord: a.FileSearchWholeWord,
-			Glob:           strings.TrimSpace(a.FileSearchGlob),
-			Limit:          200,
+		defer cancel()
+		rawHits := ws.SearchFilesWithOptions(ctx, opts)
+		ranked := make([]search.RankedResult, 0, len(rawHits))
+		for _, h := range rawHits {
+			ranked = append(ranked, search.RankedResult{
+				Path:    h.Path,
+				Line:    h.Line,
+				Content: h.Text,
+			})
 		}
-		hits, err := a.Engine.SearchMgr.SearchContentWithOptions(opts)
 		a.runOnUI(func() {
-			a.FileSearchBusy = false
-			if err == nil && a.ContentHitsAt == signature {
-				a.ContentHits = hits
+			if a.ContentHitsAt == signature && ctx.Err() == nil {
+				a.ContentHits = ranked
+			}
+			if a.ContentHitsAt == signature {
+				a.FileSearchBusy = false
 			}
 			if a.Window != nil {
 				a.Window.Invalidate()
