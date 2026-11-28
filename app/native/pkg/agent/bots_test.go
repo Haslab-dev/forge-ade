@@ -206,3 +206,20 @@ func TestBotPersonaInheritsParentHarnessAndLimitations(t *testing.T) {
 		t.Fatalf("unexpected UpdatePersona result: %+v", updated)
 	}
 }
+
+func TestBuildBotTaskStepSummarizesJSONCommand(t *testing.T) {
+	step := buildBotTaskStep(&ToolExecution{
+		ID:         "t-json",
+		ToolName:   "read_file",
+		Command:    `{"file_path":"/tmp/blog-drafts/social.md","limit":50}`,
+		Output:     "ok",
+		Status:     "completed",
+		DurationMs: 42,
+	})
+	if step.Detail != "/tmp/blog-drafts/social.md" {
+		t.Fatalf("expected concise Detail from JSON file_path, got %q", step.Detail)
+	}
+	if step.FullDetail != `{"file_path":"/tmp/blog-drafts/social.md","limit":50}` {
+		t.Fatalf("expected FullDetail to preserve full JSON, got %q", step.FullDetail)
+	}
+}

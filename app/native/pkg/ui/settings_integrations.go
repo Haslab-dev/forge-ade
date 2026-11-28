@@ -612,10 +612,12 @@ func clearRoleForm(sm *settings.SettingsManager) {
 	sm.RoleRules = ""
 	sm.RoleReadOnly = false
 	sm.RoleAllowBash = false
+	sm.RoleAgentID = ""
+	sm.RoleAgentType = ""
 }
 
 func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, sm *settings.SettingsManager) {
-	settingsSectionHeader(c, tc, "Orchestration & Sub-Agent Personas", "Configure the primary lead orchestrator, model tiering, concurrency, and specialist personas.")
+	settingsSectionHeader(c, tc, "Agent Personas", "Configure the lead orchestrator, model tiering, concurrency, and specialist personas.")
 
 	if a.Engine == nil || a.Engine.AgentMgr == nil {
 		ui.Text(c, "Agent engine unavailable").FontSize(12).TextColor(tc.TextMuted)
@@ -807,27 +809,79 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 					}
 				})
 
-				ui.Row(c).Gap(6).Children(func() {
-					ui.TextInput(c, &sm.RoleName).Placeholder("Persona name (e.g. Security Auditor)").Grow(1)
-					ui.TextInput(c, &sm.RoleFilter).Placeholder("Role (orchestrator/planning/research/coding/reviewer/testing/custom)").Width(240)
+				ui.Row(c).Gap(8).Children(func() {
+					ui.Column(c).Gap(3).Grow(1).Children(func() {
+						ui.Text(c, "Persona Name").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+						ui.TextInput(c, &sm.RoleName).Placeholder("e.g. Security Auditor").FillWidth()
+					})
+					ui.Column(c).Gap(3).Width(200).Children(func() {
+						ui.Text(c, "Role").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+						ui.TextInput(c, &sm.RoleFilter).Placeholder("orchestrator/planning/coding/reviewer").FillWidth()
+					})
 				})
-				ui.TextInput(c, &sm.RoleDesc).Placeholder("Short description").Grow(1)
-				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.TextInput(c, &sm.RoleModel).Placeholder("Model override or tier (blank=inherit, auto, weak, strong, or model ID)").Grow(1)
-					for _, tier := range []string{"inherit", "auto", "weak", "strong"} {
-						t := tier
-						active := strings.EqualFold(strings.TrimSpace(sm.RoleModel), t) || (t == "inherit" && strings.TrimSpace(sm.RoleModel) == "")
-						if renderOrchOptionPill(c, tc, "form-tier-"+t, t, active).Clicked() {
-							if t == "inherit" {
-								sm.RoleModel = ""
-							} else {
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Text(c, "Description").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.TextInput(c, &sm.RoleDesc).Placeholder("Short description of what this persona specializes in").FillWidth()
+				})
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Default Harness").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(5).AlignItems(ui.Center).Wrap().Children(func() {
+						type harnessOpt struct {
+							id, label, typ string
+						}
+						hOpts := []harnessOpt{
+							{"", "Auto (Inherit)", ""},
+							{"agent-internal", "Internal", "internal"},
+						}
+						if a.ACPMgr != nil {
+							for _, ag := range a.ACPMgr.Agents {
+								if ag.ID == "agent-internal" || !ag.Available {
+									continue
+								}
+								hOpts = append(hOpts, harnessOpt{ag.ID, shortHarnessLabel(ag.Name), "acp"})
+							}
+						}
+						for _, ho := range hOpts {
+							opt := ho
+							if renderOrchOptionPill(c, tc, "form-harness-"+opt.id, opt.label, sm.RoleAgentID == opt.id).Clicked() {
+								sm.RoleAgentID = opt.id
+								sm.RoleAgentType = opt.typ
+							}
+						}
+					})
+				})
+				ui.Column(c).Gap(4).Children(func() {
+					ui.Text(c, "Default Model (auto-loaded from selected harness)").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.Row(c).Gap(5).AlignItems(ui.Center).Wrap().Children(func() {
+						tiers := []string{"", "auto", "weak", "strong"}
+						for _, tier := range tiers {
+							t := tier
+							label := t
+							if label == "" {
+								label = "Inherit"
+							}
+							active := strings.EqualFold(strings.TrimSpace(sm.RoleModel), t)
+							if renderOrchOptionPill(c, tc, "form-tier-"+label, label, active).Clicked() {
 								sm.RoleModel = t
 							}
 						}
-					}
+						for _, mID := range a.modelsForHarness(sm.RoleAgentID) {
+							m := mID
+							active := strings.TrimSpace(sm.RoleModel) == m
+							if renderOrchOptionPill(c, tc, "form-model-"+m, m, active).Clicked() {
+								sm.RoleModel = m
+							}
+						}
+					})
 				})
-				ui.TextInput(c, &sm.RolePrompt).Placeholder("System instructions / Persona prompt").Grow(1)
-				ui.TextInput(c, &sm.RoleRules).Placeholder("Additional rules / constraints (optional)").Grow(1)
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Text(c, "System Instructions").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.TextAreaBase(c, &sm.RolePrompt).Lines(2, 4).Placeholder("System instructions / Persona prompt").FillWidth()
+				})
+				ui.Column(c).Gap(3).Children(func() {
+					ui.Text(c, "Rules & Guardrails (optional)").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted)
+					ui.TextInput(c, &sm.RoleRules).Placeholder("Additional rules / constraints").FillWidth()
+				})
 
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Checkbox(c, &sm.RoleReadOnly, "Read-Only (no filesystem writes)").FontSize(11)
@@ -878,6 +932,7 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 						}
 						_, err := a.Engine.AgentMgr.SaveAgentDefinition(newDef)
 						if err == nil {
+							sm.SetPersonaHarness(newDef.ID, sm.RoleAgentID, sm.RoleAgentType)
 							toastTitle := "Persona Created"
 							if sm.RoleEditingID != "" {
 								toastTitle = "Persona Updated"
@@ -931,6 +986,9 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 							if thisD.Model != "" {
 								Badge(c, tc, thisD.Model, tc.Accent)
 							}
+							if hb := sm.GetPersonaHarness(thisD.ID); hb.AgentID != "" {
+								Badge(c, tc, shortHarnessLabel(hb.AgentID), tc.Info)
+							}
 						})
 						if thisD.Description != "" {
 							ui.Text(c, thisD.Description).FontSize(11).TextColor(tc.TextMuted)
@@ -960,6 +1018,9 @@ func (a *AppUI) renderSettingsTabSubagents(c *ui.Context, tc theme.ThemeColors, 
 						sm.RoleRules = thisD.Rules
 						sm.RoleReadOnly = thisD.ReadOnly
 						sm.RoleAllowBash = thisD.AllowBash
+						hb := sm.GetPersonaHarness(thisD.ID)
+						sm.RoleAgentID = hb.AgentID
+						sm.RoleAgentType = hb.AgentType
 						sm.RoleFormOpen = true
 					}
 

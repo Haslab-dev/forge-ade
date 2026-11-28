@@ -48,12 +48,19 @@ func (a *AppUI) OpenNewBotTaskModal(botID string) {
 	a.ShowNewBotTaskModal = true
 }
 
-// OpenSpawnWorkerModal opens the Hybrid Worker (Internal or ACP) launch dialog.
+// OpenSpawnWorkerModal opens the Hybrid Worker (Internal or ACP) launch dialog,
+// defaulting to the active session's engine (e.g. agent-agy) when available.
 func (a *AppUI) OpenSpawnWorkerModal() {
 	a.WorkerNameInput = ""
 	a.WorkerTaskInput = ""
 	a.WorkerUseWorktree = false
 	a.WorkerError = ""
+	if a.Agent != nil {
+		if sess := a.Agent.ActiveSession(); sess != nil && sess.AgentID != "" {
+			a.WorkerAgentID = sess.AgentID
+			a.WorkerAgentType = sess.AgentType
+		}
+	}
 	if a.WorkerAgentID == "" {
 		a.WorkerAgentID = "agent-internal"
 		a.WorkerAgentType = "internal"
@@ -219,19 +226,35 @@ func (a *AppUI) renderSpawnWorkerModal(c *ui.Context) {
 	tc := a.ThemeMgr.Colors()
 
 	type workerAgentOpt struct {
-		ID   string
-		Name string
-		Type string
+		ID       string
+		Name     string
+		Type     string
+		Eligible bool
+		Reason   string
 	}
-	opts := []workerAgentOpt{
-		{ID: "agent-internal", Name: "ForgeADE Internal", Type: "internal"},
+	var opts []workerAgentOpt
+	if a.Agent != nil {
+		for _, st := range a.Agent.SwarmEngineStatuses() {
+			opts = append(opts, workerAgentOpt{
+				ID:       st.ID,
+				Name:     st.Name,
+				Type:     st.Type,
+				Eligible: st.Eligible,
+				Reason:   st.Reason,
+			})
+		}
 	}
-	if a.ACPMgr != nil {
-		for _, def := range a.ACPMgr.Agents {
-			if def.Type == "internal" || def.ID == "agent-internal" {
-				continue
+	if len(opts) == 0 {
+		opts = []workerAgentOpt{
+			{ID: "agent-internal", Name: "ForgeADE Internal", Type: "internal", Eligible: true},
+		}
+		if a.ACPMgr != nil {
+			for _, def := range a.ACPMgr.Agents {
+				if def.Type == "internal" || def.ID == "agent-internal" {
+					continue
+				}
+				opts = append(opts, workerAgentOpt{ID: def.ID, Name: def.Name, Type: "acp", Eligible: def.Available})
 			}
-			opts = append(opts, workerAgentOpt{ID: def.ID, Name: def.Name, Type: "acp"})
 		}
 	}
 
@@ -271,7 +294,15 @@ func (a *AppUI) renderSpawnWorkerModal(c *ui.Context) {
 							opt := o
 							sel := a.WorkerAgentID == opt.ID
 							pill := ui.Row(c.Key("sw-ag-"+opt.ID)).Height(28).Radius(7).Padding(0, 9).Gap(5).
-								AlignItems(ui.Center).Cursor(ui.CursorPointer).BorderWidth(1)
+								AlignItems(ui.Center).BorderWidth(1)
+							if opt.Eligible {
+								pill.Cursor(ui.CursorPointer)
+							} else {
+								pill.Opacity(0.5)
+								if opt.Reason != "" {
+									pill.Tooltip(opt.Reason)
+								}
+							}
 							if sel {
 								pill.Background(tc.Accent.Alpha(0.16)).BorderColor(tc.Accent.Alpha(0.55))
 							} else {
@@ -285,7 +316,7 @@ func (a *AppUI) renderSpawnWorkerModal(c *ui.Context) {
 								}
 								ui.Text(c, opt.Name).FontSize(11.5).FontWeight(500).TextColor(tc.Text)
 							})
-							if pill.Clicked() {
+							if opt.Eligible && pill.Clicked() {
 								a.WorkerAgentID = opt.ID
 								a.WorkerAgentType = opt.Type
 							}

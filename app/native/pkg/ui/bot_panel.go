@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/icons"
@@ -562,7 +565,7 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 
 	tc := a.ThemeMgr.Colors()
 	a.modal(c, &a.ShowBotTaskModal, func() {
-		modal := ui.Column(c).Width(780).MaxHeight(560).Radius(14).
+		modal := ui.Column(c).Width(820).Height(560).Radius(14).
 			Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border).
 			Shadow(0, 20, 56, -16, ui.RGBA(0, 0, 0, 0.55)).Clip()
 		modal.Children(func() {
@@ -603,7 +606,7 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 			var selectedStep *agent.BotTaskStep
 			selectedStepIdx := -1
 			for i := range task.Steps {
-				stepKey := fmt.Sprintf("%d:%s", i, task.Steps[i].ID)
+				stepKey := botTaskStepKey(i, task.Steps[i].ID)
 				if stepKey == a.SelectedBotTaskStepKey {
 					selectedStep = &task.Steps[i]
 					selectedStepIdx = i
@@ -612,33 +615,55 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 			}
 
 			// 2-Column Body
-			ui.Row(c).Grow(1).MinHeight(360).Children(func() {
-				// Left column: Execution steps / tool calls
-				ui.Scroll(c).Width(310).FillHeight().Padding(14, 16).
+			ui.Row(c).Grow(1).MinHeight(0).FillWidth().Children(func() {
+				// Left column: Execution steps / tool calls timeline
+				ui.Scroll(c.Key("btm-steps-scroll-"+task.SessionID)).Width(315).FillHeight().Padding(14, 14).
 					BorderWidth(0, 1, 0, 0).BorderColor(tc.Border).Children(func() {
-					ui.Column(c).Gap(6).Children(func() {
-						ui.Row(c).AlignItems(ui.Center).Padding(0, 0, 2, 0).Children(func() {
+					ui.Column(c).Gap(2).Children(func() {
+						ui.Row(c).AlignItems(ui.Center).Padding(0, 4, 6, 4).Children(func() {
 							ui.Text(c, "EXECUTION TRACE").FontSize(10.5).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
 							ui.Box(c).Radius(8).Padding(1, 6).Background(tc.Text.Alpha(0.08)).Children(func() {
 								ui.Text(c, formatStepCount(len(task.Steps))).FontSize(10).FontWeight(600).TextColor(tc.TextMuted)
 							})
 						})
+
+						// Top "Started" / Overview timeline node
+						overviewSelected := a.SelectedBotTaskStepKey == ""
+						startRow := ui.Row(c.Key("btm-st-overview")).Gap(8).AlignItems(ui.Start).
+							Padding(6, 8).Radius(7).Cursor(ui.CursorPointer).BorderWidth(1)
+						if overviewSelected {
+							startRow.Background(tc.Accent.Alpha(0.12)).BorderColor(tc.Accent.Alpha(0.45))
+						} else {
+							startRow.BorderColor(tc.Border.Alpha(0))
+						}
+						startRow.Children(func() {
+							ui.Column(c).Width(14).AlignItems(ui.Center).Gap(2).Children(func() {
+								ui.Icon(c, icons.TablerCircleDot).Width(13).Height(13).TextColor(tc.TextMuted)
+								if len(task.Steps) > 0 {
+									ui.Box(c).Width(1).Height(10).Background(tc.Border)
+								}
+							})
+							ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+								ui.Text(c, "Started").FontSize(11.5).FontWeight(600).TextColor(tc.Text).SingleLine()
+								ui.Text(c, "Task overview & touched files").FontSize(10).TextColor(tc.TextMuted).SingleLine()
+							})
+						})
+						if startRow.Hovered() && !overviewSelected {
+							startRow.Background(tc.Text.Alpha(0.05))
+						}
+						if startRow.Clicked() {
+							a.SelectedBotTaskStepKey = ""
+						}
+
 						if len(task.Steps) == 0 {
-							ui.Text(c, "No tool calls recorded yet.").FontSize(11.5).TextColor(tc.TextMuted)
+							ui.Text(c, "No tool calls recorded yet.").FontSize(11.5).TextColor(tc.TextMuted).Padding(8, 8)
 						} else {
 							for i, st := range task.Steps {
 								step := st
-								stepKey := fmt.Sprintf("%d:%s", i, step.ID)
+								stepKey := botTaskStepKey(i, step.ID)
 								isSelected := a.SelectedBotTaskStepKey == stepKey
-								ic := icons.TablerCheck
-								col := tc.Success
-								if step.Status == "running" {
-									ic = icons.TablerRefresh
-									col = tc.Accent
-								} else if step.Status == "failed" {
-									ic = icons.TablerX
-									col = tc.Error
-								}
+								ic, col := botTaskStepIcon(step, tc)
+								hasNext := i < len(task.Steps)-1
 								row := ui.Row(c.Key("btm-st-"+stepKey)).Gap(8).AlignItems(ui.Start).
 									Padding(6, 8).Radius(7).Cursor(ui.CursorPointer).BorderWidth(1)
 								if isSelected {
@@ -647,7 +672,12 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 									row.BorderColor(tc.Border.Alpha(0))
 								}
 								row.Children(func() {
-									ui.Icon(c, ic).Width(13).Height(13).TextColor(col)
+									ui.Column(c).Width(14).AlignItems(ui.Center).Gap(2).Children(func() {
+										ui.Icon(c, ic).Width(13).Height(13).TextColor(col)
+										if hasNext {
+											ui.Box(c).Width(1).Height(14).Background(tc.Border)
+										}
+									})
 									ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
 										ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 											ui.Text(c, step.Label).FontSize(11.5).FontWeight(600).TextColor(tc.Text).Grow(1).SingleLine()
@@ -674,9 +704,10 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 				})
 
 				// Right column: Selected Step Detail OR Summary & Artifacts
-				ui.Scroll(c).Grow(1).FillHeight().Padding(16, 18).Children(func() {
+				detailScrollKey := "btm-detail-scroll-" + task.SessionID + "-" + a.SelectedBotTaskStepKey
+				ui.Scroll(c.Key(detailScrollKey)).Grow(1).FillHeight().Padding(16, 18).Children(func() {
 					if selectedStep != nil {
-						a.renderBotTaskStepDetail(c, tc, selectedStep, selectedStepIdx, len(task.Steps))
+						a.renderBotTaskStepDetail(c, tc, task.Steps, selectedStep, selectedStepIdx)
 						return
 					}
 					ui.Column(c).Gap(14).Children(func() {
@@ -735,6 +766,24 @@ func (a *AppUI) renderBotTaskModal(c *ui.Context) {
 	})
 }
 
+func botTaskStepKey(idx int, id string) string {
+	return fmt.Sprintf("%d:%s", idx, id)
+}
+
+func botTaskStepIcon(step agent.BotTaskStep, tc theme.ThemeColors) (*ui.SVG, ui.Color) {
+	switch step.Status {
+	case "running":
+		return icons.TablerRefresh, tc.Accent
+	case "failed":
+		return icons.TablerX, tc.Error
+	}
+	lower := strings.ToLower(step.Label)
+	if strings.Contains(lower, "write") || strings.Contains(lower, "edit") || strings.Contains(lower, "create") {
+		return icons.TablerFileText, tc.Success
+	}
+	return icons.TablerCircleCheck, tc.Success
+}
+
 func formatStepCount(n int) string {
 	if n == 1 {
 		return "1 step"
@@ -749,9 +798,30 @@ func formatStepDuration(ms int64) string {
 	return fmt.Sprintf("%.1fs", float64(ms)/1000.0)
 }
 
-func (a *AppUI) renderBotTaskStepDetail(c *ui.Context, tc theme.ThemeColors, step *agent.BotTaskStep, idx, total int) {
+func formatStepJSON(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || (!strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[")) {
+		return trimmed
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(trimmed), "", "  "); err != nil {
+		return trimmed
+	}
+	return buf.String()
+}
+
+func truncateStepText(s string, maxRunes int) (string, bool) {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s, false
+	}
+	return string(runes[:maxRunes]) + "\n… (truncated for display; click Copy for full text)", true
+}
+
+func (a *AppUI) renderBotTaskStepDetail(c *ui.Context, tc theme.ThemeColors, steps []agent.BotTaskStep, step *agent.BotTaskStep, idx int) {
+	total := len(steps)
 	ui.Column(c).Gap(12).Children(func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			backBtn := ui.Row(c.Key("btm-step-back")).Height(24).Radius(6).Padding(0, 8).Gap(4).
 				AlignItems(ui.Center).Cursor(ui.CursorPointer).
 				Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
@@ -767,6 +837,38 @@ func (a *AppUI) renderBotTaskStepDetail(c *ui.Context, tc theme.ThemeColors, ste
 			}
 
 			ui.Text(c, fmt.Sprintf("Step %d of %d", idx+1, total)).FontSize(11).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
+
+			// Prev / Next step navigation
+			if idx > 0 {
+				prevBtn := ui.Row(c.Key("btm-step-prev")).Size(24, 24).Radius(6).
+					AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+				prevBtn.Tooltip("Previous step")
+				prevBtn.Children(func() {
+					ui.Icon(c, icons.TablerChevronLeft).Width(12).Height(12).TextColor(tc.Text)
+				})
+				if prevBtn.Hovered() {
+					prevBtn.Background(tc.Text.Alpha(0.08))
+				}
+				if prevBtn.Clicked() {
+					a.SelectedBotTaskStepKey = botTaskStepKey(idx-1, steps[idx-1].ID)
+				}
+			}
+			if idx+1 < total {
+				nextBtn := ui.Row(c.Key("btm-step-next")).Size(24, 24).Radius(6).
+					AlignItems(ui.Center).Justify(ui.Center).Cursor(ui.CursorPointer).
+					Background(tc.ToolbarControl).BorderWidth(1).BorderColor(tc.Border)
+				nextBtn.Tooltip("Next step")
+				nextBtn.Children(func() {
+					ui.Icon(c, icons.TablerChevronRight).Width(12).Height(12).TextColor(tc.Text)
+				})
+				if nextBtn.Hovered() {
+					nextBtn.Background(tc.Text.Alpha(0.08))
+				}
+				if nextBtn.Clicked() {
+					a.SelectedBotTaskStepKey = botTaskStepKey(idx+1, steps[idx+1].ID)
+				}
+			}
 
 			stLabel := "Complete"
 			stColor := tc.Success
@@ -785,30 +887,70 @@ func (a *AppUI) renderBotTaskStepDetail(c *ui.Context, tc theme.ThemeColors, ste
 			}
 		})
 
-		ui.Text(c, step.Label).FontSize(14).FontWeight(600).TextColor(tc.Text)
+		ui.Column(c).Gap(2).Children(func() {
+			ui.Text(c, step.Label).FontSize(14).FontWeight(600).TextColor(tc.Text)
+			if step.Detail != "" {
+				ui.Text(c, step.Detail).FontSize(11.5).TextColor(tc.TextMuted)
+			}
+		})
 
-		args := step.FullDetail
-		if args == "" {
-			args = step.Detail
+		rawArgs := step.FullDetail
+		if rawArgs == "" {
+			rawArgs = step.Detail
 		}
+		formattedArgs := formatStepJSON(rawArgs)
+		displayArgs, _ := truncateStepText(formattedArgs, 8000)
 		ui.Column(c).Gap(5).Children(func() {
-			ui.Text(c, "Arguments / Input").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Arguments / Input").FontSize(11).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
+				if rawArgs != "" {
+					copyArgsBtn := ui.Row(c.Key("btm-copy-args")).Height(20).Radius(5).Padding(0, 6).Gap(3).
+						AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					copyArgsBtn.Children(func() {
+						ui.Icon(c, icons.TablerCopy).Width(10).Height(10).TextColor(tc.IconMuted)
+						ui.Text(c, "Copy").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					})
+					if copyArgsBtn.Hovered() {
+						copyArgsBtn.Background(tc.Text.Alpha(0.06))
+					}
+					if copyArgsBtn.Clicked() {
+						mygo.Clipboard.WriteText(formattedArgs)
+					}
+				}
+			})
 			ui.Box(c).Padding(8, 10).Radius(8).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-				if args == "" {
+				if displayArgs == "" {
 					ui.Text(c, "No arguments recorded.").FontSize(11).TextColor(tc.TextMuted)
 				} else {
-					ui.Text(c, args).FontSize(11).TextColor(tc.Text)
+					ui.Text(c, displayArgs).FontSize(11).TextColor(tc.Text)
 				}
 			})
 		})
 
+		displayOutput, _ := truncateStepText(step.Output, 12000)
 		ui.Column(c).Gap(5).Children(func() {
-			ui.Text(c, "Output").FontSize(11).FontWeight(600).TextColor(tc.TextMuted)
+			ui.Row(c).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, "Output").FontSize(11).FontWeight(600).TextColor(tc.TextMuted).Grow(1)
+				if step.Output != "" {
+					copyOutBtn := ui.Row(c.Key("btm-copy-out")).Height(20).Radius(5).Padding(0, 6).Gap(3).
+						AlignItems(ui.Center).Cursor(ui.CursorPointer)
+					copyOutBtn.Children(func() {
+						ui.Icon(c, icons.TablerCopy).Width(10).Height(10).TextColor(tc.IconMuted)
+						ui.Text(c, "Copy").FontSize(10).FontWeight(500).TextColor(tc.TextMuted)
+					})
+					if copyOutBtn.Hovered() {
+						copyOutBtn.Background(tc.Text.Alpha(0.06))
+					}
+					if copyOutBtn.Clicked() {
+						mygo.Clipboard.WriteText(step.Output)
+					}
+				}
+			})
 			ui.Box(c).Padding(8, 10).Radius(8).Background(tc.SurfaceRaised).BorderWidth(1).BorderColor(tc.Border).Children(func() {
-				if step.Output == "" {
+				if displayOutput == "" {
 					ui.Text(c, "No output recorded.").FontSize(11).TextColor(tc.TextMuted)
 				} else {
-					ui.Text(c, step.Output).FontSize(11).TextColor(tc.Text)
+					ui.Text(c, displayOutput).FontSize(11).TextColor(tc.Text)
 				}
 			})
 		})

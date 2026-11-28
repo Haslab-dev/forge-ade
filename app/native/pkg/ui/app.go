@@ -342,6 +342,14 @@ type AppUI struct {
 	HandoffTargetAgentID   string
 	HandoffTargetAgentType string
 	HandoffTargetModel     string
+	HandoffPersonaID       string
+	HandoffPersonaName     string
+	HandoffPersonaPrompt   string
+	HandoffConfigOpen      bool
+	HandoffEditAgentID     string
+	HandoffEditAgentType   string
+	HandoffEditModel       string
+	HandoffEditPrompt      string
 	HandoffGoal            string
 	HandoffNextSteps       string
 	HandoffCreateWorktree  bool
@@ -1488,10 +1496,7 @@ func (a *AppUI) SetWindow(w *mygo.Window) {
 			if len(e.Paths) == 0 {
 				return
 			}
-			a.Agent.AttachFiles(e.Paths)
-			if a.Window != nil {
-				a.Window.Invalidate()
-			}
+			a.attachPathsWithToast(a.Agent, e.Paths)
 		})
 	}
 }

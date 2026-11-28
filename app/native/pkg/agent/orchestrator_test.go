@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -94,4 +95,70 @@ func TestHybridOrchestratorMixedInternalAndACPWorkers(t *testing.T) {
 
 	// Stop second worker cleanly.
 	as.StopWorker(w2.SessionID)
+}
+
+func TestSwarmAliasInheritPersonaAndEligibility(t *testing.T) {
+	dir := t.TempDir()
+	acpMgr := &ACPManager{
+		Agents: []ACPAgentDefinition{
+			{ID: "agent-agy", Name: "Antigravity", Type: "acp", Command: "agy", Available: true},
+			{ID: "agent-codex", Name: "Codex", Type: "acp", Command: "codex", Available: false},
+		},
+	}
+	as := &AgentState{
+		workspacePath: dir,
+		ACPMgr:        acpMgr,
+		Sessions: []*AgentSession{
+			{
+				ID:            "coord-agy",
+				Title:         "Coordinator",
+				Status:        "idle",
+				AgentID:       "agent-agy",
+				AgentType:     "acp",
+				Model:         "gemini-4-hydrogen",
+				WorkspacePath: dir,
+				Tasks:         NewTaskManager(),
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+			},
+		},
+		ActiveSessionID: "coord-agy",
+	}
+
+	// 1. Alias normalization
+	if id, typ := NormalizeAgentAlias("agy"); id != "agent-agy" || typ != "acp" {
+		t.Fatalf("expected (agent-agy, acp), got (%s, %s)", id, typ)
+	}
+
+	// 2. Inherit parent harness when AgentID is omitted + research persona
+	w, err := as.SpawnWorker(WorkerSpec{
+		ParentSessionID: "coord-agy",
+		Name:            "research-auth",
+		Persona:         "research",
+		Task:            "Inspect auth handlers",
+		AutoStart:       false,
+	})
+	if err != nil {
+		t.Fatalf("SpawnWorker inherit failed: %v", err)
+	}
+	if w.AgentID != "agent-agy" || w.AgentType != "acp" {
+		t.Fatalf("expected worker to inherit agent-agy/acp, got %s/%s", w.AgentID, w.AgentType)
+	}
+
+	// Verify persona instructions were injected into opening prompt
+	sess := as.FindSession(w.SessionID)
+	if sess == nil || len(sess.Messages) == 0 || !strings.Contains(sess.Messages[0].Text, "Read-only: do NOT edit") {
+		t.Fatalf("expected research persona limitations in opening prompt")
+	}
+
+	// 3. Reject unavailable ACP engine with clear error
+	if _, err := as.SpawnWorker(WorkerSpec{
+		ParentSessionID: "coord-agy",
+		Name:            "bad-worker",
+		AgentID:         "codex",
+		Task:            "Try unavailable engine",
+		AutoStart:       false,
+	}); err == nil || !strings.Contains(err.Error(), "agent-codex unavailable") || !strings.Contains(err.Error(), "agent-agy") {
+		t.Fatalf("expected unavailability error listing agent-agy, got: %v", err)
+	}
 }

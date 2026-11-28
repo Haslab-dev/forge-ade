@@ -381,6 +381,7 @@ type AgentState struct {
 	mu              sync.Mutex
 	deletedIDs      map[string]bool
 	engine          *engine.Engine
+	Bots            *BotStore
 	workspacePath   string
 	Sessions        []*AgentSession
 	ActiveSessionID string
@@ -1679,18 +1680,45 @@ func (as *AgentState) CycleReasoningEffort() {
 	}
 }
 
+const (
+	// MaxAttachedFiles caps how many files/images can be attached to one message.
+	MaxAttachedFiles = 10
+	// MaxAttachmentSizeBytes caps a single attached file/image at 20 MB.
+	MaxAttachmentSizeBytes int64 = 20 * 1024 * 1024
+	// MaxTotalAttachmentSizeBytes caps combined attachments per message at 50 MB.
+	MaxTotalAttachmentSizeBytes int64 = 50 * 1024 * 1024
+)
+
 // AttachFiles adds several files, resolving workspace-relative paths to
-// absolute ones so the ACP manager's image extraction finds them.
+// absolute ones and enforcing max-count and max-size validation.
 func (as *AgentState) AttachFiles(paths []string) {
-	for _, p := range paths {
+	_, _ = as.AttachFilesValidated(paths)
+}
+
+// AttachFilesValidated attaches files with validation (existence, non-directory,
+// max file count, max per-file size, and max total size) and returns the count
+// of newly attached files plus any human-readable validation errors.
+func (as *AgentState) AttachFilesValidated(paths []string) (int, []string) {
+	if as == nil {
+		return 0, nil
+	}
+	var errs []string
+	added := 0
+	for _, raw := range paths {
+		p := strings.TrimSpace(raw)
 		if p == "" {
 			continue
 		}
-		if !filepath.IsAbs(p) {
+		if !filepath.IsAbs(p) && as.workspacePath != "" {
 			p = filepath.Join(as.workspacePath, p)
 		}
-		as.AttachFile(p)
+		if err := as.AttachFileValidated(p); err != nil {
+			errs = append(errs, err.Error())
+		} else {
+			added++
+		}
 	}
+	return added, errs
 }
 
 var (
@@ -1811,13 +1839,52 @@ func braceEnd(text string, start int) int {
 func CleanRawToolTags(text string) string { return cleanRawToolTags(text) }
 
 // AttachFile adds a file path to the pending composer attachments.
+// AttachFile adds a path if it passes validation (ignoring errors for legacy callers).
 func (as *AgentState) AttachFile(path string) {
+	_ = as.AttachFileValidated(path)
+}
+
+// AttachFileValidated validates and attaches a single file path.
+func (as *AgentState) AttachFileValidated(path string) error {
+	if as == nil {
+		return fmt.Errorf("agent state unavailable")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("empty file path")
+	}
+	if !filepath.IsAbs(path) && as.workspacePath != "" {
+		path = filepath.Join(as.workspacePath, path)
+	}
 	for _, p := range as.AttachedFiles {
 		if p == path {
-			return
+			return nil
 		}
 	}
+	if len(as.AttachedFiles) >= MaxAttachedFiles {
+		return fmt.Errorf("maximum %d attachments reached per message", MaxAttachedFiles)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory (only files/images supported)", filepath.Base(path))
+	}
+	if info.Size() > MaxAttachmentSizeBytes {
+		return fmt.Errorf("%s exceeds %d MB limit (%.1f MB)", filepath.Base(path), MaxAttachmentSizeBytes/(1024*1024), float64(info.Size())/(1024*1024))
+	}
+	var total int64
+	for _, existing := range as.AttachedFiles {
+		if st, err := os.Stat(existing); err == nil {
+			total += st.Size()
+		}
+	}
+	if total+info.Size() > MaxTotalAttachmentSizeBytes {
+		return fmt.Errorf("total attachments exceed %d MB limit", MaxTotalAttachmentSizeBytes/(1024*1024))
+	}
 	as.AttachedFiles = append(as.AttachedFiles, path)
+	return nil
 }
 
 // SavePastedImage writes a clipboard PNG into the workspace's attachments
@@ -1825,6 +1892,12 @@ func (as *AgentState) AttachFile(path string) {
 func (as *AgentState) SavePastedImage(png []byte) (string, error) {
 	if len(png) == 0 {
 		return "", fmt.Errorf("empty image")
+	}
+	if int64(len(png)) > MaxAttachmentSizeBytes {
+		return "", fmt.Errorf("pasted image exceeds %d MB limit", MaxAttachmentSizeBytes/(1024*1024))
+	}
+	if len(as.AttachedFiles) >= MaxAttachedFiles {
+		return "", fmt.Errorf("maximum %d attachments reached per message", MaxAttachedFiles)
 	}
 	dir := filepath.Join(as.workspacePath, ".forge", "attachments")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -145,6 +145,14 @@ func (d *IPCDaemon) Port() int {
 	return d.port
 }
 
+// Server returns the underlying MCP Server registered on this IPC daemon.
+func (d *IPCDaemon) Server() *Server {
+	if d == nil {
+		return nil
+	}
+	return d.server
+}
+
 // CheckLiveDaemon checks if a live ForgeADE desktop GUI is running.
 func CheckLiveDaemon() (int, bool) {
 	port := readIPCPort()

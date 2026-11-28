@@ -133,7 +133,7 @@ func (a *AppUI) renderSettingsScreen(c *ui.Context) {
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabModels, "Providers & Models", icons.TablerPackage, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabAgents, "ACP & Agent CLIs", icons.TablerBot, "")
 									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabStudio, "Studio & Generative APIs", icons.TablerSparkles, "")
-									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Orchestration & Roles", icons.TablerUser, "")
+									a.renderSettingsNavItem(c, tc, sm, settings.SettingsTabSubagents, "Agent Personas", icons.TablerUser, "")
 								})
 
 								navGroup("ANALYTICS & QUOTA", func() {
@@ -243,7 +243,7 @@ func settingsSectionTitle(tab int) string {
 	case settings.SettingsTabAutos:
 		return "Automations"
 	case settings.SettingsTabSubagents:
-		return "Orchestration & Sub-Agent Personas"
+		return "Agent Personas"
 	case settings.SettingsTabCommands:
 		return "Slash Commands"
 	case settings.SettingsTabGeneral:

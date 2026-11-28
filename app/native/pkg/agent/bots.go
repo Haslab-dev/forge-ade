@@ -496,16 +496,40 @@ type BotTaskStep struct {
 	DurationMs int64  `json:"durationMs,omitempty"`
 }
 
+func summarizeToolCommand(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "{") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			keys := []string{
+				"file_path", "path", "TargetFile", "AbsolutePath", "DirectoryPath",
+				"command", "CommandLine", "cmd",
+				"query", "Query", "pattern", "Pattern",
+				"url", "Url", "title", "Title", "description", "Description", "prompt", "Prompt",
+			}
+			for _, k := range keys {
+				if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+					raw = strings.TrimSpace(v)
+					break
+				}
+			}
+		}
+	}
+	if len(raw) > 120 {
+		return raw[:120] + "…"
+	}
+	return raw
+}
+
 func buildBotTaskStep(t *ToolExecution) BotTaskStep {
 	fullDetail := strings.TrimSpace(t.Command)
-	detail := fullDetail
-	if len(detail) > 120 {
-		detail = detail[:120] + "…"
-	}
 	return BotTaskStep{
 		ID:         t.ID,
 		Label:      t.ToolName,
-		Detail:     detail,
+		Detail:     summarizeToolCommand(fullDetail),
 		FullDetail: fullDetail,
 		Output:     strings.TrimSpace(t.Output),
 		Status:     t.Status,

@@ -14,32 +14,36 @@ import (
 // (Internal -> ACP, ACP -> ACP, ACP -> Internal, or across git worktrees)
 // without depending on provider-private conversation memory.
 type HandoffPacket struct {
-	Goal            string    `json:"goal"`
-	Summary         string    `json:"summary"`
-	Branch          string    `json:"branch,omitempty"`
-	WorktreePath    string    `json:"worktreePath,omitempty"`
-	ChangedFiles    []string  `json:"changedFiles,omitempty"`
-	NextSteps       string    `json:"nextSteps,omitempty"`
-	SourceSessionID string    `json:"sourceSessionId"`
-	SourceTitle     string    `json:"sourceTitle,omitempty"`
-	SourceAgent     string    `json:"sourceAgent"`
-	TargetAgent     string    `json:"targetAgent"`
-	TargetModel     string    `json:"targetModel,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
+	Goal                string    `json:"goal"`
+	Summary             string    `json:"summary"`
+	Branch              string    `json:"branch,omitempty"`
+	WorktreePath        string    `json:"worktreePath,omitempty"`
+	ChangedFiles        []string  `json:"changedFiles,omitempty"`
+	NextSteps           string    `json:"nextSteps,omitempty"`
+	SourceSessionID     string    `json:"sourceSessionId"`
+	SourceTitle         string    `json:"sourceTitle,omitempty"`
+	SourceAgent         string    `json:"sourceAgent"`
+	TargetAgent         string    `json:"targetAgent"`
+	TargetModel         string    `json:"targetModel,omitempty"`
+	PersonaName         string    `json:"personaName,omitempty"`
+	PersonaInstructions string    `json:"personaInstructions,omitempty"`
+	CreatedAt           time.Time `json:"createdAt"`
 }
 
 // HandoffRequest parameterizes an ExecuteHandoff operation.
 type HandoffRequest struct {
-	SourceSessionID string
-	TargetAgentID   string // e.g. "agent-internal", "agent-claude", "agent-codex", "agent-agy"
-	TargetAgentType string // "internal" or "acp"
-	TargetModel     string // optional override
-	Goal            string
-	NextSteps       string
-	CreateWorktree  bool
-	WorktreeBranch  string
-	AutoStart       bool // if true, immediately dispatches the opening turn
-	Background      bool // if true, does not switch ActiveSessionID
+	SourceSessionID     string
+	TargetAgentID       string // e.g. "agent-internal", "agent-claude", "agent-codex", "agent-agy"
+	TargetAgentType     string // "internal" or "acp"
+	TargetModel         string // optional override
+	PersonaName         string // optional role/persona name (e.g. "Reviewer", "Planner")
+	PersonaInstructions string // optional persona system instructions
+	Goal                string
+	NextSteps           string
+	CreateWorktree      bool
+	WorktreeBranch      string
+	AutoStart           bool // if true, immediately dispatches the opening turn
+	Background          bool // if true, does not switch ActiveSessionID
 }
 
 // BuildHandoffPacket inspects sourceSessionID and constructs a concise,
@@ -159,6 +163,17 @@ func FormatHandoffPrompt(pkt *HandoffPacket) string {
 		b.WriteString(pkt.Goal)
 		b.WriteString("\n")
 	}
+	if pkt.PersonaName != "" || pkt.PersonaInstructions != "" {
+		if pkt.PersonaName != "" {
+			fmt.Fprintf(&b, "\n### Persona: %s\n", pkt.PersonaName)
+		} else {
+			b.WriteString("\n### Persona Instructions\n")
+		}
+		if pkt.PersonaInstructions != "" {
+			b.WriteString(pkt.PersonaInstructions)
+			b.WriteString("\n")
+		}
+	}
 	if pkt.Summary != "" {
 		b.WriteString("\n### Context & Progress So Far\n")
 		b.WriteString(pkt.Summary)
@@ -195,18 +210,12 @@ func (as *AgentState) ExecuteHandoff(req HandoffRequest) (*AgentSession, error) 
 		return nil, fmt.Errorf("agent state is nil")
 	}
 	pkt := as.BuildHandoffPacket(req.SourceSessionID, req.Goal, req.NextSteps)
+	pkt.PersonaName = strings.TrimSpace(req.PersonaName)
+	pkt.PersonaInstructions = strings.TrimSpace(req.PersonaInstructions)
 
-	targetAgentID := strings.TrimSpace(req.TargetAgentID)
-	targetAgentType := strings.TrimSpace(req.TargetAgentType)
-	if targetAgentID == "" {
-		targetAgentID = "agent-internal"
-	}
-	if targetAgentType == "" {
-		if targetAgentID == "agent-internal" {
-			targetAgentType = "internal"
-		} else {
-			targetAgentType = "acp"
-		}
+	targetAgentID, targetAgentType, resolvedModel := as.resolveWorkerEngine(req.SourceSessionID, req.TargetAgentID, req.TargetAgentType, req.TargetModel)
+	if req.TargetModel == "" {
+		req.TargetModel = resolvedModel
 	}
 
 	targetModel := strings.TrimSpace(req.TargetModel)

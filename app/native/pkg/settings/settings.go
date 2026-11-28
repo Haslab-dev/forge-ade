@@ -76,6 +76,13 @@ type HookEntry struct {
 	Command string `json:"command"`
 }
 
+// PersonaHarnessBinding binds an AgentDefinition ID (from Orchestration & Sub-Agent
+// Personas) to a preferred execution harness (e.g. agent-agy, agent-internal).
+type PersonaHarnessBinding struct {
+	AgentID   string `json:"agent_id"`
+	AgentType string `json:"agent_type"`
+}
+
 // SettingsManager manages provider credentials, models, and application preferences.
 type SettingsManager struct {
 	mu           sync.RWMutex
@@ -115,6 +122,8 @@ type SettingsManager struct {
 	RoleRules     string
 	RoleReadOnly  bool
 	RoleAllowBash bool
+	RoleAgentID   string
+	RoleAgentType string
 
 	// Custom slash commands state
 	CmdFormOpen    bool
@@ -129,6 +138,9 @@ type SettingsManager struct {
 	HookMatcher  string
 	HookCommand  string
 	HooksList    []HookEntry
+
+	// Persona harness bindings (personaID -> harness)
+	PersonaHarnesses map[string]PersonaHarnessBinding
 
 	// Browser Use state
 	BrowserHeadless bool
@@ -420,8 +432,9 @@ func NewSettingsManager(engine *engine.Engine, onSaved func(provider, model stri
 // integrationLists is the persisted shape for custom slash commands and
 // lifecycle hooks (they round-trip through the settings data directory).
 type integrationLists struct {
-	CustomCommands []CustomSlashCommand `json:"custom_commands"`
-	Hooks          []HookEntry          `json:"hooks"`
+	CustomCommands   []CustomSlashCommand             `json:"custom_commands"`
+	Hooks            []HookEntry                      `json:"hooks"`
+	PersonaHarnesses map[string]PersonaHarnessBinding `json:"persona_harnesses,omitempty"`
 }
 
 func (sm *SettingsManager) integrationPath() string {
@@ -453,6 +466,7 @@ func (sm *SettingsManager) loadIntegrationLists() {
 	}
 	sm.CustomCommands = lists.CustomCommands
 	sm.HooksList = lists.Hooks
+	sm.PersonaHarnesses = lists.PersonaHarnesses
 }
 
 // persistIntegrationListsLocked writes the current lists (caller holds mu).
@@ -461,11 +475,46 @@ func (sm *SettingsManager) persistIntegrationListsLocked() {
 	if path == "" {
 		return
 	}
-	payload := integrationLists{CustomCommands: sm.CustomCommands, Hooks: sm.HooksList}
+	payload := integrationLists{
+		CustomCommands:   sm.CustomCommands,
+		Hooks:            sm.HooksList,
+		PersonaHarnesses: sm.PersonaHarnesses,
+	}
 	if data, err := json.MarshalIndent(payload, "", "  "); err == nil {
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
 		_ = os.WriteFile(path, data, 0o644)
 	}
+}
+
+// GetPersonaHarness returns the configured harness binding for a persona ID, if any.
+func (sm *SettingsManager) GetPersonaHarness(personaID string) PersonaHarnessBinding {
+	if sm == nil || personaID == "" {
+		return PersonaHarnessBinding{}
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.PersonaHarnesses == nil {
+		return PersonaHarnessBinding{}
+	}
+	return sm.PersonaHarnesses[personaID]
+}
+
+// SetPersonaHarness binds a persona ID to an agent harness (empty clears to inherit).
+func (sm *SettingsManager) SetPersonaHarness(personaID, agentID, agentType string) {
+	if sm == nil || personaID == "" {
+		return
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.PersonaHarnesses == nil {
+		sm.PersonaHarnesses = make(map[string]PersonaHarnessBinding)
+	}
+	if agentID == "" {
+		delete(sm.PersonaHarnesses, personaID)
+	} else {
+		sm.PersonaHarnesses[personaID] = PersonaHarnessBinding{AgentID: agentID, AgentType: agentType}
+	}
+	sm.persistIntegrationListsLocked()
 }
 
 // SetCustomCommands replaces the custom slash command list and persists it.

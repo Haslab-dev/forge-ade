@@ -799,10 +799,20 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 		}
 	}
 
-	leftInset, _ := a.chatLaneInset(c)
-	rightInset := leftInset
+	leftInset, rightInset := a.chatLaneInset(c)
 	if a.showFloatingInspector(c) {
-		rightInset = 324
+		rightInset = maxF(rightInset, 324)
+	}
+	hasUserTurns := false
+	for _, m := range msgs {
+		if m != nil && m.Role == "user" {
+			hasUserTurns = true
+			break
+		}
+	}
+	listLeftInset := leftInset
+	if hasUserTurns && listLeftInset > 16 {
+		listLeftInset -= 16
 	}
 
 	// The chat fills a box so the ZCode floating inspector card can overlay it
@@ -824,16 +834,16 @@ func (a *AppUI) renderAgentChat(c *ui.Context) {
 					}
 					m := msgs[i]
 					if m.Role == "model-change" {
-						a.renderModelChangeCard(c, tc, rightInset, leftInset, m)
+						a.renderModelChangeCard(c, tc, rightInset, listLeftInset, m)
 					} else if m.Role == "user" {
-						ui.Column(c.Key("urow")).Padding(10, rightInset, 8, leftInset).Gap(4).AlignItems(ui.End).Children(func() {
+						ui.Column(c.Key("urow")).Padding(10, rightInset, 8, listLeftInset).Gap(4).AlignItems(ui.End).Children(func() {
 							a.renderUserMessageBubble(c, tc, sessionID, m, 620)
 							renderUserPromptCopyRow(c, tc, "ucopy-"+fmt.Sprint(m.ID), m)
 						})
 					} else {
 						// Agent message: response card with work traces -> markdown ->
 						// changes card, followed by bottom-left action icons + timestamp.
-						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, leftInset).Gap(6).Children(func() {
+						ui.Column(c.Key("arow")).Padding(8, rightInset, 10, listLeftInset).Gap(6).Children(func() {
 							a.renderAssistantResponseCard(c, tc, sessionID, lastAssistantID, m)
 
 							// 5. ZCode Bottom-Left Action Icons + Timestamp
@@ -2451,14 +2461,13 @@ func (a *AppUI) renderComposer(c *ui.Context, tc theme.ThemeColors, sess *agent.
 	if as == nil {
 		return
 	}
-	inset, rightInset := a.chatLaneInset(c)
-	rightPad := inset
+	leftInset, rightInset := a.chatLaneInset(c)
 	if a.showFloatingInspector(c) {
-		rightPad = maxF(inset, 324)
+		rightInset = maxF(rightInset, 324)
 	}
 
 	// Composer area: animated wait/progress strip + live Bot/process status above the composer.
-	ui.Column(c).Padding(0, rightPad, 12, rightInset).Gap(6).Children(func() {
+	ui.Column(c).MaxWidth(a.chatColumnWidth(c)).Padding(0, rightInset, 12, leftInset).Gap(6).Children(func() {
 		a.renderStreamingLoaderStrip(c, tc, sess)
 		a.renderChatProcessBar(c, tc, sess)
 		a.renderComposerCard(c, tc, false)
@@ -2704,38 +2713,34 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 		}
 
 		ui.Row(c).Gap(6).Padding(4, 12, 12, 12).AlignItems(ui.Center).Children(func() {
-			// [+] Add Context Button: attach picker, active file, or workspace file
-			addBtn := ui.Row(c).Size(28, 28).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
-				Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			// [+] Add Context Button: attach files/images, active file, or workspace file
+			addBtn := ui.Row(c.Key("composer-attach-btn")).Size(28, 28).Radius(8).AlignItems(ui.Center).Justify(ui.Center).
+				Cursor(ui.CursorPointer).Background(tc.Surface).BorderWidth(1).BorderColor(tc.Border.Alpha(0.6))
+			addBtn.Tooltip("Attach files, images, or context")
 			addBtn.Children(func() {
 				ui.Icon(c, icons.TablerPlus).Width(13).Height(13).TextColor(tc.TextMuted)
 			})
 			if addBtn.Hovered() {
 				addBtn.Background(tc.Text.Alpha(0.06))
 			}
-			addBtn.ContextMenu(func(m *ui.Menu) {
+			addBtn.Menu(func(m *ui.Menu) {
 				if m.Item("Attach Files...").Chosen() {
-					if a.Window != nil {
-						win := a.Window
-						go func() {
-							paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-								Parent:   win,
-								Title:    "Attach Files",
-								Multiple: true,
-							})
-							if err != nil || len(paths) == 0 {
-								return
-							}
-							as.AttachFiles(paths)
-							if a.Window != nil {
-								a.Window.Invalidate()
-							}
-						}()
-					}
+					a.openAttachDialog(as, "Attach Files", nil)
+				}
+				if m.Item("Attach Images...").Chosen() {
+					a.openAttachDialog(as, "Attach Images", []mygo.FileFilter{
+						{
+							Name:       "Images",
+							Extensions: []string{"png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif", "avif", "svg"},
+							MIMETypes:  []string{"image/*"},
+						},
+					})
 				}
 				if doc := a.Editor.ActiveDoc(); doc != nil {
 					if m.Item("Attach Active File").Subtitle(doc.RelativePath).Chosen() {
-						as.AttachFile(doc.RelativePath)
+						if err := as.AttachFileValidated(doc.RelativePath); err != nil {
+							c.AddToast(ui.Toast{Title: "Attachment Rejected", Description: err.Error(), Type: "warning"})
+						}
 					}
 				}
 				if m.Item("Attach Workspace File...").Chosen() {
@@ -2887,103 +2892,6 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			a.renderBgShellPill(c, tc, bgSessionID)
 
 			// ACP / Lead Persona Selector (Responsive: slim mode with model & acp selector)
-			isInternalHarness := as.ActiveAgentID == "" || as.ActiveAgentID == "agent-internal" || as.ActiveAgentType == "internal"
-			activeSess := as.ActiveSession()
-			var personaID, personaName, shortPersona string
-			var acpIcon *ui.SVG
-			var acpColor, acpIconColor ui.Color
-
-			if isInternalHarness {
-				if a.Engine != nil && a.Engine.AgentMgr != nil {
-					personaID, personaName = as.EffectivePersona(activeSess)
-				}
-				if personaName == "" {
-					personaName = "Orchestrator"
-				}
-				shortPersona = strings.TrimSpace(strings.TrimSuffix(personaName, "Agent"))
-				if shortPersona == "" {
-					shortPersona = personaName
-				}
-				acpIcon = icons.TablerBot
-				acpColor = tc.Text
-				acpIconColor = tc.IconMuted
-				if personaID == "orchestrator" || personaID == "" {
-					acpColor = tc.Accent
-					acpIconColor = tc.Accent
-				}
-			} else {
-				// ACP External Harness
-				acpIcon = icons.TablerPlug
-				acpColor = tc.Accent
-				acpIconColor = tc.Accent
-				personaName = as.ActiveAgentID
-				if a.ACPMgr != nil {
-					for _, ag := range a.ACPMgr.Agents {
-						if ag.ID == as.ActiveAgentID {
-							personaName = ag.Name
-							break
-						}
-					}
-				}
-				shortPersona = shortHarnessLabel(personaName)
-			}
-
-			displayPersona := shortHarnessLabel(personaName)
-			if isSlim {
-				if isInternalHarness {
-					if personaID == "orchestrator" || personaID == "" {
-						displayPersona = "Orch"
-					} else if len(shortPersona) > 8 {
-						displayPersona = string([]rune(shortPersona)[:7]) + "…"
-					} else {
-						displayPersona = shortPersona
-					}
-				} else {
-					displayPersona = shortPersona
-				}
-			}
-
-			personaBtn := ui.Row(c.Key("composer-harness")).Height(26).Radius(6).Padding(0, 7).Gap(4).
-				AlignItems(ui.Center).Cursor(ui.CursorPointer)
-			personaBtn.Tooltip(fmt.Sprintf("Agent / Harness: %s", personaName))
-			personaBtn.Children(func() {
-				ui.Icon(c, acpIcon).Width(12).Height(12).TextColor(acpIconColor)
-				ui.Text(c, displayPersona).FontSize(11.5).FontWeight(500).TextColor(acpColor).SingleLine()
-				ui.Icon(c, icons.TablerChevronDown).Width(9).Height(9).TextColor(tc.IconMuted)
-			})
-			if personaBtn.Hovered() {
-				personaBtn.Background(tc.Text.Alpha(0.06))
-			}
-			personaBtn.Menu(func(m *ui.Menu) {
-				m.Item("── Internal (Forge Engine) ──").Disabled(true)
-				internalItem := m.Item(menuChecked(isInternalHarness, "ForgeADE Internal")).Subtitle("Auto · Swarm & Subagents")
-				if internalItem.Chosen() {
-					a.switchToInternalHarness("")
-				}
-				if a.ACPMgr != nil && len(a.ACPMgr.Agents) > 0 {
-					m.Separator()
-					m.Item("── ACP Agents (External) ──").Disabled(true)
-					for _, ag := range a.ACPMgr.Agents {
-						if ag.ID == "agent-internal" {
-							continue
-						}
-						agentDef := ag
-						isThisACP := !isInternalHarness && as.ActiveAgentID == agentDef.ID
-						it := m.Item(menuChecked(isThisACP, agentDef.Name))
-						if agentDef.Type != "" {
-							it = it.Subtitle(agentDef.Type)
-						}
-						if it.Chosen() {
-							a.switchToACPHarness(agentDef.ID)
-						}
-					}
-				}
-				m.Separator()
-				if m.Item("Orchestration & Personas Settings...").Chosen() {
-					a.openSettings(settings.SettingsTabSubagents)
-				}
-			})
-
 			// Prompt stash chip: appears when entries exist; popover lists
 			// stashed prompts (click restores into the composer).
 			if len(as.StashedPrompts) > 0 {
@@ -4537,4 +4445,46 @@ func messagePlainText(m *agent.ChatMessage) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func (a *AppUI) openAttachDialog(as *agent.AgentState, title string, filters []mygo.FileFilter) {
+	if a.Window == nil || as == nil {
+		return
+	}
+	win := a.Window
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+			Parent:   win,
+			Title:    title,
+			Multiple: true,
+			Filters:  filters,
+		})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		a.runOnUI(func() {
+			a.attachPathsWithToast(as, paths)
+		})
+	}()
+}
+
+func (a *AppUI) attachPathsWithToast(as *agent.AgentState, paths []string) {
+	if as == nil || len(paths) == 0 {
+		return
+	}
+	added, errs := as.AttachFilesValidated(paths)
+	if len(errs) > 0 {
+		msg := errs[0]
+		if len(errs) > 1 {
+			msg = fmt.Sprintf("%s (+%d more)", errs[0], len(errs)-1)
+		}
+		title := "Attachment Rejected"
+		if added > 0 {
+			title = fmt.Sprintf("Attached %d file(s); some skipped", added)
+		}
+		a.queueToast(ui.Toast{Title: title, Description: msg, Type: "warning"})
+	}
+	if a.Window != nil {
+		a.Window.Invalidate()
+	}
 }

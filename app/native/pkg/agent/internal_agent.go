@@ -83,7 +83,7 @@ func (as *AgentState) resolvePersonaKey(personaID string, planMode bool) (string
 		}
 		return string(defRole), defRole
 	}
-	return string(agent.RoleCoding), agent.RoleCoding
+	return string(agent.RoleOrchestrator), agent.RoleOrchestrator
 }
 
 // SetSessionPersona sets the persona ID for a session and clears applied state so
