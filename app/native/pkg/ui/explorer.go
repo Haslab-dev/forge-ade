@@ -256,14 +256,14 @@ func (a *AppUI) openExplorerFileInEditor(fullPath, relPath string) {
 	switch {
 	case strings.HasSuffix(lower, ".pdf"):
 		a.openPdfViewer(fullPath)
-		em.ActivePath = fullPath
+		em.EnsureViewerTab(fullPath)
 		return
 	case isDeckOrMotionFile(lower):
 		a.openDeckViewer(fullPath)
-		em.ActivePath = fullPath
+		em.EnsureViewerTab(fullPath)
 		return
 	case isImageOrSVG(lower):
-		em.ActivePath = fullPath
+		em.EnsureViewerTab(fullPath)
 		return
 	}
 	if !strings.HasPrefix(fullPath, "ssh://") {
@@ -291,8 +291,9 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 					a.openSidePreviewFile(c, node.RelativePath)
 				}
 				if m.Item("Open in Editor").Chosen() {
-					a.openExplorerFileInEditor(node.FullPath, node.RelativePath)
-					a.Mode = ModeEditor
+					fullPath, relPath := node.FullPath, node.RelativePath
+					a.setMode(ModeEditor)
+					a.openExplorerFileInEditor(fullPath, relPath)
 				}
 				m.Separator()
 			} else {
@@ -300,8 +301,9 @@ func (a *AppUI) attachExplorerMenu(c *ui.Context, row ui.Element, node *FileTree
 					a.openExplorerNode(node)
 				}
 				if m.Item("Open in Editor").Chosen() {
-					a.openExplorerFileInEditor(node.FullPath, node.RelativePath)
-					a.Mode = ModeEditor
+					fullPath, relPath := node.FullPath, node.RelativePath
+					a.setMode(ModeEditor)
+					a.openExplorerFileInEditor(fullPath, relPath)
 				}
 				m.Separator()
 			}

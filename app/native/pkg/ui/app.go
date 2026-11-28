@@ -19,6 +19,7 @@ import (
 	"github.com/Haslab-dev/RakitKode/search"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/egoist/mygo/ui/markdown"
 	"github.com/hasdev/forge-ade/app/native/pkg/agent"
 	"github.com/hasdev/forge-ade/app/native/pkg/board"
@@ -34,6 +35,7 @@ import (
 	"github.com/hasdev/forge-ade/app/native/pkg/usage"
 	"github.com/hasdev/forge-ade/app/native/pkg/workspace"
 	"github.com/hasdev/forge-ade/core/agentsession"
+	"github.com/hasdev/forge-ade/core/lsp"
 	"github.com/hasdev/forge-ade/core/remotefs"
 	corestudio "github.com/hasdev/forge-ade/core/studio"
 )
@@ -94,13 +96,16 @@ type SideChatSession struct {
 	Streaming bool
 }
 
-// ModeDrawerState stores mode-isolated right drawer visibility and tabs so
-// Agent Mode and Editor Mode never share or overwrite each other's drawer panes.
+// ModeDrawerState stores mode-isolated right drawer, left sidebar, and git client
+// visibility so Agent Mode, Editor Mode, and Studio Mode never share or overwrite
+// each other's layout panes.
 type ModeDrawerState struct {
-	Show   bool
-	Tab    int
-	Tabs   []DrawerTabInstance
-	Active int
+	Show        bool
+	Tab         int
+	Tabs        []DrawerTabInstance
+	Active      int
+	LeftSidebar bool
+	GitClient   bool
 }
 
 // AppUI is the top-level native UI application state coordinating the modular domain engines.
@@ -741,7 +746,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 		ShowAgentBottomTerminal:        false,
 		ShowRightDrawer:                false,
 		RightDrawerTab:                 RightTabLauncher,
-		editorDrawerState:              ModeDrawerState{Tab: RightTabLauncher},
+		agentDrawerState:               ModeDrawerState{Tab: RightTabLauncher, LeftSidebar: true},
+		editorDrawerState:              ModeDrawerState{Tab: RightTabLauncher, LeftSidebar: true},
+		studioDrawerState:              ModeDrawerState{Tab: RightTabArtifacts, LeftSidebar: false},
 		ExternalOpenTarget:             "terminal",
 		EditorShellPaneWidth:           380,
 		EditorActivity:                 ActivityExplorer,
@@ -785,6 +792,9 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	appUI.Editor.WorkspaceDir = rootDir
+	if appUI.Agent != nil {
+		appUI.Agent.Bots = appUI.Bots
+	}
 	if appUI.Studio != nil {
 		appUI.Studio.SetOnChanged(func() {
 			if appUI.Window != nil {
@@ -797,12 +807,56 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	appUI.EditorBottomWorkspaceTerminals[normInitial] = appUI.EditorBottomTerminal
 	appUI.AgentWorkspaceTerminals[normInitial] = appUI.AgentTerminal
 	appUI.Editor.OnDefinitionRequested = func(symbol string, matches []editor.PeekMatch) {
-		appUI.ShowPeekModal = true
-		appUI.PeekSymbol = symbol
-		appUI.PeekResults = matches
-		if appUI.Window != nil {
-			appUI.Window.Invalidate()
+		appUI.runOnUI(func() {
+			appUI.applyPeekMatches("Go to Definition", "No definition found for ", symbol, matches)
+			appUI.invalidateUI()
+		})
+	}
+	appUI.Editor.OnRunUI = appUI.runOnUI
+	if appUI.Editor.LSP != nil {
+		appUI.Editor.LSP.OnDiagnostics = func(path string, diags []lsp.Diagnostic) {
+			appUI.runOnUI(func() {
+				doc := appUI.Editor.GetDoc(path)
+				if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+					return
+				}
+				buf := doc.Editor.Buffer
+				out := make([]mygoeditor.Diagnostic, 0, len(diags))
+				for _, d := range diags {
+					start := buf.Offset(mygoeditor.Pos{Line: max(0, d.Range.Start.Line), Col: max(0, d.Range.Start.Character)})
+					end := buf.Offset(mygoeditor.Pos{Line: max(0, d.Range.End.Line), Col: max(0, d.Range.End.Character)})
+					if end <= start && start < buf.Len() {
+						end = start + 1
+					}
+					sev := mygoeditor.SeverityError
+					switch d.Severity {
+					case lsp.SeverityWarning:
+						sev = mygoeditor.SeverityWarning
+					case lsp.SeverityInformation:
+						sev = mygoeditor.SeverityInfo
+					case lsp.SeverityHint:
+						sev = mygoeditor.SeverityHint
+					}
+					out = append(out, mygoeditor.Diagnostic{
+						Start:    start,
+						End:      end,
+						Severity: sev,
+						Message:  d.Message,
+						Source:   d.Source,
+					})
+				}
+				doc.Editor.SetDiagnostics(buf.Version(), out)
+				appUI.invalidateUI()
+			})
 		}
+	}
+	appUI.Editor.OnDiagnosticsReady = func(path string, version uint64, diags []mygoeditor.Diagnostic) {
+		appUI.runOnUI(func() {
+			if doc := appUI.Editor.GetDoc(path); doc != nil && doc.Editor != nil {
+				doc.Editor.SetDiagnostics(version, diags)
+				appUI.invalidateUI()
+			}
+		})
 	}
 
 	// Data-loss contracts: never discard a dirty buffer, clobber a file that
@@ -1085,11 +1139,26 @@ func NewAppUI(engine *engine.Engine, rootDir string) *AppUI {
 	}
 
 	appUI.Palette = palette.NewPaletteManager(appUI.Workspace, func(path string) {
-		fullPath := appUI.Workspace.ResolveFullPath(path)
-		_, _ = appUI.Editor.OpenFile(fullPath, path)
-		appUI.SelectedFile = path
-		appUI.Mode = ModeEditor
+		fullPath := ""
+		if appUI.Workspace != nil {
+			fullPath = appUI.Workspace.ResolveFullPath(path)
+		}
+		appUI.setMode(ModeEditor)
+		if fullPath != "" && appUI.Editor != nil {
+			_, _ = appUI.Editor.OpenFile(fullPath, path)
+			appUI.SelectedFile = path
+		}
 	})
+	appUI.Palette.OnLineJump = func(line, col int) {
+		if appUI.Editor == nil {
+			return
+		}
+		if doc := appUI.Editor.ActiveDoc(); doc != nil && doc.Editor != nil {
+			l := max(0, line-1)
+			c := max(0, col-1)
+			doc.Editor.GoTo(mygoeditor.Pos{Line: l, Col: c})
+		}
+	}
 	appUI.Palette.SetCommands(appUI.paletteCommands())
 	// Workspace symbol backend for the "@" go-to-symbol palette mode.
 	appUI.Palette.SetSymbolSearch(func(query string, limit int) ([]palette.SymbolHit, error) {
@@ -1262,7 +1331,7 @@ func (a *AppUI) paletteCommands() []palette.PaletteCommand {
 			a.OpenProjectSwitcherModal()
 		}},
 		{ID: "board", Label: "Show Workflow Board", Run: func() {
-			a.Mode = ModeAgent
+			a.setMode(ModeAgent)
 			a.AgentViewMode = AgentViewBoard
 			a.RefreshBoard()
 		}},
@@ -1411,6 +1480,9 @@ func (a *AppUI) SetWindow(w *mygo.Window) {
 				h := a.Window.NativeHandle()
 				return *(*unsafe.Pointer)(unsafe.Pointer(&h))
 			})
+			if a.Engine.IPCDaemon != nil && a.Engine.IPCDaemon.Server() != nil && a.Agent != nil {
+				a.Engine.IPCDaemon.Server().RegisterSwarmTools(a.Agent.NewSwarmBridge(a.Bots))
+			}
 		}
 		w.OnFileDrop(func(e *mygo.FileDropEvent) {
 			if len(e.Paths) == 0 {
@@ -1454,7 +1526,7 @@ func (a *AppUI) View(c *ui.Context) {
 	a.drainToasts(c)
 
 	// Global Keyboard Shortcuts
-	if c.Shortcut(ui.Cmd, ui.KeyS) {
+	if c.Shortcut(ui.Cmd, ui.KeyS) && a.Mode == ModeEditor {
 		if err := a.Editor.SaveActiveFile(); err == nil {
 			doc := a.Editor.ActiveDoc()
 			name := "File"
@@ -1500,32 +1572,48 @@ func (a *AppUI) View(c *ui.Context) {
 		// Edit with AI over the selection (CodeEditorPane's Mod-i).
 		a.openInlineAI()
 	}
+	if cmdOrCtrl(ui.KeyPeriod) && a.Mode == ModeEditor {
+		a.openInlineAI()
+	}
 	if c.Shortcut(ui.Shift|ui.Alt, ui.KeyF) && a.Mode == ModeEditor {
 		// Format Document (Shift-Alt-F).
 		a.formatActiveDocument(c)
 	}
-	if c.Shortcut(0, ui.KeyF12) && a.Mode == ModeEditor {
-		// Peek definition runs the workspace symbol scan off the render path —
-		// FindDefinitions can take seconds on large codebases.
-		doc := a.Editor.ActiveDoc()
-		if doc != nil {
-			sym := a.symbolUnderCursor(doc)
-			if sym != "" {
-				wsDir := a.Workspace.RootDir
-				go func() {
-					matches := a.Editor.FindDefinitions(sym, wsDir)
-					a.runOnUI(func() {
-						if len(matches) == 1 {
-							a.openSearchResult(matches[0].Path, matches[0].Line, "")
-						} else if len(matches) > 1 {
-							a.ShowPeekModal = true
-							a.PeekSymbol = sym
-							a.PeekResults = matches
-						}
-						a.invalidateUI()
-					})
-				}()
+	if a.Mode == ModeEditor {
+		runSymbolScan := func(action, notFound, lspKind string, scan func(sym, wsDir string) []editor.PeekMatch) {
+			doc := a.Editor.ActiveDoc()
+			if doc == nil {
+				return
 			}
+			sym := a.symbolUnderCursor(doc)
+			if sym == "" || a.Workspace == nil {
+				return
+			}
+			wsDir := a.Workspace.RootDir
+			fullPath := doc.FullPath
+			pos := doc.Editor.CursorPos()
+			go func() {
+				matches, ok := a.Editor.LSPFindLocations(lspKind, fullPath, pos.Line, pos.Col)
+				if !ok || len(matches) == 0 {
+					matches = scan(sym, wsDir)
+				}
+				a.runOnUI(func() {
+					a.applyPeekMatches(action, notFound, sym, matches)
+					a.invalidateUI()
+				})
+			}()
+		}
+		if c.Shortcut(0, ui.KeyF12) {
+			runSymbolScan("Go to Definition", "No definition found for ", "definition", a.Editor.FindDefinitions)
+		}
+		if c.Shortcut(ui.Shift, ui.KeyF12) {
+			runSymbolScan("Go to Type Definition", "No type definition found for ", "typeDefinition", a.Editor.FindTypeDefinitions)
+		}
+		if c.Shortcut(ui.Cmd, ui.KeyF12) {
+			runSymbolScan("Go to Implementation", "No implementation found for ", "implementation", a.Editor.FindImplementations)
+		}
+		if c.Shortcut(ui.Alt|ui.Shift, ui.KeyF12) {
+			runSymbolScan("Find All References", "No references found for ", "references", a.Editor.FindReferences)
 		}
 	}
 	if c.Shortcut(0, ui.KeyF2) && a.Mode == ModeEditor {
@@ -1551,12 +1639,12 @@ func (a *AppUI) View(c *ui.Context) {
 		if a.Mode == ModeStudio {
 			a.studioExportActive()
 		} else {
-			a.Mode = ModeEditor
+			a.setMode(ModeEditor)
 			a.ShowLeftSidebar = true
 			a.EditorActivity = ActivityExplorer
 		}
 	}
-	if cmdOrCtrlShift(ui.KeyO) {
+	if cmdOrCtrlShift(ui.KeyO) && a.Mode == ModeEditor {
 		// Go to symbol (⌘⇧O) — the "@" palette mode.
 		a.Palette.OpenSymbols()
 		a.Palette.Query = "@"
@@ -1595,7 +1683,11 @@ func (a *AppUI) View(c *ui.Context) {
 		a.ShowLeftSidebar = !a.ShowLeftSidebar
 	}
 	if cmdOrCtrl(ui.KeyN) {
-		a.handleNewTask()
+		if a.Mode == ModeEditor && a.Editor != nil {
+			a.Editor.NewUntitledFile()
+		} else {
+			a.handleNewTask()
+		}
 	}
 	if cmdOrCtrlShift(ui.KeyN) {
 		a.OpenNewTaskModal()
@@ -1648,10 +1740,10 @@ func (a *AppUI) View(c *ui.Context) {
 	if c.Shortcut(ui.Cmd|ui.Alt, ui.KeyT) || c.Shortcut(ui.Ctrl|ui.Alt, ui.KeyT) || cmdOrCtrlShift(ui.KeyC) {
 		a.openExternalTerminal("")
 	}
-	if c.Shortcut(ui.Ctrl, ui.KeyTab) {
+	if c.Shortcut(ui.Ctrl, ui.KeyTab) && a.Mode == ModeEditor {
 		a.Editor.CycleTab(1)
 	}
-	if c.Shortcut(ui.Ctrl|ui.Shift, ui.KeyTab) {
+	if c.Shortcut(ui.Ctrl|ui.Shift, ui.KeyTab) && a.Mode == ModeEditor {
 		a.Editor.CycleTab(-1)
 	}
 	if cmdOrCtrl(ui.KeyW) {
@@ -1749,6 +1841,9 @@ func (a *AppUI) Close() {
 	}
 	if a.Engine != nil && a.Engine.ShellMgr != nil {
 		a.Engine.ShellMgr.StopAll()
+	}
+	if a.Editor != nil && a.Editor.LSP != nil {
+		a.Editor.LSP.ShutdownAll()
 	}
 	// Close EVERY per-workspace terminal, not just the active one: switching
 	// workspaces parks previous TerminalStates in this map and their PTY
@@ -2873,10 +2968,12 @@ func (a *AppUI) syncModeDrawerState(targetMode int) {
 		return
 	}
 	cur := ModeDrawerState{
-		Show:   a.ShowRightDrawer,
-		Tab:    a.RightDrawerTab,
-		Tabs:   a.DrawerTabs,
-		Active: a.drawerActiveIdx,
+		Show:        a.ShowRightDrawer,
+		Tab:         a.RightDrawerTab,
+		Tabs:        a.DrawerTabs,
+		Active:      a.drawerActiveIdx,
+		LeftSidebar: a.ShowLeftSidebar,
+		GitClient:   a.IsGitClientOpen,
 	}
 	if a.activeDrawerMode == ModeEditor {
 		a.editorDrawerState = cur
@@ -2901,6 +2998,8 @@ func (a *AppUI) syncModeDrawerState(targetMode int) {
 	a.RightDrawerTab = next.Tab
 	a.DrawerTabs = next.Tabs
 	a.drawerActiveIdx = next.Active
+	a.ShowLeftSidebar = next.LeftSidebar
+	a.IsGitClientOpen = next.GitClient
 	a.activeDrawerMode = targetMode
 }
 
@@ -2982,7 +3081,6 @@ func (a *AppUI) setMode(mode int) {
 		if a.Studio != nil && a.Workspace != nil {
 			a.Studio.SetWorkspace(a.Workspace.RootDir)
 		}
-		a.ShowLeftSidebar = false
 	}
 	if a.Window != nil {
 		a.Window.Invalidate()
@@ -3050,6 +3148,9 @@ func (a *AppUI) switchWorkspaceForMode(dir string, keepActiveSession bool, fromM
 
 	// 2. Set up incoming workspace
 	a.Workspace = workspace.NewWorkspaceState(rawDir)
+	if a.Palette != nil {
+		a.Palette.Workspace = a.Workspace
+	}
 	a.recordRecentWorkspace(rawDir)
 	if rawDir != "" && rawDir != "/" {
 		a.recordOpenWorkspace(rawDir)

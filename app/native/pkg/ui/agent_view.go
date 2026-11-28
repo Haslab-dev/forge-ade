@@ -743,9 +743,9 @@ func (a *AppUI) openFileInEditor(path string) {
 	} else if root != "" {
 		fullPath = filepath.Join(root, path)
 	}
-	_, _ = a.Editor.OpenFile(fullPath, relPath)
-	a.Mode = ModeEditor
+	a.setMode(ModeEditor)
 	a.IsGitClientOpen = false
+	_, _ = a.Editor.OpenFile(fullPath, relPath)
 }
 
 func (a *AppUI) showFloatingInspector(c *ui.Context) bool {
@@ -2956,21 +2956,9 @@ func (a *AppUI) renderComposerCard(c *ui.Context, tc theme.ThemeColors, isHome b
 			}
 			personaBtn.Menu(func(m *ui.Menu) {
 				m.Item("── Internal (Forge Engine) ──").Disabled(true)
-				if m.Item(menuChecked(isInternalHarness && (activeSess == nil || activeSess.PersonaID == ""), "Auto (Orchestrator)")).Chosen() {
+				internalItem := m.Item(menuChecked(isInternalHarness, "ForgeADE Internal")).Subtitle("Auto · Swarm & Subagents")
+				if internalItem.Chosen() {
 					a.switchToInternalHarness("")
-				}
-				if a.Engine != nil && a.Engine.AgentMgr != nil {
-					for _, def := range a.Engine.AgentMgr.ListAgentDefinitions() {
-						d := def
-						isThisPersona := isInternalHarness && activeSess != nil && activeSess.PersonaID == d.ID
-						it := m.Item(menuChecked(isThisPersona, d.Name))
-						if d.Role != "" {
-							it = it.Subtitle(string(d.Role))
-						}
-						if it.Chosen() {
-							a.switchToInternalHarness(d.ID)
-						}
-					}
 				}
 				if a.ACPMgr != nil && len(a.ACPMgr.Agents) > 0 {
 					m.Separator()

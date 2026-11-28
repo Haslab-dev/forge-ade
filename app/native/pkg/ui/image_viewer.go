@@ -463,8 +463,8 @@ func (a *AppUI) renderImageViewer(c *ui.Context, tc theme.ThemeColors, fullPath,
 					openInEditorBtn.Background(tc.Accent.Alpha(0.2))
 				}
 				if openInEditorBtn.Clicked() {
+					a.setMode(ModeEditor)
 					_, _ = a.Editor.OpenFile(fullPath, relPath)
-					a.Mode = ModeEditor
 				}
 			}
 		})

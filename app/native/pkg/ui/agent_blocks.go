@@ -1156,9 +1156,9 @@ func (a *AppUI) renderToolDesignBlock(c *ui.Context, tc theme.ThemeColors, t *ag
 							rel = r
 						}
 					}
-					_, _ = a.Editor.OpenFile(targetPath, rel)
-					a.Mode = ModeEditor
+					a.setMode(ModeEditor)
 					a.IsGitClientOpen = false
+					_, _ = a.Editor.OpenFile(targetPath, rel)
 				}
 			}
 		})

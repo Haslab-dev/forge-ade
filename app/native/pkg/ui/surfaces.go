@@ -796,9 +796,9 @@ func (a *AppUI) renderGitChangesSurface(c *ui.Context, tc theme.ThemeColors, gm 
 				}
 				if openBtn.Clicked() {
 					fullPath := filepath.Join(a.Workspace.RootDir, diffTitle)
-					_, _ = a.Editor.OpenFile(fullPath, diffTitle)
+					a.setMode(ModeEditor)
 					a.IsGitClientOpen = false
-					a.Mode = ModeEditor
+					_, _ = a.Editor.OpenFile(fullPath, diffTitle)
 				}
 			})
 

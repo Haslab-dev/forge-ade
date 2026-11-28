@@ -1434,3 +1434,51 @@ func TestDisplayedTerminalTargetsEditorTerminalTab(t *testing.T) {
 		t.Fatalf("expected displayedTerminal() to return app.EditorBottomTerminal for file tab, got %p (want %p)", got, app.EditorBottomTerminal)
 	}
 }
+
+func TestEditorModeIsolationSidebarGitAndPalette(t *testing.T) {
+	dataDir := t.TempDir()
+	wsA := t.TempDir()
+	wsB := t.TempDir()
+
+	eng := engine.NewEngine(dataDir)
+	app := NewAppUI(eng, wsA)
+	defer app.Close()
+
+	// Agent mode: open Git client, collapse sidebar
+	app.IsGitClientOpen = true
+	app.ShowLeftSidebar = false
+
+	// Switch to Editor mode: should start with Editor's isolated sidebar=true, gitClient=false
+	app.setMode(ModeEditor)
+	if !app.ShowLeftSidebar {
+		t.Fatalf("expected Editor Mode ShowLeftSidebar=true, got false")
+	}
+	if app.IsGitClientOpen {
+		t.Fatalf("expected Editor Mode IsGitClientOpen=false, got true")
+	}
+
+	// Switch Editor to wsB: Palette.Workspace must follow app.Workspace
+	app.switchWorkspace(wsB)
+	if app.Palette.Workspace != app.Workspace || app.Palette.Workspace.RootDir != app.Workspace.RootDir {
+		t.Fatalf("expected Palette.Workspace to track Editor workspace %q, got %q", app.Workspace.RootDir, app.Palette.Workspace.RootDir)
+	}
+
+	// Switch to Studio mode (sidebar=false by default), then back to Editor mode
+	app.setMode(ModeStudio)
+	if app.ShowLeftSidebar {
+		t.Fatalf("expected Studio Mode ShowLeftSidebar=false by default")
+	}
+	app.setMode(ModeEditor)
+	if !app.ShowLeftSidebar {
+		t.Fatalf("expected Editor Mode ShowLeftSidebar=true restored after Studio Mode")
+	}
+
+	// Switch back to Agent mode: Agent's sidebar=false and IsGitClientOpen=true preserved
+	app.setMode(ModeAgent)
+	if app.ShowLeftSidebar {
+		t.Fatalf("expected Agent Mode ShowLeftSidebar=false preserved")
+	}
+	if !app.IsGitClientOpen {
+		t.Fatalf("expected Agent Mode IsGitClientOpen=true preserved")
+	}
+}

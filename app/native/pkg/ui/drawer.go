@@ -1374,8 +1374,8 @@ func (a *AppUI) renderChangesPane(c *ui.Context) {
 				}
 				if openBtn.Clicked() {
 					fullPath := filepath.Join(a.Workspace.RootDir, diffTitle)
+					a.setMode(ModeEditor)
 					_, _ = a.Editor.OpenFile(fullPath, diffTitle)
-					a.Mode = ModeEditor
 				}
 			})
 
@@ -2300,8 +2300,9 @@ func (a *AppUI) renderSideFilePane(c *ui.Context) {
 				a.SideFileDiffMode[a.ActiveSideFile] = !diffMode
 			}
 			if ui.Text(c, "Open in Editor").FontSize(10).TextColor(tc.Accent).Padding(0, 0, 0, 10).Cursor(ui.CursorPointer).Clicked() {
-				_, _ = a.Editor.OpenFile(full, a.ActiveSideFile)
-				a.Mode = ModeEditor
+				rel := a.ActiveSideFile
+				a.setMode(ModeEditor)
+				_, _ = a.Editor.OpenFile(full, rel)
 			}
 		})
 	})

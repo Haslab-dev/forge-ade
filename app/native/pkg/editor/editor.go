@@ -2,6 +2,7 @@ package editor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"github.com/egoist/mygo/ui"
 	mygoeditor "github.com/egoist/mygo/ui/editor"
 	"github.com/hasdev/forge-ade/app/native/pkg/theme"
+	coreeditor "github.com/hasdev/forge-ade/core/editor"
+	"github.com/hasdev/forge-ade/core/lsp"
 	"github.com/hasdev/forge-ade/core/remotefs"
 )
 
@@ -51,6 +54,7 @@ type OpenDocument struct {
 	minimapVersion    uint64
 	minimapMaxBuckets int
 	minimapBuckets    []MinimapBucket
+	lastLSPVersion    uint64
 }
 
 // detectCRLF reports whether CRLF is the file's dominant line ending:
@@ -207,6 +211,19 @@ type EditorManager struct {
 	// TerminalSessions binds editor terminal tabs (terminal://… paths) to
 	// TerminalState tab IDs so each editor terminal tab owns a distinct PTY.
 	TerminalSessions map[string]int
+
+	// OnDiagnosticsReady delivers async syntax diagnostics to the UI thread.
+	OnDiagnosticsReady func(path string, version uint64, diags []mygoeditor.Diagnostic)
+
+	// OnRunUI marshals async LSP completion/hover results onto the UI thread.
+	OnRunUI func(fn func())
+
+	LSP              *lsp.Manager
+	reqMu            sync.Mutex
+	completionCancel context.CancelFunc
+	hoverCancel      context.CancelFunc
+
+	untitledSeq int
 }
 
 // NewEditorManager creates and initializes an EditorManager.
@@ -226,6 +243,7 @@ func NewEditorManager() *EditorManager {
 		DiffLayout:       0,
 		DiffInline:       "Words",
 		TerminalSessions: make(map[string]int),
+		LSP:              lsp.NewManager(),
 	}
 }
 
@@ -479,9 +497,86 @@ func (em *EditorManager) OpenFile(fullPath, relPath string) (*OpenDocument, erro
 	em.setupEditorCallbacks(doc)
 	em.applyReadOnlyLocked(doc)
 
+	doc.lastLSPVersion = editBuf.Version()
 	em.docs[fullPath] = doc
 	em.StatusMsg = fmt.Sprintf("Opened %s", relPath)
+	if em.LSP != nil {
+		em.LSP.DidOpen(em.WorkspaceDir, fullPath, content)
+	}
+	em.runDiagnosticsLocked(doc)
 	return doc, nil
+}
+
+// NewUntitledFile creates a new in-memory untitled buffer tab (Cmd+N parity).
+func (em *EditorManager) NewUntitledFile() *OpenDocument {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	em.untitledSeq++
+	name := fmt.Sprintf("Untitled-%d", em.untitledSeq)
+	fullPath := "untitled://" + name
+
+	origBuf := mygoeditor.NewBuffer("")
+	editBuf := mygoeditor.NewBuffer("")
+	origBuf.SetLineEnding("\n")
+	editBuf.SetLineEnding("\n")
+
+	doc := &OpenDocument{
+		RelativePath: name,
+		FullPath:     fullPath,
+		Original:     origBuf,
+		DiskContent:  "",
+		Editor: &mygoeditor.State{
+			Buffer:     editBuf,
+			DiffBase:   origBuf,
+			WrapGuides: []int{100},
+			SoftWrap:   em.SoftWrap,
+		},
+		Diff: &mygoeditor.DiffState{
+			Old:           origBuf,
+			New:           editBuf,
+			Editable:      true,
+			HunkActions:   true,
+			LineSelection: true,
+			Wrap:          em.SoftWrap,
+		},
+	}
+
+	em.ApplyTheme(doc.Editor)
+	em.ApplyDiffTheme(doc.Diff)
+	em.setupEditorCallbacks(doc)
+
+	em.OpenTabPaths = append(em.OpenTabPaths, fullPath)
+	em.ActivePath = fullPath
+	if len(em.Panes) > 1 {
+		if em.ActivePane < 0 || em.ActivePane >= len(em.Panes) {
+			em.ActivePane = 0
+		}
+		em.Panes[em.ActivePane] = fullPath
+	}
+	em.docs[fullPath] = doc
+	em.StatusMsg = fmt.Sprintf("Created %s", name)
+	return doc
+}
+
+// EnsureViewerTab registers a non-text viewer path (PDF, deck, image) in
+// OpenTabPaths and activates it without loading its bytes into a text buffer.
+func (em *EditorManager) EnsureViewerTab(fullPath string) {
+	if em == nil || fullPath == "" {
+		return
+	}
+	em.mu.Lock()
+	defer em.mu.Unlock()
+	if !em.containsLocked(fullPath) {
+		em.OpenTabPaths = append(em.OpenTabPaths, fullPath)
+	}
+	em.ActivePath = fullPath
+	if len(em.Panes) > 1 {
+		if em.ActivePane < 0 || em.ActivePane >= len(em.Panes) {
+			em.ActivePane = 0
+		}
+		em.Panes[em.ActivePane] = fullPath
+	}
 }
 
 // OpenTerminalTab opens or activates a terminal tab in the editor (CodeEditorPane parity).
@@ -789,6 +884,9 @@ func (em *EditorManager) closeTabLocked(fullPath string) bool {
 	}
 	em.OpenTabPaths = newTabs
 	delete(em.docs, fullPath)
+	if em.LSP != nil {
+		em.LSP.DidClose(em.WorkspaceDir, fullPath)
+	}
 	delete(em.PinnedTabs, fullPath)
 	delete(em.ReadOnlyTabs, fullPath)
 	em.deletePatchDiffLocked(fullPath)
@@ -1301,6 +1399,10 @@ func (em *EditorManager) SaveActiveFile() error {
 		em.mu.Unlock()
 		return fmt.Errorf("no active document to save")
 	}
+	if strings.HasPrefix(doc.FullPath, "untitled://") {
+		em.mu.Unlock()
+		return fmt.Errorf("untitled buffer has no file path")
+	}
 
 	// External-change conflict: the file changed on disk behind the buffer.
 	// With a confirm hook, defer to it; without one, save anyway (previous
@@ -1384,6 +1486,9 @@ func (em *EditorManager) SaveAllDirty() (saved int, err error) {
 		if doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
 			continue
 		}
+		if strings.HasPrefix(doc.FullPath, "untitled://") {
+			continue
+		}
 		if !doc.Editor.Buffer.Modified() {
 			continue
 		}
@@ -1463,6 +1568,10 @@ func (em *EditorManager) saveDocLocked(doc *OpenDocument, newText string) error 
 	doc.Editor.DiffBase = newOrig
 	doc.Diff.Old = newOrig
 	em.StatusMsg = fmt.Sprintf("Saved %s", doc.RelativePath)
+	if em.LSP != nil {
+		em.LSP.DidSave(em.WorkspaceDir, doc.FullPath, newText)
+	}
+	em.runDiagnosticsLocked(doc)
 	return nil
 }
 
@@ -1531,7 +1640,46 @@ func writeFileAtomic(path string, data []byte) error {
 func (em *EditorManager) setupEditorCallbacks(doc *OpenDocument) {
 	st := doc.Editor
 	st.OnCompletion = func(r mygoeditor.CompletionRequest) {
-		st.ShowCompletions(r.Offset-len(r.Prefix), WordCompletions(st.Buffer, r.Prefix))
+		if em.LSP == nil || !em.LSP.SupportsPath(doc.FullPath) || em.OnRunUI == nil {
+			st.ShowCompletions(r.Offset-len(r.Prefix), WordCompletions(st.Buffer, r.Prefix))
+			return
+		}
+		pos := st.Buffer.Pos(r.Offset)
+		wsDir := em.WorkspaceDir
+		fullPath := doc.FullPath
+		startOff := r.Offset - len(r.Prefix)
+
+		em.reqMu.Lock()
+		if em.completionCancel != nil {
+			em.completionCancel()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		em.completionCancel = cancel
+		em.reqMu.Unlock()
+
+		go func() {
+			defer cancel()
+			lspItems, ok := em.LSP.Completion(ctx, wsDir, fullPath, pos.Line, pos.Col)
+			if ctx.Err() != nil {
+				return
+			}
+			em.OnRunUI(func() {
+				if ok && len(lspItems) > 0 {
+					items := make([]mygoeditor.Completion, 0, len(lspItems))
+					for _, it := range lspItems {
+						items = append(items, mygoeditor.Completion{
+							Label:  it.Label,
+							Detail: it.Detail,
+							Kind:   mapLSPCompletionKind(it.Kind),
+							Insert: it.InsertText,
+						})
+					}
+					st.ShowCompletions(startOff, items)
+					return
+				}
+				st.ShowCompletions(startOff, WordCompletions(st.Buffer, r.Prefix))
+			})
+		}()
 	}
 
 	st.OnHover = func(r mygoeditor.HoverRequest) {
@@ -1539,34 +1687,147 @@ func (em *EditorManager) setupEditorCallbacks(doc *OpenDocument) {
 		if word == "" {
 			return
 		}
-		count := strings.Count(st.Buffer.String(), word)
-		st.ShowHover(start, end, fmt.Sprintf("Symbol '%s' (%d occurrences)", word, count), nil)
+		if em.LSP == nil || !em.LSP.SupportsPath(doc.FullPath) || em.OnRunUI == nil {
+			count := strings.Count(st.Buffer.String(), word)
+			st.ShowHover(start, end, fmt.Sprintf("Symbol '%s' (%d occurrences)", word, count), nil)
+			return
+		}
+		pos := st.Buffer.Pos(r.Offset)
+		wsDir := em.WorkspaceDir
+		fullPath := doc.FullPath
+
+		em.reqMu.Lock()
+		if em.hoverCancel != nil {
+			em.hoverCancel()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+		em.hoverCancel = cancel
+		em.reqMu.Unlock()
+
+		go func() {
+			defer cancel()
+			txt, ok := em.LSP.Hover(ctx, wsDir, fullPath, pos.Line, pos.Col)
+			if ctx.Err() != nil {
+				return
+			}
+			em.OnRunUI(func() {
+				if ok && txt != "" {
+					st.ShowHover(start, end, txt, nil)
+					return
+				}
+				count := strings.Count(st.Buffer.String(), word)
+				st.ShowHover(start, end, fmt.Sprintf("Symbol '%s' (%d occurrences)", word, count), nil)
+			})
+		}()
 	}
 
 	st.OnDefinition = func(offset int) {
 		word, _, _ := WordAtOffset(st.Buffer, offset)
-		if word == "" {
+		if word == "" || em.OnDefinitionRequested == nil {
 			return
 		}
-		matches := em.FindDefinitions(word, em.WorkspaceDir)
-		if len(matches) == 1 {
-			rel := filepath.Base(matches[0].Path)
-			if em.WorkspaceDir != "" {
-				if r, err := filepath.Rel(em.WorkspaceDir, matches[0].Path); err == nil && !strings.HasPrefix(r, "..") {
-					rel = r
-				}
+		pos := st.Buffer.Pos(offset)
+		wsDir := em.WorkspaceDir
+		fullPath := doc.FullPath
+		cb := em.OnDefinitionRequested
+		go func() {
+			if matches, ok := em.LSPFindLocations("definition", fullPath, pos.Line, pos.Col); ok && len(matches) > 0 {
+				cb(word, matches)
+				return
 			}
-			_, _ = em.OpenFile(matches[0].Path, rel)
-			if active := em.ActiveDoc(); active != nil {
-				line := max(0, matches[0].Line-1)
-				col := max(0, matches[0].Col-1)
-				active.Editor.GoTo(mygoeditor.Pos{Line: line, Col: col})
-			}
-		} else if len(matches) > 1 {
-			if em.OnDefinitionRequested != nil {
-				em.OnDefinitionRequested(word, matches)
-			}
-		}
+			matches := em.FindDefinitions(word, wsDir)
+			cb(word, matches)
+		}()
+	}
+}
+
+// NotifyBufferChange triggers a debounced LSP didChange notification when a
+// document's buffer version advances (O(1) check on the render path).
+func (em *EditorManager) NotifyBufferChange(doc *OpenDocument) {
+	if em == nil || em.LSP == nil || doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil {
+		return
+	}
+	ver := doc.Editor.Buffer.Version()
+	if ver == doc.lastLSPVersion {
+		return
+	}
+	doc.lastLSPVersion = ver
+	em.LSP.DidChange(em.WorkspaceDir, doc.FullPath, func() string {
+		return doc.Editor.Buffer.String()
+	})
+}
+
+// LSPFindLocations queries the active language server for definition,
+// typeDefinition, implementation, or references.
+func (em *EditorManager) LSPFindLocations(kind, fullPath string, line, col int) ([]PeekMatch, bool) {
+	if em == nil || em.LSP == nil || !em.LSP.SupportsPath(fullPath) {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var locs []lsp.Location
+	var ok bool
+	switch kind {
+	case "definition":
+		locs, ok = em.LSP.Definition(ctx, em.WorkspaceDir, fullPath, line, col)
+	case "typeDefinition":
+		locs, ok = em.LSP.TypeDefinition(ctx, em.WorkspaceDir, fullPath, line, col)
+	case "implementation":
+		locs, ok = em.LSP.Implementation(ctx, em.WorkspaceDir, fullPath, line, col)
+	case "references":
+		locs, ok = em.LSP.References(ctx, em.WorkspaceDir, fullPath, line, col)
+	}
+	if !ok || len(locs) == 0 {
+		return nil, false
+	}
+	out := make([]PeekMatch, 0, len(locs))
+	for _, loc := range locs {
+		p := lsp.URIToPath(loc.URI)
+		out = append(out, PeekMatch{
+			Path: p,
+			Line: loc.Range.Start.Line + 1,
+			Col:  loc.Range.Start.Character + 1,
+		})
+	}
+	return out, true
+}
+
+// LSPRename queries the active language server for a workspace rename edit.
+func (em *EditorManager) LSPRename(fullPath string, line, col int, newName string) (*lsp.WorkspaceEdit, bool) {
+	if em == nil || em.LSP == nil || !em.LSP.SupportsPath(fullPath) {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	return em.LSP.Rename(ctx, em.WorkspaceDir, fullPath, line, col, newName)
+}
+
+// LSPFormat queries the active language server for document formatting edits.
+func (em *EditorManager) LSPFormat(fullPath string, tabSize int, insertSpaces bool) ([]lsp.TextEdit, bool) {
+	if em == nil || em.LSP == nil || !em.LSP.SupportsPath(fullPath) {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	return em.LSP.Formatting(ctx, em.WorkspaceDir, fullPath, tabSize, insertSpaces)
+}
+
+func mapLSPCompletionKind(k int) mygoeditor.CompletionKind {
+	switch k {
+	case 2, 3, 4: // Method, Function, Constructor
+		return mygoeditor.CompletionFunction
+	case 5, 6, 10: // Field, Variable, Property
+		return mygoeditor.CompletionVariable
+	case 7, 8, 9, 22: // Class, Interface, Module, Struct
+		return mygoeditor.CompletionType
+	case 14: // Keyword
+		return mygoeditor.CompletionKeyword
+	case 15: // Snippet
+		return mygoeditor.CompletionSnippet
+	case 21: // Constant
+		return mygoeditor.CompletionConstant
+	default:
+		return mygoeditor.CompletionText
 	}
 }
 
@@ -2045,4 +2306,71 @@ func (em *EditorManager) SetInlays(path string, inlays []mygoeditor.Inlay) {
 	if ok && doc.Editor != nil {
 		doc.Editor.SetInlays(inlays)
 	}
+}
+
+func (em *EditorManager) runDiagnosticsLocked(doc *OpenDocument) {
+	if em == nil || doc == nil || doc.Editor == nil || doc.Editor.Buffer == nil || em.OnDiagnosticsReady == nil {
+		return
+	}
+	if strings.HasPrefix(doc.FullPath, "ssh://") || strings.HasPrefix(doc.FullPath, "untitled://") {
+		return
+	}
+	fullPath := doc.FullPath
+	ver := doc.Editor.Buffer.Version()
+	content := doc.Editor.Buffer.String()
+	wsDir := em.WorkspaceDir
+	cb := em.OnDiagnosticsReady
+	go func() {
+		raw, err := coreeditor.NewTooling(wsDir).CheckSyntax(context.Background(), fullPath, content)
+		if err != nil {
+			return
+		}
+		diags := make([]mygoeditor.Diagnostic, 0, len(raw))
+		for _, d := range raw {
+			start, end := offsetAtLineCol(content, d.Line, d.Column)
+			diags = append(diags, mygoeditor.Diagnostic{
+				Start:    start,
+				End:      end,
+				Severity: mygoeditor.SeverityError,
+				Message:  d.Message,
+				Source:   "esbuild",
+			})
+		}
+		cb(fullPath, ver, diags)
+	}()
+}
+
+// offsetAtLineCol converts a 1-based line and 0-based column into a [start, end)
+// byte span in content, clamped to content bounds.
+func offsetAtLineCol(content string, line1, col0 int) (int, int) {
+	if len(content) == 0 {
+		return 0, 0
+	}
+	if line1 < 1 {
+		line1 = 1
+	}
+	if col0 < 0 {
+		col0 = 0
+	}
+	lineStart := 0
+	curLine := 1
+	for curLine < line1 && lineStart < len(content) {
+		idx := strings.IndexByte(content[lineStart:], '\n')
+		if idx < 0 {
+			lineStart = len(content)
+			break
+		}
+		lineStart += idx + 1
+		curLine++
+	}
+	lineEnd := len(content)
+	if idx := strings.IndexByte(content[lineStart:], '\n'); idx >= 0 {
+		lineEnd = lineStart + idx
+	}
+	start := min(lineStart+col0, lineEnd)
+	end := min(start+1, len(content))
+	if start == end && start > 0 {
+		start--
+	}
+	return start, end
 }

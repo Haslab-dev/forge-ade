@@ -218,10 +218,15 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 					path := tabPath
 					isTerm := strings.HasPrefix(path, "terminal://")
 					var doc *editor.OpenDocument
+					relPath := path
 					if !isTerm {
 						doc = em.GetDoc(path)
-						if doc == nil {
-							continue
+						if doc != nil {
+							relPath = doc.RelativePath
+						} else if a.Workspace != nil && a.Workspace.RootDir != "" {
+							if r, err := filepath.Rel(a.Workspace.RootDir, path); err == nil && !strings.HasPrefix(r, "..") {
+								relPath = r
+							}
 						}
 					}
 
@@ -237,7 +242,7 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 							baseName = "Terminal"
 						}
 					} else {
-						baseName = filepath.Base(doc.RelativePath)
+						baseName = filepath.Base(relPath)
 					}
 					isPinned := em.IsPinned(path)
 					isReadOnly := em.IsReadOnly(path)
@@ -253,7 +258,7 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						if isTerm {
 							ui.Icon(c, icons.TablerTerminal).Width(13).Height(13).TextColor(tc.Accent)
 						} else {
-							icons.RenderFileIcon(c, doc.RelativePath, 13, tc.IconMuted)
+							icons.RenderFileIcon(c, relPath, 13, tc.IconMuted)
 						}
 						if isPinned {
 							ui.Icon(c, icons.TablerPinFilled).Width(9).Height(9).TextColor(tc.Accent)
@@ -393,11 +398,11 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 						}
 						m.Separator()
 						if len(em.Panes) > 1 {
-							if m.Item("Move to Right Pane").Chosen() {
-								em.MoveTabToPane(path, 1)
-							}
-							if m.Item("Move to Left Pane").Chosen() {
-								em.MoveTabToPane(path, 0)
+							for pi := range em.Panes {
+								pi := pi
+								if m.Item(fmt.Sprintf("Move to Pane %d", pi+1)).Chosen() {
+									em.MoveTabToPane(path, pi)
+								}
 							}
 						} else {
 							if m.Item("Split Editor Right").Chosen() {
@@ -428,7 +433,7 @@ func (a *AppUI) renderEditorTabBar(c *ui.Context) {
 							mygo.Clipboard.WriteText(path)
 						}
 						if m.Item("Copy Relative Path").Chosen() {
-							mygo.Clipboard.WriteText(doc.RelativePath)
+							mygo.Clipboard.WriteText(relPath)
 						}
 						if !strings.HasPrefix(path, "ssh://") {
 							if m.Item("Reveal in Finder").Chosen() {
@@ -645,6 +650,8 @@ func (a *AppUI) renderEditorContent(c *ui.Context) {
 					case isActivePane && em.IsDiffView:
 						a.renderEditorDiff(c)
 					default:
+						em.NotifyBufferChange(paneDoc)
+						a.renderBreadcrumbs(c, paneDoc)
 						ui.Row(c).Grow(1).FillWidth().Children(func() {
 							ui.Column(c).Grow(1).FillHeight().Children(func() {
 								edView := mygoeditor.View(c, paneDoc.Editor).Grow(1).FillWidth()
@@ -910,6 +917,7 @@ func (a *AppUI) renderEditorSingle(c *ui.Context) {
 
 	doc.Editor.SoftWrap = em.SoftWrap
 	em.ApplyTheme(doc.Editor)
+	em.NotifyBufferChange(doc)
 
 	ui.Column(c).Grow(1).FillWidth().Children(func() {
 		// Breadcrumbs
@@ -1043,14 +1051,50 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 	lineCol := "Ln 1, Col 1"
 	langLabel := "Plain Text"
 	lineCount := 0
+	selChars := 0
+	errCount := 0
+	warnCount := 0
+	eolLabel := "LF"
+	encLabel := "UTF-8"
+	indentLabel := "Spaces: 4"
 
+	var activeDoc *editor.OpenDocument
 	if doc := a.Editor.ActiveDoc(); doc != nil {
+		activeDoc = doc
 		curPath = doc.RelativePath
 		pos := doc.Editor.CursorPos()
 		lineCol = FormatLineCol(pos.Line, pos.Col)
 		lineCount = doc.Editor.Buffer.LineCount()
 		if l := doc.Editor.Buffer.Language(); l != nil {
 			langLabel = l.Name
+		}
+		sel := doc.Editor.Selection()
+		if sel.Head >= sel.Anchor {
+			selChars = sel.Head - sel.Anchor
+		} else {
+			selChars = sel.Anchor - sel.Head
+		}
+		for _, d := range doc.Editor.Diagnostics() {
+			if d.Severity == mygoeditor.SeverityError {
+				errCount++
+			} else if d.Severity == mygoeditor.SeverityWarning {
+				warnCount++
+			}
+		}
+		if doc.HasCRLF {
+			eolLabel = "CRLF"
+		}
+		if doc.HasBOM {
+			encLabel = "UTF-8 BOM"
+		}
+		tabW := doc.Editor.TabSize
+		if tabW <= 0 {
+			tabW = 4
+		}
+		if doc.Editor.Indent == mygoeditor.IndentTabs {
+			indentLabel = fmt.Sprintf("Tabs: %d", tabW)
+		} else {
+			indentLabel = fmt.Sprintf("Spaces: %d", tabW)
 		}
 	}
 
@@ -1164,7 +1208,26 @@ func (a *AppUI) renderStatusBar(c *ui.Context) {
 			a.FollowAgent = !a.FollowAgent
 		}
 
-		statusText(lineCol)
+		if selChars > 0 {
+			statusText(fmt.Sprintf("%s (%d sel)", lineCol, selChars))
+		} else {
+			statusText(lineCol)
+		}
+		if activeDoc != nil {
+			if errCount > 0 || warnCount > 0 {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					if errCount > 0 {
+						ui.Text(c, fmt.Sprintf("✕ %d", errCount)).FontSize(11).FontWeight(600).TextColor(tc.Error)
+					}
+					if warnCount > 0 {
+						ui.Text(c, fmt.Sprintf("▲ %d", warnCount)).FontSize(11).FontWeight(600).TextColor(tc.Warning)
+					}
+				})
+			}
+			statusText(indentLabel)
+			statusText(eolLabel)
+			statusText(encLabel)
+		}
 		statusText(fmt.Sprintf("%d lines · %s", lineCount, langLabel))
 
 		if a.Git != nil {
@@ -1520,14 +1583,19 @@ func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *edito
 		wsDir := a.Workspace.RootDir
 		em := a.Editor
 
-		// Symbol scans walk the whole workspace, so they run off the render
-		// thread and apply results on the UI thread (same panes as before).
-		scanAsync := func(action, notFound string, scan func(symbol, wsDir string) []editor.PeekMatch) {
+		// Symbol scans try the active LSP first and fall back to workspace scans
+		// off the render thread, applying results on the UI thread.
+		pos := doc.Editor.CursorPos()
+		fullPath := doc.FullPath
+		scanAsync := func(action, notFound, lspKind string, scan func(symbol, wsDir string) []editor.PeekMatch) {
 			if sym == "" {
 				return
 			}
 			go func() {
-				matches := scan(sym, wsDir)
+				matches, ok := em.LSPFindLocations(lspKind, fullPath, pos.Line, pos.Col)
+				if !ok || len(matches) == 0 {
+					matches = scan(sym, wsDir)
+				}
 				a.runOnUI(func() {
 					a.applyPeekMatches(action, notFound, sym, matches)
 				})
@@ -1537,30 +1605,30 @@ func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *edito
 		// 1. Navigation / LSP
 		if m.Item("Go to Definition").Shortcut(0, ui.KeyF12).Chosen() {
 			if sym != "" {
-				scanAsync("Go to Definition", "No definition found for ", em.FindDefinitions)
+				scanAsync("Go to Definition", "No definition found for ", "definition", em.FindDefinitions)
 			} else {
 				doc.Editor.Run(mygoeditor.GoToDefinition)
 			}
 		}
 
 		if m.Item("Go to Declaration").Shortcut(ui.Ctrl, ui.KeyF12).Chosen() {
-			scanAsync("Go to Declaration", "No declaration found for ", em.FindDefinitions)
+			scanAsync("Go to Declaration", "No declaration found for ", "definition", em.FindDefinitions)
 		}
 
 		if m.Item("Go to Type Definition").Shortcut(ui.Shift, ui.KeyF12).Chosen() {
-			scanAsync("Go to Type Definition", "No type definition found for ", em.FindTypeDefinitions)
+			scanAsync("Go to Type Definition", "No type definition found for ", "typeDefinition", em.FindTypeDefinitions)
 		}
 
 		if m.Item("Go to Implementation").Shortcut(ui.Cmd, ui.KeyF12).Chosen() {
-			scanAsync("Go to Implementation", "No implementation found for ", em.FindImplementations)
+			scanAsync("Go to Implementation", "No implementation found for ", "implementation", em.FindImplementations)
 		}
 
 		if m.Item("Find All References").Shortcut(ui.Alt|ui.Shift, ui.KeyF12).Chosen() {
-			scanAsync("Find All References", "No references found for ", em.FindReferences)
+			scanAsync("Find All References", "No references found for ", "references", em.FindReferences)
 		}
 
 		if m.Item("Find References").Shortcut(ui.Alt|ui.Shift, ui.KeyH).Chosen() {
-			scanAsync("Find References", "No references found for ", em.FindReferences)
+			scanAsync("Find References", "No references found for ", "references", em.FindReferences)
 		}
 
 		m.Separator()
@@ -1580,7 +1648,7 @@ func (a *AppUI) attachEditorContextMenu(c *ui.Context, el ui.Element, doc *edito
 			a.formatDocument(c, doc)
 		}
 
-		if m.Item("Format Selections").Shortcut(ui.Cmd, ui.KeyK).Chosen() {
+		if m.Item("Format Selections").Chosen() {
 			a.formatDocumentSelection(c, doc)
 		}
 

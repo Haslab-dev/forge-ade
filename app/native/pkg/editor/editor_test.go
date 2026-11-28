@@ -127,3 +127,28 @@ func TestEditorMinimapSplitAndRename(t *testing.T) {
 		t.Errorf("expected ActivePath=%s, got %s", renamedB, em.ActivePath)
 	}
 }
+
+func TestUntitledFileViewerTabAndOffset(t *testing.T) {
+	em := NewEditorManager()
+
+	u1 := em.NewUntitledFile()
+	if u1 == nil || u1.FullPath != "untitled://Untitled-1" || em.ActivePath != "untitled://Untitled-1" {
+		t.Fatalf("unexpected untitled doc: %+v active=%q", u1, em.ActivePath)
+	}
+	if err := em.SaveActiveFile(); err == nil {
+		t.Fatalf("expected SaveActiveFile on untitled buffer to fail without path")
+	}
+
+	em.EnsureViewerTab("/tmp/sample.pdf")
+	if em.ActivePath != "/tmp/sample.pdf" {
+		t.Fatalf("expected ActivePath=/tmp/sample.pdf, got %q", em.ActivePath)
+	}
+	if idx := em.TabIndex("/tmp/sample.pdf"); idx < 0 {
+		t.Fatalf("expected /tmp/sample.pdf in OpenTabPaths, got %v", em.OpenTabPaths)
+	}
+
+	s, e := offsetAtLineCol("first\nsecond\nthird", 2, 3)
+	if s != 9 || e != 10 {
+		t.Fatalf("expected offset (9,10) for line 2 col 3, got (%d,%d)", s, e)
+	}
+}
