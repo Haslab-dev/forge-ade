@@ -198,13 +198,15 @@ func clampZoom(z float64) float64 {
 // iteration of live state before; every access below is length-captured,
 // bounds-checked and nil-defensive.
 type subagentSnapshot struct {
-	id           string
-	name         string
-	roleFilter   string
-	state        string
-	model        string
-	messages     []subagentMessageSnapshot
-	pendingTools []subagentPendingToolSnapshot
+	id             string
+	name           string
+	roleFilter     string
+	state          string
+	model          string
+	isHybridWorker bool
+	isToolTrace    bool
+	messages       []subagentMessageSnapshot
+	pendingTools   []subagentPendingToolSnapshot
 }
 
 // subagentMessageSnapshot holds the message fields the chat view renders,
@@ -240,9 +242,6 @@ func (a *AppUI) snapshotSubagents(sessionID string) []subagentSnapshot {
 		return nil
 	}
 	live := a.Agent.Subagents(sessionID)
-	if len(live) == 0 {
-		return nil
-	}
 	out := make([]subagentSnapshot, 0, len(live))
 	for _, sub := range live {
 		if sub == nil {
@@ -309,7 +308,143 @@ func (a *AppUI) snapshotSubagents(sessionID string) []subagentSnapshot {
 
 		out = append(out, snap)
 	}
+
+	// 2. Hybrid Swarm Workers (WorkersForParent)
+	seenIDs := make(map[string]bool, len(out))
+	for _, s := range out {
+		seenIDs[s.id] = true
+	}
+	for _, w := range a.Agent.WorkersForParent(sessionID) {
+		if w == nil || seenIDs[w.ID] {
+			continue
+		}
+		seenIDs[w.ID] = true
+		wName := w.WorkerName
+		if wName == "" {
+			wName = w.Title
+		}
+		snap := subagentSnapshot{
+			id:             w.ID,
+			name:           wName,
+			roleFilter:     w.AgentID,
+			state:          w.Status,
+			model:          w.Model,
+			isHybridWorker: true,
+		}
+		for _, m := range w.Messages {
+			if m == nil {
+				continue
+			}
+			sm := subagentMessageSnapshot{
+				role:      m.Role,
+				text:      m.Text,
+				thinking:  m.Thinking,
+				timestamp: m.Timestamp,
+			}
+			for _, t := range m.Tools {
+				if t == nil {
+					continue
+				}
+				sm.toolCalls = append(sm.toolCalls, t.ToolName)
+				sm.lastTool = t.ToolName
+				sm.lastToolDetail = clampRunes(strings.TrimSpace(t.Command), 56)
+			}
+			snap.messages = append(snap.messages, sm)
+		}
+		out = append(out, snap)
+	}
+
+	// 3. ACP / Chat Subagent Tool Calls (invoke_subagent, subagent, agent, task)
+	if sess := a.Agent.FindSession(sessionID); sess != nil {
+		for _, m := range sess.Messages {
+			if m == nil {
+				continue
+			}
+			for ti, t := range m.Tools {
+				if t == nil || !isSubagentToolName(t.ToolName) {
+					continue
+				}
+				tid := t.ID
+				if tid == "" {
+					tid = fmt.Sprintf("subtool-%d-%d", m.ID, ti)
+				}
+				if seenIDs[tid] {
+					continue
+				}
+				seenIDs[tid] = true
+				role, prompt := parseSubagentToolCommand(t.Command)
+				name := role
+				if name == "" {
+					name = t.ToolName
+				}
+				st := t.Status
+				if st == "" {
+					st = "completed"
+				}
+				ts := m.Timestamp
+				if t.CreatedAtMs > 0 {
+					ts = time.UnixMilli(t.CreatedAtMs)
+				}
+				snap := subagentSnapshot{
+					id:          tid,
+					name:        name,
+					roleFilter:  t.ToolName,
+					state:       st,
+					isToolTrace: true,
+				}
+				if prompt != "" {
+					snap.messages = append(snap.messages, subagentMessageSnapshot{
+						role:      "user",
+						text:      prompt,
+						timestamp: ts,
+					})
+				}
+				if outText := strings.TrimSpace(t.Output); outText != "" {
+					snap.messages = append(snap.messages, subagentMessageSnapshot{
+						role:      "assistant",
+						text:      outText,
+						timestamp: ts,
+					})
+				}
+				out = append(out, snap)
+			}
+		}
+	}
+
 	return out
+}
+
+func isSubagentToolName(name string) bool {
+	low := strings.ToLower(strings.TrimSpace(name))
+	return low == "subagent" || low == "invoke_subagent" || low == "agent" || low == "task" || strings.Contains(low, "subagent")
+}
+
+func parseSubagentToolCommand(raw string) (role, prompt string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(raw, "{") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err == nil {
+			for _, k := range []string{"Role", "role", "name", "Name", "TypeName", "type", "subagent_type"} {
+				if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+					role = strings.TrimSpace(v)
+					break
+				}
+			}
+			for _, k := range []string{"Prompt", "prompt", "task", "description", "Description"} {
+				if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+					prompt = strings.TrimSpace(v)
+					break
+				}
+			}
+		}
+	}
+	if prompt == "" {
+		prompt = raw
+	}
+	return role, prompt
 }
 
 // summarizeToolArgsCopy defensively copies a tool-call arguments map (same
@@ -395,9 +530,9 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 		return
 	}
 
-	scroll := ui.Scroll(c)
+	scroll := ui.Scroll(c.Key("subagents-scroll")).Grow(1).FillWidth()
 	scroll.Children(func() {
-		col := ui.Column(c).Gap(2).Padding(8)
+		col := ui.Column(c).FillWidth().Gap(2).Padding(8)
 		col.Children(func() {
 			for i := range subs {
 				sub := subs[i]
@@ -434,7 +569,7 @@ func (a *AppUI) renderSubagentPane(c *ui.Context) {
 				}
 			}
 		})
-	}).Grow(1)
+	})
 }
 
 // subagentDirectorySummary returns the latest activity line for a directory
@@ -520,15 +655,19 @@ func (a *AppUI) renderSubagentChatView(c *ui.Context, sub *subagentSnapshot) {
 		}
 
 		isWorking := sub.state == "running" || sub.state == "working"
-		if isWorking {
+		if isWorking && !sub.isToolTrace {
 			stopBtn := ui.Row(c).Height(22).Radius(4).Padding(0, 6).Gap(4).AlignItems(ui.Center).
 				Background(tc.Error.Alpha(0.15)).BorderWidth(1).BorderColor(tc.Error.Alpha(0.3)).Cursor(ui.CursorPointer)
 			stopBtn.Children(func() {
 				ui.Icon(c, icons.TablerPlayerStop).Width(10).Height(10).TextColor(tc.Error)
 				ui.Text(c, "Stop").FontSize(10).FontWeight(600).TextColor(tc.Error)
 			})
-			if stopBtn.Clicked() && a.Engine != nil && a.Engine.AgentMgr != nil {
-				a.Engine.AgentMgr.StopTurn(sub.id)
+			if stopBtn.Clicked() {
+				if sub.isHybridWorker && a.Agent != nil {
+					a.Agent.StopWorker(sub.id)
+				} else if a.Engine != nil && a.Engine.AgentMgr != nil {
+					a.Engine.AgentMgr.StopTurn(sub.id)
+				}
 				if a.Window != nil {
 					a.Window.Invalidate()
 				}

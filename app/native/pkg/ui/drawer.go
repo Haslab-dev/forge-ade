@@ -852,7 +852,7 @@ func (a *AppUI) subagentSessionCount() int {
 	if a.Agent == nil || a.Agent.ActiveSessionID == "" {
 		return 0
 	}
-	return len(a.Agent.Subagents(a.Agent.ActiveSessionID))
+	return len(a.snapshotSubagents(a.Agent.SnapshotActiveSessionID()))
 }
 
 // drawerTabTitle maps a drawer tab kind to its pill title.
